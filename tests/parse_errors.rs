@@ -103,23 +103,6 @@ fn rejects_unknown_resources_with_command_specific_next_steps() {
 }
 
 #[test]
-fn rejects_unknown_command_with_specific_agent_next_step() {
-    let error = parse_command(["logbrew", "traces", "--json"]).expect_err("unknown command");
-    let mut output = Vec::new();
-
-    write_cli_error(&error, true, &mut output).expect("error writes");
-
-    let body: serde_json::Value = serde_json::from_slice(output.as_slice()).expect("valid json");
-    assert_eq!(body["ok"], false);
-    assert_eq!(body["error"], "unknown_command");
-    assert_eq!(body["message"], "unknown command: traces");
-    assert_eq!(
-        body["next"],
-        "use logbrew trace <trace_id> or logbrew explain trace <trace_id>"
-    );
-}
-
-#[test]
 fn suggests_obvious_top_level_command_typos_for_agents() {
     for (command, next) in [
         ("logg", "did you mean logbrew logs?"),
@@ -170,34 +153,6 @@ fn rejects_inline_values_on_simple_command_flags_with_command_help() {
             next: "run logbrew read logs --help",
         })
     );
-}
-
-#[test]
-fn rejects_trace_terms_without_ids_with_concrete_next_steps() {
-    for (args, message, next) in [
-        (
-            ["logbrew", "traces", "--json"],
-            "unknown command: traces",
-            "use logbrew trace <trace_id> or logbrew explain trace <trace_id>",
-        ),
-        (
-            ["logbrew", "spans", "--json"],
-            "unknown command: spans",
-            "use logbrew trace <trace_id> or logbrew explain trace <trace_id>",
-        ),
-    ] {
-        let error = parse_command(args).expect_err("unknown command");
-        let mut output = Vec::new();
-
-        write_cli_error(&error, true, &mut output).expect("error writes");
-
-        let body: serde_json::Value =
-            serde_json::from_slice(output.as_slice()).expect("valid json");
-        assert_eq!(body["ok"], false);
-        assert_eq!(body["error"], "unknown_command");
-        assert_eq!(body["message"], message);
-        assert_eq!(body["next"], next);
-    }
 }
 
 #[test]

@@ -169,6 +169,9 @@ fn parse_values(values: &[String]) -> Result<Command, CliError> {
         }
         "log" => parse_read_resource("logs", tail),
         "release" => parse_read_resource("releases", tail),
+        alias if is_trace_term(alias) && !has_position_candidate(tail) => {
+            parse_help_alias(HelpTopic::ReadTrace, tail)
+        }
         "logs" | "issues" | "errors" | "error" | "exceptions" | "exception" | "actions"
         | "events" | "event" | "action" | "releases" | "trace" | "issue" => {
             parse_read_resource(head, tail)
@@ -289,6 +292,11 @@ fn is_setup_alias(value: &str) -> bool {
 /// Returns whether a word should use the live watch placeholder flow.
 fn is_watch_command_alias(value: &str) -> bool {
     matches!(value, "watch" | "tail" | "follow" | "stream")
+}
+
+/// Returns whether a word names trace/span vocabulary.
+fn is_trace_term(value: &str) -> bool {
+    matches!(value, "trace" | "traces" | "span" | "spans")
 }
 
 /// Returns whether a value is a version flag.

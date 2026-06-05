@@ -8,3 +8,4 @@
 .env.*
 !.env.example
 .logbrew-confidential-denylist.local
+/work/

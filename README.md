@@ -11,6 +11,23 @@ human output, clear `Next:` recovery steps, and token-safe diagnostics.
 cargo install --git https://github.com/LogBrewCo/cli logbrew-cli
 ```
 
+## Distribution
+
+LogBrew CLI is a Rust native binary. Cargo builds a platform-native `logbrew`
+executable for the selected target; npm, Homebrew, shell, PowerShell, and MSI
+installers are wrappers around those native release artifacts.
+
+Release publishing is handled by GitHub Actions on Blacksmith runners:
+
+- GitHub Releases: native archives for Linux x64/ARM64, macOS x64/ARM64, and
+  Windows x64.
+- Installers: shell, PowerShell, npm package, Homebrew formula, and Windows MSI.
+- Package managers: crates.io via `cargo publish`, npm via `npm publish`, and
+  Homebrew via the `LogBrewCo/homebrew-tap` formula repository.
+
+Publishing requires these GitHub Actions secrets before pushing a release tag:
+`CARGO_REGISTRY_TOKEN`, `NPM_TOKEN`, and `HOMEBREW_TAP_TOKEN`.
+
 ## Basic Usage
 
 ```bash

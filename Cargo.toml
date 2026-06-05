@@ -4,13 +4,14 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.85"
 description = "Public command-line interface for LogBrew."
+authors = ["LogBrewCo"]
 license = "MIT"
 repository = "https://github.com/LogBrewCo/cli"
 homepage = "https://logbrew.co"
 readme = "README.md"
 keywords = ["logbrew", "cli", "observability", "logs"]
 categories = ["command-line-utilities", "development-tools"]
-publish = false
+publish = ["crates-io"]
 
 [[bin]]
 name = "logbrew"
@@ -133,3 +134,19 @@ codegen-units = 1
 strip = true
 opt-level = 3
 panic = "abort"
+
+[package.metadata.dist]
+dist = true
+formula = "logbrew"
+npm-package = "logbrew-cli"
+
+[package.metadata.wix]
+upgrade-guid = "740F488A-F669-4698-AA07-15053924C85C"
+path-guid = "6165A5A2-FEA6-475E-83C6-34614F8F2498"
+license = false
+eula = false
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"
