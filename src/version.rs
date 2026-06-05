@@ -12,6 +12,9 @@ pub(crate) fn execute_version<W: std::io::Write>(
             "ok": true,
             "name": "logbrew",
             "version": env!("CARGO_PKG_VERSION"),
+            "binary": "native",
+            "os": std::env::consts::OS,
+            "arch": std::env::consts::ARCH,
         });
         writeln!(output, "{body}")?;
     } else {

@@ -151,7 +151,8 @@ Usage:
   logbrew version [--json]
   logbrew --version [--json]
 
-Prints the installed CLI version.";
+Prints the installed CLI version.
+The CLI is a native Rust binary.";
 
 /// Auth workflow help text.
 const AUTH_HELP: &str = "\
