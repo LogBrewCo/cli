@@ -25,6 +25,9 @@ This is the public LogBrew CLI repository. Everything committed here is public.
   Releases, shell, PowerShell, npm, Homebrew, MSI, and crates.io. Registry
   publishing needs only public secret names in this repo:
   `CARGO_REGISTRY_TOKEN`, `NPM_TOKEN`, and `HOMEBREW_TAP_TOKEN`.
+- The public Homebrew tap already exists at `LogBrewCo/homebrew-tap`; do not
+  recreate it. Future release work should only verify tap access and the
+  `HOMEBREW_TAP_TOKEN` secret name.
 - Keep setup/init/install/configure/sdk non-mutating until installation is
   truly implemented. Human setup output must say `Mode: non-mutating plan`,
   `No files changed.`, and `Install: not ready`.
