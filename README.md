@@ -47,8 +47,7 @@ Authentication uses either `LOGBREW_TOKEN` or the local token file created by
 ## Development
 
 ```bash
-bash scripts/confidentiality-check.sh
-bash scripts/check-all.sh
+bash scripts/pre-commit.sh
 ```
 
 Public-repo rule: do not add private backend code, private hostnames, private

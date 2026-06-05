@@ -9,7 +9,9 @@ This is the public LogBrew CLI repository. Everything committed here is public.
   secrets, or private backend implementation details.
 - Keep this repo CLI-only. Do not add backend, mobile app, SDK, infrastructure,
   deployment, backup, ClickHouse schema, or private ops work here.
-- Before every commit, run `bash scripts/confidentiality-check.sh`.
+- Before every commit, run `bash scripts/pre-commit.sh`. This intentionally
+  runs `bash scripts/confidentiality-check.sh` first, then
+  `bash scripts/check-all.sh`.
 - Preserve token safety: CLI output may say whether auth exists and where it
   came from, but must never print token material.
 - Preserve stable JSON for agents and readable human output with concrete
@@ -33,11 +35,7 @@ This is the public LogBrew CLI repository. Everything committed here is public.
 ## Verification
 
 ```bash
-bash scripts/confidentiality-check.sh
-cargo fmt --all -- --check
-cargo clippy --lib --bin logbrew --all-features -- -D warnings
-cargo test --all-targets --all-features
-bash scripts/check-all.sh
+bash scripts/pre-commit.sh
 ```
 
 ## Public Boundary
