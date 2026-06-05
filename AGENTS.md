@@ -36,6 +36,9 @@ This is the public LogBrew CLI repository. Everything committed here is public.
 - Use TDD for CLI behavior changes: add or update the failing test first, run it
   to see the failure, implement, then rerun focused tests and `scripts/check-all.sh`.
 - Keep dependencies current through official release notes and advisories.
+- Keep the recurring automation prompt self-improving and under 20,000 bytes.
+  Compact it when needed without losing confidentiality, product, quality,
+  release, or PR guidance.
 
 ## Verification
 
