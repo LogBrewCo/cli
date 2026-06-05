@@ -62,6 +62,7 @@ fn version_help_is_discoverable() {
     );
     assert!(help::help_text(HelpTopic::Root).contains("logbrew version [--json]"));
     assert!(help::help_text(HelpTopic::Version).contains("Prints the installed CLI version."));
+    assert!(help::help_text(HelpTopic::Version).contains("The CLI is a native Rust binary."));
 }
 
 #[test]
@@ -177,6 +178,9 @@ async fn version_json_output_is_stable() -> Result<(), Box<dyn std::error::Error
     assert_eq!(body["ok"], true);
     assert_eq!(body["name"], "logbrew");
     assert_eq!(body["version"], env!("CARGO_PKG_VERSION"));
+    assert_eq!(body["binary"], "native");
+    assert_eq!(body["os"], std::env::consts::OS);
+    assert_eq!(body["arch"], std::env::consts::ARCH);
     Ok(())
 }
 
