@@ -399,6 +399,28 @@ fn parses_filter_terms_as_top_level_discovery_help() {
 }
 
 #[test]
+fn parses_bare_trace_terms_as_top_level_discovery_help() {
+    for args in [
+        &["logbrew", "trace", "--json"][..],
+        &["logbrew", "traces", "--json"],
+        &["logbrew", "span", "--json"],
+        &["logbrew", "spans", "--json"],
+        &["logbrew", "traces"],
+        &["logbrew", "--json", "spans"],
+    ] {
+        let command = parse_command(args.iter().copied()).expect("trace discovery help parses");
+
+        assert_eq!(
+            command,
+            Command::Help {
+                topic: HelpTopic::ReadTrace,
+                json: args.contains(&"--json")
+            }
+        );
+    }
+}
+
+#[test]
 fn parses_auth_help_as_real_user_topic() {
     for args in [
         &["logbrew", "help", "auth"][..],

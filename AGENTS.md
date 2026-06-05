@@ -9,11 +9,22 @@ This is the public LogBrew CLI repository. Everything committed here is public.
   secrets, or private backend implementation details.
 - Keep this repo CLI-only. Do not add backend, mobile app, SDK, infrastructure,
   deployment, backup, ClickHouse schema, or private ops work here.
-- Before every commit, run `bash scripts/confidentiality-check.sh`.
+- Before every commit, run `bash scripts/pre-commit.sh`. This intentionally
+  runs `bash scripts/confidentiality-check.sh` first, then
+  `bash scripts/check-all.sh`.
 - Preserve token safety: CLI output may say whether auth exists and where it
   came from, but must never print token material.
 - Preserve stable JSON for agents and readable human output with concrete
   `Next:` recovery steps.
+- Treat bare public discovery terms as help, not dead ends, when no required
+  identifier is present. For example, `logbrew traces --json` and
+  `logbrew spans --json` should return trace help while ID-bearing forms still
+  read the trace.
+- The CLI is a Rust native binary. Package-manager releases should publish
+  native cargo-dist artifacts through Blacksmith-backed GitHub Actions: GitHub
+  Releases, shell, PowerShell, npm, Homebrew, MSI, and crates.io. Registry
+  publishing needs only public secret names in this repo:
+  `CARGO_REGISTRY_TOKEN`, `NPM_TOKEN`, and `HOMEBREW_TAP_TOKEN`.
 - Keep setup/init/install/configure/sdk non-mutating until installation is
   truly implemented. Human setup output must say `Mode: non-mutating plan`,
   `No files changed.`, and `Install: not ready`.
@@ -24,11 +35,7 @@ This is the public LogBrew CLI repository. Everything committed here is public.
 ## Verification
 
 ```bash
-bash scripts/confidentiality-check.sh
-cargo fmt --all -- --check
-cargo clippy --lib --bin logbrew --all-features -- -D warnings
-cargo test --all-targets --all-features
-bash scripts/check-all.sh
+bash scripts/pre-commit.sh
 ```
 
 ## Public Boundary
