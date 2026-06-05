@@ -1,0 +1,10 @@
+/target/
+/.idea/
+/.vscode/
+.DS_Store
+*.swp
+*.swo
+.env
+.env.*
+!.env.example
+.logbrew-confidential-denylist.local

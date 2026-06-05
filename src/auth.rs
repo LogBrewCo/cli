@@ -1,0 +1,285 @@
+//! Local CLI authentication helpers and status rendering.
+
+use crate::{CliEnvironment, RuntimeError};
+
+/// Next step after status confirms both API reachability and local auth.
+const AUTHENTICATED_STATUS_NEXT: &str =
+    "run logbrew releases or logbrew logs --release <release> --environment <environment>";
+
+/// Redacted local authentication status for CLI diagnostics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct AuthSnapshot {
+    /// Whether a local credential is configured.
+    pub(crate) authenticated: bool,
+    /// Stable machine-readable auth source key.
+    pub(crate) source: &'static str,
+    /// Concise human auth label.
+    pub(crate) label: &'static str,
+    /// Suggested next step for the current auth state.
+    pub(crate) next: &'static str,
+}
+
+/// Bearer token plus redacted source metadata for API calls.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct AuthCredential {
+    /// Bearer token value. Never render this in user output.
+    pub(crate) token: String,
+    /// Stable machine-readable auth source key.
+    pub(crate) source: &'static str,
+    /// Concise human auth label.
+    pub(crate) label: &'static str,
+}
+
+/// Resolves the bearer token and redacted source from env or local file.
+pub(crate) fn resolve_credential(env: &CliEnvironment) -> Result<AuthCredential, RuntimeError> {
+    if let Some(token) = env.token.as_ref().filter(|token| !token.trim().is_empty()) {
+        return Ok(AuthCredential {
+            token: token.clone(),
+            source: AuthSource::Env.key(),
+            label: AuthSource::Env.human_label(),
+        });
+    }
+
+    let Some(home) = &env.home else {
+        return Err(RuntimeError::MissingToken);
+    };
+    Ok(AuthCredential {
+        token: read_token_from_home(home)?,
+        source: AuthSource::TokenFile.key(),
+        label: AuthSource::TokenFile.human_label(),
+    })
+}
+
+/// Opens a URL in the user's default browser.
+pub(crate) fn open_browser(url: &str) -> bool {
+    let command = if cfg!(target_os = "macos") {
+        ("open", vec![url])
+    } else if cfg!(target_os = "windows") {
+        ("rundll32", vec!["url.dll,FileProtocolHandler", url])
+    } else {
+        ("xdg-open", vec![url])
+    };
+
+    std::process::Command::new(command.0)
+        .args(command.1)
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+/// Writes the successful `status` command response.
+pub(crate) fn write_status_success<W: std::io::Write>(
+    env: &CliEnvironment,
+    status_code: u16,
+    body: &str,
+    json: bool,
+    output: &mut W,
+) -> Result<(), RuntimeError> {
+    let auth_status = inspect_auth_snapshot(env)?;
+    if json {
+        let response = serde_json::json!({
+            "ok": true,
+            "status": "reachable",
+            "status_code": status_code,
+            "body": body,
+            "api_url": env.base_url,
+            "authenticated": auth_status.authenticated,
+            "auth_source": auth_status.source,
+            "next": auth_status.next,
+        });
+        writeln!(output, "{response}")?;
+    } else {
+        writeln!(output, "LogBrew API reachable.")?;
+        writeln!(output, "API: {}", env.base_url)?;
+        writeln!(output, "Auth: {}", auth_status.label)?;
+        writeln!(output, "Next: {}", auth_status.next)?;
+    }
+    Ok(())
+}
+
+/// Removes the local CLI token and writes a redacted logout result.
+pub(crate) fn write_logout_result<W: std::io::Write>(
+    env: &CliEnvironment,
+    json: bool,
+    output: &mut W,
+) -> Result<(), RuntimeError> {
+    let env_token_active = env
+        .token
+        .as_ref()
+        .is_some_and(|token| !token.trim().is_empty());
+    let removed = remove_token_from_home(env.home.as_deref())?;
+    let auth_source = if env_token_active {
+        "env"
+    } else if removed {
+        "token_file"
+    } else {
+        "missing"
+    };
+    let next = logout_next_step(env_token_active, removed);
+
+    if json {
+        let response = serde_json::json!({
+            "ok": true,
+            "removed": removed,
+            "auth_source": auth_source,
+            "env_token_active": env_token_active,
+            "next": next,
+        });
+        writeln!(output, "{response}")?;
+    } else if env_token_active {
+        if removed {
+            writeln!(output, "Local LogBrew token removed.")?;
+        } else {
+            writeln!(output, "No local LogBrew token found.")?;
+        }
+        writeln!(output, "Auth: env token still active")?;
+        writeln!(output, "Next: {next}")?;
+    } else if removed {
+        writeln!(output, "Logged out of LogBrew.")?;
+        writeln!(output, "Removed: local token")?;
+        writeln!(output, "Next: {next}")?;
+    } else {
+        writeln!(output, "No local LogBrew token found.")?;
+        writeln!(output, "Next: {next}")?;
+    }
+    Ok(())
+}
+
+/// Inspects local auth and returns only redacted status metadata.
+pub(crate) fn inspect_auth_snapshot(env: &CliEnvironment) -> Result<AuthSnapshot, RuntimeError> {
+    let status = inspect_auth_status(env)?;
+    Ok(AuthSnapshot {
+        authenticated: status.is_authenticated(),
+        source: status.source_key(),
+        label: status.human_label(),
+        next: status.next_step(),
+    })
+}
+
+/// Inspects whether a local auth credential is configured without exposing it.
+fn inspect_auth_status(env: &CliEnvironment) -> Result<AuthStatus, RuntimeError> {
+    if env
+        .token
+        .as_ref()
+        .is_some_and(|token| !token.trim().is_empty())
+    {
+        return Ok(AuthStatus::Configured(AuthSource::Env));
+    }
+
+    let Some(home) = &env.home else {
+        return Ok(AuthStatus::Missing);
+    };
+    match read_token_from_home(home) {
+        Ok(_) => Ok(AuthStatus::Configured(AuthSource::TokenFile)),
+        Err(RuntimeError::MissingToken) => Ok(AuthStatus::Missing),
+        Err(error) => Err(error),
+    }
+}
+
+/// Removes a persisted token if it exists.
+fn remove_token_from_home(home: Option<&std::path::Path>) -> Result<bool, RuntimeError> {
+    let Some(home) = home else {
+        return Ok(false);
+    };
+    let token_path = home.join(".logbrew").join("token");
+    match std::fs::remove_file(token_path) {
+        Ok(()) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(RuntimeError::Io(error)),
+    }
+}
+
+/// Returns the next logout step without exposing credential material.
+const fn logout_next_step(env_token_active: bool, removed: bool) -> &'static str {
+    if env_token_active {
+        "unset LOGBREW_TOKEN to fully log out"
+    } else if removed {
+        "run logbrew login to authenticate again"
+    } else {
+        "run logbrew login to authenticate"
+    }
+}
+
+/// Reads a persisted CLI token from a home directory.
+fn read_token_from_home(home: &std::path::Path) -> Result<String, RuntimeError> {
+    let token_path = home.join(".logbrew").join("token");
+    let token = match std::fs::read_to_string(token_path) {
+        Ok(token) => token,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Err(RuntimeError::MissingToken);
+        }
+        Err(error) => return Err(RuntimeError::Io(error)),
+    };
+    let trimmed = token.trim();
+    if trimmed.is_empty() {
+        Err(RuntimeError::MissingToken)
+    } else {
+        Ok(trimmed.to_owned())
+    }
+}
+
+/// Local authentication state reported by `status`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AuthStatus {
+    /// A local credential is configured.
+    Configured(AuthSource),
+    /// No local credential was found.
+    Missing,
+}
+
+impl AuthStatus {
+    /// Returns whether a local credential is configured.
+    const fn is_authenticated(self) -> bool {
+        matches!(self, Self::Configured(_))
+    }
+
+    /// Returns the stable JSON source key.
+    const fn source_key(self) -> &'static str {
+        match self {
+            Self::Configured(source) => source.key(),
+            Self::Missing => "missing",
+        }
+    }
+
+    /// Returns a concise human status label.
+    const fn human_label(self) -> &'static str {
+        match self {
+            Self::Configured(source) => source.human_label(),
+            Self::Missing => "not logged in",
+        }
+    }
+
+    /// Returns the next action for the current authentication state.
+    const fn next_step(self) -> &'static str {
+        match self {
+            Self::Configured(_) => AUTHENTICATED_STATUS_NEXT,
+            Self::Missing => "run logbrew login",
+        }
+    }
+}
+
+/// Source of a configured local credential.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AuthSource {
+    /// `LOGBREW_TOKEN` process environment variable.
+    Env,
+    /// Persisted token file below the user home directory.
+    TokenFile,
+}
+
+impl AuthSource {
+    /// Returns the stable JSON key for this source.
+    const fn key(self) -> &'static str {
+        match self {
+            Self::Env => "env",
+            Self::TokenFile => "token_file",
+        }
+    }
+
+    /// Returns a concise human status label for this source.
+    const fn human_label(self) -> &'static str {
+        match self {
+            Self::Env => "logged in (env token)",
+            Self::TokenFile => "logged in (local token)",
+        }
+    }
+}

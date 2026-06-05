@@ -1,0 +1,135 @@
+[package]
+name = "logbrew-cli"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Public command-line interface for LogBrew."
+license = "MIT"
+repository = "https://github.com/LogBrewCo/cli"
+homepage = "https://logbrew.co"
+readme = "README.md"
+keywords = ["logbrew", "cli", "observability", "logs"]
+categories = ["command-line-utilities", "development-tools"]
+publish = false
+
+[[bin]]
+name = "logbrew"
+path = "src/main.rs"
+
+[dependencies]
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "http2"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+
+[dev-dependencies]
+wiremock = "0.6"
+
+[lints.rust]
+warnings = { level = "deny", priority = -2 }
+unsafe_code = "forbid"
+missing_docs = "deny"
+missing_copy_implementations = "deny"
+missing_debug_implementations = "deny"
+rust_2018_idioms = { level = "deny", priority = -1 }
+rust_2024_compatibility = { level = "deny", priority = -1 }
+absolute_paths_not_starting_with_crate = "deny"
+ambiguous_negative_literals = "deny"
+deprecated_in_future = "deny"
+deprecated_safe_2024 = "deny"
+edition_2024_expr_fragment_specifier = "deny"
+explicit_outlives_requirements = "deny"
+ffi_unwind_calls = "deny"
+impl_trait_redundant_captures = "deny"
+keyword_idents_2024 = "deny"
+meta_variable_misuse = "deny"
+missing_unsafe_on_extern = "deny"
+unsafe_op_in_unsafe_fn = "deny"
+macro_use_extern_crate = "deny"
+trivial_casts = "deny"
+trivial_numeric_casts = "deny"
+unit_bindings = "deny"
+unused = { level = "deny", priority = -1 }
+nonstandard_style = { level = "deny", priority = -1 }
+future_incompatible = { level = "deny", priority = -1 }
+redundant_imports = "deny"
+unreachable_pub = "deny"
+unnameable_types = "deny"
+unused_qualifications = "deny"
+unused_results = "deny"
+variant_size_differences = "deny"
+elided_lifetimes_in_paths = "deny"
+single_use_lifetimes = "deny"
+non_ascii_idents = "deny"
+let_underscore_drop = "deny"
+redundant_lifetimes = "deny"
+
+[lints.rustdoc]
+broken_intra_doc_links = "deny"
+private_intra_doc_links = "deny"
+bare_urls = "deny"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+dbg_macro = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+undocumented_unsafe_blocks = "deny"
+allow_attributes = "deny"
+allow_attributes_without_reason = "deny"
+clone_on_ref_ptr = "deny"
+exit = "deny"
+mem_forget = "deny"
+multiple_inherent_impl = "deny"
+rc_buffer = "deny"
+rc_mutex = "deny"
+str_to_string = "deny"
+wildcard_enum_match_arm = "deny"
+missing_docs_in_private_items = "deny"
+missing_assert_message = "deny"
+must_use_candidate = "deny"
+rest_pat_in_fully_bound_structs = "deny"
+verbose_file_reads = "deny"
+unused_result_ok = "deny"
+unused_trait_names = "deny"
+as_underscore = "deny"
+deref_by_slicing = "deny"
+empty_drop = "deny"
+empty_enum_variants_with_brackets = "deny"
+error_impl_error = "deny"
+float_cmp_const = "deny"
+format_push_string = "deny"
+get_unwrap = "deny"
+if_then_some_else_none = "deny"
+impl_trait_in_params = "deny"
+infinite_loop = "deny"
+lossy_float_literal = "deny"
+mutex_atomic = "deny"
+needless_raw_strings = "deny"
+partial_pub_fields = "deny"
+pub_without_shorthand = "deny"
+renamed_function_params = "deny"
+same_name_method = "deny"
+string_lit_chars_any = "deny"
+unnecessary_safety_comment = "deny"
+unnecessary_self_imports = "deny"
+unneeded_field_pattern = "deny"
+unseparated_literal_suffix = "deny"
+cargo_common_metadata = "deny"
+negative_feature_names = "deny"
+redundant_feature_names = "deny"
+wildcard_dependencies = "deny"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+opt-level = 3
+panic = "abort"
