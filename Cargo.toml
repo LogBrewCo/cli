@@ -12,6 +12,14 @@ readme = "README.md"
 keywords = ["logbrew", "cli", "observability", "logs"]
 categories = ["command-line-utilities", "development-tools"]
 publish = ["crates-io"]
+include = [
+  "Cargo.lock",
+  "Cargo.toml",
+  "LICENSE",
+  "README.md",
+  "src/**",
+  "tests/**",
+]
 
 [[bin]]
 name = "logbrew"
