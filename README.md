@@ -39,6 +39,15 @@ Release publishing is handled by GitHub Actions on Blacksmith runners:
 Publishing requires these GitHub Actions secrets before pushing a release tag:
 `CARGO_REGISTRY_TOKEN`, `NPM_TOKEN`, and `HOMEBREW_TAP_TOKEN`.
 
+Before pushing a release tag, run the release preflight:
+
+```bash
+bash scripts/release-preflight.sh v0.1.0
+```
+
+The preflight checks the tag/version match, clean synced `main`, green CI,
+missing GitHub Actions secret names, and existing release/tag collisions.
+
 ## Basic Usage
 
 ```bash
