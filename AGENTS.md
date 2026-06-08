@@ -27,9 +27,10 @@ This is the public LogBrew CLI repository. Everything committed here is public.
   `CARGO_REGISTRY_TOKEN`, `NPM_TOKEN`, and `HOMEBREW_TAP_TOKEN`.
 - Preserve native-binary introspection: `logbrew version --json` must expose
   `binary`, `os`, and `arch` without making human `logbrew version` verbose.
-- The public Homebrew tap already exists at `LogBrewCo/homebrew-tap`; do not
-  recreate it. Future release work should only verify tap access and the
-  `HOMEBREW_TAP_TOKEN` secret name.
+- Homebrew publishing needs a public tap path, but do not assume or recreate
+  one. Public checks returned 404 for `LogBrewCo/homebrew-tap` on 2026-06-07.
+  Treat Homebrew publishing as blocked until the user restores or approves a
+  tap path and the `HOMEBREW_TAP_TOKEN` secret name is available.
 - Keep setup/init/install/configure/sdk non-mutating until installation is
   truly implemented. Human setup output must say `Mode: non-mutating plan`,
   `No files changed.`, and `Install: not ready`.
