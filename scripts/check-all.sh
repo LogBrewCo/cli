@@ -8,3 +8,4 @@ bash scripts/confidentiality-check.sh
 cargo fmt --all -- --check
 cargo clippy --lib --bin logbrew --all-features -- -D warnings
 cargo test --all-targets --all-features
+cargo publish --dry-run --locked --allow-dirty
