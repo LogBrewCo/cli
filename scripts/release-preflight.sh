@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
 REPO="${LOGBREW_RELEASE_REPO:-LogBrewCo/cli}"
+HOMEBREW_TAP_REPO="${LOGBREW_HOMEBREW_TAP_REPO:-LogBrewCo/homebrew-tap}"
 TAG="${1:-}"
 REQUIRED_SECRETS=(
   CARGO_REGISTRY_TOKEN
@@ -90,6 +91,30 @@ check_npm_version_available() {
   esac
 }
 
+check_homebrew_tap_available() {
+  local tap_repo="$1"
+  local metadata
+  local is_private
+  local default_branch
+
+  if ! metadata="$(
+    gh repo view "$tap_repo" --json defaultBranchRef,isPrivate,nameWithOwner,url
+  )"; then
+    fail "could not verify Homebrew tap repository ${tap_repo}"
+  fi
+
+  is_private="$(jq -r '.isPrivate' <<<"$metadata")"
+  default_branch="$(jq -r '.defaultBranchRef.name // ""' <<<"$metadata")"
+
+  if [[ "$is_private" != "false" ]]; then
+    fail "Homebrew tap repository ${tap_repo} is not public"
+  fi
+
+  if [[ -z "$default_branch" ]]; then
+    fail "Homebrew tap repository ${tap_repo} has no default branch"
+  fi
+}
+
 crate_version="$(
   cargo metadata --no-deps --format-version=1 |
     jq -r '.packages[] | select(.name == "logbrew-cli").version'
@@ -146,6 +171,7 @@ trap 'rm -rf "$tmp_dir"' EXIT
 
 check_crates_version_available "logbrew-cli" "$crate_version" "$tmp_dir/crates.json"
 check_npm_version_available "logbrew-cli" "$crate_version" "$tmp_dir/npm.json"
+check_homebrew_tap_available "$HOMEBREW_TAP_REPO"
 
 secret_names="$(
   gh secret list --repo "$REPO" --app actions --json name --jq '.[].name'

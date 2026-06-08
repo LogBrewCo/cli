@@ -46,8 +46,8 @@ bash scripts/release-preflight.sh v0.1.0
 ```
 
 The preflight checks the tag/version match, clean synced `main`, public
-crates.io/npm version collisions, green CI, missing GitHub Actions secret names,
-and existing release/tag collisions.
+crates.io/npm version collisions, the public Homebrew tap repository, green CI,
+missing GitHub Actions secret names, and existing release/tag collisions.
 
 ## Basic Usage
 
