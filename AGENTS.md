@@ -12,6 +12,8 @@ This is the public LogBrew CLI repository. Everything committed here is public.
 - Before every commit, run `bash scripts/pre-commit.sh`. This intentionally
   runs `bash scripts/confidentiality-check.sh` first, then
   `bash scripts/check-all.sh`.
+- Before pushing a release tag, run `bash scripts/release-preflight.sh vX.Y.Z`
+  and then rerun `bash scripts/pre-commit.sh`.
 - Preserve token safety: CLI output may say whether auth exists and where it
   came from, but must never print token material.
 - Preserve stable JSON for agents and readable human output with concrete
