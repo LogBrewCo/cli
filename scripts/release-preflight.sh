@@ -19,6 +19,16 @@ fail() {
   exit 1
 }
 
+fail_missing_secrets() {
+  printf 'Release preflight failed: missing GitHub Actions secret names: %s\n' "$*" >&2
+  printf 'Next: add the missing repository secret names in GitHub Actions secrets before tagging:\n' >&2
+  for secret in "$@"; do
+    printf "  gh secret set %s --repo %s --body '<token-value>'\n" "$secret" "$REPO" >&2
+  done
+  printf 'Then rerun %s %s before pushing a release tag.\n' "$0" "${TAG:-v<version>}" >&2
+  exit 1
+}
+
 require_command() {
   if ! command -v "$1" >/dev/null 2>&1; then
     fail "missing required command '$1'"
@@ -184,7 +194,7 @@ for secret in "${REQUIRED_SECRETS[@]}"; do
 done
 
 if (( ${#missing_secrets[@]} > 0 )); then
-  fail "missing GitHub Actions secret names: ${missing_secrets[*]}"
+  fail_missing_secrets "${missing_secrets[@]}"
 fi
 
 ci_run="$(

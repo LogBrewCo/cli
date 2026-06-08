@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
 bash scripts/confidentiality-check.sh
+bash scripts/test-release-preflight.sh
 cargo fmt --all -- --check
 cargo clippy --lib --bin logbrew --all-features -- -D warnings
 cargo test --all-targets --all-features

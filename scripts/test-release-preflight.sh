@@ -1,0 +1,144 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT_DIR"
+
+tmp_dir="$(mktemp -d)"
+output_file="$(mktemp)"
+trap 'rm -rf "$tmp_dir" "$output_file"' EXIT
+
+cat >"$tmp_dir/cargo" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "${1:-}" == "metadata" ]]; then
+  printf '{"packages":[{"name":"logbrew-cli","version":"0.1.0"}]}\n'
+  exit 0
+fi
+
+printf 'unexpected cargo args: %s\n' "$*" >&2
+exit 1
+STUB
+
+cat >"$tmp_dir/curl" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+
+output_file=""
+url=""
+
+while (( $# > 0 )); do
+  case "$1" in
+    --output)
+      output_file="$2"
+      shift 2
+      ;;
+    --write-out | --header)
+      shift 2
+      ;;
+    --silent | --show-error | --location)
+      shift
+      ;;
+    *)
+      url="$1"
+      shift
+      ;;
+  esac
+done
+
+case "$url" in
+  https://crates.io/api/v1/crates/logbrew-cli)
+    printf '{"versions":[]}\n' >"$output_file"
+    printf '200'
+    ;;
+  https://registry.npmjs.org/logbrew-cli)
+    printf '{"versions":{}}\n' >"$output_file"
+    printf '200'
+    ;;
+  *)
+    printf 'unexpected curl url: %s\n' "$url" >&2
+    exit 1
+    ;;
+esac
+STUB
+
+cat >"$tmp_dir/gh" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+
+case "${1:-} ${2:-}" in
+  "auth status")
+    exit 0
+    ;;
+  "release view")
+    exit 1
+    ;;
+  "repo view")
+    printf '{"defaultBranchRef":{"name":"main"},"isPrivate":false,"nameWithOwner":"LogBrewCo/homebrew-tap","url":"https://github.com/LogBrewCo/homebrew-tap"}\n'
+    ;;
+  "secret list")
+    printf 'CARGO_REGISTRY_TOKEN\n'
+    ;;
+  *)
+    printf 'unexpected gh args: %s\n' "$*" >&2
+    exit 1
+    ;;
+esac
+STUB
+
+cat >"$tmp_dir/git" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+
+case "${1:-}" in
+  fetch | diff)
+    exit 0
+    ;;
+  branch)
+    if [[ "${2:-}" == "--show-current" ]]; then
+      printf 'main\n'
+      exit 0
+    fi
+    ;;
+  rev-parse)
+    if [[ "${2:-}" == "HEAD" || "${2:-}" == "origin/main" ]]; then
+      printf 'abc123\n'
+      exit 0
+    fi
+    if [[ "${2:-}" == "-q" && "${3:-}" == "--verify" ]]; then
+      exit 1
+    fi
+    ;;
+  ls-remote)
+    exit 2
+    ;;
+esac
+
+printf 'unexpected git args: %s\n' "$*" >&2
+exit 1
+STUB
+
+chmod +x "$tmp_dir/cargo" "$tmp_dir/curl" "$tmp_dir/gh" "$tmp_dir/git"
+
+if PATH="$tmp_dir:$PATH" bash scripts/release-preflight.sh v0.1.0 >"$output_file" 2>&1; then
+  printf 'expected release preflight to fail with missing secrets\n' >&2
+  cat "$output_file" >&2
+  exit 1
+fi
+
+expected_lines=(
+  "Release preflight failed: missing GitHub Actions secret names: NPM_TOKEN HOMEBREW_TAP_TOKEN"
+  "Next: add the missing repository secret names in GitHub Actions secrets before tagging:"
+  "gh secret set NPM_TOKEN --repo LogBrewCo/cli --body '<token-value>'"
+  "gh secret set HOMEBREW_TAP_TOKEN --repo LogBrewCo/cli --body '<token-value>'"
+)
+
+for line in "${expected_lines[@]}"; do
+  if ! grep -Fq "$line" "$output_file"; then
+    printf 'expected release preflight output to contain: %s\n' "$line" >&2
+    printf 'actual output:\n' >&2
+    cat "$output_file" >&2
+    exit 1
+  fi
+done
