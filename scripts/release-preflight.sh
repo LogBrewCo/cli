@@ -25,9 +25,70 @@ require_command() {
 }
 
 require_command cargo
+require_command curl
 require_command gh
 require_command git
 require_command jq
+
+http_json_status() {
+  local url="$1"
+  local output_file="$2"
+
+  curl \
+    --silent \
+    --show-error \
+    --location \
+    --header 'User-Agent: logbrew-release-preflight' \
+    --output "$output_file" \
+    --write-out '%{http_code}' \
+    "$url"
+}
+
+check_crates_version_available() {
+  local crate_name="$1"
+  local version="$2"
+  local response_file="$3"
+  local status
+
+  if ! status="$(http_json_status "https://crates.io/api/v1/crates/${crate_name}" "$response_file")"; then
+    fail "could not verify crates.io package ${crate_name}; registry request failed"
+  fi
+  case "$status" in
+    200)
+      if jq -e --arg version "$version" '.versions[] | select(.num == $version)' "$response_file" >/dev/null; then
+        fail "crates.io package ${crate_name} already has version ${version}"
+      fi
+      ;;
+    404)
+      ;;
+    *)
+      fail "could not verify crates.io package ${crate_name}; registry returned HTTP ${status}"
+      ;;
+  esac
+}
+
+check_npm_version_available() {
+  local package_name="$1"
+  local version="$2"
+  local response_file="$3"
+  local status
+
+  if ! status="$(http_json_status "https://registry.npmjs.org/${package_name}" "$response_file")"; then
+    fail "could not verify npm package ${package_name}; registry request failed"
+  fi
+  case "$status" in
+    200)
+      if jq -e --arg version "$version" '.versions | has($version)' "$response_file" >/dev/null; then
+        fail "npm package ${package_name} already has version ${version}"
+      fi
+      ;;
+    404)
+      ;;
+    *)
+      fail "could not verify npm package ${package_name}; registry returned HTTP ${status}"
+      ;;
+  esac
+}
 
 crate_version="$(
   cargo metadata --no-deps --format-version=1 |
@@ -79,6 +140,12 @@ fi
 if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
   fail "GitHub Release ${TAG} already exists"
 fi
+
+tmp_dir="$(mktemp -d)"
+trap 'rm -rf "$tmp_dir"' EXIT
+
+check_crates_version_available "logbrew-cli" "$crate_version" "$tmp_dir/crates.json"
+check_npm_version_available "logbrew-cli" "$crate_version" "$tmp_dir/npm.json"
 
 secret_names="$(
   gh secret list --repo "$REPO" --app actions --json name --jq '.[].name'

@@ -45,8 +45,9 @@ Before pushing a release tag, run the release preflight:
 bash scripts/release-preflight.sh v0.1.0
 ```
 
-The preflight checks the tag/version match, clean synced `main`, green CI,
-missing GitHub Actions secret names, and existing release/tag collisions.
+The preflight checks the tag/version match, clean synced `main`, public
+crates.io/npm version collisions, green CI, missing GitHub Actions secret names,
+and existing release/tag collisions.
 
 ## Basic Usage
 
