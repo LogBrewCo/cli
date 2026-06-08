@@ -5,10 +5,21 @@ Public command-line interface for LogBrew.
 The CLI is built for humans and coding agents: stable JSON output, readable
 human output, clear `Next:` recovery steps, and token-safe diagnostics.
 
-## Install From Source
+## Install
+
+Until the first packaged release is published, install from source:
 
 ```bash
 cargo install --git https://github.com/LogBrewCo/cli logbrew-cli
+```
+
+After the first release, package-manager installs should use the standard
+distribution surfaces:
+
+```bash
+cargo install logbrew-cli
+npm install -g logbrew-cli
+brew install LogBrewCo/tap/logbrew
 ```
 
 ## Distribution

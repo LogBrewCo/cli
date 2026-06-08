@@ -28,8 +28,9 @@ This is the public LogBrew CLI repository. Everything committed here is public.
 - Preserve native-binary introspection: `logbrew version --json` must expose
   `binary`, `os`, and `arch` without making human `logbrew version` verbose.
 - Homebrew publishing uses the public `LogBrewCo/homebrew-tap` repository.
-  Treat Homebrew registry publishing as blocked until the
-  `HOMEBREW_TAP_TOKEN` secret name is available.
+  Treat the tap repo as release plumbing; document user-facing Homebrew installs
+  as `brew install LogBrewCo/tap/logbrew`. Treat Homebrew registry publishing as
+  blocked until the `HOMEBREW_TAP_TOKEN` secret name is available.
 - Keep setup/init/install/configure/sdk non-mutating until installation is
   truly implemented. Human setup output must say `Mode: non-mutating plan`,
   `No files changed.`, and `Install: not ready`.
