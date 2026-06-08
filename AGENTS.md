@@ -14,6 +14,9 @@ This is the public LogBrew CLI repository. Everything committed here is public.
   `bash scripts/check-all.sh`.
 - Before pushing a release tag, run `bash scripts/release-preflight.sh vX.Y.Z`
   and then rerun `bash scripts/pre-commit.sh`.
+- Treat `scripts/release-preflight.sh` as the fail-before-hosting gate for tag
+  pushes. Do not hand-edit cargo-dist generated workflow structure unless the
+  change is supported by cargo-dist config; `dist plan` rejects drift.
 - Preserve token safety: CLI output may say whether auth exists and where it
   came from, but must never print token material.
 - Preserve stable JSON for agents and readable human output with concrete

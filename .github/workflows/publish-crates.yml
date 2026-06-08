@@ -22,6 +22,17 @@ jobs:
         with:
           toolchain: stable
 
+      - name: Check crates.io publishing secret
+        shell: bash
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          if [[ -z "${CARGO_REGISTRY_TOKEN:-}" ]]; then
+            printf 'Missing GitHub Actions secret name: CARGO_REGISTRY_TOKEN\n' >&2
+            printf 'Next: add CARGO_REGISTRY_TOKEN before pushing the release tag again.\n' >&2
+            exit 1
+          fi
+
       - name: Check tag matches crate version
         shell: bash
         run: |
