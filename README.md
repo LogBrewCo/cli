@@ -71,7 +71,6 @@ Authentication uses either `LOGBREW_TOKEN` or the local token file created by
 bash scripts/pre-commit.sh
 ```
 
-Public-repo rule: do not add private backend code, private hostnames, private
-IP addresses, secrets, deployment files, database configuration, or private
-operational details here. Keep backend implementation in the private LogBrew
-repo.
+Public-repo rule: keep this repository CLI-only. Do not add backend code,
+hostnames, IP addresses, secrets, deployment files, database configuration, or
+operational details here.
