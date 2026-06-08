@@ -16,8 +16,9 @@ This is the public LogBrew CLI repository. Everything committed here is public.
   and then rerun `bash scripts/pre-commit.sh`.
 - Treat `scripts/release-preflight.sh` as the fail-before-hosting gate for tag
   pushes. It should verify public registry version availability before tag
-  creation. Do not hand-edit cargo-dist generated workflow structure unless the
-  change is supported by cargo-dist config; `dist plan` rejects drift.
+  creation and verify the public Homebrew tap is reachable. Do not hand-edit
+  cargo-dist generated workflow structure unless the change is supported by
+  cargo-dist config; `dist plan` rejects drift.
 - Preserve token safety: CLI output may say whether auth exists and where it
   came from, but must never print token material.
 - Preserve stable JSON for agents and readable human output with concrete
