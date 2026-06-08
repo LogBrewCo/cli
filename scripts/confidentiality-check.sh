@@ -31,9 +31,31 @@ scan_pattern() {
     fi
 }
 
+scan_file_pattern() {
+    local pattern="$1"
+    local file="$2"
+    local status
+
+    set +e
+    rg -n --hidden --ignore-case "$pattern" "$file"
+    status="$?"
+    set -e
+
+    if [[ "$status" -eq 0 ]]; then
+        printf 'Confidentiality check failed. Remove private/backend-only details before committing.\n' >&2
+        exit 1
+    fi
+
+    if [[ "$status" -gt 1 ]]; then
+        printf 'Confidentiality check failed because ripgrep could not scan %s.\n' "$file" >&2
+        exit "$status"
+    fi
+}
+
 public_secret_pattern='AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY|GOOGLE_APPLICATION_CREDENTIALS|DATABASE_URL=|JWT_SECRET=|PASSWORD=|SECRET_KEY=|PRIVATE_KEY|-----BEGIN [A-Z ]*PRIVATE KEY-----|Bearer [A-Za-z0-9._=-]{20,}|ghp_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]+|sk-[A-Za-z0-9]{20,}'
 
 scan_pattern "$public_secret_pattern"
+scan_file_pattern '\bprivate\b' README.md
 
 local_denylist="$ROOT_DIR/.logbrew-confidential-denylist.local"
 if [[ -f "$local_denylist" ]]; then
