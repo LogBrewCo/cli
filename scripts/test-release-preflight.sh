@@ -6,7 +6,8 @@ cd "$ROOT_DIR"
 
 tmp_dir="$(mktemp -d)"
 output_file="$(mktemp)"
-trap 'rm -rf "$tmp_dir" "$output_file"' EXIT
+missing_audit_dir=""
+trap 'rm -rf "$tmp_dir" "$missing_audit_dir" "$output_file"' EXIT
 
 cat >"$tmp_dir/cargo" <<'STUB'
 #!/usr/bin/env bash
@@ -185,6 +186,32 @@ exit 1
 STUB
 
 chmod +x "$tmp_dir/cargo" "$tmp_dir/cargo-audit" "$tmp_dir/curl" "$tmp_dir/gh" "$tmp_dir/git"
+
+missing_audit_dir="$(mktemp -d)"
+cp "$tmp_dir/cargo" "$tmp_dir/curl" "$tmp_dir/gh" "$tmp_dir/git" "$missing_audit_dir"
+
+: >"$output_file"
+if PATH="$missing_audit_dir:/usr/bin:/bin" bash scripts/release-preflight.sh v0.1.0 >"$output_file" 2>&1; then
+  printf 'expected release preflight to fail when cargo-audit is missing\n' >&2
+  cat "$output_file" >&2
+  exit 1
+fi
+
+expected_missing_audit_lines=(
+  "Release preflight failed: missing required command 'cargo-audit'"
+  "Next: install cargo-audit with:"
+  "  cargo install cargo-audit --version 0.22.1 --locked"
+  "Then rerun scripts/release-preflight.sh v0.1.0 before pushing a release tag."
+)
+
+for line in "${expected_missing_audit_lines[@]}"; do
+  if ! grep -Fq "$line" "$output_file"; then
+    printf 'expected missing cargo-audit output to contain: %s\n' "$line" >&2
+    printf 'actual output:\n' >&2
+    cat "$output_file" >&2
+    exit 1
+  fi
+done
 
 if PATH="$tmp_dir:$PATH" bash scripts/release-preflight.sh v0.1.0 >"$output_file" 2>&1; then
   printf 'expected release preflight to fail with missing secrets\n' >&2
