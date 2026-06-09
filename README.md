@@ -28,16 +28,18 @@ LogBrew CLI is a Rust native binary. Cargo builds a platform-native `logbrew`
 executable for the selected target; npm, Homebrew, shell, PowerShell, and MSI
 installers are wrappers around those native release artifacts.
 
-Release publishing is handled by GitHub Actions on Blacksmith runners:
+Release publishing is handled by GitHub Actions:
 
 - GitHub Releases: native archives for Linux x64/ARM64, macOS x64/ARM64, and
-  Windows x64.
+  Windows x64 on Blacksmith runners.
 - Installers: shell, PowerShell, npm package, Homebrew formula, and Windows MSI.
-- Package managers: crates.io via `cargo publish`, npm via `npm publish`, and
-  Homebrew via the `LogBrewCo/homebrew-tap` formula repository.
+- Package managers: crates.io and npm via trusted publishing/OIDC, and Homebrew
+  via the `LogBrewCo/homebrew-tap` formula repository.
 
-Publishing requires these GitHub Actions secrets before pushing a release tag:
-`CARGO_REGISTRY_TOKEN`, `NPM_TOKEN`, and `HOMEBREW_TAP_TOKEN`.
+Trusted publishing requires the npm package and crates.io crate to already
+exist, so brand-new package names need one manual first publish before CI release
+tags can publish future versions without long-lived registry tokens. Homebrew
+publishing requires the GitHub Actions secret `HOMEBREW_TAP_TOKEN`.
 
 Before pushing a release tag, run the release preflight:
 
@@ -46,8 +48,9 @@ bash scripts/release-preflight.sh v0.1.0
 ```
 
 The preflight checks the tag/version match, clean synced `main`, public
-crates.io/npm version collisions, the public Homebrew tap repository, green CI,
-missing GitHub Actions secret names, and existing release/tag collisions.
+crates.io/npm package bootstrap and version collisions, the public Homebrew tap
+repository, green CI, required GitHub Actions secret names, and existing
+release/tag collisions.
 
 ## Basic Usage
 

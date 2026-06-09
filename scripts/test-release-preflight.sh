@@ -58,12 +58,22 @@ done
 
 case "$url" in
   https://crates.io/api/v1/crates/logbrew-cli)
-    printf '{"versions":[]}\n' >"$output_file"
-    printf '200'
+    if [[ "${LOGBREW_TEST_CRATES_PACKAGE:-exists}" == "missing" ]]; then
+      printf '{}\n' >"$output_file"
+      printf '404'
+    else
+      printf '{"versions":[]}\n' >"$output_file"
+      printf '200'
+    fi
     ;;
   https://registry.npmjs.org/logbrew-cli)
-    printf '{"versions":{}}\n' >"$output_file"
-    printf '200'
+    if [[ "${LOGBREW_TEST_NPM_PACKAGE:-exists}" == "missing" ]]; then
+      printf '{}\n' >"$output_file"
+      printf '404'
+    else
+      printf '{"versions":{}}\n' >"$output_file"
+      printf '200'
+    fi
     ;;
   *)
     printf 'unexpected curl url: %s\n' "$url" >&2
@@ -119,9 +129,9 @@ case "${1:-} ${2:-}" in
     ;;
   "secret list")
     if [[ "${LOGBREW_TEST_SECRETS:-partial}" == "all" ]]; then
-      printf 'CARGO_REGISTRY_TOKEN\nNPM_TOKEN\nHOMEBREW_TAP_TOKEN\n'
+      printf 'HOMEBREW_TAP_TOKEN\n'
     else
-      printf 'CARGO_REGISTRY_TOKEN\n'
+      printf ''
     fi
     ;;
   "run list")
@@ -221,9 +231,8 @@ if PATH="$tmp_dir:$PATH" bash scripts/release-preflight.sh v0.1.0 >"$output_file
 fi
 
 expected_lines=(
-  "Release preflight failed: missing GitHub Actions secret names: NPM_TOKEN HOMEBREW_TAP_TOKEN"
+  "Release preflight failed: missing GitHub Actions secret names: HOMEBREW_TAP_TOKEN"
   "Next: add the missing repository secret names in GitHub Actions secrets before tagging:"
-  "gh secret set NPM_TOKEN --repo LogBrewCo/cli --body '<token-value>'"
   "gh secret set HOMEBREW_TAP_TOKEN --repo LogBrewCo/cli --body '<token-value>'"
 )
 
@@ -235,6 +244,34 @@ for line in "${expected_lines[@]}"; do
     exit 1
   fi
 done
+
+: >"$output_file"
+if LOGBREW_TEST_SECRETS=all LOGBREW_TEST_CRATES_PACKAGE=missing PATH="$tmp_dir:$PATH" bash scripts/release-preflight.sh v0.1.0 >"$output_file" 2>&1; then
+  printf 'expected release preflight to fail when trusted crates.io bootstrap is missing\n' >&2
+  cat "$output_file" >&2
+  exit 1
+fi
+
+if ! grep -Fq "Release preflight failed: crates.io package logbrew-cli does not exist yet; trusted publishing requires a first manual crate publish before CI release tags" "$output_file"; then
+  printf 'expected release preflight to explain missing crates.io trusted bootstrap\n' >&2
+  printf 'actual output:\n' >&2
+  cat "$output_file" >&2
+  exit 1
+fi
+
+: >"$output_file"
+if LOGBREW_TEST_SECRETS=all LOGBREW_TEST_NPM_PACKAGE=missing PATH="$tmp_dir:$PATH" bash scripts/release-preflight.sh v0.1.0 >"$output_file" 2>&1; then
+  printf 'expected release preflight to fail when trusted npm bootstrap is missing\n' >&2
+  cat "$output_file" >&2
+  exit 1
+fi
+
+if ! grep -Fq "Release preflight failed: npm package logbrew-cli does not exist yet; trusted publishing requires a first manual package publish before CI release tags" "$output_file"; then
+  printf 'expected release preflight to explain missing npm trusted bootstrap\n' >&2
+  printf 'actual output:\n' >&2
+  cat "$output_file" >&2
+  exit 1
+fi
 
 : >"$output_file"
 if LOGBREW_TEST_PROTECTION=missing-plan PATH="$tmp_dir:$PATH" bash scripts/release-preflight.sh v0.1.0 >"$output_file" 2>&1; then

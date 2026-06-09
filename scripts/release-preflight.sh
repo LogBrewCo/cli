@@ -8,8 +8,6 @@ REPO="${LOGBREW_RELEASE_REPO:-LogBrewCo/cli}"
 HOMEBREW_TAP_REPO="${LOGBREW_HOMEBREW_TAP_REPO:-LogBrewCo/homebrew-tap}"
 TAG="${1:-}"
 REQUIRED_SECRETS=(
-  CARGO_REGISTRY_TOKEN
-  NPM_TOKEN
   HOMEBREW_TAP_TOKEN
 )
 REQUIRED_STATUS_CHECKS=(
@@ -123,6 +121,7 @@ check_crates_version_available() {
       fi
       ;;
     404)
+      fail "crates.io package ${crate_name} does not exist yet; trusted publishing requires a first manual crate publish before CI release tags"
       ;;
     *)
       fail "could not verify crates.io package ${crate_name}; registry returned HTTP ${status}"
@@ -146,6 +145,7 @@ check_npm_version_available() {
       fi
       ;;
     404)
+      fail "npm package ${package_name} does not exist yet; trusted publishing requires a first manual package publish before CI release tags"
       ;;
     *)
       fail "could not verify npm package ${package_name}; registry returned HTTP ${status}"
