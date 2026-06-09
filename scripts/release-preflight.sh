@@ -12,6 +12,10 @@ REQUIRED_SECRETS=(
   NPM_TOKEN
   HOMEBREW_TAP_TOKEN
 )
+REQUIRED_STATUS_CHECKS=(
+  check
+  plan
+)
 
 fail() {
   printf 'Release preflight failed: %s\n' "$1" >&2
@@ -125,6 +129,54 @@ check_homebrew_tap_available() {
   fi
 }
 
+check_main_branch_protection() {
+  local metadata
+  local required_reviews
+  local dismiss_stale_reviews
+  local enforce_admins
+  local strict_status_checks
+  local status_checks
+
+  if ! metadata="$(gh api "repos/${REPO}/branches/main/protection")"; then
+    fail "could not verify main branch protection"
+  fi
+
+  required_reviews="$(
+    jq -r '.required_pull_request_reviews.required_approving_review_count // 0' <<<"$metadata"
+  )"
+  dismiss_stale_reviews="$(
+    jq -r '.required_pull_request_reviews.dismiss_stale_reviews // false' <<<"$metadata"
+  )"
+  enforce_admins="$(jq -r '.enforce_admins.enabled // false' <<<"$metadata")"
+  strict_status_checks="$(jq -r '.required_status_checks.strict // false' <<<"$metadata")"
+  status_checks="$(
+    jq -r '[.required_status_checks.checks[]?.context, .required_status_checks.contexts[]?] | unique[]' \
+      <<<"$metadata"
+  )"
+
+  if (( required_reviews < 1 )); then
+    fail "main branch protection must require at least one approving review"
+  fi
+
+  if [[ "$dismiss_stale_reviews" != "true" ]]; then
+    fail "main branch protection must dismiss stale pull request reviews"
+  fi
+
+  if [[ "$enforce_admins" != "true" ]]; then
+    fail "main branch protection must enforce admins"
+  fi
+
+  if [[ "$strict_status_checks" != "true" ]]; then
+    fail "main branch protection must require strict status checks"
+  fi
+
+  for check in "${REQUIRED_STATUS_CHECKS[@]}"; do
+    if ! grep -Fxq "$check" <<<"$status_checks"; then
+      fail "main branch protection must require status check ${check}"
+    fi
+  done
+}
+
 crate_version="$(
   cargo metadata --no-deps --format-version=1 |
     jq -r '.packages[] | select(.name == "logbrew-cli").version'
@@ -182,6 +234,7 @@ trap 'rm -rf "$tmp_dir"' EXIT
 check_crates_version_available "logbrew-cli" "$crate_version" "$tmp_dir/crates.json"
 check_npm_version_available "logbrew-cli" "$crate_version" "$tmp_dir/npm.json"
 check_homebrew_tap_available "$HOMEBREW_TAP_REPO"
+check_main_branch_protection
 
 secret_names="$(
   gh secret list --repo "$REPO" --app actions --json name --jq '.[].name'
