@@ -92,7 +92,26 @@ case "${1:-} ${2:-}" in
     fi
     ;;
   "run list")
-    printf '{"conclusion":"success","headSha":"abc123","status":"completed","url":"https://github.com/LogBrewCo/cli/actions/runs/1"}\n'
+    case "${LOGBREW_TEST_CI:-green}" in
+      missing)
+        ;;
+      stale)
+        printf '{"conclusion":"success","headSha":"old123","status":"completed","url":"https://github.com/LogBrewCo/cli/actions/runs/1"}\n'
+        ;;
+      running)
+        printf '{"conclusion":"","headSha":"abc123","status":"in_progress","url":"https://github.com/LogBrewCo/cli/actions/runs/1"}\n'
+        ;;
+      failed)
+        printf '{"conclusion":"failure","headSha":"abc123","status":"completed","url":"https://github.com/LogBrewCo/cli/actions/runs/1"}\n'
+        ;;
+      green)
+        printf '{"conclusion":"success","headSha":"abc123","status":"completed","url":"https://github.com/LogBrewCo/cli/actions/runs/1"}\n'
+        ;;
+      *)
+        printf 'unexpected LOGBREW_TEST_CI: %s\n' "${LOGBREW_TEST_CI}" >&2
+        exit 1
+        ;;
+    esac
     ;;
   *)
     printf 'unexpected gh args: %s\n' "$*" >&2
@@ -170,6 +189,27 @@ if ! grep -Fq "Release preflight failed: main branch protection must require sta
   cat "$output_file" >&2
   exit 1
 fi
+
+: >"$output_file"
+if LOGBREW_TEST_SECRETS=all LOGBREW_TEST_CI=stale PATH="$tmp_dir:$PATH" bash scripts/release-preflight.sh v0.1.0 >"$output_file" 2>&1; then
+  printf 'expected release preflight to fail with stale main CI\n' >&2
+  cat "$output_file" >&2
+  exit 1
+fi
+
+expected_ci_lines=(
+  "Release preflight failed: latest main CI is not green for abc123; latest run: https://github.com/LogBrewCo/cli/actions/runs/1"
+  "Next: wait for main CI to pass on abc123, rerun failed checks if needed, then rerun scripts/release-preflight.sh v0.1.0 before tagging."
+)
+
+for line in "${expected_ci_lines[@]}"; do
+  if ! grep -Fq "$line" "$output_file"; then
+    printf 'expected stale CI output to contain: %s\n' "$line" >&2
+    printf 'actual output:\n' >&2
+    cat "$output_file" >&2
+    exit 1
+  fi
+done
 
 : >"$output_file"
 if ! LOGBREW_TEST_SECRETS=all PATH="$tmp_dir:$PATH" bash scripts/release-preflight.sh v0.1.0 >"$output_file" 2>&1; then

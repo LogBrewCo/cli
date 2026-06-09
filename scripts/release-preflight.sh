@@ -33,6 +33,21 @@ fail_missing_secrets() {
   exit 1
 }
 
+fail_ci_not_green() {
+  local head="$1"
+  local run_url="$2"
+
+  printf 'Release preflight failed: latest main CI is not green for %s; latest run: %s\n' "$head" "$run_url" >&2
+  printf 'Next: wait for main CI to pass on %s, rerun failed checks if needed, then rerun %s %s before tagging.\n' "$head" "$0" "$TAG" >&2
+  exit 1
+}
+
+fail_missing_ci() {
+  printf 'Release preflight failed: could not find a main CI run\n' >&2
+  printf 'Next: push main or rerun CI, wait for a successful main CI run, then rerun %s %s before tagging.\n' "$0" "$TAG" >&2
+  exit 1
+}
+
 require_command() {
   if ! command -v "$1" >/dev/null 2>&1; then
     fail "missing required command '$1'"
@@ -261,7 +276,7 @@ ci_run="$(
 )"
 
 if [[ -z "$ci_run" ]]; then
-  fail "could not find a main CI run"
+  fail_missing_ci
 fi
 
 ci_head="$(jq -r '.headSha' <<<"$ci_run")"
@@ -270,7 +285,7 @@ ci_conclusion="$(jq -r '.conclusion' <<<"$ci_run")"
 ci_url="$(jq -r '.url' <<<"$ci_run")"
 
 if [[ "$ci_head" != "$local_head" || "$ci_status" != "completed" || "$ci_conclusion" != "success" ]]; then
-  fail "latest main CI is not green for ${local_head}; latest run: ${ci_url}"
+  fail_ci_not_green "$local_head" "$ci_url"
 fi
 
 printf 'Release preflight passed for %s (%s).\n' "$TAG" "$local_head"
