@@ -85,7 +85,14 @@ case "${1:-} ${2:-}" in
     fi
     ;;
   "secret list")
-    printf 'CARGO_REGISTRY_TOKEN\n'
+    if [[ "${LOGBREW_TEST_SECRETS:-partial}" == "all" ]]; then
+      printf 'CARGO_REGISTRY_TOKEN\nNPM_TOKEN\nHOMEBREW_TAP_TOKEN\n'
+    else
+      printf 'CARGO_REGISTRY_TOKEN\n'
+    fi
+    ;;
+  "run list")
+    printf '{"conclusion":"success","headSha":"abc123","status":"completed","url":"https://github.com/LogBrewCo/cli/actions/runs/1"}\n'
     ;;
   *)
     printf 'unexpected gh args: %s\n' "$*" >&2
@@ -159,6 +166,21 @@ fi
 
 if ! grep -Fq "Release preflight failed: main branch protection must require status check plan" "$output_file"; then
   printf 'expected release preflight to explain the missing plan protection check\n' >&2
+  printf 'actual output:\n' >&2
+  cat "$output_file" >&2
+  exit 1
+fi
+
+: >"$output_file"
+if ! LOGBREW_TEST_SECRETS=all PATH="$tmp_dir:$PATH" bash scripts/release-preflight.sh v0.1.0 >"$output_file" 2>&1; then
+  printf 'expected release preflight to pass when all gates are satisfied\n' >&2
+  printf 'actual output:\n' >&2
+  cat "$output_file" >&2
+  exit 1
+fi
+
+if ! grep -Fq "Release preflight passed for v0.1.0 (abc123)." "$output_file"; then
+  printf 'expected release preflight success output\n' >&2
   printf 'actual output:\n' >&2
   cat "$output_file" >&2
   exit 1
