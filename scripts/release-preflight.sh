@@ -16,6 +16,11 @@ REQUIRED_STATUS_CHECKS=(
   check
   plan
 )
+REQUIRED_WORKFLOWS=(
+  CI
+  Release
+  "Publish crates.io"
+)
 
 fail() {
   printf 'Release preflight failed: %s\n' "$1" >&2
@@ -192,6 +197,32 @@ check_main_branch_protection() {
   done
 }
 
+check_required_workflows_active() {
+  local metadata
+  local workflow
+  local state
+
+  if ! metadata="$(gh api "repos/${REPO}/actions/workflows")"; then
+    fail "could not verify GitHub Actions workflows"
+  fi
+
+  for workflow in "${REQUIRED_WORKFLOWS[@]}"; do
+    state="$(
+      jq -r --arg workflow "$workflow" \
+        '[.workflows[]? | select(.name == $workflow) | .state][0] // ""' \
+        <<<"$metadata"
+    )"
+
+    if [[ -z "$state" ]]; then
+      fail "GitHub Actions workflow ${workflow} is missing"
+    fi
+
+    if [[ "$state" != "active" ]]; then
+      fail "GitHub Actions workflow ${workflow} is not active"
+    fi
+  done
+}
+
 crate_version="$(
   cargo metadata --no-deps --format-version=1 |
     jq -r '.packages[] | select(.name == "logbrew-cli").version'
@@ -250,6 +281,7 @@ check_crates_version_available "logbrew-cli" "$crate_version" "$tmp_dir/crates.j
 check_npm_version_available "logbrew-cli" "$crate_version" "$tmp_dir/npm.json"
 check_homebrew_tap_available "$HOMEBREW_TAP_REPO"
 check_main_branch_protection
+check_required_workflows_active
 
 secret_names="$(
   gh secret list --repo "$REPO" --app actions --json name --jq '.[].name'

@@ -84,6 +84,23 @@ case "${1:-} ${2:-}" in
       printf '{"required_pull_request_reviews":{"required_approving_review_count":1,"dismiss_stale_reviews":true},"enforce_admins":{"enabled":true},"required_status_checks":{"strict":true,"checks":[{"context":"check"},{"context":"plan"}],"contexts":["check","plan"]}}\n'
     fi
     ;;
+  "api repos/LogBrewCo/cli/actions/workflows")
+    case "${LOGBREW_TEST_WORKFLOWS:-active}" in
+      active)
+        printf '{"workflows":[{"name":"CI","state":"active"},{"name":"Release","state":"active"},{"name":"Publish crates.io","state":"active"}]}\n'
+        ;;
+      missing-release)
+        printf '{"workflows":[{"name":"CI","state":"active"},{"name":"Publish crates.io","state":"active"}]}\n'
+        ;;
+      disabled-crates)
+        printf '{"workflows":[{"name":"CI","state":"active"},{"name":"Release","state":"active"},{"name":"Publish crates.io","state":"disabled_manually"}]}\n'
+        ;;
+      *)
+        printf 'unexpected LOGBREW_TEST_WORKFLOWS: %s\n' "${LOGBREW_TEST_WORKFLOWS}" >&2
+        exit 1
+        ;;
+    esac
+    ;;
   "secret list")
     if [[ "${LOGBREW_TEST_SECRETS:-partial}" == "all" ]]; then
       printf 'CARGO_REGISTRY_TOKEN\nNPM_TOKEN\nHOMEBREW_TAP_TOKEN\n'
@@ -185,6 +202,34 @@ fi
 
 if ! grep -Fq "Release preflight failed: main branch protection must require status check plan" "$output_file"; then
   printf 'expected release preflight to explain the missing plan protection check\n' >&2
+  printf 'actual output:\n' >&2
+  cat "$output_file" >&2
+  exit 1
+fi
+
+: >"$output_file"
+if LOGBREW_TEST_WORKFLOWS=missing-release PATH="$tmp_dir:$PATH" bash scripts/release-preflight.sh v0.1.0 >"$output_file" 2>&1; then
+  printf 'expected release preflight to fail with missing release workflow\n' >&2
+  cat "$output_file" >&2
+  exit 1
+fi
+
+if ! grep -Fq "Release preflight failed: GitHub Actions workflow Release is missing" "$output_file"; then
+  printf 'expected release preflight to explain the missing Release workflow\n' >&2
+  printf 'actual output:\n' >&2
+  cat "$output_file" >&2
+  exit 1
+fi
+
+: >"$output_file"
+if LOGBREW_TEST_WORKFLOWS=disabled-crates PATH="$tmp_dir:$PATH" bash scripts/release-preflight.sh v0.1.0 >"$output_file" 2>&1; then
+  printf 'expected release preflight to fail with disabled crates publishing workflow\n' >&2
+  cat "$output_file" >&2
+  exit 1
+fi
+
+if ! grep -Fq "Release preflight failed: GitHub Actions workflow Publish crates.io is not active" "$output_file"; then
+  printf 'expected release preflight to explain the disabled crates publishing workflow\n' >&2
   printf 'actual output:\n' >&2
   cat "$output_file" >&2
   exit 1
