@@ -53,6 +53,12 @@ fail_missing_ci() {
   exit 1
 }
 
+fail_audit() {
+  printf 'Release preflight failed: cargo audit found RustSec advisories or could not complete\n' >&2
+  printf 'Next: review cargo audit output, update affected dependencies, then rerun %s %s before tagging.\n' "$0" "$TAG" >&2
+  exit 1
+}
+
 require_command() {
   if ! command -v "$1" >/dev/null 2>&1; then
     fail "missing required command '$1'"
@@ -64,6 +70,7 @@ require_command curl
 require_command gh
 require_command git
 require_command jq
+require_command cargo-audit
 
 http_json_status() {
   local url="$1"
@@ -223,6 +230,12 @@ check_required_workflows_active() {
   done
 }
 
+check_dependency_advisories() {
+  if ! cargo audit; then
+    fail_audit
+  fi
+}
+
 crate_version="$(
   cargo metadata --no-deps --format-version=1 |
     jq -r '.packages[] | select(.name == "logbrew-cli").version'
@@ -282,6 +295,7 @@ check_npm_version_available "logbrew-cli" "$crate_version" "$tmp_dir/npm.json"
 check_homebrew_tap_available "$HOMEBREW_TAP_REPO"
 check_main_branch_protection
 check_required_workflows_active
+check_dependency_advisories
 
 secret_names="$(
   gh secret list --repo "$REPO" --app actions --json name --jq '.[].name'

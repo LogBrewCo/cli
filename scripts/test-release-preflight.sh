@@ -17,6 +17,14 @@ if [[ "${1:-}" == "metadata" ]]; then
   exit 0
 fi
 
+if [[ "${1:-}" == "audit" ]]; then
+  if [[ "${LOGBREW_TEST_AUDIT:-pass}" == "fail" ]]; then
+    printf 'test advisory found\n' >&2
+    exit 1
+  fi
+  exit 0
+fi
+
 printf 'unexpected cargo args: %s\n' "$*" >&2
 exit 1
 STUB
@@ -61,6 +69,13 @@ case "$url" in
     exit 1
     ;;
 esac
+STUB
+
+cat >"$tmp_dir/cargo-audit" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+
+exit 0
 STUB
 
 cat >"$tmp_dir/gh" <<'STUB'
@@ -169,7 +184,7 @@ printf 'unexpected git args: %s\n' "$*" >&2
 exit 1
 STUB
 
-chmod +x "$tmp_dir/cargo" "$tmp_dir/curl" "$tmp_dir/gh" "$tmp_dir/git"
+chmod +x "$tmp_dir/cargo" "$tmp_dir/cargo-audit" "$tmp_dir/curl" "$tmp_dir/gh" "$tmp_dir/git"
 
 if PATH="$tmp_dir:$PATH" bash scripts/release-preflight.sh v0.1.0 >"$output_file" 2>&1; then
   printf 'expected release preflight to fail with missing secrets\n' >&2
@@ -234,6 +249,27 @@ if ! grep -Fq "Release preflight failed: GitHub Actions workflow Publish crates.
   cat "$output_file" >&2
   exit 1
 fi
+
+: >"$output_file"
+if LOGBREW_TEST_AUDIT=fail PATH="$tmp_dir:$PATH" bash scripts/release-preflight.sh v0.1.0 >"$output_file" 2>&1; then
+  printf 'expected release preflight to fail when cargo audit fails\n' >&2
+  cat "$output_file" >&2
+  exit 1
+fi
+
+expected_audit_lines=(
+  "Release preflight failed: cargo audit found RustSec advisories or could not complete"
+  "Next: review cargo audit output, update affected dependencies, then rerun scripts/release-preflight.sh v0.1.0 before tagging."
+)
+
+for line in "${expected_audit_lines[@]}"; do
+  if ! grep -Fq "$line" "$output_file"; then
+    printf 'expected cargo audit output to contain: %s\n' "$line" >&2
+    printf 'actual output:\n' >&2
+    cat "$output_file" >&2
+    exit 1
+  fi
+done
 
 : >"$output_file"
 if LOGBREW_TEST_SECRETS=all LOGBREW_TEST_CI=stale PATH="$tmp_dir:$PATH" bash scripts/release-preflight.sh v0.1.0 >"$output_file" 2>&1; then
