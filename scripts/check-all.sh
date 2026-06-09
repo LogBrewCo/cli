@@ -7,6 +7,7 @@ cd "$ROOT_DIR"
 bash scripts/confidentiality-check.sh
 bash scripts/test-package-contents.sh
 bash scripts/test-release-preflight.sh
+cargo audit
 cargo fmt --all -- --check
 cargo clippy --lib --bin logbrew --all-features -- -D warnings
 cargo test --all-targets --all-features
