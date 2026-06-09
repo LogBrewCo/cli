@@ -77,6 +77,13 @@ case "${1:-} ${2:-}" in
   "repo view")
     printf '{"defaultBranchRef":{"name":"main"},"isPrivate":false,"nameWithOwner":"LogBrewCo/homebrew-tap","url":"https://github.com/LogBrewCo/homebrew-tap"}\n'
     ;;
+  "api repos/LogBrewCo/cli/branches/main/protection")
+    if [[ "${LOGBREW_TEST_PROTECTION:-ok}" == "missing-plan" ]]; then
+      printf '{"required_pull_request_reviews":{"required_approving_review_count":1,"dismiss_stale_reviews":true},"enforce_admins":{"enabled":true},"required_status_checks":{"strict":true,"checks":[{"context":"check"}],"contexts":["check"]}}\n'
+    else
+      printf '{"required_pull_request_reviews":{"required_approving_review_count":1,"dismiss_stale_reviews":true},"enforce_admins":{"enabled":true},"required_status_checks":{"strict":true,"checks":[{"context":"check"},{"context":"plan"}],"contexts":["check","plan"]}}\n'
+    fi
+    ;;
   "secret list")
     printf 'CARGO_REGISTRY_TOKEN\n'
     ;;
@@ -142,3 +149,17 @@ for line in "${expected_lines[@]}"; do
     exit 1
   fi
 done
+
+: >"$output_file"
+if LOGBREW_TEST_PROTECTION=missing-plan PATH="$tmp_dir:$PATH" bash scripts/release-preflight.sh v0.1.0 >"$output_file" 2>&1; then
+  printf 'expected release preflight to fail with missing branch protection check\n' >&2
+  cat "$output_file" >&2
+  exit 1
+fi
+
+if ! grep -Fq "Release preflight failed: main branch protection must require status check plan" "$output_file"; then
+  printf 'expected release preflight to explain the missing plan protection check\n' >&2
+  printf 'actual output:\n' >&2
+  cat "$output_file" >&2
+  exit 1
+fi
