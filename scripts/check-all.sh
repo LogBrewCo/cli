@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
-CARGO_AUDIT_VERSION="${LOGBREW_CARGO_AUDIT_VERSION:-0.22.1}"
+CARGO_AUDIT_VERSION="$(bash scripts/cargo-audit-version.sh)"
 
 require_command() {
   if ! command -v "$1" >/dev/null 2>&1; then
