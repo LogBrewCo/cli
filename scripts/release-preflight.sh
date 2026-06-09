@@ -21,6 +21,7 @@ REQUIRED_WORKFLOWS=(
   Release
   "Publish crates.io"
 )
+CARGO_AUDIT_VERSION="${LOGBREW_CARGO_AUDIT_VERSION:-0.22.1}"
 
 fail() {
   printf 'Release preflight failed: %s\n' "$1" >&2
@@ -59,9 +60,29 @@ fail_audit() {
   exit 1
 }
 
+fail_missing_command() {
+  local command_name="$1"
+
+  printf "Release preflight failed: missing required command '%s'\n" "$command_name" >&2
+  case "$command_name" in
+    cargo-audit)
+      printf 'Next: install cargo-audit with:\n' >&2
+      printf '  cargo install cargo-audit --version %s --locked\n' "$CARGO_AUDIT_VERSION" >&2
+      printf 'Then rerun %s %s before pushing a release tag.\n' "$0" "${TAG:-v<version>}" >&2
+      ;;
+    gh)
+      printf 'Next: install GitHub CLI, authenticate with gh auth login, then rerun %s %s before pushing a release tag.\n' "$0" "${TAG:-v<version>}" >&2
+      ;;
+    *)
+      printf "Next: install '%s' so it is on PATH, then rerun %s %s before pushing a release tag.\n" "$command_name" "$0" "${TAG:-v<version>}" >&2
+      ;;
+  esac
+  exit 1
+}
+
 require_command() {
   if ! command -v "$1" >/dev/null 2>&1; then
-    fail "missing required command '$1'"
+    fail_missing_command "$1"
   fi
 }
 
