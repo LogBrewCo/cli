@@ -28,10 +28,12 @@ This is the public LogBrew CLI repository. Everything committed here is public.
   `logbrew spans --json` should return trace help while ID-bearing forms still
   read the trace.
 - The CLI is a Rust native binary. Package-manager releases should publish
-  native cargo-dist artifacts through Blacksmith-backed GitHub Actions: GitHub
-  Releases, shell, PowerShell, npm, Homebrew, MSI, and crates.io. Registry
-  publishing needs only public secret names in this repo:
-  `CARGO_REGISTRY_TOKEN`, `NPM_TOKEN`, and `HOMEBREW_TAP_TOKEN`.
+  native cargo-dist artifacts through GitHub Actions: GitHub Releases, shell,
+  PowerShell, npm, Homebrew, MSI, and crates.io. Prefer trusted publishing/OIDC
+  for npm and crates.io so CI does not store long-lived registry tokens. The
+  first manual registry publish is required before trusted publishing can be
+  configured for a new package name. Homebrew publishing still needs only the
+  public secret name `HOMEBREW_TAP_TOKEN`.
 - Preserve native-binary introspection: `logbrew version --json` must expose
   `binary`, `os`, and `arch` without making human `logbrew version` verbose.
 - Homebrew publishing uses the public `LogBrewCo/homebrew-tap` repository.
