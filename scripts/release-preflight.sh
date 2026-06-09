@@ -21,7 +21,7 @@ REQUIRED_WORKFLOWS=(
   Release
   "Publish crates.io"
 )
-CARGO_AUDIT_VERSION="${LOGBREW_CARGO_AUDIT_VERSION:-0.22.1}"
+CARGO_AUDIT_VERSION="$(bash scripts/cargo-audit-version.sh)"
 
 fail() {
   printf 'Release preflight failed: %s\n' "$1" >&2

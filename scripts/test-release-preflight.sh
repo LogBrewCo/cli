@@ -189,6 +189,7 @@ chmod +x "$tmp_dir/cargo" "$tmp_dir/cargo-audit" "$tmp_dir/curl" "$tmp_dir/gh" "
 
 missing_audit_dir="$(mktemp -d)"
 cp "$tmp_dir/cargo" "$tmp_dir/curl" "$tmp_dir/gh" "$tmp_dir/git" "$missing_audit_dir"
+cargo_audit_version="$(bash scripts/cargo-audit-version.sh)"
 
 : >"$output_file"
 if PATH="$missing_audit_dir:/usr/bin:/bin" bash scripts/release-preflight.sh v0.1.0 >"$output_file" 2>&1; then
@@ -200,7 +201,7 @@ fi
 expected_missing_audit_lines=(
   "Release preflight failed: missing required command 'cargo-audit'"
   "Next: install cargo-audit with:"
-  "  cargo install cargo-audit --version 0.22.1 --locked"
+  "  cargo install cargo-audit --version ${cargo_audit_version} --locked"
   "Then rerun scripts/release-preflight.sh v0.1.0 before pushing a release tag."
 )
 
