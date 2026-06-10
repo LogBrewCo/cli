@@ -15,8 +15,8 @@ jobs:
     runs-on: ubuntu-latest
     env:
       PLAN: ${{ inputs.plan }}
-      GITHUB_USER: "axo bot"
-      GITHUB_EMAIL: "admin+bot@axo.dev"
+      GITHUB_USER: "LogBrew release bot"
+      GITHUB_EMAIL: "41898282+github-actions[bot]@users.noreply.github.com"
     steps:
       - name: Checkout tap
         uses: actions/checkout@v6
