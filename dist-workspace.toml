@@ -12,6 +12,8 @@ installers = ["shell", "powershell", "npm", "homebrew", "msi"]
 # Publish jobs to run in CI
 publish-jobs = ["./publish-npm-trusted", "homebrew"]
 github-custom-job-permissions = { "publish-npm-trusted" = { contents = "read", id-token = "write", packages = "write" } }
+# Extra setup steps injected into cargo-dist build-local-artifacts jobs.
+github-build-setup = "../build-setup.yml"
 # A GitHub repo to push Homebrew formulas to
 tap = "LogBrewCo/homebrew-tap"
 # Target platforms to build apps for (Rust target-triple syntax)
