@@ -1,0 +1,55 @@
+name: Publish Homebrew tap
+
+on:
+  workflow_call:
+    inputs:
+      plan:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      PLAN: ${{ inputs.plan }}
+      GITHUB_USER: "LogBrew release bot"
+      GITHUB_EMAIL: "41898282+github-actions[bot]@users.noreply.github.com"
+    steps:
+      - name: Checkout tap
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: true
+          repository: "LogBrewCo/homebrew-tap"
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+
+      - name: Fetch Homebrew formulae
+        uses: actions/download-artifact@v8
+        with:
+          pattern: artifacts-*
+          path: Formula/
+          merge-multiple: true
+
+      - name: Commit formula files
+        shell: bash
+        run: |
+          git config --global user.name "${GITHUB_USER}"
+          git config --global user.email "${GITHUB_EMAIL}"
+
+          for release in $(echo "$PLAN" | jq --compact-output '.releases[] | select([.artifacts[] | endswith(".rb")] | any)'); do
+            filename=$(echo "$release" | jq '.artifacts[] | select(endswith(".rb"))' --raw-output)
+            name=$(echo "$filename" | sed "s/\.rb$//")
+            version=$(echo "$release" | jq .app_version --raw-output)
+
+            ruby -c "Formula/${filename}"
+            git add "Formula/${filename}"
+            if git diff --cached --quiet -- "Formula/${filename}"; then
+              echo "Formula/${filename} already up to date"
+            else
+              git commit -m "${name} ${version}"
+            fi
+          done
+
+          git push
