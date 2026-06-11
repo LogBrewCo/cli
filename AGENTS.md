@@ -14,6 +14,9 @@ This is the public LogBrew CLI repository. Everything committed here is public.
   `bash scripts/check-all.sh`.
 - Before pushing a release tag, run `bash scripts/release-preflight.sh vX.Y.Z`
   and then rerun `bash scripts/pre-commit.sh`.
+- Use normal SemVer numeric increments for release tags and package versions:
+  after `v0.1.9` comes `v0.1.10`, and after `v0.1.99` comes `v0.1.100`.
+  Do not add leading zero padding such as `v0.1.09` or `v0.1.010`.
 - Treat `scripts/release-preflight.sh` as the fail-before-hosting gate for tag
   pushes. It should verify public registry version availability before tag
   creation and verify the public Homebrew tap is reachable. Do not hand-edit
