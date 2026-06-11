@@ -7,19 +7,18 @@ human output, clear `Next:` recovery steps, and token-safe diagnostics.
 
 ## Install
 
-Until the first packaged release is published, install from source:
-
-```bash
-cargo install --git https://github.com/LogBrewCo/cli logbrew-cli
-```
-
-After the first release, package-manager installs should use the standard
-distribution surfaces:
+Use one of the published package-manager installs:
 
 ```bash
 cargo install logbrew-cli
 npm install -g logbrew-cli
 brew install LogBrewCo/tap/logbrew
+```
+
+For development from the public repository:
+
+```bash
+cargo install --git https://github.com/LogBrewCo/cli logbrew-cli
 ```
 
 ## Distribution
@@ -44,7 +43,7 @@ publishing requires the GitHub Actions secret `HOMEBREW_TAP_TOKEN`.
 Before pushing a release tag, run the release preflight:
 
 ```bash
-bash scripts/release-preflight.sh v0.1.0
+bash scripts/release-preflight.sh vX.Y.Z
 ```
 
 The preflight checks the tag/version match, clean synced `main`, public
