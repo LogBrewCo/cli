@@ -1,6 +1,7 @@
 //! CLI error types and output rendering.
 
 use crate::ISSUE_STATUS_VALUES_NEXT_STEP;
+use std::borrow::Cow;
 
 /// CLI parsing error.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -176,16 +177,28 @@ pub fn write_runtime_error<W: std::io::Write>(
     json: bool,
     output: &mut W,
 ) -> Result<(), std::io::Error> {
-    if !json {
-        if let RuntimeError::StatusUnavailable {
+    if json {
+        let body = runtime_error_json(error);
+        writeln!(output, "{body}")
+    } else {
+        write_human_runtime_error(error, output)
+    }
+}
+
+/// Writes a runtime error for human readers.
+fn write_human_runtime_error<W: std::io::Write>(
+    error: &RuntimeError,
+    output: &mut W,
+) -> Result<(), std::io::Error> {
+    match error {
+        RuntimeError::StatusUnavailable {
             api_url,
             status_code,
             body,
             auth_label,
             message,
             ..
-        } = error
-        {
+        } => {
             writeln!(output, "LogBrew API unreachable.")?;
             writeln!(output, "API: {api_url}")?;
             writeln!(output, "Auth: {auth_label}")?;
@@ -198,17 +211,37 @@ pub fn write_runtime_error<W: std::io::Write>(
                 writeln!(output, "Reason: {message}")?;
             }
             writeln!(output, "Next: {STATUS_UNAVAILABLE_NEXT_STEP}")?;
-            return Ok(());
+            Ok(())
         }
-        writeln!(output, "{error}")?;
-        if let RuntimeError::Api { auth_label, .. } = error {
+        RuntimeError::Api {
+            status,
+            body,
+            auth_label,
+            ..
+        } => {
+            let api_details = ApiErrorDetails::parse(body);
+            writeln!(output, "{error}")?;
+            if let Some(code) = api_details.code.as_deref() {
+                writeln!(output, "Code: {code}")?;
+            }
             writeln!(output, "Auth: {auth_label}")?;
+            writeln!(output, "Next: {}", api_next_step(*status, &api_details))
         }
-        writeln!(output, "Next: {}", runtime_error_next_step(error))?;
-        return Ok(());
+        RuntimeError::Cli(_)
+        | RuntimeError::Io(_)
+        | RuntimeError::Http(_)
+        | RuntimeError::MissingToken
+        | RuntimeError::Unavailable { .. } => {
+            writeln!(output, "{error}")?;
+            writeln!(output, "Next: {}", runtime_error_next_step(error))?;
+            Ok(())
+        }
     }
+}
 
-    let body = match error {
+/// Builds a JSON runtime error body for agents.
+fn runtime_error_json(error: &RuntimeError) -> serde_json::Value {
+    match error {
         RuntimeError::MissingToken
         | RuntimeError::Unavailable { .. }
         | RuntimeError::Io(_)
@@ -223,15 +256,22 @@ pub fn write_runtime_error<W: std::io::Write>(
             body,
             auth_source,
             ..
-        } => serde_json::json!({
-            "ok": false,
-            "error": runtime_error_code(error),
-            "message": error.to_string(),
-            "status": status,
-            "body": body,
-            "auth_source": auth_source,
-            "next": runtime_error_next_step(error),
-        }),
+        } => {
+            let api_details = ApiErrorDetails::parse(body);
+            let next = api_next_step(*status, &api_details);
+            serde_json::json!({
+                "ok": false,
+                "error": runtime_error_code(error),
+                "message": error.to_string(),
+                "status": status,
+                "body": body,
+                "api_error": api_details.error.as_deref(),
+                "api_code": api_details.code.as_deref(),
+                "api_next": api_details.next.as_deref(),
+                "auth_source": auth_source,
+                "next": next,
+            })
+        }
         RuntimeError::StatusUnavailable {
             api_url,
             status_code,
@@ -258,8 +298,7 @@ pub fn write_runtime_error<W: std::io::Write>(
             "message": error.to_string(),
             "next": cli_error_next_step(error),
         }),
-    };
-    writeln!(output, "{body}")
+    }
 }
 
 /// Returns a stable machine-readable parse error code.
@@ -313,23 +352,86 @@ const fn runtime_error_code(error: &RuntimeError) -> &'static str {
 /// Next step for failed `status` reachability checks.
 const STATUS_UNAVAILABLE_NEXT_STEP: &str = "check LOGBREW_API_URL or network";
 
+/// Parsed public API error details.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct ApiErrorDetails {
+    /// Human-readable backend error message.
+    error: Option<String>,
+    /// Stable backend error code.
+    code: Option<String>,
+    /// Backend-provided recovery step.
+    next: Option<String>,
+}
+
+impl ApiErrorDetails {
+    /// Parses additive backend error fields from an API response body.
+    fn parse(body: &str) -> Self {
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(body) else {
+            return Self::default();
+        };
+
+        Self {
+            error: json_string_field(&value, "error"),
+            code: json_string_field(&value, "code"),
+            next: json_string_field(&value, "next"),
+        }
+    }
+}
+
+/// Extracts a non-empty string field from a JSON object.
+fn json_string_field(value: &serde_json::Value, key: &str) -> Option<String> {
+    value
+        .get(key)
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
 /// Returns a useful next step for runtime errors when one is known.
-const fn runtime_error_next_step(error: &RuntimeError) -> &'static str {
+fn runtime_error_next_step(error: &RuntimeError) -> Cow<'static, str> {
+    match error {
+        RuntimeError::Api { status, body, .. } => {
+            let api_details = ApiErrorDetails::parse(body);
+            api_next_step(*status, &api_details)
+        }
+        RuntimeError::Cli(_)
+        | RuntimeError::Io(_)
+        | RuntimeError::Http(_)
+        | RuntimeError::MissingToken
+        | RuntimeError::StatusUnavailable { .. }
+        | RuntimeError::Unavailable { .. } => {
+            Cow::Borrowed(fallback_runtime_error_next_step(error))
+        }
+    }
+}
+
+/// Returns the API next step, preferring backend guidance when available.
+fn api_next_step(status: u16, api_details: &ApiErrorDetails) -> Cow<'static, str> {
+    api_details.next.as_ref().map_or_else(
+        || Cow::Borrowed(fallback_api_next_step(status)),
+        |next| Cow::Owned(next.clone()),
+    )
+}
+
+/// Returns the CLI fallback next step for an API status.
+const fn fallback_api_next_step(status: u16) -> &'static str {
+    match status {
+        401 | 403 => "run logbrew login",
+        400 | 422 => "check command arguments or filters",
+        404 => "check the resource id or filters",
+        429 => "retry later",
+        500..=599 => "check LOGBREW_API_URL or retry later",
+        _ => "check command arguments or retry later",
+    }
+}
+
+/// Returns a useful fallback next step for runtime errors when one is known.
+const fn fallback_runtime_error_next_step(error: &RuntimeError) -> &'static str {
     match error {
         RuntimeError::Cli(error) => cli_error_next_step(error),
-        RuntimeError::MissingToken
-        | RuntimeError::Api {
-            status: 401 | 403, ..
-        } => "run logbrew login",
-        RuntimeError::Api {
-            status: 400 | 422, ..
-        } => "check command arguments or filters",
-        RuntimeError::Api { status: 404, .. } => "check the resource id or filters",
-        RuntimeError::Api { status: 429, .. } => "retry later",
-        RuntimeError::Api {
-            status: 500..=599, ..
-        } => "check LOGBREW_API_URL or retry later",
-        RuntimeError::Api { .. } => "check command arguments or retry later",
+        RuntimeError::MissingToken => "run logbrew login",
+        RuntimeError::Api { status, .. } => fallback_api_next_step(*status),
         RuntimeError::StatusUnavailable { .. } | RuntimeError::Http(_) => {
             STATUS_UNAVAILABLE_NEXT_STEP
         }
