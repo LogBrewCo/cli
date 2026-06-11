@@ -213,7 +213,7 @@ pub struct ReadOptions {
     pub user: Option<String>,
     /// Optional trace ID filter.
     pub trace: Option<String>,
-    /// Optional log level filter.
+    /// Optional log severity filter.
     pub level: Option<String>,
     /// Optional log message substring search.
     pub search: Option<String>,
@@ -640,7 +640,7 @@ struct ReadPathFilters<'a> {
     user: Option<&'a str>,
     /// Optional trace ID filter.
     trace: Option<&'a str>,
-    /// Optional log level filter.
+    /// Optional log severity filter.
     level: Option<&'a str>,
     /// Optional log message substring search.
     search: Option<&'a str>,

@@ -122,7 +122,9 @@ impl FlagScope {
                 "use --project <project_id> or --project-id <project_id>"
             }
             (Self::Read, "status") => ISSUE_STATUS_FILTER_NEXT_STEP,
-            (Self::Read, "level") => "use --level trace, debug, info, warn, error, or fatal",
+            (Self::Read, "level" | "severity") => {
+                "use --severity info, warning, error, or critical; --level is also accepted"
+            }
             (Self::Read, "search") => "use --search <text>",
             (Self::Read, "user" | "distinct-id") => {
                 "use --user <distinct_id> or --distinct-id <distinct_id>"
@@ -278,6 +280,7 @@ pub(crate) fn is_read_filter_word(value: &str) -> bool {
             | "span"
             | "spans"
             | "status"
+            | "severity"
             | "level"
             | "search"
             | "user"
@@ -407,7 +410,7 @@ enum ReadFilterKind {
     User,
     /// Trace correlation filter.
     Trace,
-    /// Log level filter.
+    /// Log severity filter.
     Level,
     /// Log message search filter.
     Search,
@@ -433,6 +436,7 @@ fn read_filter_spec(flag: &str) -> Option<ReadFilterSpec> {
         "--trace" => ReadFilterSpec::new(ReadFilterKind::Trace, "--trace", "--trace"),
         "--trace-id" => ReadFilterSpec::new(ReadFilterKind::Trace, "--trace", "--trace-id"),
         "--level" => ReadFilterSpec::new(ReadFilterKind::Level, "--level", "--level"),
+        "--severity" => ReadFilterSpec::new(ReadFilterKind::Level, "--level", "--severity"),
         "--search" => ReadFilterSpec::new(ReadFilterKind::Search, "--search", "--search"),
         "--project" => ReadFilterSpec::new(ReadFilterKind::Project, "--project", "--project"),
         "--project-id" => ReadFilterSpec::new(ReadFilterKind::Project, "--project", "--project-id"),
@@ -519,7 +523,7 @@ fn duplicate_flag_next(flag: &'static str) -> &'static str {
         "--since" => "use --since once",
         "--user" => "use --user once",
         "--trace" => "use --trace once",
-        "--level" => "use --level once",
+        "--level" => "use --severity or --level once",
         "--search" => "use --search once",
         "--project" => "use --project once",
         "--release" => "use --release once",
@@ -540,15 +544,13 @@ pub(crate) fn normalize_status(status: &str) -> Result<String, CliError> {
     }
 }
 
-/// Normalizes human-friendly log level aliases.
+/// Normalizes human-friendly severity aliases.
 pub(crate) fn normalize_log_level(level: &str) -> Result<String, CliError> {
     match level.to_ascii_lowercase().as_str() {
-        "trace" => Ok(String::from("trace")),
-        "debug" => Ok(String::from("debug")),
-        "info" | "information" => Ok(String::from("info")),
-        "warn" | "warning" => Ok(String::from("warn")),
+        "trace" | "debug" | "info" | "information" => Ok(String::from("info")),
+        "warn" | "warning" => Ok(String::from("warning")),
         "error" | "err" => Ok(String::from("error")),
-        "fatal" => Ok(String::from("fatal")),
+        "fatal" | "critical" => Ok(String::from("critical")),
         other => Err(CliError::UnknownLogLevel(other.to_owned())),
     }
 }
@@ -598,6 +600,7 @@ fn missing_flag_value_next(flag: &'static str) -> &'static str {
         "--trace" => "provide a value after --trace",
         "--trace-id" => "provide a value after --trace-id",
         "--level" => "provide a value after --level",
+        "--severity" => "provide a value after --severity",
         "--search" => "provide a value after --search",
         "--project" => "provide a value after --project",
         "--project-id" => "provide a value after --project-id",

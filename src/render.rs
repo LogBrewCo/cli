@@ -125,8 +125,8 @@ fn empty_list_message(title: &str) -> String {
 fn log_line(value: &serde_json::Value) -> Option<String> {
     let message = field(value, "message")?;
     let mut output = String::new();
-    if let Some(level) = field(value, "level") {
-        output.push_str(level);
+    if let Some(severity) = display_severity(value) {
+        output.push_str(&severity);
         output.push(' ');
     }
     output.push_str(message);
@@ -140,9 +140,9 @@ fn issue_line(value: &serde_json::Value) -> Option<String> {
     let id = field(value, "id")?;
     let status = field(value, "status")?;
     let mut output = format!("{id} {status}");
-    if let Some(severity) = field(value, "severity") {
+    if let Some(severity) = display_severity(value) {
         output.push(' ');
-        output.push_str(severity);
+        output.push_str(&severity);
     }
     if let Some(title) = field(value, "title") {
         output.push(' ');
@@ -161,6 +161,10 @@ fn issue_line(value: &serde_json::Value) -> Option<String> {
 fn action_line(value: &serde_json::Value) -> Option<String> {
     let name = field(value, "name")?;
     let mut output = name.to_owned();
+    if let Some(severity) = display_severity(value) {
+        output.push(' ');
+        output.push_str(&severity);
+    }
     append_labeled_field(&mut output, "user", value, "distinct_id");
     append_labeled_field(&mut output, "trace", value, "trace_id");
     output.push_str(release_environment_suffix(value).as_str());
@@ -252,9 +256,9 @@ fn issue_detail_summary(value: &serde_json::Value) -> Option<String> {
     let id = field(issue, "id")?;
     let status = field(issue, "status")?;
     let mut output = format!("Issue {id} {status}");
-    if let Some(severity) = field(issue, "severity") {
+    if let Some(severity) = display_severity(issue) {
         output.push(' ');
-        output.push_str(severity);
+        output.push_str(&severity);
     }
     append_labeled_field(&mut output, "trace", issue, "trace_id");
     output.push_str(release_environment_suffix(issue).as_str());
@@ -300,6 +304,24 @@ fn issue_value(value: &serde_json::Value) -> Option<&serde_json::Value> {
 /// Returns a string field value.
 fn field<'a>(value: &'a serde_json::Value, name: &str) -> Option<&'a str> {
     value.get(name)?.as_str()
+}
+
+/// Returns the user-facing severity label, preferring canonical backend severity.
+fn display_severity(value: &serde_json::Value) -> Option<std::borrow::Cow<'_, str>> {
+    field(value, "severity")
+        .or_else(|| field(value, "level"))
+        .map(canonical_severity_label)
+}
+
+/// Maps SDK/runtime aliases to the public severity vocabulary for human output.
+fn canonical_severity_label(value: &str) -> std::borrow::Cow<'_, str> {
+    match value.to_ascii_lowercase().as_str() {
+        "trace" | "debug" | "info" | "information" => std::borrow::Cow::Borrowed("info"),
+        "warn" | "warning" => std::borrow::Cow::Borrowed("warning"),
+        "error" | "err" => std::borrow::Cow::Borrowed("error"),
+        "fatal" | "critical" => std::borrow::Cow::Borrowed("critical"),
+        _ => std::borrow::Cow::Borrowed(value),
+    }
 }
 
 /// Appends a compact labeled string field to an existing line.

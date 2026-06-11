@@ -332,7 +332,9 @@ const fn cli_error_next_step(error: &CliError) -> &'static str {
         | CliError::UnknownCommandName { next, .. } => next,
         CliError::UnknownCommand => "run logbrew --help",
         CliError::UnknownStatus(_) => ISSUE_STATUS_VALUES_NEXT_STEP,
-        CliError::UnknownLogLevel(_) => "use one of trace, debug, info, warn, error, fatal",
+        CliError::UnknownLogLevel(_) => {
+            "use one of info, warning, error, critical; aliases: trace, debug, warn, fatal"
+        }
     }
 }
 

@@ -32,8 +32,8 @@ fn recovers_watch_positionals_to_historical_reads() {
     let log_text = String::from_utf8(log_output).expect("utf8 output");
     assert_eq!(
         log_text,
-        "unexpected argument for watch: error\nNext: use logbrew logs --level <level> or --search \
-         <text> for historical data until live watch is available\n"
+        "unexpected argument for watch: error\nNext: use logbrew logs --severity <severity> or \
+         --search <text> for historical data until live watch is available\n"
     );
 }
 
@@ -73,5 +73,18 @@ fn recovers_watch_read_filters_to_historical_reads() {
         log_text,
         "unsupported flag for watch: --level\nNext: use logbrew logs with filters for historical \
          data until live watch is available\n"
+    );
+
+    let severity_error = parse_command(["logbrew", "watch", "logs", "--severity", "warning"])
+        .expect_err("reserved watch severity filter fails");
+    let mut severity_output = Vec::new();
+
+    write_cli_error(&severity_error, false, &mut severity_output).expect("error writes");
+
+    let severity_text = String::from_utf8(severity_output).expect("utf8 output");
+    assert_eq!(
+        severity_text,
+        "unsupported flag for watch: --severity\nNext: use logbrew logs with filters for \
+         historical data until live watch is available\n"
     );
 }

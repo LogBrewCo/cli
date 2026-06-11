@@ -67,6 +67,7 @@ const TRACE_DETAIL_UNSUPPORTED_FLAGS: &[&str] = &[
     "--trace",
     "--trace-id",
     "--level",
+    "--severity",
     "--search",
     "--status",
     "--limit",
@@ -80,6 +81,7 @@ const ISSUE_DETAIL_UNSUPPORTED_FLAGS: &[&str] = &[
     "--trace",
     "--trace-id",
     "--level",
+    "--severity",
     "--search",
     "--project",
     "--project-id",
@@ -90,8 +92,14 @@ const ISSUE_DETAIL_UNSUPPORTED_FLAGS: &[&str] = &[
     "--limit",
 ];
 /// Filters action list reads cannot apply.
-const ACTION_LIST_UNSUPPORTED_FLAGS: &[&str] =
-    &["--trace", "--trace-id", "--level", "--search", "--status"];
+const ACTION_LIST_UNSUPPORTED_FLAGS: &[&str] = &[
+    "--trace",
+    "--trace-id",
+    "--level",
+    "--severity",
+    "--search",
+    "--status",
+];
 
 /// # Errors
 /// Returns [`CliError`] if the command grammar is invalid.
@@ -584,6 +592,7 @@ fn parse_read_resource(resource: &str, rest: &[String]) -> Result<Command, CliEr
                 "--trace",
                 "--trace-id",
                 "--level",
+                "--severity",
                 "--search",
                 "--status",
             ],
@@ -639,7 +648,7 @@ fn is_action_collection_alias(value: &str) -> bool {
     matches!(value, "actions" | "events" | "event" | "action")
 }
 
-/// Parses log lists, accepting natural search and positional log levels.
+/// Parses log lists, accepting natural search and positional severity aliases.
 fn parse_log_list_read(rest: &[String]) -> Result<(ReadTarget, crate::flags::Flags), CliError> {
     let args = log_shortcut_args(rest);
     parse_list_read(
@@ -667,6 +676,7 @@ fn parse_issue_list_read(rest: &[String]) -> Result<(ReadTarget, crate::flags::F
             "--trace",
             "--trace-id",
             "--level",
+            "--severity",
             "--search",
         ],
     )
@@ -861,7 +871,7 @@ fn read_value_canonical_flag(flag: &str) -> Option<&'static str> {
         "--since" => "--since",
         "--user" | "--distinct-id" => "--user",
         "--trace" | "--trace-id" => "--trace",
-        "--level" => "--level",
+        "--level" | "--severity" => "--level",
         "--search" => "--search",
         "--project" | "--project-id" => "--project",
         "--release" => "--release",
@@ -876,7 +886,7 @@ fn read_value_canonical_flag(flag: &str) -> Option<&'static str> {
 /// Returns whether a supported read flag has a value that should be reported first.
 fn has_invalid_supported_read_value(flag: &str, value: &str) -> bool {
     match flag {
-        "--level" => !is_known_log_level(value),
+        "--level" | "--severity" => !is_known_log_level(value),
         "--status" => !is_known_issue_status(value),
         "--limit" => value.parse::<u32>().map_or(true, |limit| limit == 0),
         _ => false,
@@ -909,6 +919,7 @@ fn is_read_value_flag(flag: &str) -> bool {
             | "--trace"
             | "--trace-id"
             | "--level"
+            | "--severity"
             | "--search"
             | "--project"
             | "--project-id"
