@@ -196,3 +196,47 @@ fn writes_api_validation_errors_as_json_with_argument_next_step() {
     assert_eq!(body["auth_source"], "token_file");
     assert_eq!(body["next"], "check command arguments or filters");
 }
+
+#[test]
+fn writes_backend_api_code_and_next_for_agents() {
+    let mut output = Vec::new();
+    let error = RuntimeError::Api {
+        status: 422,
+        body: String::from(
+            r#"{"error":"release is required","code":"validation_failed","next":"provide --release <release>"}"#,
+        ),
+        auth_source: "token_file",
+        auth_label: "logged in (local token)",
+    };
+
+    write_runtime_error(&error, true, &mut output).expect("error writes");
+
+    let body: serde_json::Value = serde_json::from_slice(output.as_slice()).expect("valid json");
+    assert_eq!(body["ok"], false);
+    assert_eq!(body["error"], "api_error");
+    assert_eq!(body["api_error"], "release is required");
+    assert_eq!(body["api_code"], "validation_failed");
+    assert_eq!(body["api_next"], "provide --release <release>");
+    assert_eq!(body["next"], "provide --release <release>");
+}
+
+#[test]
+fn writes_backend_api_code_and_next_for_humans() {
+    let mut output = Vec::new();
+    let error = RuntimeError::Api {
+        status: 404,
+        body: String::from(
+            r#"{"error":"issue not found","code":"not_found","next":"check the issue id"}"#,
+        ),
+        auth_source: "env",
+        auth_label: "logged in (env token)",
+    };
+
+    write_runtime_error(&error, false, &mut output).expect("error writes");
+
+    let text = String::from_utf8(output).expect("utf8 output");
+    assert_eq!(
+        text,
+        "api returned status 404: {\"error\":\"issue not found\",\"code\":\"not_found\",\"next\":\"check the issue id\"}\nCode: not_found\nAuth: logged in (env token)\nNext: check the issue id\n",
+    );
+}
