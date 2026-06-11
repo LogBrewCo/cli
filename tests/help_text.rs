@@ -6,8 +6,8 @@ use logbrew_cli::{HelpTopic, help};
 fn root_help_surfaces_release_environment_pairing() {
     let text = help::help_text(HelpTopic::Root);
 
-    assert!(text.contains("logbrew read logs [--level error] [--search checkout]"));
-    assert!(text.contains("logbrew logs checkout failed [--level error]"));
+    assert!(text.contains("logbrew read logs [--severity error] [--search checkout]"));
+    assert!(text.contains("logbrew logs checkout failed [--severity error]"));
     assert!(text.contains("logbrew logs error checkout failed [--release <release>]"));
     assert!(text.contains("logbrew search checkout [--release <release>]"));
     assert!(text.contains("logbrew find checkout [--release <release>]"));
@@ -92,6 +92,8 @@ fn log_help_advertises_unquoted_search_after_explicit_filters() {
 
     assert!(text.contains("Recency counts are limit shortcuts, such as logbrew last 10 logs."));
     assert!(text.contains("logbrew logs --level error checkout failed"));
+    assert!(text.contains("logbrew logs --severity warning checkout failed"));
+    assert!(text.contains("Severity values are info, warning, error, and critical."));
     assert!(text.contains("logbrew logs --search checkout failed"));
     assert!(text.contains("logbrew logs -- --timeout --json"));
 }

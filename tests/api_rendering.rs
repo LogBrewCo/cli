@@ -15,7 +15,8 @@ async fn authenticated_read_logs_sends_bearer_token_and_prints_api_body() {
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "logs": [
                 {
-                    "level": "error",
+                    "level": "warn",
+                    "severity": "warning",
                     "message": "checkout failed",
                     "release": "checkout@1.2.3",
                     "environment": "production",
@@ -48,6 +49,8 @@ async fn authenticated_read_logs_sends_bearer_token_and_prints_api_body() {
         .expect("read succeeds");
 
     let body: serde_json::Value = serde_json::from_slice(output.as_slice()).expect("valid json");
+    assert_eq!(body["logs"][0]["level"], "warn");
+    assert_eq!(body["logs"][0]["severity"], "warning");
     assert_eq!(body["logs"][0]["message"], "checkout failed");
     assert_eq!(body["logs"][0]["release"], "checkout@1.2.3");
     assert_eq!(body["logs"][0]["environment"], "production");
@@ -64,7 +67,8 @@ async fn human_read_logs_prints_scan_friendly_summary() {
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "logs": [
                 {
-                    "level": "error",
+                    "level": "warn",
+                    "severity": "warning",
                     "message": "checkout failed",
                     "release": "checkout@1.2.3",
                     "environment": "production",
@@ -90,12 +94,12 @@ async fn human_read_logs_prints_scan_friendly_summary() {
     .expect("read succeeds");
     assert_eq!(
         text,
-        "Logs (1)\n- error checkout failed trace=trace_123 [checkout@1.2.3 / production]\n"
+        "Logs (1)\n- warning checkout failed trace=trace_123 [checkout@1.2.3 / production]\n"
     );
 }
 
 #[tokio::test]
-async fn human_read_logs_summarizes_real_api_array_shape() {
+async fn human_read_logs_summarizes_level_only_array_shape_with_canonical_label() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/api/logs"))
@@ -104,7 +108,7 @@ async fn human_read_logs_summarizes_real_api_array_shape() {
         .and(header("authorization", "Bearer test-token"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
             {
-                "level": "error",
+                "level": "fatal",
                 "message": "checkout failed",
                 "release": "checkout@1.2.3",
                 "environment": "production",
@@ -129,7 +133,7 @@ async fn human_read_logs_summarizes_real_api_array_shape() {
     .expect("read succeeds");
     assert_eq!(
         text,
-        "Logs (1)\n- error checkout failed trace=trace_123 [checkout@1.2.3 / production]\n"
+        "Logs (1)\n- critical checkout failed trace=trace_123 [checkout@1.2.3 / production]\n"
     );
 }
 
@@ -219,6 +223,7 @@ async fn human_read_actions_and_issues_summarize_pivot_context() {
             body: serde_json::json!([
                 {
                     "name": "checkout_failed",
+                    "severity": "warning",
                     "distinct_id": "user_123",
                     "trace_id": "trace_123",
                     "release": "checkout@1.2.3",
@@ -236,7 +241,7 @@ async fn human_read_actions_and_issues_summarize_pivot_context() {
                 "checkout_failed",
             ],
             home: "human-read-actions-context",
-            expected: "Actions (1)\n- checkout_failed user=user_123 trace=trace_123 \
+            expected: "Actions (1)\n- checkout_failed warning user=user_123 trace=trace_123 \
                        [checkout@1.2.3 / production]\n",
         },
         ContextCase {

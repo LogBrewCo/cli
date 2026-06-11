@@ -41,10 +41,10 @@ Usage:
   logbrew whoami [--json]
   logbrew me [--json]
   logbrew version [--json]
-  logbrew read logs [--level error] [--search checkout] [--release <release>] [--environment \
+  logbrew read logs [--severity error] [--search checkout] [--release <release>] [--environment \
                          production] [--since 24h] [--json]
-  logbrew logs checkout failed [--level error] [--release <release>] [--environment production] \
-                         [--json]
+  logbrew logs checkout failed [--severity error] [--release <release>] [--environment \
+                         production] [--json]
   logbrew logs error checkout failed [--release <release>] [--environment production] [--json]
   logbrew search checkout [--release <release>] [--environment production] [--json]
   logbrew find checkout [--release <release>] [--environment production] [--json]
@@ -207,23 +207,26 @@ Filter aliases: --env, --project-id, --trace-id, and --distinct-id.";
 /// Read logs help text.
 const READ_LOGS_HELP: &str = "\
 Usage:
-  logbrew read logs [--level error] [--search checkout] [--release <release>] [--environment \
+  logbrew read logs [--severity error] [--search checkout] [--release <release>] [--environment \
                               production] [--since 24h] [--trace <trace_id>] [--project \
                               <project_id>] [--limit 100] [--json]
-  logbrew logs checkout failed [--level error] [--release <release>] [--environment production] \
-                              [--json]
+  logbrew logs checkout failed [--severity error] [--release <release>] [--environment \
+                              production] [--json]
   logbrew logs error checkout failed [--release <release>] [--environment production] [--json]
 
-Reads structured logs. Levels are trace, debug, info, warn, error, and fatal.
-Aliases: information maps to info, warning maps to warn, and err maps to error.
-Level matching is case-insensitive.
+Reads structured logs. Severity values are info, warning, error, and critical.
+Aliases: trace, debug, and information map to info; warn maps to warning; err maps to error; \
+                              fatal maps to critical.
+Severity matching is case-insensitive. --level is accepted as a compatibility alias for \
+                              --severity.
 The logs shortcut accepts obvious multi-word search text, such as logbrew logs checkout failed.
 Shortcut levels can include search text, such as logbrew logs error checkout failed.
 Recency counts are limit shortcuts, such as logbrew last 10 logs.
-Explicit filters accept unquoted search text too, such as logbrew logs --level error checkout \
-                              failed or logbrew logs --search checkout failed.
+Explicit filters accept unquoted search text too, such as logbrew logs --severity warning checkout \
+                              failed, logbrew logs --level error checkout failed, or logbrew logs \
+                              --search checkout failed.
 Use -- before literal flag-looking search text, such as logbrew logs -- --timeout --json.
-Filter by level, message search, release, or trace_id to correlate logs with spans.
+Filter by severity, message search, release, or trace_id to correlate logs with spans.
 Limit must be a positive whole number.";
 
 /// Read issues help text.

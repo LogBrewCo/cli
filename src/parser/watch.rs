@@ -8,8 +8,8 @@ use crate::{CliError, Command, WatchTarget};
 const WATCH_LOG_FILTER_NEXT_STEP: &str =
     "use logbrew logs with filters for historical data until live watch is available";
 /// Historical log recovery for reserved watch positionals.
-const WATCH_LOG_POSITIONAL_NEXT_STEP: &str = "use logbrew logs --level <level> or --search <text> \
-                                              for historical data until live watch is available";
+const WATCH_LOG_POSITIONAL_NEXT_STEP: &str = "use logbrew logs --severity <severity> or --search \
+                                              <text> for historical data until live watch is available";
 /// Historical action recovery for reserved watch filters.
 const WATCH_ACTION_FILTER_NEXT_STEP: &str =
     "use logbrew actions with filters for historical data until live watch is available";
@@ -87,8 +87,10 @@ fn historical_filter_flag(target: WatchTarget, arg: &str) -> Option<&str> {
     let flag = arg.split_once('=').map_or(arg, |(name, _)| name);
     match target {
         WatchTarget::Logs => match flag {
-            "--level" | "--search" | "--trace" | "--trace-id" | "--project" | "--project-id"
-            | "--release" | "--environment" | "--env" | "--since" | "--limit" => Some(flag),
+            "--level" | "--severity" | "--search" | "--trace" | "--trace-id" | "--project"
+            | "--project-id" | "--release" | "--environment" | "--env" | "--since" | "--limit" => {
+                Some(flag)
+            }
             _ => None,
         },
         WatchTarget::Actions => match flag {

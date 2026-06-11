@@ -563,11 +563,11 @@ fn parses_positional_log_level_shortcuts_for_noisy_logs() {
         ),
         (
             &["logbrew", "read", "logs", "warning", "--json"],
-            "/api/logs?level=warn",
+            "/api/logs?level=warning",
         ),
         (
             &["logbrew", "latest", "logs", "fatal", "--json"],
-            "/api/logs?level=fatal",
+            "/api/logs?level=critical",
         ),
         (
             &["logbrew", "--json", "logs", "err"],
@@ -588,7 +588,7 @@ fn parses_positional_log_level_shortcuts_for_noisy_logs() {
                 "api@1",
                 "--json",
             ],
-            "/api/logs?level=warn&search=checkout%20failed&release=api%401",
+            "/api/logs?level=warning&search=checkout%20failed&release=api%401",
         ),
     ] {
         let command = parse_command(args.iter().copied()).expect("command parses");
@@ -674,7 +674,7 @@ fn parses_natural_log_search_after_explicit_log_filters() {
                 "api@1",
                 "--json",
             ],
-            "/api/logs?level=warn&search=checkout%20failed&release=api%401",
+            "/api/logs?level=warning&search=checkout%20failed&release=api%401",
         ),
         (
             &[

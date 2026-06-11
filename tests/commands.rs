@@ -1148,7 +1148,18 @@ fn normalizes_human_log_level_aliases() {
 
     assert_eq!(
         command.http_path().expect("read logs has endpoint"),
-        "/api/logs?level=warn"
+        "/api/logs?level=warning"
+    );
+}
+
+#[test]
+fn accepts_severity_filter_alias_with_canonical_values() {
+    let command = parse_command(["logbrew", "logs", "--severity", "fatal", "--json"])
+        .expect("command parses");
+
+    assert_eq!(
+        command.http_path().expect("read logs has endpoint"),
+        "/api/logs?level=critical"
     );
 }
 

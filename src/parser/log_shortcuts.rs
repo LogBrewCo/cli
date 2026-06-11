@@ -86,13 +86,13 @@ fn log_explicit_filter_shortcut_args(args: &[String]) -> Vec<String> {
             index += consumed + 1;
             continue;
         }
-        if arg == "--level" {
+        if matches!(arg.as_str(), "--level" | "--severity") {
             rewritten.push(arg.clone());
             let consumed = push_level_value_and_tail_search(&args[index + 1..], &mut rewritten);
             index += consumed + 1;
             continue;
         }
-        if let Some(value) = arg.strip_prefix("--level=")
+        if let Some(value) = inline_level_value(arg)
             && is_known_log_level(value)
         {
             rewritten.push(arg.clone());
@@ -121,6 +121,12 @@ fn log_explicit_filter_shortcut_args(args: &[String]) -> Vec<String> {
     rewritten
 }
 
+/// Returns the inline value for log severity/level filters.
+fn inline_level_value(arg: &str) -> Option<&str> {
+    arg.strip_prefix("--level=")
+        .or_else(|| arg.strip_prefix("--severity="))
+}
+
 /// Pushes a `--search` filter value, joining adjacent non-flag search words.
 fn push_explicit_search_filter_value(args: &[String], rewritten: &mut Vec<String>) -> usize {
     if let Some((query, rest)) = split_separator_log_search_tail(args) {
@@ -144,7 +150,7 @@ fn push_inline_search_value(value: &str, tail: &[String], rewritten: &mut Vec<St
     consumed
 }
 
-/// Pushes `--level <value>` and optional natural search text after it.
+/// Pushes a severity/level filter value and optional natural search text after it.
 fn push_level_value_and_tail_search(args: &[String], rewritten: &mut Vec<String>) -> usize {
     let Some(level) = args.first().filter(|value| !value.starts_with('-')) else {
         return 0;
@@ -239,7 +245,7 @@ fn split_separator_log_search_tail(args: &[String]) -> Option<(String, Vec<Strin
     Some((query, rest))
 }
 
-/// Splits optional natural search text after a positional log level.
+/// Splits optional natural search text after a positional severity alias.
 fn split_natural_log_search_tail(
     args: &[String],
     allow_single_word: bool,
