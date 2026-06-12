@@ -94,7 +94,7 @@ impl SetupPlan {
     }
 
     /// Returns the setup follow-up step.
-    fn next_step(&self) -> &'static str {
+    const fn next_step(&self) -> &'static str {
         if self.detected.is_empty() {
             EMPTY_NEXT_STEP
         } else {

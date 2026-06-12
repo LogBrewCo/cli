@@ -15,6 +15,10 @@ npm install -g logbrew-cli
 brew install LogBrewCo/tap/logbrew
 ```
 
+Cargo installs and source builds require Rust 1.87 or newer. The npm,
+Homebrew, shell, PowerShell, and MSI installers use native release artifacts and
+do not require a local Rust toolchain.
+
 For development from the public repository:
 
 ```bash

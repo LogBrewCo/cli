@@ -2,7 +2,7 @@
 name = "logbrew-cli"
 version = "0.1.5"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.87"
 description = "Public command-line interface for LogBrew."
 authors = ["LogBrewCo"]
 license = "MIT"
