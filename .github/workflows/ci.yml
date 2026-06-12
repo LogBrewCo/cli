@@ -9,6 +9,9 @@ on:
 permissions:
   contents: read
 
+env:
+  CARGO_HTTP_MULTIPLEXING: "false"
+
 jobs:
   check:
     runs-on: blacksmith-2vcpu-ubuntu-2404
