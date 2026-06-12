@@ -1,2 +1,6 @@
+- name: Disable Cargo HTTP multiplexing
+  shell: bash
+  run: echo "CARGO_HTTP_MULTIPLEXING=false" >> "$GITHUB_ENV"
+
 - name: Install Rust
   uses: dtolnay/rust-toolchain@stable

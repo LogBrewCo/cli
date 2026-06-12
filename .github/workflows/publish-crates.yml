@@ -9,6 +9,9 @@ permissions:
   contents: read
   id-token: write
 
+env:
+  CARGO_HTTP_MULTIPLEXING: "false"
+
 jobs:
   publish:
     runs-on: blacksmith-2vcpu-ubuntu-2404
