@@ -39,14 +39,19 @@ This is the public LogBrew CLI repository. Everything committed here is public.
   public secret name `HOMEBREW_TAP_TOKEN`.
 - Preserve native-binary introspection: `logbrew version --json` must expose
   `binary`, `os`, and `arch` without making human `logbrew version` verbose.
-- When adding LogBrew brand assets to public CLI README/docs/package surfaces,
-  use approved canonical logo exports without redesigning, recoloring,
-  recropping, outlining, shadowing, or changing the geometry. Use
-  espresso-background variants for store, app, home-screen, PWA, and favicon
-  contexts; use transparent/no-background variants for in-page website/app UI
-  where the surrounding surface should show through. Brand colors are espresso
-  `#3C2B24`, beer gold `#FFC61A`, edge black `#111011`, and foam white
-  `#FFFFFF`.
+- When adding LogBrew brand assets to public CLI README/docs/GitHub Release/
+  package/installer/marketplace surfaces, use approved canonical exports from
+  public `LogBrewCo/sdk` brand assets. Use espresso-background variants for
+  store, social, preview, PWA, favicon, installer, and package preview contexts;
+  use transparent/no-background variants for in-page website/app UI where the
+  surrounding surface should show through. Primary public assets:
+  `https://raw.githubusercontent.com/LogBrewCo/sdk/main/assets/brand/logbrew-logo-espresso-bg-512.png`,
+  `https://raw.githubusercontent.com/LogBrewCo/sdk/main/assets/brand/logbrew-logo-transparent-512.png`,
+  and `https://raw.githubusercontent.com/LogBrewCo/sdk/main/assets/brand/github-social-preview.png`.
+  Do not redraw, recolor, smooth, recrop, outline, shadow, or otherwise alter
+  the pixel logo; convert/export only from canonical SVG/PNG sources. Brand
+  colors are espresso `#3C2B24`, beer gold `#FFC61A`, edge black `#111011`, and
+  foam white `#FFFFFF`.
 - Homebrew publishing uses the public `LogBrewCo/homebrew-tap` repository.
   Treat the tap repo as release plumbing; document user-facing Homebrew installs
   as `brew install LogBrewCo/tap/logbrew`. Treat Homebrew registry publishing as
