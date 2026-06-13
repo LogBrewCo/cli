@@ -559,23 +559,23 @@ fn parses_positional_log_level_shortcuts_for_noisy_logs() {
     for (args, expected_path) in [
         (
             &["logbrew", "logs", "error", "--json"][..],
-            "/api/logs?level=error",
+            "/api/logs?severity=error",
         ),
         (
             &["logbrew", "read", "logs", "warning", "--json"],
-            "/api/logs?level=warning",
+            "/api/logs?severity=warning",
         ),
         (
             &["logbrew", "latest", "logs", "fatal", "--json"],
-            "/api/logs?level=critical",
+            "/api/logs?severity=critical",
         ),
         (
             &["logbrew", "--json", "logs", "err"],
-            "/api/logs?level=error",
+            "/api/logs?severity=error",
         ),
         (
             &["logbrew", "logs", "error", "checkout", "failed", "--json"],
-            "/api/logs?level=error&search=checkout%20failed",
+            "/api/logs?severity=error&search=checkout%20failed",
         ),
         (
             &[
@@ -588,7 +588,7 @@ fn parses_positional_log_level_shortcuts_for_noisy_logs() {
                 "api@1",
                 "--json",
             ],
-            "/api/logs?level=warning&search=checkout%20failed&release=api%401",
+            "/api/logs?severity=warning&search=checkout%20failed&release=api%401",
         ),
     ] {
         let command = parse_command(args.iter().copied()).expect("command parses");
@@ -641,7 +641,7 @@ fn parses_natural_log_search_after_log_shortcuts() {
                 "api@1",
                 "--json",
             ],
-            "/api/logs?level=error&search=checkout%20failed&release=api%401",
+            "/api/logs?severity=error&search=checkout%20failed&release=api%401",
         ),
     ] {
         let command = parse_command(args.iter().copied()).expect("natural logs search parses");
@@ -660,7 +660,7 @@ fn parses_natural_log_search_after_explicit_log_filters() {
             &[
                 "logbrew", "logs", "--level", "error", "checkout", "failed", "--json",
             ][..],
-            "/api/logs?level=error&search=checkout%20failed",
+            "/api/logs?severity=error&search=checkout%20failed",
         ),
         (
             &[
@@ -674,13 +674,13 @@ fn parses_natural_log_search_after_explicit_log_filters() {
                 "api@1",
                 "--json",
             ],
-            "/api/logs?level=warning&search=checkout%20failed&release=api%401",
+            "/api/logs?severity=warning&search=checkout%20failed&release=api%401",
         ),
         (
             &[
                 "logbrew", "logs", "--search", "checkout", "failed", "--level", "error", "--json",
             ],
-            "/api/logs?level=error&search=checkout%20failed",
+            "/api/logs?severity=error&search=checkout%20failed",
         ),
         (
             &[

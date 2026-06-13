@@ -225,7 +225,7 @@ fn parses_logs_separator_as_literal_log_search_shortcut() {
                 "--timeout",
                 "--json",
             ][..],
-            "/api/logs?level=error&search=--timeout",
+            "/api/logs?severity=error&search=--timeout",
             true,
         ),
         (
@@ -239,7 +239,7 @@ fn parses_logs_separator_as_literal_log_search_shortcut() {
                 "--timeout",
                 "--json",
             ][..],
-            "/api/logs?level=error&search=--timeout",
+            "/api/logs?severity=error&search=--timeout",
             true,
         ),
         (
@@ -257,7 +257,7 @@ fn parses_logs_separator_as_literal_log_search_shortcut() {
                 "--search=--timeout",
                 "failed",
             ][..],
-            "/api/logs?level=error&search=--timeout%20failed",
+            "/api/logs?severity=error&search=--timeout%20failed",
             true,
         ),
         (

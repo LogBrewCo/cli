@@ -1126,7 +1126,7 @@ fn parses_log_level_and_search_filters_for_noisy_logs() {
 
     assert_eq!(
         command.http_path().expect("read logs has endpoint"),
-        "/api/logs?level=error&search=checkout%20failed"
+        "/api/logs?severity=error&search=checkout%20failed"
     );
 }
 
@@ -1148,7 +1148,7 @@ fn normalizes_human_log_level_aliases() {
 
     assert_eq!(
         command.http_path().expect("read logs has endpoint"),
-        "/api/logs?level=warning"
+        "/api/logs?severity=warning"
     );
 }
 
@@ -1167,7 +1167,7 @@ fn accepts_legacy_log_level_alias_inputs_as_canonical_filters() {
 
         assert_eq!(
             command.http_path().expect("read logs has endpoint"),
-            format!("/api/logs?level={canonical}")
+            format!("/api/logs?severity={canonical}")
         );
     }
 }

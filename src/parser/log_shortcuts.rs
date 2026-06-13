@@ -193,7 +193,7 @@ fn collect_explicit_search_words(args: &[String]) -> Option<(String, usize)> {
     Some((args[..word_count].join(" "), word_count))
 }
 
-/// Rewrites `logs error checkout failed` to `logs --level error --search "checkout failed"`.
+/// Rewrites `logs error checkout failed` to `logs --severity error --search "checkout failed"`.
 fn build_log_shortcut_args(
     level: Option<String>,
     search: Option<String>,
@@ -202,7 +202,7 @@ fn build_log_shortcut_args(
 ) -> Vec<String> {
     let mut rewritten = Vec::with_capacity(source_len + 4);
     if let Some(level) = level {
-        rewritten.push(String::from("--level"));
+        rewritten.push(String::from("--severity"));
         rewritten.push(level);
     }
     if let Some(query) = search {

@@ -222,8 +222,7 @@ The logs shortcut accepts obvious multi-word search text, such as logbrew logs c
 Shortcut levels can include search text, such as logbrew logs error checkout failed.
 Recency counts are limit shortcuts, such as logbrew last 10 logs.
 Explicit filters accept unquoted search text too, such as logbrew logs --severity warning checkout \
-                              failed, logbrew logs --level error checkout failed, or logbrew logs \
-                              --search checkout failed.
+                              failed or logbrew logs --search checkout failed.
 Use -- before literal flag-looking search text, such as logbrew logs -- --timeout --json.
 Filter by severity, message search, release, or trace_id to correlate logs with spans.
 Limit must be a positive whole number.";
