@@ -215,8 +215,7 @@ Usage:
   logbrew logs error checkout failed [--release <release>] [--environment production] [--json]
 
 Reads structured logs. Severity values are info, warning, error, and critical.
-Aliases: trace, debug, and information map to info; warn maps to warning; err maps to error; \
-                              fatal maps to critical.
+Legacy severity aliases are accepted on input and normalized.
 Severity matching is case-insensitive. --level is accepted as a compatibility alias for \
                               --severity.
 The logs shortcut accepts obvious multi-word search text, such as logbrew logs checkout failed.

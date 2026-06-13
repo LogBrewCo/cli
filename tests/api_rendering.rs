@@ -15,7 +15,7 @@ async fn authenticated_read_logs_sends_bearer_token_and_prints_api_body() {
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "logs": [
                 {
-                    "level": "warn",
+                    "level": "warning",
                     "severity": "warning",
                     "message": "checkout failed",
                     "release": "checkout@1.2.3",
@@ -49,7 +49,7 @@ async fn authenticated_read_logs_sends_bearer_token_and_prints_api_body() {
         .expect("read succeeds");
 
     let body: serde_json::Value = serde_json::from_slice(output.as_slice()).expect("valid json");
-    assert_eq!(body["logs"][0]["level"], "warn");
+    assert_eq!(body["logs"][0]["level"], "warning");
     assert_eq!(body["logs"][0]["severity"], "warning");
     assert_eq!(body["logs"][0]["message"], "checkout failed");
     assert_eq!(body["logs"][0]["release"], "checkout@1.2.3");
@@ -67,7 +67,7 @@ async fn human_read_logs_prints_scan_friendly_summary() {
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "logs": [
                 {
-                    "level": "warn",
+                    "level": "warning",
                     "severity": "warning",
                     "message": "checkout failed",
                     "release": "checkout@1.2.3",
@@ -108,7 +108,8 @@ async fn human_read_logs_summarizes_level_only_array_shape_with_canonical_label(
         .and(header("authorization", "Bearer test-token"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
             {
-                "level": "fatal",
+                "level": "critical",
+                "severity": "critical",
                 "message": "checkout failed",
                 "release": "checkout@1.2.3",
                 "environment": "production",
