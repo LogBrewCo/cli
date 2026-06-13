@@ -830,7 +830,7 @@ fn reject_unsupported_read_flags(
         }
         if unsupported_flags.contains(&flag) {
             return Err(CliError::UnsupportedFlag {
-                flag: flag.to_owned(),
+                flag: user_facing_read_flag(flag).to_owned(),
                 command,
                 next,
             });
@@ -871,7 +871,7 @@ fn read_value_canonical_flag(flag: &str) -> Option<&'static str> {
         "--since" => "--since",
         "--user" | "--distinct-id" => "--user",
         "--trace" | "--trace-id" => "--trace",
-        "--level" | "--severity" => "--level",
+        "--level" | "--severity" => "--severity",
         "--search" => "--search",
         "--project" | "--project-id" => "--project",
         "--release" => "--release",
@@ -881,6 +881,14 @@ fn read_value_canonical_flag(flag: &str) -> Option<&'static str> {
         _ => return None,
     };
     Some(canonical)
+}
+
+/// Returns the canonical flag name to show in read-filter recovery output.
+fn user_facing_read_flag(flag: &str) -> &str {
+    match flag {
+        "--level" => "--severity",
+        other => other,
+    }
 }
 
 /// Returns whether a supported read flag has a value that should be reported first.

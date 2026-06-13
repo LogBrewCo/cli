@@ -900,7 +900,28 @@ fn rejects_log_only_filters_on_issue_lists_with_command_help_next_step() {
     let body: serde_json::Value = serde_json::from_slice(output.as_slice()).expect("valid json");
     assert_eq!(body["ok"], false);
     assert_eq!(body["error"], "unsupported_flag");
-    assert_eq!(body["message"], "unsupported flag for read issues: --level");
+    assert_eq!(
+        body["message"],
+        "unsupported flag for read issues: --severity"
+    );
+    assert_eq!(body["next"], "run logbrew read issues --help");
+}
+
+#[test]
+fn rejects_canonical_severity_on_issue_lists_with_canonical_message() {
+    let error = parse_command(["logbrew", "issues", "--severity", "error", "--json"])
+        .expect_err("unsupported issue list filter fails");
+    let mut output = Vec::new();
+
+    write_cli_error(&error, true, &mut output).expect("error writes");
+
+    let body: serde_json::Value = serde_json::from_slice(output.as_slice()).expect("valid json");
+    assert_eq!(body["ok"], false);
+    assert_eq!(body["error"], "unsupported_flag");
+    assert_eq!(
+        body["message"],
+        "unsupported flag for read issues: --severity"
+    );
     assert_eq!(body["next"], "run logbrew read issues --help");
 }
 
@@ -929,7 +950,7 @@ fn rejects_list_filters_that_target_cannot_apply() {
         ),
         (
             &["logbrew", "issues", "--level", "panic", "--json"][..],
-            "unsupported flag for read issues: --level",
+            "unsupported flag for read issues: --severity",
             "run logbrew read issues --help",
         ),
         (
@@ -939,7 +960,7 @@ fn rejects_list_filters_that_target_cannot_apply() {
         ),
         (
             &["logbrew", "releases", "--level", "panic", "--json"][..],
-            "unsupported flag for read releases: --level",
+            "unsupported flag for read releases: --severity",
             "run logbrew read releases --help",
         ),
     ] {

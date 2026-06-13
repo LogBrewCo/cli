@@ -435,8 +435,9 @@ fn read_filter_spec(flag: &str) -> Option<ReadFilterSpec> {
         "--distinct-id" => ReadFilterSpec::new(ReadFilterKind::User, "--user", "--distinct-id"),
         "--trace" => ReadFilterSpec::new(ReadFilterKind::Trace, "--trace", "--trace"),
         "--trace-id" => ReadFilterSpec::new(ReadFilterKind::Trace, "--trace", "--trace-id"),
-        "--level" => ReadFilterSpec::new(ReadFilterKind::Level, "--level", "--level"),
-        "--severity" => ReadFilterSpec::new(ReadFilterKind::Level, "--level", "--severity"),
+        "--level" | "--severity" => {
+            ReadFilterSpec::new(ReadFilterKind::Level, "--severity", "--severity")
+        }
         "--search" => ReadFilterSpec::new(ReadFilterKind::Search, "--search", "--search"),
         "--project" => ReadFilterSpec::new(ReadFilterKind::Project, "--project", "--project"),
         "--project-id" => ReadFilterSpec::new(ReadFilterKind::Project, "--project", "--project-id"),
@@ -523,7 +524,7 @@ fn duplicate_flag_next(flag: &'static str) -> &'static str {
         "--since" => "use --since once",
         "--user" => "use --user once",
         "--trace" => "use --trace once",
-        "--level" => "use --severity or --level once",
+        "--severity" => "use --severity once",
         "--search" => "use --search once",
         "--project" => "use --project once",
         "--release" => "use --release once",
