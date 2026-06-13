@@ -9,6 +9,9 @@ This is the public LogBrew CLI repository. Everything committed here is public.
   secrets, or private backend implementation details.
 - Keep this repo CLI-only. Do not add backend, mobile app, SDK, infrastructure,
   deployment, backup, ClickHouse schema, or private ops work here.
+- Do not mirror SDK package surfaces in this repo. Language and framework SDK
+  packages stay owned by public `LogBrewCo/sdk`; this repo publishes only the
+  `logbrew` CLI binary and its install wrappers.
 - Before every commit, run `bash scripts/pre-commit.sh`. This intentionally
   runs `bash scripts/confidentiality-check.sh` first, then
   `bash scripts/check-all.sh`.

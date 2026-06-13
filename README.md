@@ -39,6 +39,12 @@ Release publishing is handled by GitHub Actions:
 - Package managers: crates.io and npm via trusted publishing/OIDC, and Homebrew
   via the `LogBrewCo/homebrew-tap` formula repository.
 
+The CLI package surface is intentionally separate from the language and
+framework SDK packages in `LogBrewCo/sdk`. SDK packages such as JavaScript
+framework integrations, Python framework middleware, Swift, .NET, Go, Java,
+Kotlin, Ruby, Rust SDK crates, and Unity packages remain SDK-owned. This repo
+only publishes the `logbrew` CLI binary and its install wrappers.
+
 Trusted publishing requires the npm package and crates.io crate to already
 exist, so brand-new package names need one manual first publish before CI release
 tags can publish future versions without long-lived registry tokens. Homebrew
