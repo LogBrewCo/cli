@@ -662,7 +662,7 @@ fn read_path(target: &ReadTarget, filters: &ReadPathFilters<'_>) -> String {
         ReadTarget::Logs => path_with_query(
             "/api/logs",
             &[
-                ("level", filters.level),
+                ("severity", filters.level),
                 ("search", filters.search),
                 ("since", filters.since),
                 ("trace_id", filters.trace),

@@ -91,10 +91,11 @@ fn log_help_advertises_unquoted_search_after_explicit_filters() {
     let text = help::help_text(HelpTopic::ReadLogs);
 
     assert!(text.contains("Recency counts are limit shortcuts, such as logbrew last 10 logs."));
-    assert!(text.contains("logbrew logs --level error checkout failed"));
     assert!(text.contains("logbrew logs --severity warning checkout failed"));
+    assert!(!text.contains("logbrew logs --level error checkout failed"));
     assert!(text.contains("Severity values are info, warning, error, and critical."));
     assert!(text.contains("Legacy severity aliases are accepted on input and normalized."));
+    assert!(text.contains("--level is accepted as a compatibility alias for --severity."));
     assert!(!text.contains("warn maps"));
     assert!(!text.contains("fatal maps"));
     assert!(!text.contains("debug"));
