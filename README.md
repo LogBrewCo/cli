@@ -82,7 +82,8 @@ Authentication uses either `LOGBREW_TOKEN` or the local token file created by
 For AI sessions, the default mode should be checking only when requested because
 it uses fewer AI tokens. `logbrew watch --json` opens a live WebSocket stream for
 the current session, and `logbrew watch --severity error,critical --json`
-filters live logs/issues client-side to actionable severities.
+filters live logs/issues client-side to actionable severities. The watch stream
+reconnects after transient disconnects with a fresh feed ticket and backoff.
 
 ## Development
 

@@ -37,6 +37,13 @@ use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::{Error as WebSocketError, Message};
 use version::execute_version;
 
+/// Initial delay before reconnecting a live watch stream.
+const WATCH_RECONNECT_INITIAL_DELAY: std::time::Duration = std::time::Duration::from_secs(1);
+/// Maximum delay before reconnecting a live watch stream.
+const WATCH_RECONNECT_MAX_DELAY: std::time::Duration = std::time::Duration::from_secs(30);
+/// Maximum jitter added to reconnect delays.
+const WATCH_RECONNECT_JITTER_MAX_MILLIS: u64 = 250;
+
 /// Accepted issue status values for generic recovery text.
 pub(crate) const ISSUE_STATUS_VALUES_NEXT_STEP: &str =
     "use one of unresolved/open, resolved/closed, ignored";
@@ -648,26 +655,124 @@ async fn execute_watch<W: std::io::Write>(
     }
 
     let credential = resolve_credential(env)?;
-    let ticket = request_feed_ticket(env, &credential).await?;
-    let live_url = feed_live_url(env.base_url.as_str(), ticket.as_str())?;
-    let (mut websocket, _) = connect_async(live_url.as_str())
-        .await
-        .map_err(map_websocket_connect_error)?;
-
-    while let Some(message) = websocket.next().await {
-        let message = message.map_err(map_websocket_stream_error)?;
-        match message {
-            Message::Text(text) => {
-                let event = parse_live_event(text.as_str())?;
-                if watch_event_matches(target, options, &event) {
-                    writeln!(output, "{event}")?;
-                }
+    let mut reconnect_backoff = WatchReconnectBackoff::default();
+    loop {
+        let ticket = match request_feed_ticket(env, &credential).await {
+            Ok(ticket) => ticket,
+            Err(error) if reconnect_backoff.connected_once() && !runtime_error_is_auth(&error) => {
+                tokio::time::sleep(reconnect_backoff.next_delay()).await;
+                continue;
             }
-            Message::Binary(_) | Message::Ping(_) | Message::Pong(_) | Message::Frame(_) => {}
-            Message::Close(_) => break,
+            Err(error) => return Err(error),
+        };
+        let live_url = feed_live_url(env.base_url.as_str(), ticket.as_str())?;
+        let (mut websocket, _) = match connect_async(live_url.as_str()).await {
+            Ok(connection) => connection,
+            Err(error)
+                if reconnect_backoff.connected_once() && !websocket_error_is_auth(&error) =>
+            {
+                tokio::time::sleep(reconnect_backoff.next_delay()).await;
+                continue;
+            }
+            Err(error) => return Err(map_websocket_connect_error(error)),
+        };
+        reconnect_backoff.mark_connected();
+
+        let mut emitted_before_disconnect = false;
+        loop {
+            let Some(message) = websocket.next().await else {
+                break;
+            };
+            let message = match message {
+                Ok(message) => message,
+                Err(error) if websocket_error_is_auth(&error) => {
+                    return Err(map_websocket_stream_error(error));
+                }
+                Err(_) => break,
+            };
+            match message {
+                Message::Text(text) => {
+                    let event = parse_live_event(text.as_str())?;
+                    if watch_event_matches(target, options, &event) {
+                        writeln!(output, "{event}")?;
+                    }
+                    emitted_before_disconnect = true;
+                }
+                Message::Binary(_) | Message::Ping(_) | Message::Pong(_) | Message::Frame(_) => {}
+                Message::Close(_) => return Ok(()),
+            }
+        }
+        if emitted_before_disconnect {
+            reconnect_backoff.reset();
+        }
+        tokio::time::sleep(reconnect_backoff.next_delay()).await;
+    }
+}
+
+/// Reconnect state for long-running live watch streams.
+#[derive(Debug, Default)]
+struct WatchReconnectBackoff {
+    /// Whether a live WebSocket connection has ever been established.
+    connected_once: bool,
+    /// Consecutive reconnect attempts since the last stable event.
+    attempts: u32,
+}
+
+impl WatchReconnectBackoff {
+    /// Returns whether the stream has connected at least once.
+    const fn connected_once(&self) -> bool {
+        self.connected_once
+    }
+
+    /// Records a successful WebSocket connection.
+    const fn mark_connected(&mut self) {
+        self.connected_once = true;
+    }
+
+    /// Resets retry delay after a stream successfully emits data.
+    const fn reset(&mut self) {
+        self.attempts = 0;
+    }
+
+    /// Returns the next capped exponential reconnect delay.
+    fn next_delay(&mut self) -> std::time::Duration {
+        let exponent = self.attempts.min(5);
+        let multiplier = 1_u64 << exponent;
+        self.attempts = self.attempts.saturating_add(1);
+        let base = WATCH_RECONNECT_INITIAL_DELAY
+            .as_secs()
+            .saturating_mul(multiplier)
+            .min(WATCH_RECONNECT_MAX_DELAY.as_secs());
+        let delay = std::time::Duration::from_secs(base) + watch_reconnect_jitter();
+        if delay > WATCH_RECONNECT_MAX_DELAY {
+            WATCH_RECONNECT_MAX_DELAY
+        } else {
+            delay
         }
     }
-    Ok(())
+}
+
+/// Returns small jitter for reconnect delays without adding a random dependency.
+fn watch_reconnect_jitter() -> std::time::Duration {
+    let Ok(elapsed) = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) else {
+        return std::time::Duration::ZERO;
+    };
+    std::time::Duration::from_millis(
+        u64::from(elapsed.subsec_millis()) % WATCH_RECONNECT_JITTER_MAX_MILLIS,
+    )
+}
+
+/// Returns whether a runtime error should stop watch reconnect attempts.
+const fn runtime_error_is_auth(error: &RuntimeError) -> bool {
+    matches!(
+        error,
+        RuntimeError::MissingToken | RuntimeError::Api { status: 401, .. }
+    )
+}
+
+/// Returns whether a WebSocket error is an auth failure.
+fn websocket_error_is_auth(error: &WebSocketError) -> bool {
+    matches!(error, WebSocketError::Http(response) if response.status().as_u16() == 401)
 }
 
 /// Requests a short-lived WebSocket feed ticket from the public API.

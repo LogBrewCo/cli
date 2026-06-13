@@ -174,6 +174,7 @@ fn watch_help_explains_websocket_ticket_flow() {
     assert!(text.contains("logbrew watch --severity error,critical --json"));
     assert!(text.contains("Aliases: tail, follow, and stream use the same live watch flow."));
     assert!(text.contains("Live watch uses a short-lived feed ticket and WebSocket stream."));
+    assert!(text.contains("Transient disconnects reconnect with a fresh ticket and backoff."));
 }
 
 #[test]
