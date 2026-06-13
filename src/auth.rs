@@ -5,6 +5,9 @@ use crate::{CliEnvironment, RuntimeError};
 /// Next step after status confirms both API reachability and local auth.
 const AUTHENTICATED_STATUS_NEXT: &str =
     "run logbrew releases or logbrew logs --release <release> --environment <environment>";
+/// Reason used when status advertises planned live watch modes before transport support lands.
+const LIVE_WATCH_UNAVAILABLE_REASON: &str =
+    "live watch is reserved until the stream transport is available";
 
 /// Redacted local authentication status for CLI diagnostics.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -76,7 +79,7 @@ pub(crate) fn write_status_success<W: std::io::Write>(
 ) -> Result<(), RuntimeError> {
     let auth_status = inspect_auth_snapshot(env)?;
     if json {
-        let response = serde_json::json!({
+        let mut response = serde_json::json!({
             "ok": true,
             "status": "reachable",
             "status_code": status_code,
@@ -86,13 +89,81 @@ pub(crate) fn write_status_success<W: std::io::Write>(
             "auth_source": auth_status.source,
             "next": auth_status.next,
         });
+        if auth_status.authenticated {
+            if let Some(object) = response.as_object_mut() {
+                drop(object.insert("agent_use".to_owned(), authenticated_agent_use()));
+            }
+        }
         writeln!(output, "{response}")?;
     } else {
         writeln!(output, "LogBrew API reachable.")?;
         writeln!(output, "API: {}", env.base_url)?;
         writeln!(output, "Auth: {}", auth_status.label)?;
+        if auth_status.authenticated {
+            write_authenticated_agent_use_prompt(output)?;
+        }
         writeln!(output, "Next: {}", auth_status.next)?;
     }
+    Ok(())
+}
+
+/// Agent-readable user choice prompt for authenticated status responses.
+fn authenticated_agent_use() -> serde_json::Value {
+    serde_json::json!({
+        "prompt": "How should your AI use LogBrew?",
+        "default": "on_request",
+        "options": [
+            {
+                "id": "on_request",
+                "label": "Check only when requested",
+                "token_use": "lower",
+                "available": true,
+                "description": "Your AI runs LogBrew commands when you ask."
+            },
+            {
+                "id": "keep_watching",
+                "label": "Keep watching this session",
+                "token_use": "higher",
+                "available": false,
+                "description": "Your AI watches new events/logs until stopped.",
+                "reason": LIVE_WATCH_UNAVAILABLE_REASON
+            },
+            {
+                "id": "watch_errors_critical",
+                "label": "Watch only errors and critical issues",
+                "token_use": "moderate",
+                "available": false,
+                "description": "Your AI ignores lower-severity logs/events.",
+                "reason": LIVE_WATCH_UNAVAILABLE_REASON
+            }
+        ]
+    })
+}
+
+/// Writes the authenticated human prompt without implying live watch is ready.
+fn write_authenticated_agent_use_prompt<W: std::io::Write>(output: &mut W) -> std::io::Result<()> {
+    writeln!(output, "LogBrew is connected. How should your AI use it?")?;
+    writeln!(output)?;
+    writeln!(output, "1. Check only when requested")?;
+    writeln!(
+        output,
+        "   Lower token use. Your AI runs LogBrew commands when you ask."
+    )?;
+    writeln!(output)?;
+    writeln!(output, "2. Keep watching this session")?;
+    writeln!(
+        output,
+        "   Higher token use. Your AI watches new events/logs until stopped. Not available until \
+         live watch is ready."
+    )?;
+    writeln!(output)?;
+    writeln!(output, "3. Watch only errors and critical issues")?;
+    writeln!(
+        output,
+        "   Moderate token use. Your AI ignores lower-severity logs/events. Not available until \
+         live watch is ready."
+    )?;
+    writeln!(output)?;
     Ok(())
 }
 
