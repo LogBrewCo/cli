@@ -293,6 +293,7 @@ Usage:
 
 Aliases: tail, follow, and stream use the same live watch flow.
 Live watch uses a short-lived feed ticket and WebSocket stream.
+Transient disconnects reconnect with a fresh ticket and backoff.
 Server-side live filters are not sent yet; severity filtering is applied client-side.";
 
 /// Explain command help text.

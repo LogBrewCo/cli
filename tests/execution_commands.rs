@@ -382,6 +382,66 @@ async fn watch_json_filters_error_and_critical_events_client_side() {
 }
 
 #[tokio::test]
+async fn watch_json_reconnects_with_fresh_ticket_after_transient_disconnect() {
+    let sessions = vec![
+        FeedSession {
+            ticket: "first ticket",
+            messages: vec![
+                serde_json::json!({
+                    "type": "native_log",
+                    "data": {
+                        "id": "log_before_disconnect",
+                        "level": "error",
+                        "severity": "error",
+                        "message": "first connection"
+                    }
+                })
+                .to_string(),
+            ],
+            close: FeedClose::Drop,
+        },
+        FeedSession {
+            ticket: "second ticket",
+            messages: vec![
+                serde_json::json!({
+                    "type": "native_log",
+                    "data": {
+                        "id": "log_after_reconnect",
+                        "level": "critical",
+                        "severity": "critical",
+                        "message": "second connection"
+                    }
+                })
+                .to_string(),
+            ],
+            close: FeedClose::Clean,
+        },
+    ];
+    let (base_url, server) = spawn_feed_server_sessions(sessions).await;
+    let command = parse_command(["logbrew", "watch", "logs", "--json"]).expect("command parses");
+    let env = CliEnvironment {
+        base_url,
+        token: Some("fixture-token".to_owned()),
+        home: Some(std::env::temp_dir().join("logbrew-watch-reconnect-test")),
+        cwd: None,
+    };
+    let mut output = Vec::new();
+
+    execute_command(&command, &env, &mut output)
+        .await
+        .expect("watch reconnect succeeds");
+    server.await.expect("feed server task succeeds");
+
+    let text = String::from_utf8(output).expect("utf8 output");
+    let lines = text.lines().collect::<Vec<_>>();
+    assert_eq!(lines.len(), 2);
+    assert!(lines[0].contains("log_before_disconnect"));
+    assert!(lines[1].contains("log_after_reconnect"));
+    assert!(!text.contains("first ticket"));
+    assert!(!text.contains("second ticket"));
+}
+
+#[tokio::test]
 async fn watch_human_requires_json_for_live_stream() {
     let command = parse_command(["logbrew", "follow", "events"]).expect("command parses");
     assert_eq!(
@@ -457,6 +517,70 @@ async fn spawn_feed_server(
                 .expect("send websocket message");
         }
         websocket.close(None).await.expect("close websocket");
+    });
+    (format!("http://{address}"), server)
+}
+
+struct FeedSession {
+    ticket: &'static str,
+    messages: Vec<String>,
+    close: FeedClose,
+}
+
+#[derive(Clone, Copy)]
+enum FeedClose {
+    Clean,
+    Drop,
+}
+
+async fn spawn_feed_server_sessions(
+    sessions: Vec<FeedSession>,
+) -> (String, tokio::task::JoinHandle<()>) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind feed server");
+    let address = listener.local_addr().expect("local feed server address");
+    let server = tokio::spawn(async move {
+        for session in sessions {
+            let (mut ticket_stream, _) = listener.accept().await.expect("ticket connection");
+            let request = read_http_request(&mut ticket_stream).await;
+            let lower_request = request.to_ascii_lowercase();
+            assert!(request.starts_with("POST /api/feed/ticket "));
+            assert!(lower_request.contains("authorization: bearer fixture-token"));
+            let body = serde_json::json!({ "ticket": session.ticket }).to_string();
+            let response = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            ticket_stream
+                .write_all(response.as_bytes())
+                .await
+                .expect("write ticket response");
+
+            let expected_ticket_query = format!("ticket={}", percent_encode(session.ticket));
+            let (live_stream, _) = listener.accept().await.expect("websocket connection");
+            let callback =
+                |request: &tokio_tungstenite::tungstenite::handshake::server::Request,
+                 response: tokio_tungstenite::tungstenite::handshake::server::Response| {
+                    assert_eq!(request.uri().path(), "/api/feed/live");
+                    assert_eq!(request.uri().query(), Some(expected_ticket_query.as_str()));
+                    Ok(response)
+                };
+            let mut websocket = accept_hdr_async(live_stream, callback)
+                .await
+                .expect("accept websocket");
+            for message in session.messages {
+                websocket
+                    .send(Message::Text(message.into()))
+                    .await
+                    .expect("send websocket message");
+            }
+            match session.close {
+                FeedClose::Clean => websocket.close(None).await.expect("close websocket"),
+                FeedClose::Drop => drop(websocket),
+            }
+        }
     });
     (format!("http://{address}"), server)
 }
