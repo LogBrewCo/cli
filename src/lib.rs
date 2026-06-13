@@ -238,7 +238,7 @@ impl ReadOptions {
             (self.since.is_some(), "--since"),
             (self.user.is_some(), "--user"),
             (self.trace.is_some(), "--trace"),
-            (self.level.is_some(), "--level"),
+            (self.level.is_some(), "--severity"),
             (self.search.is_some(), "--search"),
             (self.status.is_some(), "--status"),
             (self.limit.is_some(), "--limit"),
@@ -253,7 +253,7 @@ impl ReadOptions {
             (self.since.is_some(), "--since"),
             (self.user.is_some(), "--user"),
             (self.trace.is_some(), "--trace"),
-            (self.level.is_some(), "--level"),
+            (self.level.is_some(), "--severity"),
             (self.search.is_some(), "--search"),
             (self.project.is_some(), "--project"),
             (self.release.is_some(), "--release"),
@@ -281,7 +281,7 @@ impl ReadOptions {
             (self.since.is_some(), "--since"),
             (self.user.is_some(), "--user"),
             (self.trace.is_some(), "--trace"),
-            (self.level.is_some(), "--level"),
+            (self.level.is_some(), "--severity"),
             (self.search.is_some(), "--search"),
         ])
     }
@@ -291,7 +291,7 @@ impl ReadOptions {
     pub(crate) fn first_action_unsupported_flag(&self) -> Option<&'static str> {
         first_present_flag([
             (self.trace.is_some(), "--trace"),
-            (self.level.is_some(), "--level"),
+            (self.level.is_some(), "--severity"),
             (self.search.is_some(), "--search"),
             (self.status.is_some(), "--status"),
         ])
@@ -305,7 +305,7 @@ impl ReadOptions {
             (self.since.is_some(), "--since"),
             (self.user.is_some(), "--user"),
             (self.trace.is_some(), "--trace"),
-            (self.level.is_some(), "--level"),
+            (self.level.is_some(), "--severity"),
             (self.search.is_some(), "--search"),
             (self.status.is_some(), "--status"),
         ])
