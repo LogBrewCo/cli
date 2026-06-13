@@ -275,7 +275,7 @@ fn keeps_invalid_value_recovery_before_later_unsupported_filter() {
             ][..],
             "unknown_log_level",
             "unknown log level: panic",
-            "use one of info, warning, error, critical; aliases: trace, debug, warn, fatal",
+            "use one of info, warning, error, critical",
         ),
         (
             &[
@@ -984,10 +984,7 @@ fn rejects_unknown_log_level_with_agent_next_step() {
     assert_eq!(body["ok"], false);
     assert_eq!(body["error"], "unknown_log_level");
     assert_eq!(body["message"], "unknown log level: urgent");
-    assert_eq!(
-        body["next"],
-        "use one of info, warning, error, critical; aliases: trace, debug, warn, fatal"
-    );
+    assert_eq!(body["next"], "use one of info, warning, error, critical");
 }
 
 #[test]
@@ -1000,8 +997,7 @@ fn rejects_unknown_log_level_with_human_next_step() {
     let text = String::from_utf8(output).expect("utf8 output");
     assert_eq!(
         text,
-        "unknown log level: panic\nNext: use one of info, warning, error, critical; aliases: \
-         trace, debug, warn, fatal\n"
+        "unknown log level: panic\nNext: use one of info, warning, error, critical\n"
     );
 }
 

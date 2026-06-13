@@ -1153,14 +1153,23 @@ fn normalizes_human_log_level_aliases() {
 }
 
 #[test]
-fn accepts_severity_filter_alias_with_canonical_values() {
-    let command = parse_command(["logbrew", "logs", "--severity", "fatal", "--json"])
-        .expect("command parses");
+fn accepts_legacy_log_level_alias_inputs_as_canonical_filters() {
+    for (alias, canonical) in [
+        ("trace", "info"),
+        ("debug", "info"),
+        ("information", "info"),
+        ("warn", "warning"),
+        ("err", "error"),
+        ("fatal", "critical"),
+    ] {
+        let command = parse_command(["logbrew", "logs", "--severity", alias, "--json"])
+            .expect("command parses");
 
-    assert_eq!(
-        command.http_path().expect("read logs has endpoint"),
-        "/api/logs?level=critical"
-    );
+        assert_eq!(
+            command.http_path().expect("read logs has endpoint"),
+            format!("/api/logs?level={canonical}")
+        );
+    }
 }
 
 #[test]

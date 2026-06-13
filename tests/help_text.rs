@@ -94,6 +94,10 @@ fn log_help_advertises_unquoted_search_after_explicit_filters() {
     assert!(text.contains("logbrew logs --level error checkout failed"));
     assert!(text.contains("logbrew logs --severity warning checkout failed"));
     assert!(text.contains("Severity values are info, warning, error, and critical."));
+    assert!(text.contains("Legacy severity aliases are accepted on input and normalized."));
+    assert!(!text.contains("warn maps"));
+    assert!(!text.contains("fatal maps"));
+    assert!(!text.contains("debug"));
     assert!(text.contains("logbrew logs --search checkout failed"));
     assert!(text.contains("logbrew logs -- --timeout --json"));
 }
