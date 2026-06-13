@@ -1,8 +1,8 @@
 //! CLI real-user shortcut tests.
 
 use logbrew_cli::{
-    CliError, Command, ExplainTarget, ReadOptions, ReadTarget, SetTarget, WatchTarget,
-    parse_command,
+    CliError, Command, ExplainTarget, ReadOptions, ReadTarget, SetTarget, WatchOptions,
+    WatchTarget, parse_command,
 };
 
 #[test]
@@ -902,7 +902,7 @@ fn parses_live_reading_verbs_as_watch_shortcuts() {
         ),
         (
             &["logbrew", "stream", "events", "--json"],
-            WatchTarget::Actions,
+            WatchTarget::All,
             true,
         ),
         (
@@ -917,6 +917,7 @@ fn parses_live_reading_verbs_as_watch_shortcuts() {
             command,
             Command::Watch {
                 target: expected_target,
+                options: WatchOptions::default(),
                 json: expected_json
             }
         );

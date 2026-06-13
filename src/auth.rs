@@ -5,10 +5,6 @@ use crate::{CliEnvironment, RuntimeError};
 /// Next step after status confirms both API reachability and local auth.
 const AUTHENTICATED_STATUS_NEXT: &str =
     "run logbrew releases or logbrew logs --release <release> --environment <environment>";
-/// Reason used when status advertises planned live watch modes before transport support lands.
-const LIVE_WATCH_UNAVAILABLE_REASON: &str =
-    "live watch is reserved until the stream transport is available";
-
 /// Redacted local authentication status for CLI diagnostics.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct AuthSnapshot {
@@ -124,17 +120,17 @@ fn authenticated_agent_use() -> serde_json::Value {
                 "id": "keep_watching",
                 "label": "Keep watching this session",
                 "token_use": "higher",
-                "available": false,
+                "available": true,
                 "description": "Your AI watches new events/logs until stopped.",
-                "reason": LIVE_WATCH_UNAVAILABLE_REASON
+                "command": "logbrew watch --json"
             },
             {
                 "id": "watch_errors_critical",
                 "label": "Watch only errors and critical issues",
                 "token_use": "moderate",
-                "available": false,
+                "available": true,
                 "description": "Your AI ignores lower-severity logs/events.",
-                "reason": LIVE_WATCH_UNAVAILABLE_REASON
+                "command": "logbrew watch --severity error,critical --json"
             }
         ]
     })
@@ -153,15 +149,18 @@ fn write_authenticated_agent_use_prompt<W: std::io::Write>(output: &mut W) -> st
     writeln!(output, "2. Keep watching this session")?;
     writeln!(
         output,
-        "   Higher token use. Your AI watches new events/logs until stopped. Not available until \
-         live watch is ready."
+        "   Higher token use. Your AI watches new events/logs until stopped."
     )?;
+    writeln!(output, "   Command: logbrew watch --json")?;
     writeln!(output)?;
     writeln!(output, "3. Watch only errors and critical issues")?;
     writeln!(
         output,
-        "   Moderate token use. Your AI ignores lower-severity logs/events. Not available until \
-         live watch is ready."
+        "   Moderate token use. Your AI ignores lower-severity logs/events."
+    )?;
+    writeln!(
+        output,
+        "   Command: logbrew watch --severity error,critical --json"
     )?;
     writeln!(output)?;
     Ok(())

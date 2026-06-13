@@ -166,14 +166,14 @@ fn login_help_explains_json_handoff_without_browser() {
 }
 
 #[test]
-fn watch_help_explains_reserved_state_and_fallback() {
+fn watch_help_explains_websocket_ticket_flow() {
     let text = help::help_text(HelpTopic::Watch);
 
-    assert!(text.contains("logbrew watch action [--json]"));
-    assert!(text.contains("logbrew watch events [--json]"));
-    assert!(text.contains("Aliases: tail, follow, and stream use the same reserved watch flow."));
-    assert!(text.contains("watch is reserved for the live stream transport"));
-    assert!(text.contains("Use logbrew logs or logbrew actions for historical data until then."));
+    assert!(text.contains("logbrew watch --json"));
+    assert!(text.contains("logbrew watch issues [--json]"));
+    assert!(text.contains("logbrew watch --severity error,critical --json"));
+    assert!(text.contains("Aliases: tail, follow, and stream use the same live watch flow."));
+    assert!(text.contains("Live watch uses a short-lived feed ticket and WebSocket stream."));
 }
 
 #[test]

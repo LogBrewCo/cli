@@ -53,7 +53,7 @@ const READ_ACTIONS_NEXT_STEP: &str = "run logbrew read actions --help";
 /// Help for release list reads.
 const READ_RELEASES_NEXT_STEP: &str = "run logbrew read releases --help";
 /// Valid resources for live watch.
-const WATCH_RESOURCE_NEXT_STEP: &str = "choose logs or actions";
+const WATCH_RESOURCE_NEXT_STEP: &str = "choose logs, issues, actions, or omit a resource";
 /// Valid resources for explain.
 const EXPLAIN_RESOURCE_NEXT_STEP: &str = "choose issue or trace";
 /// Valid resources for state mutation.

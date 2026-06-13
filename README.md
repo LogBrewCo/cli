@@ -69,6 +69,8 @@ logbrew login
 logbrew logs --release checkout@1 --environment production
 logbrew issues open --json
 logbrew explain issue issue_123
+logbrew watch --json
+logbrew watch --severity error,critical --json
 ```
 
 The default API URL is `https://api.logbrew.co`. Override it with
@@ -76,6 +78,11 @@ The default API URL is `https://api.logbrew.co`. Override it with
 
 Authentication uses either `LOGBREW_TOKEN` or the local token file created by
 `logbrew login`. CLI output must never print token material.
+
+For AI sessions, the default mode should be checking only when requested because
+it uses fewer AI tokens. `logbrew watch --json` opens a live WebSocket stream for
+the current session, and `logbrew watch --severity error,critical --json`
+filters live logs/issues client-side to actionable severities.
 
 ## Development
 
