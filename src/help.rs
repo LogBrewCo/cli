@@ -285,14 +285,15 @@ Reads one grouped issue with status, release, environment, and occurrence counts
 /// Watch command help text.
 const WATCH_HELP: &str = "\
 Usage:
+  logbrew watch --json
   logbrew watch logs [--json]
+  logbrew watch issues [--json]
   logbrew watch actions [--json]
-  logbrew watch action [--json]
-  logbrew watch events [--json]
+  logbrew watch --severity error,critical --json
 
-Aliases: tail, follow, and stream use the same reserved watch flow.
-watch is reserved for the live stream transport.
-Use logbrew logs or logbrew actions for historical data until then.";
+Aliases: tail, follow, and stream use the same live watch flow.
+Live watch uses a short-lived feed ticket and WebSocket stream.
+Server-side live filters are not sent yet; severity filtering is applied client-side.";
 
 /// Explain command help text.
 const EXPLAIN_HELP: &str = "\

@@ -32,8 +32,6 @@ pub(crate) enum FlagScope {
     Version,
     /// Historical read commands.
     Read,
-    /// Live watch command.
-    Watch,
     /// Explanation command.
     Explain,
     /// State mutation command.
@@ -68,7 +66,6 @@ impl FlagScope {
             Self::Status => "status",
             Self::Version => "version",
             Self::Read => "read",
-            Self::Watch => "watch",
             Self::Explain => "explain",
             Self::Set => "set",
             Self::Resolve => "resolve",
@@ -92,7 +89,6 @@ impl FlagScope {
             Self::Status => "run logbrew status --help",
             Self::Version => "run logbrew version --help",
             Self::Read => "run logbrew read --help",
-            Self::Watch => "run logbrew watch --help",
             Self::Explain => "run logbrew explain --help",
             Self::Set => "run logbrew set --help",
             Self::Resolve => "run logbrew resolve --help",
@@ -138,7 +134,6 @@ impl FlagScope {
             (Self::Setup, _) => "run logbrew setup --help",
             (Self::Status, _) => "run logbrew status --help",
             (Self::Version, _) => "run logbrew version --help",
-            (Self::Watch, _) => "run logbrew watch --help",
             (Self::Explain, _) => "run logbrew explain --help",
             (Self::Set, _) => "run logbrew set --help",
             (Self::Resolve, _) => "run logbrew resolve --help",

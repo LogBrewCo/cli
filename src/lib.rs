@@ -28,10 +28,13 @@ pub mod version;
 
 use auth::{open_browser, resolve_credential, write_logout_result};
 pub use error::{CliError, RuntimeError, write_cli_error, write_runtime_error};
+use futures_util::StreamExt as _;
 pub use parser::parse_command;
 use render::write_api_success;
 use setup::write_setup_plan;
 use status::execute_status;
+use tokio_tungstenite::connect_async;
+use tokio_tungstenite::tungstenite::{Error as WebSocketError, Message};
 use version::execute_version;
 
 /// Accepted issue status values for generic recovery text.
@@ -98,6 +101,8 @@ pub enum Command {
     Watch {
         /// Resource to watch.
         target: WatchTarget,
+        /// Live watch filters applied client-side.
+        options: WatchOptions,
         /// Emit machine-readable JSON.
         json: bool,
     },
@@ -322,10 +327,21 @@ fn first_present_flag<const N: usize>(flags: [(bool, &'static str); N]) -> Optio
 /// Live stream target for `watch`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WatchTarget {
+    /// All supported live event types.
+    All,
     /// Structured logs.
     Logs,
+    /// Grouped issues.
+    Issues,
     /// Product actions.
     Actions,
+}
+
+/// Client-side filters for live watch commands.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct WatchOptions {
+    /// Canonical severity filters for logs and issues.
+    pub severity: Vec<String>,
 }
 
 /// Context target for `explain`.
@@ -494,7 +510,11 @@ pub async fn execute_command<W: std::io::Write>(
         Command::Read { .. } | Command::Explain { .. } | Command::Set { .. } => {
             execute_http(command, env, output).await
         }
-        Command::Watch { target, .. } => execute_watch_placeholder(*target),
+        Command::Watch {
+            target,
+            options,
+            json,
+        } => execute_watch(env, *target, options, *json, output).await,
     }
 }
 
@@ -612,21 +632,216 @@ async fn execute_http<W: std::io::Write>(
     Ok(())
 }
 
-/// Returns a stable unavailable error for reserved watch commands.
-const fn execute_watch_placeholder(target: WatchTarget) -> Result<(), RuntimeError> {
-    Err(RuntimeError::Unavailable {
-        message: "watch is reserved for the live stream transport",
-        next: watch_next_step(target),
+/// Executes the public live WebSocket watch flow.
+async fn execute_watch<W: std::io::Write>(
+    env: &CliEnvironment,
+    target: WatchTarget,
+    options: &WatchOptions,
+    json: bool,
+    output: &mut W,
+) -> Result<(), RuntimeError> {
+    if !json {
+        return Err(RuntimeError::Unavailable {
+            message: "watch streams JSON for agents",
+            next: "run logbrew watch --json",
+        });
+    }
+
+    let credential = resolve_credential(env)?;
+    let ticket = request_feed_ticket(env, &credential).await?;
+    let live_url = feed_live_url(env.base_url.as_str(), ticket.as_str())?;
+    let (mut websocket, _) = connect_async(live_url.as_str())
+        .await
+        .map_err(map_websocket_connect_error)?;
+
+    while let Some(message) = websocket.next().await {
+        let message = message.map_err(map_websocket_stream_error)?;
+        match message {
+            Message::Text(text) => {
+                let event = parse_live_event(text.as_str())?;
+                if watch_event_matches(target, options, &event) {
+                    writeln!(output, "{event}")?;
+                }
+            }
+            Message::Binary(_) | Message::Ping(_) | Message::Pong(_) | Message::Frame(_) => {}
+            Message::Close(_) => break,
+        }
+    }
+    Ok(())
+}
+
+/// Requests a short-lived WebSocket feed ticket from the public API.
+async fn request_feed_ticket(
+    env: &CliEnvironment,
+    credential: &auth::AuthCredential,
+) -> Result<String, RuntimeError> {
+    let url = format!("{}/api/feed/ticket", env.base_url.trim_end_matches('/'));
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .build()?;
+    let response = client
+        .post(url)
+        .bearer_auth(credential.token.as_str())
+        .send()
+        .await?;
+    let status = response.status();
+    let body = response.text().await?;
+    if !status.is_success() {
+        return Err(RuntimeError::Api {
+            status: status.as_u16(),
+            body,
+            auth_source: credential.source,
+            auth_label: credential.label,
+        });
+    }
+
+    let value = serde_json::from_str::<serde_json::Value>(body.as_str()).map_err(|_| {
+        RuntimeError::Unavailable {
+            message: "feed ticket response was not valid JSON",
+            next: "retry logbrew watch or run logbrew status",
+        }
+    })?;
+    value
+        .get("ticket")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|ticket| !ticket.is_empty())
+        .map(ToOwned::to_owned)
+        .ok_or(RuntimeError::Unavailable {
+            message: "feed ticket response did not include a ticket",
+            next: "retry logbrew watch or run logbrew status",
+        })
+}
+
+/// Builds the WebSocket live feed URL without exposing the opaque ticket elsewhere.
+fn feed_live_url(base_url: &str, ticket: &str) -> Result<String, RuntimeError> {
+    let trimmed = base_url.trim_end_matches('/');
+    let (scheme, rest) = websocket_base_parts(trimmed).ok_or(RuntimeError::Unavailable {
+        message: "LOGBREW_API_URL must start with http:// or https://",
+        next: "check LOGBREW_API_URL or run logbrew status",
+    })?;
+    Ok(format!(
+        "{scheme}://{rest}/api/feed/live?ticket={}",
+        encode_component(ticket)
+    ))
+}
+
+/// Converts an HTTP API base URL into WebSocket scheme and authority/path base parts.
+fn websocket_base_parts(base_url: &str) -> Option<(&'static str, &str)> {
+    base_url
+        .strip_prefix("https://")
+        .map(|rest| ("wss", rest))
+        .or_else(|| base_url.strip_prefix("http://").map(|rest| ("ws", rest)))
+}
+
+/// Parses one backend live event object.
+fn parse_live_event(text: &str) -> Result<serde_json::Value, RuntimeError> {
+    serde_json::from_str::<serde_json::Value>(text).map_err(|_| RuntimeError::Unavailable {
+        message: "live watch event was not valid JSON",
+        next: "retry logbrew watch or check LOGBREW_API_URL",
     })
 }
 
-/// Returns the historical command fallback while live watch is reserved.
-const fn watch_next_step(target: WatchTarget) -> &'static str {
+/// Returns whether an event should be emitted for the requested watch target and filters.
+fn watch_event_matches(
+    target: WatchTarget,
+    options: &WatchOptions,
+    event: &serde_json::Value,
+) -> bool {
+    target_matches_event(target, event) && severity_matches(options, event)
+}
+
+/// Returns whether the event type belongs to the selected target.
+fn target_matches_event(target: WatchTarget, event: &serde_json::Value) -> bool {
+    let event_type = event
+        .get("type")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
     match target {
-        WatchTarget::Logs => "use logbrew logs for historical data until live watch is available",
-        WatchTarget::Actions => {
-            "use logbrew actions for historical data until live watch is available"
+        WatchTarget::All => true,
+        WatchTarget::Logs => event_type == "native_log",
+        WatchTarget::Issues => event_type == "native_issue",
+        WatchTarget::Actions => event_type == "native_action",
+    }
+}
+
+/// Applies client-side severity filters to log and issue events.
+fn severity_matches(options: &WatchOptions, event: &serde_json::Value) -> bool {
+    if options.severity.is_empty() {
+        return true;
+    }
+    let Some(severity) = event
+        .get("data")
+        .and_then(|data| data.get("severity").or_else(|| data.get("level")))
+        .and_then(serde_json::Value::as_str)
+    else {
+        return false;
+    };
+    options
+        .severity
+        .iter()
+        .any(|allowed| allowed.as_str() == severity)
+}
+
+/// Maps a WebSocket connection failure to a token-safe runtime error.
+fn map_websocket_connect_error(error: WebSocketError) -> RuntimeError {
+    match error {
+        WebSocketError::Http(response) if response.status().as_u16() == 401 => {
+            RuntimeError::Unavailable {
+                message: "live watch ticket was rejected",
+                next: "run logbrew login",
+            }
         }
+        WebSocketError::Http(_) => RuntimeError::Unavailable {
+            message: "live watch websocket upgrade failed",
+            next: "retry logbrew watch or check LOGBREW_API_URL",
+        },
+        WebSocketError::ConnectionClosed
+        | WebSocketError::AlreadyClosed
+        | WebSocketError::Io(_)
+        | WebSocketError::Tls(_)
+        | WebSocketError::Capacity(_)
+        | WebSocketError::Protocol(_)
+        | WebSocketError::WriteBufferFull(_)
+        | WebSocketError::Utf8(_)
+        | WebSocketError::AttackAttempt
+        | WebSocketError::Url(_)
+        | WebSocketError::HttpFormat(_) => RuntimeError::Unavailable {
+            message: "live watch websocket failed",
+            next: "retry logbrew watch or check LOGBREW_API_URL",
+        },
+    }
+}
+
+/// Maps an established WebSocket stream failure to a token-safe runtime error.
+fn map_websocket_stream_error(error: WebSocketError) -> RuntimeError {
+    match error {
+        WebSocketError::ConnectionClosed | WebSocketError::AlreadyClosed => {
+            RuntimeError::Unavailable {
+                message: "live watch websocket closed",
+                next: "retry logbrew watch",
+            }
+        }
+        WebSocketError::Http(response) if response.status().as_u16() == 401 => {
+            RuntimeError::Unavailable {
+                message: "live watch ticket was rejected",
+                next: "run logbrew login",
+            }
+        }
+        WebSocketError::Http(_)
+        | WebSocketError::Io(_)
+        | WebSocketError::Tls(_)
+        | WebSocketError::Capacity(_)
+        | WebSocketError::Protocol(_)
+        | WebSocketError::WriteBufferFull(_)
+        | WebSocketError::Utf8(_)
+        | WebSocketError::AttackAttempt
+        | WebSocketError::Url(_)
+        | WebSocketError::HttpFormat(_) => RuntimeError::Unavailable {
+            message: "live watch websocket failed",
+            next: "retry logbrew watch or check LOGBREW_API_URL",
+        },
     }
 }
 

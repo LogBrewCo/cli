@@ -75,7 +75,7 @@ fn rejects_unknown_resources_with_command_specific_next_steps() {
         (
             &["logbrew", "watch", "traces", "--json"][..],
             "unknown resource: traces",
-            "choose logs or actions",
+            "choose logs, issues, actions, or omit a resource",
         ),
         (
             &["logbrew", "explain", "logs", "--json"][..],
@@ -632,10 +632,6 @@ fn rejects_missing_resources_with_command_specific_next_steps() {
         (
             &["logbrew", "read", "--json"][..],
             "choose one of logs, issues, actions, releases, trace, issue",
-        ),
-        (
-            &["logbrew", "watch", "--json"][..],
-            "choose logs or actions",
         ),
         (
             &["logbrew", "explain", "--json"][..],

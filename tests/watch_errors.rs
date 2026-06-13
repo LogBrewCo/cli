@@ -1,11 +1,11 @@
-//! Reserved watch parse recovery tests.
+//! Live watch parse recovery tests.
 
 use logbrew_cli::{parse_command, write_cli_error};
 
 #[test]
 fn recovers_watch_positionals_to_historical_reads() {
-    let action_error = parse_command(["logbrew", "watch", "events", "checkout_failed", "--json"])
-        .expect_err("reserved watch action name fails");
+    let action_error = parse_command(["logbrew", "watch", "actions", "checkout_failed", "--json"])
+        .expect_err("watch action name fails");
     let mut action_output = Vec::new();
 
     write_cli_error(&action_error, true, &mut action_output).expect("error writes");
@@ -20,11 +20,12 @@ fn recovers_watch_positionals_to_historical_reads() {
     );
     assert_eq!(
         action_body["next"],
-        "use logbrew actions --name <name> for historical data until live watch is available"
+        "use logbrew actions --name <name> for historical data, or logbrew watch actions --json \
+         for live actions"
     );
 
-    let log_error = parse_command(["logbrew", "tail", "logs", "error"])
-        .expect_err("reserved tail search fails");
+    let log_error =
+        parse_command(["logbrew", "tail", "logs", "error"]).expect_err("watch log search fails");
     let mut log_output = Vec::new();
 
     write_cli_error(&log_error, false, &mut log_output).expect("error writes");
@@ -33,7 +34,7 @@ fn recovers_watch_positionals_to_historical_reads() {
     assert_eq!(
         log_text,
         "unexpected argument for watch: error\nNext: use logbrew logs --severity <severity> or \
-         --search <text> for historical data until live watch is available\n"
+         --search <text> for historical data, or logbrew watch logs --json for live logs\n"
     );
 }
 
@@ -47,7 +48,7 @@ fn recovers_watch_read_filters_to_historical_reads() {
         "checkout_failed",
         "--json",
     ])
-    .expect_err("reserved watch action filter fails");
+    .expect_err("watch action filter fails");
     let mut action_output = Vec::new();
 
     write_cli_error(&action_error, true, &mut action_output).expect("error writes");
@@ -59,11 +60,12 @@ fn recovers_watch_read_filters_to_historical_reads() {
     assert_eq!(action_body["message"], "unsupported flag for watch: --name");
     assert_eq!(
         action_body["next"],
-        "use logbrew actions with filters for historical data until live watch is available"
+        "use logbrew actions with filters for historical data, or logbrew watch actions --json \
+         for live actions"
     );
 
-    let log_error = parse_command(["logbrew", "watch", "logs", "--level", "error"])
-        .expect_err("reserved watch log filter fails");
+    let log_error = parse_command(["logbrew", "watch", "logs", "--search", "checkout"])
+        .expect_err("watch log search filter fails");
     let mut log_output = Vec::new();
 
     write_cli_error(&log_error, false, &mut log_output).expect("error writes");
@@ -71,20 +73,23 @@ fn recovers_watch_read_filters_to_historical_reads() {
     let log_text = String::from_utf8(log_output).expect("utf8 output");
     assert_eq!(
         log_text,
-        "unsupported flag for watch: --level\nNext: use logbrew logs with filters for historical \
-         data until live watch is available\n"
+        "unsupported flag for watch: --search\nNext: use logbrew logs with filters for historical \
+         data, or logbrew watch logs --severity <severity> --json for live severity filtering\n"
     );
 
-    let severity_error = parse_command(["logbrew", "watch", "logs", "--severity", "warning"])
-        .expect_err("reserved watch severity filter fails");
-    let mut severity_output = Vec::new();
-
-    write_cli_error(&severity_error, false, &mut severity_output).expect("error writes");
-
-    let severity_text = String::from_utf8(severity_output).expect("utf8 output");
-    assert_eq!(
-        severity_text,
-        "unsupported flag for watch: --severity\nNext: use logbrew logs with filters for \
-         historical data until live watch is available\n"
+    drop(
+        parse_command(["logbrew", "watch", "logs", "--level", "error", "--json"])
+            .expect("watch level alias parses"),
+    );
+    drop(
+        parse_command([
+            "logbrew",
+            "watch",
+            "logs",
+            "--severity",
+            "warning",
+            "--json",
+        ])
+        .expect("watch severity filter parses"),
     );
 }
