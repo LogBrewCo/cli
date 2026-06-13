@@ -34,6 +34,7 @@ async fn status_json_reports_api_and_missing_auth_for_agents() {
     assert_eq!(body["authenticated"], false);
     assert_eq!(body["auth_source"], "missing");
     assert_eq!(body["next"], "run logbrew login");
+    assert!(body.get("agent_use").is_none());
 }
 
 #[tokio::test]
@@ -63,6 +64,43 @@ async fn status_json_reports_env_auth_without_exposing_token() {
     assert_eq!(
         body["next"],
         "run logbrew releases or logbrew logs --release <release> --environment <environment>"
+    );
+    assert_eq!(
+        body["agent_use"]["prompt"],
+        "How should your AI use LogBrew?"
+    );
+    assert_eq!(body["agent_use"]["default"], "on_request");
+    assert_eq!(body["agent_use"]["options"][0]["id"], "on_request");
+    assert_eq!(body["agent_use"]["options"][0]["token_use"], "lower");
+    assert_eq!(body["agent_use"]["options"][0]["available"], true);
+    assert_eq!(
+        body["agent_use"]["options"][0]["description"],
+        "Your AI runs LogBrew commands when you ask."
+    );
+    assert_eq!(body["agent_use"]["options"][1]["id"], "keep_watching");
+    assert_eq!(body["agent_use"]["options"][1]["token_use"], "higher");
+    assert_eq!(body["agent_use"]["options"][1]["available"], false);
+    assert_eq!(
+        body["agent_use"]["options"][1]["description"],
+        "Your AI watches new events/logs until stopped."
+    );
+    assert_eq!(
+        body["agent_use"]["options"][1]["reason"],
+        "live watch is reserved until the stream transport is available"
+    );
+    assert_eq!(
+        body["agent_use"]["options"][2]["id"],
+        "watch_errors_critical"
+    );
+    assert_eq!(body["agent_use"]["options"][2]["token_use"], "moderate");
+    assert_eq!(body["agent_use"]["options"][2]["available"], false);
+    assert_eq!(
+        body["agent_use"]["options"][2]["description"],
+        "Your AI ignores lower-severity logs/events."
+    );
+    assert_eq!(
+        body["agent_use"]["options"][2]["reason"],
+        "live watch is reserved until the stream transport is available"
     );
     assert!(!body.to_string().contains("fixture-token"));
 }
@@ -123,8 +161,14 @@ async fn status_human_authenticated_output_points_to_first_read_without_leaking_
     assert_eq!(
         text,
         format!(
-            "LogBrew API reachable.\nAPI: {}\nAuth: logged in (env token)\nNext: run logbrew \
-             releases or logbrew logs --release <release> --environment <environment>\n",
+            "LogBrew API reachable.\nAPI: {}\nAuth: logged in (env token)\nLogBrew is \
+             connected. How should your AI use it?\n\n1. Check only when requested\n   Lower \
+             token use. Your AI runs LogBrew commands when you ask.\n\n2. Keep watching this \
+             session\n   Higher token use. Your AI watches new events/logs until stopped. Not \
+             available until live watch is ready.\n\n3. Watch only errors and critical \
+             issues\n   Moderate token use. Your AI ignores lower-severity logs/events. Not \
+             available until live watch is ready.\n\nNext: run logbrew releases or logbrew logs \
+             --release <release> --environment <environment>\n",
             server.uri()
         )
     );
