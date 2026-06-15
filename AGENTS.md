@@ -27,6 +27,14 @@ This is the public LogBrew CLI repository. Everything committed here is public.
   cargo-dist config; `dist plan` rejects drift.
 - Preserve token safety: CLI output may say whether auth exists and where it
   came from, but must never print token material.
+- Treat shared auth/account/session/API/ingest/WebSocket behavior as
+  backend-owned contracts. The CLI should consume stable token-safe public
+  contracts only; do not describe or implement provider setup, backend sessions,
+  token lifecycle, account lifecycle, storage, backup, deploy, or ops behavior
+  independently. If public CLI behavior appears to drift from a backend-owned
+  contract, report only public-safe facts: expected CLI/API shape, observed
+  response or error, reproduction, user impact, workaround, and requested
+  backend action.
 - Preserve stable JSON for agents and readable human output with concrete
   `Next:` recovery steps.
 - Treat bare public discovery terms as help, not dead ends, when no required
