@@ -57,6 +57,7 @@ fn root_help_surfaces_release_environment_pairing() {
         "Topic help: logbrew logs --help, logbrew help logs, logbrew help read logs, or logbrew \
          help json."
     ));
+    assert!(text.contains("Examples: logbrew examples."));
 }
 
 #[test]
@@ -115,4 +116,19 @@ fn issue_help_advertises_status_word_shortcuts() {
     assert!(text.contains("logbrew errors closed [--release <release>]"));
     assert!(text.contains("Issue shortcuts accept status words"));
     assert!(text.contains("Recency issue shortcuts can include status and count"));
+}
+
+#[test]
+fn examples_help_gives_first_run_and_troubleshooting_workflows() {
+    let text = help::help_text(HelpTopic::Examples);
+
+    assert!(text.contains("logbrew status"));
+    assert!(text.contains("logbrew login"));
+    assert!(text.contains("logbrew setup"));
+    assert!(text.contains("logbrew logs error checkout failed"));
+    assert!(text.contains("logbrew issues open"));
+    assert!(text.contains("logbrew explain issue issue_123"));
+    assert!(text.contains("logbrew watch --severity error,critical --json"));
+    assert!(text.contains("logbrew --json status"));
+    assert!(text.contains("logbrew help json"));
 }

@@ -14,6 +14,7 @@ pub const fn help_text(topic: HelpTopic) -> &'static str {
         HelpTopic::Version => VERSION_HELP,
         HelpTopic::Auth => AUTH_HELP,
         HelpTopic::Json => JSON_HELP,
+        HelpTopic::Examples => EXAMPLES_HELP,
         HelpTopic::Read => READ_HELP,
         HelpTopic::ReadLogs => READ_LOGS_HELP,
         HelpTopic::ReadIssues => READ_ISSUES_HELP,
@@ -96,6 +97,7 @@ Read verbs: logbrew show logs, logbrew latest logs, logbrew last 10 logs, logbre
                          logbrew list issues, logbrew get issue <id>.
 Singular read aliases: logbrew read log, read release, show log, list issue, get release.
 Pasted IDs: logbrew issue_123 or logbrew <trace_id>.
+Examples: logbrew examples.
 Topic help: logbrew logs --help, logbrew help logs, logbrew help read logs, or logbrew help json.
 JSON mode: logbrew --json status and logbrew status --json both work.
 Use --json for stable machine-readable output.";
@@ -182,6 +184,39 @@ Usage:
 Use --json before or after commands for stable machine-readable output.
 Stable JSON keeps server response shapes for reads and mutations.
 Errors include ok, error, message, and next.";
+
+/// First-run examples and common workflows.
+const EXAMPLES_HELP: &str = "\
+Usage:
+  logbrew examples
+  logbrew help examples
+
+First run:
+  logbrew status
+  logbrew login
+  logbrew setup
+
+Troubleshoot:
+  logbrew logs error checkout failed --release checkout@1 --environment production
+  logbrew issues open --release checkout@1 --environment production
+  logbrew issue issue_123
+  logbrew explain issue issue_123
+  logbrew trace <trace_id>
+
+Live:
+  logbrew watch --json
+  logbrew watch --severity error,critical --json
+
+Agent JSON:
+  logbrew --json status
+  logbrew logs checkout failed --json
+  logbrew explain trace <trace_id> --json
+
+More help:
+  logbrew help logs
+  logbrew help issues
+  logbrew help watch
+  logbrew help json";
 
 /// Read command help text.
 const READ_HELP: &str = "\

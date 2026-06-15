@@ -2,9 +2,9 @@
 
 use super::{
     EXPLAIN_RESOURCE_NEXT_STEP, HELP_NEXT_STEP, SET_RESOURCE_NEXT_STEP, WATCH_RESOURCE_NEXT_STEP,
-    is_action_collection_alias, is_ambiguous_log_search_word, is_issue_collection_alias,
-    is_issue_status_action_alias, is_known_issue_status, is_known_log_level,
-    is_log_search_shortcut, is_read_verb, is_recency_read_verb, is_setup_alias,
+    is_action_collection_alias, is_ambiguous_log_search_word, is_examples_help_alias,
+    is_issue_collection_alias, is_issue_status_action_alias, is_known_issue_status,
+    is_known_log_level, is_log_search_shortcut, is_read_verb, is_recency_read_verb, is_setup_alias,
     is_status_first_issue_collection_alias, is_status_help_alias, is_watch_command_alias,
     unknown_command, unknown_flag, unknown_read_resource, unknown_resource,
 };
@@ -81,6 +81,9 @@ pub(super) fn help_topic(head: &str, tail: &[String]) -> Result<HelpTopic, CliEr
         }
         "json" | "output" => {
             help_topic_without_positionals(HelpTopic::Json, positionals.as_slice())
+        }
+        alias if is_examples_help_alias(alias) => {
+            help_topic_without_positionals(HelpTopic::Examples, positionals.as_slice())
         }
         "list" if positionals.first().is_some_and(|arg| *arg == "issue") => {
             help_topic_without_positionals(HelpTopic::ReadIssues, &positionals[1..])
@@ -488,6 +491,9 @@ fn explicit_help_topic(args: &[&str]) -> Result<HelpTopic, CliError> {
             help_topic_without_positionals(HelpTopic::Auth, tail)
         }
         ["json" | "output", tail @ ..] => help_topic_without_positionals(HelpTopic::Json, tail),
+        [topic, tail @ ..] if is_examples_help_alias(topic) => {
+            help_topic_without_positionals(HelpTopic::Examples, tail)
+        }
         [topic, tail @ ..] if is_watch_command_alias(topic) => subresource_help_topic(
             HelpTopic::Watch,
             tail,
