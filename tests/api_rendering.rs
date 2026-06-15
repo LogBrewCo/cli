@@ -1,7 +1,7 @@
 //! CLI API response rendering tests.
 
 use logbrew_cli::{CliEnvironment, execute_command, parse_command, write_runtime_error};
-use wiremock::matchers::{header, method, path, query_param};
+use wiremock::matchers::{body_json, header, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 #[tokio::test]
@@ -482,6 +482,124 @@ async fn human_set_issue_status_summarizes_real_api_object_shape() {
     assert_eq!(
         text,
         "Issue issue_123 marked resolved trace=trace_123 [checkout@1.2.3 / production].\n"
+    );
+}
+
+#[tokio::test]
+async fn project_setup_seen_posts_backend_owned_setup_state()
+-> Result<(), Box<dyn std::error::Error>> {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/projects/proj_123/setup/seen"))
+        .and(header("authorization", "Bearer test-token"))
+        .and(body_json(serde_json::json!({
+            "runtime": "node",
+            "source": "cli",
+            "environment": "production"
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "status": "sdk_seen",
+            "runtime": "node",
+            "source": "cli",
+            "environment": "production",
+            "last_seen_at": "2026-06-15T20:00:00Z",
+            "next": "send telemetry for this project"
+        })))
+        .mount(&server)
+        .await;
+    let command = parse_command([
+        "logbrew",
+        "projects",
+        "setup",
+        "proj_123",
+        "--runtime",
+        "node",
+        "--source",
+        "cli",
+        "--environment",
+        "production",
+        "--json",
+    ])?;
+    let env = authenticated_env(&server, "project-setup-seen-json");
+    let mut output = Vec::new();
+
+    execute_command(&command, &env, &mut output).await?;
+
+    let body: serde_json::Value = serde_json::from_slice(output.as_slice())?;
+    assert_eq!(body["status"], "sdk_seen");
+    assert_eq!(body["runtime"], "node");
+    assert_eq!(body["source"], "cli");
+    assert_eq!(body["environment"], "production");
+    assert_eq!(body["next"], "send telemetry for this project");
+    Ok(())
+}
+
+#[tokio::test]
+async fn project_setup_seen_omits_source_for_ingest_key_auth()
+-> Result<(), Box<dyn std::error::Error>> {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/projects/proj_123/setup/seen"))
+        .and(header("authorization", "Bearer lbw_ingest_test"))
+        .and(body_json(serde_json::json!({ "runtime": "node" })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "status": "sdk_seen",
+            "runtime": "node",
+            "source": "sdk",
+            "next": "send telemetry for this project"
+        })))
+        .mount(&server)
+        .await;
+    let command = parse_command([
+        "logbrew",
+        "projects",
+        "setup",
+        "proj_123",
+        "--runtime",
+        "node",
+        "--json",
+    ])?;
+    let env = CliEnvironment {
+        base_url: server.uri(),
+        token: Some("lbw_ingest_test".to_owned()),
+        home: Some(std::env::temp_dir().join("logbrew-project-setup-ingest-key")),
+        cwd: None,
+    };
+    let mut output = Vec::new();
+
+    execute_command(&command, &env, &mut output).await?;
+
+    let body: serde_json::Value = serde_json::from_slice(output.as_slice())?;
+    assert_eq!(body["source"], "sdk");
+    Ok(())
+}
+
+#[tokio::test]
+async fn human_project_setup_seen_prints_status_and_next() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/projects/proj_123/setup/seen"))
+        .and(header("authorization", "Bearer test-token"))
+        .and(body_json(serde_json::json!({ "source": "cli" })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "status": "sdk_seen",
+            "source": "cli",
+            "last_seen_at": "2026-06-15T20:00:00Z",
+            "next": "send telemetry for this project"
+        })))
+        .mount(&server)
+        .await;
+    let text = successful_human_output(
+        &server,
+        ["logbrew", "projects", "setup", "proj_123"],
+        "human-project-setup-seen",
+    )
+    .await
+    .expect("project setup seen succeeds");
+
+    assert_eq!(
+        text,
+        "Project setup seen: sdk_seen\nLast seen: 2026-06-15T20:00:00Z\nNext: send telemetry for this project\n"
     );
 }
 

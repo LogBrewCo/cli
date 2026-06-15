@@ -24,8 +24,8 @@ use crate::flags::{
 };
 use crate::ids::{infer_explain_target, is_issue_id, is_pasted_detail_id, is_trace_id};
 use crate::{
-    CliError, Command, ExplainTarget, HelpTopic, ISSUE_STATUS_ARGUMENT_NEXT_STEP, ReadOptions,
-    ReadTarget, SetTarget, auth_namespace,
+    CliError, Command, ExplainTarget, HelpTopic, ISSUE_STATUS_ARGUMENT_NEXT_STEP,
+    ProjectSetupSeenOptions, ReadOptions, ReadTarget, SetTarget, auth_namespace,
 };
 
 /// Standard next step for malformed help invocations.
@@ -54,6 +54,10 @@ const READ_ACTIONS_NEXT_STEP: &str = "run logbrew read actions --help";
 const READ_RELEASES_NEXT_STEP: &str = "run logbrew read releases --help";
 /// Help for backend-owned project setup discovery.
 const PROJECTS_NEXT_STEP: &str = "run logbrew projects --help";
+/// Help for backend-owned project setup seen calls.
+const PROJECT_SETUP_SEEN_NEXT_STEP: &str = "run logbrew projects setup <project_id> --help";
+/// Valid setup source values for setup seen calls.
+const PROJECT_SETUP_SOURCE_NEXT_STEP: &str = "use --source api, cli, or sdk";
 /// Valid resources for live watch.
 const WATCH_RESOURCE_NEXT_STEP: &str = "choose logs, issues, actions, or omit a resource";
 /// Valid resources for explain.
@@ -169,7 +173,7 @@ fn parse_values(values: &[String]) -> Result<Command, CliError> {
         alias if auth_namespace::is_help_alias(alias) => parse_help_alias(HelpTopic::Auth, tail),
         "json" | "output" => parse_help_alias(HelpTopic::Json, tail),
         alias if is_examples_help_alias(alias) => parse_help_alias(HelpTopic::Examples, tail),
-        alias if is_project_help_alias(alias) => parse_discovery_help(HelpTopic::Projects, tail),
+        alias if is_project_help_alias(alias) => parse_project(tail),
         "usage" => parse_discovery_help(HelpTopic::Usage, tail),
         alias if is_direct_filter_help_alias(alias) => parse_help_alias(HelpTopic::Read, tail),
         "read" => parse_read(tail),
@@ -417,6 +421,175 @@ fn parse_setup_create_project(args: &[String]) -> Result<Command, CliError> {
         topic: HelpTopic::Projects,
         json: seen_json,
     })
+}
+
+/// Parses backend-owned project commands.
+fn parse_project(args: &[String]) -> Result<Command, CliError> {
+    let normalized = move_leading_json_to_tail(args);
+    if let Some((subcommand, tail)) = normalized.split_first()
+        && subcommand == "setup"
+        && has_position_candidate(tail)
+    {
+        return parse_project_setup_seen(tail);
+    }
+    parse_discovery_help(HelpTopic::Projects, args)
+}
+
+/// Parses `projects setup <project_id>`.
+fn parse_project_setup_seen(args: &[String]) -> Result<Command, CliError> {
+    let (project_id, tail) =
+        take_required_position(args, "project_id", PROJECT_SETUP_SEEN_NEXT_STEP)?;
+    let (options, json) = parse_project_setup_seen_flags(tail.as_slice())?;
+    Ok(Command::ProjectSetupSeen {
+        project_id,
+        options,
+        json,
+    })
+}
+
+/// Parses flags for backend setup seen calls.
+fn parse_project_setup_seen_flags(
+    args: &[String],
+) -> Result<(ProjectSetupSeenOptions, bool), CliError> {
+    let mut options = ProjectSetupSeenOptions::default();
+    let mut json = false;
+    let mut seen = Vec::new();
+    let mut index = 0;
+
+    while let Some(arg) = args.get(index) {
+        let (flag, inline_value) = split_project_setup_seen_inline_value(arg.as_str());
+        match flag {
+            "--json" if inline_value.is_none() => {
+                mark_project_setup_seen_flag(&mut seen, "--json")?;
+                json = true;
+            }
+            "--runtime" => {
+                mark_project_setup_seen_flag(&mut seen, "--runtime")?;
+                options.runtime = Some(project_setup_seen_flag_value(
+                    args,
+                    &mut index,
+                    "--runtime",
+                    inline_value,
+                )?);
+            }
+            "--source" => {
+                mark_project_setup_seen_flag(&mut seen, "--source")?;
+                options.source = Some(validate_project_setup_seen_source(
+                    project_setup_seen_flag_value(args, &mut index, "--source", inline_value)?
+                        .as_str(),
+                )?);
+            }
+            "--environment" | "--env" => {
+                mark_project_setup_seen_flag(&mut seen, "--environment")?;
+                let visible_flag = if flag == "--env" {
+                    "--env"
+                } else {
+                    "--environment"
+                };
+                options.environment = Some(project_setup_seen_flag_value(
+                    args,
+                    &mut index,
+                    visible_flag,
+                    inline_value,
+                )?);
+            }
+            flag if flag.starts_with('-') => {
+                return Err(unknown_flag(flag, PROJECT_SETUP_SEEN_NEXT_STEP));
+            }
+            argument => {
+                return Err(CliError::UnexpectedArgument {
+                    argument: argument.to_owned(),
+                    command: "projects setup",
+                    next: PROJECT_SETUP_SEEN_NEXT_STEP,
+                });
+            }
+        }
+        index += 1;
+    }
+
+    Ok((options, json))
+}
+
+/// Splits a value-taking project setup flag.
+fn split_project_setup_seen_inline_value(flag: &str) -> (&str, Option<&str>) {
+    flag.split_once('=')
+        .map_or((flag, None), |(name, value)| (name, Some(value)))
+}
+
+/// Records a project setup flag and rejects duplicate occurrences.
+fn mark_project_setup_seen_flag(
+    seen: &mut Vec<&'static str>,
+    flag: &'static str,
+) -> Result<(), CliError> {
+    if seen.contains(&flag) {
+        return Err(CliError::DuplicateFlag {
+            flag,
+            next: project_setup_seen_duplicate_next(flag),
+        });
+    }
+    seen.push(flag);
+    Ok(())
+}
+
+/// Returns the recovery step for duplicate project setup flags.
+fn project_setup_seen_duplicate_next(flag: &'static str) -> &'static str {
+    match flag {
+        "--json" => "use --json once",
+        "--runtime" => "use --runtime once",
+        "--source" => "use --source once",
+        "--environment" => "use --environment once",
+        _ => "use the flag once",
+    }
+}
+
+/// Reads a value for a project setup flag.
+fn project_setup_seen_flag_value(
+    args: &[String],
+    index: &mut usize,
+    flag: &'static str,
+    inline_value: Option<&str>,
+) -> Result<String, CliError> {
+    if let Some(value) = inline_value {
+        if value.is_empty() {
+            return Err(missing_project_setup_seen_flag_value(flag));
+        }
+        return Ok(value.to_owned());
+    }
+    *index += 1;
+    let Some(value) = args.get(*index) else {
+        return Err(missing_project_setup_seen_flag_value(flag));
+    };
+    if value.starts_with('-') {
+        return Err(missing_project_setup_seen_flag_value(flag));
+    }
+    Ok(value.clone())
+}
+
+/// Builds a missing-value error for project setup flags.
+fn missing_project_setup_seen_flag_value(flag: &'static str) -> CliError {
+    CliError::MissingFlagValue {
+        flag,
+        next: project_setup_seen_missing_value_next(flag),
+    }
+}
+
+/// Returns the recovery step for missing project setup flag values.
+fn project_setup_seen_missing_value_next(flag: &'static str) -> &'static str {
+    match flag {
+        "--runtime" => "provide a value after --runtime",
+        "--source" => PROJECT_SETUP_SOURCE_NEXT_STEP,
+        "--environment" => "provide a value after --environment",
+        "--env" => "provide a value after --env",
+        _ => "provide a value after the flag",
+    }
+}
+
+/// Validates setup source values accepted by the public backend contract.
+fn validate_project_setup_seen_source(source: &str) -> Result<String, CliError> {
+    match source {
+        "api" | "cli" | "sdk" => Ok(source.to_owned()),
+        other => Err(CliError::InvalidSetupSource(other.to_owned())),
+    }
 }
 
 /// Parses `status`.

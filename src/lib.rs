@@ -127,6 +127,15 @@ pub enum Command {
         /// Emit machine-readable JSON.
         json: bool,
     },
+    /// Marks backend-owned project setup as seen.
+    ProjectSetupSeen {
+        /// Project identifier.
+        project_id: String,
+        /// Optional setup metadata sent to the backend.
+        options: ProjectSetupSeenOptions,
+        /// Emit machine-readable JSON.
+        json: bool,
+    },
 }
 
 /// Help topic for CLI usage output.
@@ -360,6 +369,17 @@ pub struct WatchOptions {
     pub severity: Vec<String>,
 }
 
+/// Optional metadata for backend-owned project setup tracking.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ProjectSetupSeenOptions {
+    /// Runtime or framework observed by setup.
+    pub runtime: Option<String>,
+    /// Setup source for account-token calls.
+    pub source: Option<String>,
+    /// Release environment observed by setup.
+    pub environment: Option<String>,
+}
+
 /// Context target for `explain`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExplainTarget {
@@ -433,6 +453,9 @@ impl Command {
             )),
             Self::Explain { target, .. } => Some(explain_path(target)),
             Self::Set { target, .. } => Some(set_path(target)),
+            Self::ProjectSetupSeen { project_id, .. } => {
+                Some(format!("/api/projects/{project_id}/setup/seen"))
+            }
             Self::Help { .. }
             | Self::Login { .. }
             | Self::Logout { .. }
@@ -456,6 +479,7 @@ impl Command {
             | Self::Watch { json, .. }
             | Self::Explain { json, .. }
             | Self::Set { json, .. }
+            | Self::ProjectSetupSeen { json, .. }
             | Self::Setup { json, .. } => *json,
         }
     }
@@ -465,6 +489,7 @@ impl Command {
     pub const fn http_method(&self) -> Option<HttpMethod> {
         match self {
             Self::Read { .. } | Self::Explain { .. } => Some(HttpMethod::Get),
+            Self::ProjectSetupSeen { .. } => Some(HttpMethod::Post),
             Self::Set { .. } => Some(HttpMethod::Patch),
             Self::Help { .. }
             | Self::Login { .. }
@@ -479,11 +504,18 @@ impl Command {
     /// Returns JSON request body for mutation commands.
     #[must_use]
     pub fn request_body(&self) -> Option<serde_json::Value> {
+        self.request_body_for_token(None)
+    }
+
+    /// Returns JSON request body for mutation commands with auth-aware defaults.
+    #[must_use]
+    fn request_body_for_token(&self, token: Option<&str>) -> Option<serde_json::Value> {
         match self {
             Self::Set {
                 target: SetTarget::IssueStatus { status, .. },
                 ..
             } => Some(serde_json::json!({ "status": status })),
+            Self::ProjectSetupSeen { options, .. } => Some(project_setup_seen_body(options, token)),
             Self::Help { .. }
             | Self::Login { .. }
             | Self::Logout { .. }
@@ -502,8 +534,47 @@ impl Command {
 pub enum HttpMethod {
     /// GET request.
     Get,
+    /// POST request.
+    Post,
     /// PATCH request.
     Patch,
+}
+
+/// Builds the `setup/seen` request body without local setup state.
+fn project_setup_seen_body(
+    options: &ProjectSetupSeenOptions,
+    token: Option<&str>,
+) -> serde_json::Value {
+    let mut body = serde_json::Map::new();
+    if let Some(runtime) = options.runtime.as_ref() {
+        drop(body.insert(
+            "runtime".to_owned(),
+            serde_json::Value::String(runtime.clone()),
+        ));
+    }
+    if let Some(source) = setup_seen_source(options, token) {
+        drop(body.insert("source".to_owned(), serde_json::Value::String(source)));
+    }
+    if let Some(environment) = options.environment.as_ref() {
+        drop(body.insert(
+            "environment".to_owned(),
+            serde_json::Value::String(environment.clone()),
+        ));
+    }
+    serde_json::Value::Object(body)
+}
+
+/// Resolves setup source while preserving ingest-key identity derivation.
+fn setup_seen_source(options: &ProjectSetupSeenOptions, token: Option<&str>) -> Option<String> {
+    if token_is_project_ingest_key(token) {
+        return None;
+    }
+    Some(options.source.as_deref().unwrap_or("cli").to_owned())
+}
+
+/// Returns whether a token has the public project-scoped ingest key prefix.
+fn token_is_project_ingest_key(token: Option<&str>) -> bool {
+    token.is_some_and(|token| token.trim_start().starts_with("lbw_ingest_"))
 }
 
 /// Executes a parsed command.
@@ -523,9 +594,10 @@ pub async fn execute_command<W: std::io::Write>(
         Command::Setup { auto, yes, json } => execute_setup(env, *auto, *yes, *json, output),
         Command::Status { json } => execute_status(env, *json, output).await,
         Command::Version { json } => execute_version(*json, output),
-        Command::Read { .. } | Command::Explain { .. } | Command::Set { .. } => {
-            execute_http(command, env, output).await
-        }
+        Command::Read { .. }
+        | Command::Explain { .. }
+        | Command::Set { .. }
+        | Command::ProjectSetupSeen { .. } => execute_http(command, env, output).await,
         Command::Watch {
             target,
             options,
@@ -621,13 +693,14 @@ async fn execute_http<W: std::io::Write>(
 
     let mut request = match command.http_method().unwrap_or(HttpMethod::Get) {
         HttpMethod::Get => client.get(url),
+        HttpMethod::Post => client.post(url),
         HttpMethod::Patch => client.patch(url),
     };
 
     let credential = resolve_credential(env)?;
-    request = request.bearer_auth(credential.token);
+    request = request.bearer_auth(credential.token.as_str());
 
-    if let Some(body) = command.request_body() {
+    if let Some(body) = command.request_body_for_token(Some(credential.token.as_str())) {
         request = request.json(&body);
     }
 

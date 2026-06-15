@@ -115,7 +115,6 @@ fn project_and_usage_help_are_backend_owned_and_non_mutating() {
         &["logbrew", "setup", "--create-project", "--json"][..],
         &["logbrew", "--json", "setup", "--create-project"][..],
         &["logbrew", "setup", "--create-project", "--help", "--json"][..],
-        &["logbrew", "projects", "setup", "proj_123", "--json"][..],
     ] {
         let command = parse_command(args.iter().copied()).expect("project help parses");
 
@@ -146,8 +145,9 @@ fn project_and_usage_help_are_backend_owned_and_non_mutating() {
 
     let projects = help::help_text(HelpTopic::Projects);
     assert!(projects.contains("backend-owned"));
-    assert!(projects.contains("Current mode: help only."));
+    assert!(projects.contains("Current mode: projects setup marks backend-owned setup as seen;"));
     assert!(projects.contains("No local project, install, quota, or usage state is created."));
+    assert!(projects.contains("POST /api/projects/{project_id}/setup/seen"));
     assert!(projects.contains("Never use an account bearer token as SDK or ingest configuration."));
 
     let usage = help::help_text(HelpTopic::Usage);

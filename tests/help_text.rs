@@ -71,8 +71,9 @@ fn project_and_usage_help_are_honest_about_backend_readiness() {
     assert!(projects.contains("logbrew projects create <name> [--json]"));
     assert!(projects.contains("logbrew setup --create-project [--json]"));
     assert!(projects.contains("Project creation, setup status"));
-    assert!(projects.contains("Current mode: help only."));
+    assert!(projects.contains("Current mode: projects setup marks backend-owned setup as seen;"));
     assert!(projects.contains("No local project, install, quota, or usage state is created."));
+    assert!(projects.contains("POST /api/projects/{project_id}/setup/seen"));
     assert!(projects.contains("Never use an account bearer token as SDK or ingest configuration."));
 
     assert!(usage.contains("logbrew usage [--json]"));
