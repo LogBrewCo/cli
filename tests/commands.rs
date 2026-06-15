@@ -328,7 +328,15 @@ fn parses_common_help_terms_as_real_user_topics() {
         ),
         (["logbrew", "help", "filters", "--json"], HelpTopic::Read),
         (["logbrew", "help", "filter", "--json"], HelpTopic::Read),
-        (["logbrew", "help", "project", "--json"], HelpTopic::Read),
+        (
+            ["logbrew", "help", "project", "--json"],
+            HelpTopic::Projects,
+        ),
+        (
+            ["logbrew", "help", "projects", "--json"],
+            HelpTopic::Projects,
+        ),
+        (["logbrew", "help", "usage", "--json"], HelpTopic::Usage),
         (["logbrew", "help", "project-id", "--json"], HelpTopic::Read),
     ] {
         let command = parse_command(args).expect("help parses");
@@ -387,7 +395,7 @@ fn parses_common_help_terms_as_real_user_topics() {
     assert_eq!(
         parse_command(["logbrew", "project", "--help"]).expect("project help parses"),
         Command::Help {
-            topic: HelpTopic::Read,
+            topic: HelpTopic::Projects,
             json: false
         }
     );
@@ -414,8 +422,7 @@ fn parses_filter_terms_as_top_level_discovery_help() {
         ["logbrew", "environment", "--json"],
         ["logbrew", "environments", "--json"],
         ["logbrew", "filters", "--json"],
-        ["logbrew", "project", "--json"],
-        ["logbrew", "projects", "--json"],
+        ["logbrew", "project-id", "--json"],
     ] {
         let command = parse_command(args).expect("filter discovery help parses");
 
@@ -423,6 +430,43 @@ fn parses_filter_terms_as_top_level_discovery_help() {
             command,
             Command::Help {
                 topic: HelpTopic::Read,
+                json: true
+            }
+        );
+    }
+}
+
+#[test]
+fn parses_project_and_usage_terms_as_backend_owned_help() {
+    for args in [
+        &["logbrew", "project", "--json"][..],
+        &["logbrew", "projects", "--json"],
+        &["logbrew", "--json", "projects"],
+        &["logbrew", "projects", "create", "checkout", "--json"],
+        &["logbrew", "projects", "setup", "proj_123", "--json"],
+    ] {
+        let command = parse_command(args.iter().copied()).expect("project discovery help parses");
+
+        assert_eq!(
+            command,
+            Command::Help {
+                topic: HelpTopic::Projects,
+                json: true
+            }
+        );
+    }
+
+    for args in [
+        &["logbrew", "usage", "--json"][..],
+        &["logbrew", "--json", "usage"],
+        &["logbrew", "account", "usage", "--json"],
+    ] {
+        let command = parse_command(args.iter().copied()).expect("usage discovery help parses");
+
+        assert_eq!(
+            command,
+            Command::Help {
+                topic: HelpTopic::Usage,
                 json: true
             }
         );

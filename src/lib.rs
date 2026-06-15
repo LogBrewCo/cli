@@ -150,6 +150,10 @@ pub enum HelpTopic {
     Json,
     /// First-run examples and common workflows.
     Examples,
+    /// Backend-owned project setup and ingest key workflow overview.
+    Projects,
+    /// Backend-owned account usage and quota workflow overview.
+    Usage,
     /// Read command overview.
     Read,
     /// Log reading command.
@@ -186,6 +190,8 @@ impl HelpTopic {
             Self::Auth => "auth",
             Self::Json => "json",
             Self::Examples => "examples",
+            Self::Projects => "projects",
+            Self::Usage => "usage",
             Self::Read => "read",
             Self::ReadLogs => "read_logs",
             Self::ReadIssues => "read_issues",

@@ -15,6 +15,8 @@ pub const fn help_text(topic: HelpTopic) -> &'static str {
         HelpTopic::Auth => AUTH_HELP,
         HelpTopic::Json => JSON_HELP,
         HelpTopic::Examples => EXAMPLES_HELP,
+        HelpTopic::Projects => PROJECTS_HELP,
+        HelpTopic::Usage => USAGE_HELP,
         HelpTopic::Read => READ_HELP,
         HelpTopic::ReadLogs => READ_LOGS_HELP,
         HelpTopic::ReadIssues => READ_ISSUES_HELP,
@@ -36,6 +38,8 @@ Usage:
   logbrew login [--no-open] [--json]
   logbrew logout [--json]
   logbrew setup [--auto] [--yes] [--json]
+  logbrew projects [--json]
+  logbrew usage [--json]
   logbrew status [--json]
   logbrew health [--json]
   logbrew doctor [--json]
@@ -82,8 +86,8 @@ Usage:
   logbrew ignore <issue_id> [--json]
   logbrew reopen <issue_id> [--json]
 
-Popular terms: auth, status, health, logs, issues, errors, traces, spans, actions, events, \
-                         releases, environments.
+Popular terms: auth, status, health, setup, projects, usage, logs, issues, errors, traces, spans, \
+                         actions, events, releases, environments.
 Health aliases: logbrew status, logbrew health, logbrew ping, logbrew doctor.
 Setup aliases (non-mutating plan): logbrew init, logbrew install, logbrew configure, logbrew sdk.
 Shortcuts: logbrew auth, logbrew whoami, logbrew me, logbrew log, logbrew logs, logbrew issues, \
@@ -217,6 +221,35 @@ More help:
   logbrew help issues
   logbrew help watch
   logbrew help json";
+
+/// Backend-owned project setup help text.
+const PROJECTS_HELP: &str = "\
+Usage:
+  logbrew projects [--json]
+  logbrew project [--json]
+  logbrew projects create <name> [--json]
+  logbrew setup --create-project [--json]
+  logbrew projects setup <project_id> [--json]
+
+Project creation, setup status, and project-scoped ingest credentials are backend-owned.
+Current mode: help only. No local project, install, quota, or usage state is created.
+When backend project setup is available, the CLI will call the backend contract and print \
+backend-generated project-scoped SDK/ingest credentials.
+Never use an account bearer token as SDK or ingest configuration.
+Next: run logbrew setup for the current non-mutating local plan.";
+
+/// Backend-owned usage and quota help text.
+const USAGE_HELP: &str = "\
+Usage:
+  logbrew usage [--json]
+  logbrew account usage [--json]
+
+Account usage, plan limits, quota state, reset dates, and per-project or per-stream breakdowns are \
+backend-owned.
+Current mode: help only. The CLI does not calculate or persist usage/quota state from local files.
+When backend usage is available, the CLI will read the backend account usage contract and preserve \
+stable JSON for agents.
+Next: run logbrew status to verify API and auth state.";
 
 /// Read command help text.
 const READ_HELP: &str = "\

@@ -4,9 +4,10 @@ use super::{
     EXPLAIN_RESOURCE_NEXT_STEP, HELP_NEXT_STEP, SET_RESOURCE_NEXT_STEP, WATCH_RESOURCE_NEXT_STEP,
     is_action_collection_alias, is_ambiguous_log_search_word, is_examples_help_alias,
     is_issue_collection_alias, is_issue_status_action_alias, is_known_issue_status,
-    is_known_log_level, is_log_search_shortcut, is_read_verb, is_recency_read_verb, is_setup_alias,
-    is_status_first_issue_collection_alias, is_status_help_alias, is_watch_command_alias,
-    unknown_command, unknown_flag, unknown_read_resource, unknown_resource,
+    is_known_log_level, is_log_search_shortcut, is_project_help_alias, is_read_verb,
+    is_recency_read_verb, is_setup_alias, is_status_first_issue_collection_alias,
+    is_status_help_alias, is_watch_command_alias, unknown_command, unknown_flag,
+    unknown_read_resource, unknown_resource,
 };
 use crate::ids::{infer_explain_target, is_issue_id, is_pasted_detail_id, is_trace_id};
 use crate::{CliError, Command, HelpTopic, auth_namespace};
@@ -73,6 +74,9 @@ pub(super) fn help_topic(head: &str, tail: &[String]) -> Result<HelpTopic, CliEr
             help_topic_without_positionals(HelpTopic::Status, positionals.as_slice())
         }
         "version" => help_topic_without_positionals(HelpTopic::Version, positionals.as_slice()),
+        "account" if positionals.first().is_some_and(|arg| *arg == "usage") => {
+            help_topic_without_positionals(HelpTopic::Usage, &positionals[1..])
+        }
         alias if auth_namespace::is_namespace(alias) => {
             auth_namespace::help_topic(positionals.as_slice())
         }
@@ -85,6 +89,8 @@ pub(super) fn help_topic(head: &str, tail: &[String]) -> Result<HelpTopic, CliEr
         alias if is_examples_help_alias(alias) => {
             help_topic_without_positionals(HelpTopic::Examples, positionals.as_slice())
         }
+        alias if is_project_help_alias(alias) => Ok(HelpTopic::Projects),
+        "usage" => Ok(HelpTopic::Usage),
         "list" if positionals.first().is_some_and(|arg| *arg == "issue") => {
             help_topic_without_positionals(HelpTopic::ReadIssues, &positionals[1..])
         }
@@ -430,14 +436,7 @@ fn set_command_shaped_help_topic(positionals: &[&str]) -> Option<HelpTopic> {
 pub(super) fn is_read_filter_help_alias(value: &str) -> bool {
     matches!(
         value,
-        "env"
-            | "environment"
-            | "environments"
-            | "filter"
-            | "filters"
-            | "project"
-            | "projects"
-            | "project-id"
+        "env" | "environment" | "environments" | "filter" | "filters" | "project-id"
     )
 }
 
@@ -445,14 +444,7 @@ pub(super) fn is_read_filter_help_alias(value: &str) -> bool {
 pub(super) fn is_direct_filter_help_alias(value: &str) -> bool {
     matches!(
         value,
-        "env"
-            | "environment"
-            | "environments"
-            | "filter"
-            | "filters"
-            | "project"
-            | "projects"
-            | "project-id"
+        "env" | "environment" | "environments" | "filter" | "filters" | "project-id"
     )
 }
 
@@ -484,6 +476,7 @@ fn explicit_help_topic(args: &[&str]) -> Result<HelpTopic, CliError> {
         }
         ["whoami" | "me", tail @ ..] => help_topic_without_positionals(HelpTopic::Status, tail),
         ["version", tail @ ..] => help_topic_without_positionals(HelpTopic::Version, tail),
+        ["account", "usage", tail @ ..] => help_topic_without_positionals(HelpTopic::Usage, tail),
         [topic, tail @ ..] if auth_namespace::is_namespace(topic) => {
             auth_namespace::help_topic(tail)
         }
@@ -494,6 +487,8 @@ fn explicit_help_topic(args: &[&str]) -> Result<HelpTopic, CliError> {
         [topic, tail @ ..] if is_examples_help_alias(topic) => {
             help_topic_without_positionals(HelpTopic::Examples, tail)
         }
+        [topic, ..] if is_project_help_alias(topic) => Ok(HelpTopic::Projects),
+        ["usage", tail @ ..] => help_topic_without_positionals(HelpTopic::Usage, tail),
         [topic, tail @ ..] if is_watch_command_alias(topic) => subresource_help_topic(
             HelpTopic::Watch,
             tail,
@@ -702,6 +697,7 @@ fn read_resource_help_topic(resource: &str) -> Result<HelpTopic, CliError> {
         "releases" | "release" => Ok(HelpTopic::ReadReleases),
         "trace" | "traces" | "span" | "spans" => Ok(HelpTopic::ReadTrace),
         "issue" => Ok(HelpTopic::ReadIssue),
+        "project" | "projects" => Ok(HelpTopic::Read),
         alias if is_read_filter_help_alias(alias) => Ok(HelpTopic::Read),
         other => Err(unknown_read_resource(other)),
     }
