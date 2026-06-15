@@ -64,6 +64,7 @@ release/tag collisions.
 ## Basic Usage
 
 ```bash
+logbrew examples
 logbrew status
 logbrew login
 logbrew logs --release checkout@1 --environment production
@@ -72,6 +73,9 @@ logbrew explain issue issue_123
 logbrew watch --json
 logbrew watch --severity error,critical --json
 ```
+
+Run `logbrew examples` for a compact first-run, troubleshooting, live watch, and
+agent JSON workflow guide.
 
 The default API URL is `https://api.logbrew.co`. Override it with
 `LOGBREW_API_URL` when testing against another LogBrew API.
