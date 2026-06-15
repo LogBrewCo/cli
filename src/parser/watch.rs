@@ -17,6 +17,9 @@ const WATCH_ISSUE_POSITIONAL_NEXT_STEP: &str = "use logbrew issues with filters 
 const WATCH_ACTION_FILTER_NEXT_STEP: &str = "use logbrew actions with filters for historical data, or logbrew watch actions --json for live actions";
 /// Historical action recovery for unsupported watch positionals.
 const WATCH_ACTION_POSITIONAL_NEXT_STEP: &str = "use logbrew actions --name <name> for historical data, or logbrew watch actions --json for live actions";
+/// Trace/span recovery for unsupported live watch resources.
+const WATCH_TRACE_RESOURCE_NEXT_STEP: &str =
+    "watch streams logs, issues, and actions; use logbrew trace <trace_id> to read a trace";
 
 /// Parses `watch`.
 pub(super) fn parse_watch(args: &[String]) -> Result<Command, CliError> {
@@ -42,9 +45,17 @@ fn watch_target_and_tail(args: &[String]) -> Result<(WatchTarget, &[String]), Cl
         "logs" | "log" => WatchTarget::Logs,
         "issues" | "issue" => WatchTarget::Issues,
         "actions" | "action" => WatchTarget::Actions,
-        other => return Err(unknown_resource(other, WATCH_RESOURCE_NEXT_STEP)),
+        other => return Err(unknown_resource(other, watch_resource_next_step(other))),
     };
     Ok((target, tail))
+}
+
+/// Returns a recovery hint for unsupported watch resources.
+fn watch_resource_next_step(resource: &str) -> &'static str {
+    match resource {
+        "trace" | "traces" | "span" | "spans" => WATCH_TRACE_RESOURCE_NEXT_STEP,
+        _ => WATCH_RESOURCE_NEXT_STEP,
+    }
 }
 
 /// Parses watch flags and target-specific client-side filters.
