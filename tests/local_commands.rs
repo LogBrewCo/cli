@@ -112,6 +112,9 @@ fn project_and_usage_help_are_backend_owned_and_non_mutating() {
         &["logbrew", "project", "--json"][..],
         &["logbrew", "--json", "projects"][..],
         &["logbrew", "projects", "create", "checkout", "--json"][..],
+        &["logbrew", "setup", "--create-project", "--json"][..],
+        &["logbrew", "--json", "setup", "--create-project"][..],
+        &["logbrew", "setup", "--create-project", "--help", "--json"][..],
         &["logbrew", "projects", "setup", "proj_123", "--json"][..],
     ] {
         let command = parse_command(args.iter().copied()).expect("project help parses");

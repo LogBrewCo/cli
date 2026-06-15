@@ -52,6 +52,8 @@ const READ_ISSUES_NEXT_STEP: &str = "run logbrew read issues --help";
 const READ_ACTIONS_NEXT_STEP: &str = "run logbrew read actions --help";
 /// Help for release list reads.
 const READ_RELEASES_NEXT_STEP: &str = "run logbrew read releases --help";
+/// Help for backend-owned project setup discovery.
+const PROJECTS_NEXT_STEP: &str = "run logbrew projects --help";
 /// Valid resources for live watch.
 const WATCH_RESOURCE_NEXT_STEP: &str = "choose logs, issues, actions, or omit a resource";
 /// Valid resources for explain.
@@ -143,6 +145,9 @@ fn parse_values(values: &[String]) -> Result<Command, CliError> {
     }
     if let Some(command) = parse_literal_help(head, tail)? {
         return Ok(command);
+    }
+    if is_setup_alias(head) && tail.iter().any(|arg| arg == "--create-project") {
+        return parse_setup_create_project(tail);
     }
     if contains_help_flag(tail) && !is_log_search_separator_literal(head, tail) {
         validate_help_flags(tail)?;
@@ -360,11 +365,57 @@ fn parse_logout(args: &[String]) -> Result<Command, CliError> {
 
 /// Parses `setup`.
 fn parse_setup(args: &[String]) -> Result<Command, CliError> {
+    if args.iter().any(|arg| arg == "--create-project") {
+        return parse_setup_create_project(args);
+    }
     let flags = parse_flags(args, FlagScope::Setup)?;
     Ok(Command::Setup {
         auto: flags.is_auto(),
         yes: flags.skip_prompts(),
         json: flags.is_json(),
+    })
+}
+
+/// Parses the help-only backend project creation shape advertised by setup help.
+fn parse_setup_create_project(args: &[String]) -> Result<Command, CliError> {
+    let mut seen_create_project = false;
+    let mut seen_json = false;
+
+    for arg in args {
+        match arg.as_str() {
+            "--create-project" => {
+                if std::mem::replace(&mut seen_create_project, true) {
+                    return Err(CliError::DuplicateFlag {
+                        flag: "--create-project",
+                        next: "use --create-project once",
+                    });
+                }
+            }
+            "--json" => {
+                if std::mem::replace(&mut seen_json, true) {
+                    return Err(CliError::DuplicateFlag {
+                        flag: "--json",
+                        next: "use --json once",
+                    });
+                }
+            }
+            "--help" | "-h" => {}
+            flag if flag.starts_with('-') => {
+                return Err(unknown_flag(flag, PROJECTS_NEXT_STEP));
+            }
+            argument => {
+                return Err(CliError::UnexpectedArgument {
+                    argument: argument.to_owned(),
+                    command: "setup",
+                    next: PROJECTS_NEXT_STEP,
+                });
+            }
+        }
+    }
+
+    Ok(Command::Help {
+        topic: HelpTopic::Projects,
+        json: seen_json,
     })
 }
 
