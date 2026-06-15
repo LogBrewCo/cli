@@ -31,10 +31,13 @@ This is the public LogBrew CLI repository. Everything committed here is public.
   backend-owned contracts. The CLI should consume stable token-safe public
   contracts only; do not describe or implement provider setup, backend sessions,
   token lifecycle, account lifecycle, storage, backup, deploy, or ops behavior
-  independently. If public CLI behavior appears to drift from a backend-owned
-  contract, report only public-safe facts: expected CLI/API shape, observed
-  response or error, reproduction, user impact, workaround, and requested
-  backend action.
+  independently. Public auth/account semantics must preserve that different
+  surfaces can use different callback or session mechanics, but after provider
+  identity resolves they represent the same LogBrew account with the same
+  subscription, projects, telemetry, account lifecycle, and API access. If
+  public CLI behavior appears to drift from a backend-owned contract, report
+  only public-safe facts: expected CLI/API shape, observed response or error,
+  reproduction, user impact, workaround, and requested backend action.
 - Preserve stable JSON for agents and readable human output with concrete
   `Next:` recovery steps.
 - Treat bare public discovery terms as help, not dead ends, when no required
