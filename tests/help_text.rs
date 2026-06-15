@@ -40,6 +40,9 @@ fn root_help_surfaces_release_environment_pairing() {
         "Setup aliases (non-mutating plan): logbrew init, logbrew install, logbrew configure, \
          logbrew sdk."
     ));
+    assert!(text.contains("logbrew projects [--json]"));
+    assert!(text.contains("logbrew usage [--json]"));
+    assert!(text.contains("Popular terms: auth, status, health, setup, projects, usage"));
     assert!(text.contains("Shortcuts: logbrew auth, logbrew whoami, logbrew me"));
     assert!(text.contains("Health aliases: logbrew status, logbrew health, logbrew ping"));
     assert!(text.contains("logbrew errors"));
@@ -58,6 +61,27 @@ fn root_help_surfaces_release_environment_pairing() {
          help json."
     ));
     assert!(text.contains("Examples: logbrew examples."));
+}
+
+#[test]
+fn project_and_usage_help_are_honest_about_backend_readiness() {
+    let projects = help::help_text(HelpTopic::Projects);
+    let usage = help::help_text(HelpTopic::Usage);
+
+    assert!(projects.contains("logbrew projects create <name> [--json]"));
+    assert!(projects.contains("logbrew setup --create-project [--json]"));
+    assert!(projects.contains("Project creation, setup status"));
+    assert!(projects.contains("Current mode: help only."));
+    assert!(projects.contains("No local project, install, quota, or usage state is created."));
+    assert!(projects.contains("Never use an account bearer token as SDK or ingest configuration."));
+
+    assert!(usage.contains("logbrew usage [--json]"));
+    assert!(usage.contains("logbrew account usage [--json]"));
+    assert!(usage.contains("Account usage, plan limits, quota state"));
+    assert!(usage.contains("Current mode: help only."));
+    assert!(
+        usage.contains("The CLI does not calculate or persist usage/quota state from local files.")
+    );
 }
 
 #[test]

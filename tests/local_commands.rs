@@ -106,6 +106,56 @@ fn setup_help_is_honest_about_install_readiness() {
 }
 
 #[test]
+fn project_and_usage_help_are_backend_owned_and_non_mutating() {
+    for args in [
+        &["logbrew", "projects", "--json"][..],
+        &["logbrew", "project", "--json"][..],
+        &["logbrew", "--json", "projects"][..],
+        &["logbrew", "projects", "create", "checkout", "--json"][..],
+        &["logbrew", "projects", "setup", "proj_123", "--json"][..],
+    ] {
+        let command = parse_command(args.iter().copied()).expect("project help parses");
+
+        assert_eq!(
+            command,
+            Command::Help {
+                topic: HelpTopic::Projects,
+                json: true
+            }
+        );
+    }
+
+    for args in [
+        &["logbrew", "usage", "--json"][..],
+        &["logbrew", "--json", "usage"][..],
+        &["logbrew", "account", "usage", "--json"][..],
+    ] {
+        let command = parse_command(args.iter().copied()).expect("usage help parses");
+
+        assert_eq!(
+            command,
+            Command::Help {
+                topic: HelpTopic::Usage,
+                json: true
+            }
+        );
+    }
+
+    let projects = help::help_text(HelpTopic::Projects);
+    assert!(projects.contains("backend-owned"));
+    assert!(projects.contains("Current mode: help only."));
+    assert!(projects.contains("No local project, install, quota, or usage state is created."));
+    assert!(projects.contains("Never use an account bearer token as SDK or ingest configuration."));
+
+    let usage = help::help_text(HelpTopic::Usage);
+    assert!(usage.contains("backend-owned"));
+    assert!(usage.contains("Current mode: help only."));
+    assert!(
+        usage.contains("The CLI does not calculate or persist usage/quota state from local files.")
+    );
+}
+
+#[test]
 fn setup_alias_help_is_discoverable() {
     for args in [
         &["logbrew", "init", "--help"][..],

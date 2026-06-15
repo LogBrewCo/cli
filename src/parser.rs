@@ -157,10 +157,15 @@ fn parse_values(values: &[String]) -> Result<Command, CliError> {
         alias if is_setup_alias(alias) => parse_setup(tail),
         "status" | "whoami" | "me" | "health" | "ping" | "doctor" => parse_status(tail),
         "version" => parse_version(tail),
+        "account" if tail.first().is_some_and(|arg| arg == "usage") => {
+            parse_discovery_help(HelpTopic::Usage, &tail[1..])
+        }
         alias if auth_namespace::is_namespace(alias) => auth_namespace::parse(tail),
         alias if auth_namespace::is_help_alias(alias) => parse_help_alias(HelpTopic::Auth, tail),
         "json" | "output" => parse_help_alias(HelpTopic::Json, tail),
         alias if is_examples_help_alias(alias) => parse_help_alias(HelpTopic::Examples, tail),
+        alias if is_project_help_alias(alias) => parse_discovery_help(HelpTopic::Projects, tail),
+        "usage" => parse_discovery_help(HelpTopic::Usage, tail),
         alias if is_direct_filter_help_alias(alias) => parse_help_alias(HelpTopic::Read, tail),
         "read" => parse_read(tail),
         alias if is_read_verb(alias) => parse_read_verb(alias, tail),
@@ -195,6 +200,15 @@ fn parse_values(values: &[String]) -> Result<Command, CliError> {
         id if is_pasted_detail_id(id) => parse_pasted_detail_id(id, tail),
         _ => Err(unknown_command(head)),
     }
+}
+
+/// Parses non-mutating discovery help for backend-owned future workflows.
+fn parse_discovery_help(topic: HelpTopic, args: &[String]) -> Result<Command, CliError> {
+    validate_help_flags(args)?;
+    Ok(Command::Help {
+        topic,
+        json: args.iter().any(|arg| arg == "--json"),
+    })
 }
 
 /// Parses a leading global `--json` flag.
@@ -304,6 +318,11 @@ fn is_examples_help_alias(value: &str) -> bool {
 /// Returns whether a word should run the non-mutating setup plan.
 fn is_setup_alias(value: &str) -> bool {
     matches!(value, "setup" | "init" | "install" | "configure" | "sdk")
+}
+
+/// Returns whether a word should land on backend-owned project setup help.
+fn is_project_help_alias(value: &str) -> bool {
+    matches!(value, "project" | "projects")
 }
 
 /// Returns whether a word should use the live watch placeholder flow.
