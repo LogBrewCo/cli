@@ -42,6 +42,36 @@ fn parses_top_level_json_as_root_help_for_agents() {
 }
 
 #[test]
+fn parses_examples_help_for_first_run_discovery() {
+    for args in [
+        &["logbrew", "examples"][..],
+        &["logbrew", "examples", "--help"],
+        &["logbrew", "help", "examples"],
+        &["logbrew", "help", "example"],
+        &["logbrew", "sample"],
+        &["logbrew", "recipes"],
+    ] {
+        let command = parse_command(args.iter().copied()).expect("examples help parses");
+
+        assert_eq!(
+            command,
+            Command::Help {
+                topic: HelpTopic::Examples,
+                json: false
+            }
+        );
+    }
+
+    assert_eq!(
+        parse_command(["logbrew", "--json", "examples"]).expect("global json examples parses"),
+        Command::Help {
+            topic: HelpTopic::Examples,
+            json: true
+        }
+    );
+}
+
+#[test]
 fn parses_global_json_before_command_for_agents() {
     let command = parse_command(["logbrew", "--json", "status"]).expect("command parses");
 

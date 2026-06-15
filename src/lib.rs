@@ -148,6 +148,8 @@ pub enum HelpTopic {
     Auth,
     /// Machine-readable output overview.
     Json,
+    /// First-run examples and common workflows.
+    Examples,
     /// Read command overview.
     Read,
     /// Log reading command.
@@ -183,6 +185,7 @@ impl HelpTopic {
             Self::Version => "version",
             Self::Auth => "auth",
             Self::Json => "json",
+            Self::Examples => "examples",
             Self::Read => "read",
             Self::ReadLogs => "read_logs",
             Self::ReadIssues => "read_issues",

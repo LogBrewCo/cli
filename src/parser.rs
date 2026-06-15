@@ -160,6 +160,7 @@ fn parse_values(values: &[String]) -> Result<Command, CliError> {
         alias if auth_namespace::is_namespace(alias) => auth_namespace::parse(tail),
         alias if auth_namespace::is_help_alias(alias) => parse_help_alias(HelpTopic::Auth, tail),
         "json" | "output" => parse_help_alias(HelpTopic::Json, tail),
+        alias if is_examples_help_alias(alias) => parse_help_alias(HelpTopic::Examples, tail),
         alias if is_direct_filter_help_alias(alias) => parse_help_alias(HelpTopic::Read, tail),
         "read" => parse_read(tail),
         alias if is_read_verb(alias) => parse_read_verb(alias, tail),
@@ -290,6 +291,14 @@ fn unknown_command_next_step(command: &str) -> &'static str {
 /// Returns whether a word should land on status/health help.
 fn is_status_help_alias(value: &str) -> bool {
     matches!(value, "status" | "health" | "ping" | "doctor")
+}
+
+/// Returns whether a word should land on example-oriented help.
+fn is_examples_help_alias(value: &str) -> bool {
+    matches!(
+        value,
+        "example" | "examples" | "sample" | "samples" | "recipe" | "recipes"
+    )
 }
 
 /// Returns whether a word should run the non-mutating setup plan.
