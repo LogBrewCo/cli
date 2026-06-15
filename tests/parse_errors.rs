@@ -75,7 +75,7 @@ fn rejects_unknown_resources_with_command_specific_next_steps() {
         (
             &["logbrew", "watch", "traces", "--json"][..],
             "unknown resource: traces",
-            "choose logs, issues, actions, or omit a resource",
+            "watch streams logs, issues, and actions; use logbrew trace <trace_id> to read a trace",
         ),
         (
             &["logbrew", "explain", "logs", "--json"][..],
