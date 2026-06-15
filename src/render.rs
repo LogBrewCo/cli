@@ -34,6 +34,7 @@ fn human_summary(command: &Command, value: &serde_json::Value) -> Option<String>
         Command::Read { target, .. } => read_summary(target, value),
         Command::Explain { target, .. } => explain_summary(target, value),
         Command::Set { target, .. } => set_summary(target, value),
+        Command::ProjectSetupSeen { .. } => project_setup_seen_summary(value),
         Command::Help { .. }
         | Command::Login { .. }
         | Command::Logout { .. }
@@ -80,6 +81,25 @@ fn set_summary(target: &SetTarget, value: &serde_json::Value) -> Option<String> 
             Some(output)
         }
     }
+}
+
+/// Builds a human summary for backend-owned project setup state.
+fn project_setup_seen_summary(value: &serde_json::Value) -> Option<String> {
+    let status = field(value, "status")?;
+    let mut output = format!("Project setup seen: {status}\n");
+    if let Some(last_seen_at) = field(value, "last_seen_at") {
+        output.push_str("Last seen: ");
+        output.push_str(last_seen_at);
+        output.push('\n');
+    }
+    if let Some(next) = field(value, "next") {
+        output.push_str("Next: ");
+        output.push_str(next);
+        output.push('\n');
+    } else {
+        output.push_str("Next: send telemetry for this project\n");
+    }
+    Some(output)
 }
 
 /// Returns list items from either real bare API arrays or legacy wrapper objects.

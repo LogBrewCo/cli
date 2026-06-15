@@ -229,12 +229,14 @@ Usage:
   logbrew project [--json]
   logbrew projects create <name> [--json]
   logbrew setup --create-project [--json]
-  logbrew projects setup <project_id> [--json]
+  logbrew projects setup <project_id> [--runtime <runtime>] [--source api|cli|sdk] \
+[--environment <environment>] [--json]
 
 Project creation, setup status, and project-scoped ingest credentials are backend-owned.
-Current mode: help only. No local project, install, quota, or usage state is created.
-When backend project setup is available, the CLI will call the backend contract and print \
-backend-generated project-scoped SDK/ingest credentials.
+Current mode: projects setup marks backend-owned setup as seen; project creation remains help only.
+No local project, install, quota, or usage state is created.
+Project setup uses POST /api/projects/{project_id}/setup/seen and preserves backend setup status JSON.
+Project-scoped SDK/ingest credentials are shown only when backend returns one-time credentials.
 Never use an account bearer token as SDK or ingest configuration.
 Next: run logbrew setup for the current non-mutating local plan.";
 

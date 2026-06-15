@@ -1,6 +1,9 @@
 //! CLI command grammar tests.
 
-use logbrew_cli::{Command, HelpTopic, ReadOptions, ReadTarget, SetTarget, help, parse_command};
+use logbrew_cli::{
+    Command, HelpTopic, ProjectSetupSeenOptions, ReadOptions, ReadTarget, SetTarget, help,
+    parse_command,
+};
 
 #[test]
 fn parses_root_help_for_real_user_discovery() {
@@ -443,7 +446,6 @@ fn parses_project_and_usage_terms_as_backend_owned_help() {
         &["logbrew", "projects", "--json"],
         &["logbrew", "--json", "projects"],
         &["logbrew", "projects", "create", "checkout", "--json"],
-        &["logbrew", "projects", "setup", "proj_123", "--json"],
     ] {
         let command = parse_command(args.iter().copied()).expect("project discovery help parses");
 
@@ -471,6 +473,48 @@ fn parses_project_and_usage_terms_as_backend_owned_help() {
             }
         );
     }
+}
+
+#[test]
+fn parses_project_setup_seen_contract_call() {
+    let command = parse_command([
+        "logbrew",
+        "projects",
+        "setup",
+        "proj_123",
+        "--runtime",
+        "node",
+        "--source",
+        "cli",
+        "--environment",
+        "production",
+        "--json",
+    ])
+    .expect("project setup seen parses");
+
+    assert_eq!(
+        command,
+        Command::ProjectSetupSeen {
+            project_id: "proj_123".to_owned(),
+            options: ProjectSetupSeenOptions {
+                runtime: Some("node".to_owned()),
+                source: Some("cli".to_owned()),
+                environment: Some("production".to_owned()),
+            },
+            json: true,
+        }
+    );
+
+    let global_json = parse_command(["logbrew", "--json", "project", "setup", "proj_123"])
+        .expect("global json project setup parses");
+    assert_eq!(
+        global_json,
+        Command::ProjectSetupSeen {
+            project_id: "proj_123".to_owned(),
+            options: ProjectSetupSeenOptions::default(),
+            json: true,
+        }
+    );
 }
 
 #[test]

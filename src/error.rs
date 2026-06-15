@@ -86,6 +86,9 @@ pub enum CliError {
     /// Row limit is malformed.
     #[error("invalid limit: {0}")]
     InvalidLimit(String),
+    /// Project setup source is malformed.
+    #[error("invalid setup source: {0}")]
+    InvalidSetupSource(String),
 }
 
 /// Runtime error for command execution.
@@ -315,6 +318,7 @@ const fn cli_error_code(error: &CliError) -> &'static str {
         CliError::UnknownStatus(_) => "unknown_status",
         CliError::UnknownLogLevel(_) => "unknown_log_level",
         CliError::InvalidLimit(_) => "invalid_limit",
+        CliError::InvalidSetupSource(_) => "invalid_setup_source",
     }
 }
 
@@ -322,6 +326,7 @@ const fn cli_error_code(error: &CliError) -> &'static str {
 const fn cli_error_next_step(error: &CliError) -> &'static str {
     match error {
         CliError::InvalidLimit(_) => "use --limit with a positive whole number",
+        CliError::InvalidSetupSource(_) => "use --source api, cli, or sdk",
         CliError::MissingArgument { next, .. }
         | CliError::MissingFlagValue { next, .. }
         | CliError::DuplicateFlag { next, .. }
