@@ -15,6 +15,15 @@ npm install -g logbrew-cli
 brew install LogBrewCo/tap/logbrew
 ```
 
+Or install the native GitHub Release artifact directly:
+
+```bash
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/LogBrewCo/cli/releases/latest/download/logbrew-cli-installer.sh | sh
+powershell -ExecutionPolicy Bypass -c "irm https://github.com/LogBrewCo/cli/releases/latest/download/logbrew-cli-installer.ps1 | iex"
+```
+
+Windows users can also download the latest MSI from the GitHub Release assets.
+
 Cargo installs and source builds require Rust 1.87 or newer. The npm,
 Homebrew, shell, PowerShell, and MSI installers use native release artifacts and
 do not require a local Rust toolchain.
