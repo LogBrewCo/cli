@@ -43,6 +43,13 @@ This is the public LogBrew CLI repository. Everything committed here is public.
   contract, report only public-safe facts: expected CLI/API shape, observed
   response or error, reproduction, user impact, workaround, and requested
   backend action.
+- Treat future support ticket submission as backend-owned until backend reports
+  deployed support storage and routes. Do not call `POST /api/support/tickets`,
+  `GET /api/support/tickets`, or `GET /api/support/tickets/{ticket_id}` before
+  that deployment signal. Any future CLI support submission must be an explicit
+  user or agent action, must send token-free structured diagnostics, must
+  preserve backend error codes and `next` recovery steps, and must keep support
+  ownership routing parseable without inventing local ticket behavior.
 - Preserve stable JSON for agents and readable human output with concrete
   `Next:` recovery steps.
 - Treat bare public discovery terms as help, not dead ends, when no required
