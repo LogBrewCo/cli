@@ -58,19 +58,20 @@ This is the public LogBrew CLI repository. Everything committed here is public.
   public secret name `HOMEBREW_TAP_TOKEN`.
 - Preserve native-binary introspection: `logbrew version --json` must expose
   `binary`, `os`, and `arch` without making human `logbrew version` verbose.
-- When adding LogBrew brand assets to public CLI README/docs/GitHub Release/
-  package/installer/marketplace surfaces, use approved canonical exports from
-  public `LogBrewCo/sdk` brand assets. Use espresso-background variants for
-  store, social, preview, PWA, favicon, installer, and package preview contexts;
-  use transparent/no-background variants for in-page website/app UI where the
-  surrounding surface should show through. Primary public assets:
-  `https://raw.githubusercontent.com/LogBrewCo/sdk/main/assets/brand/logbrew-logo-espresso-bg-512.png`,
-  `https://raw.githubusercontent.com/LogBrewCo/sdk/main/assets/brand/logbrew-logo-transparent-512.png`,
-  and `https://raw.githubusercontent.com/LogBrewCo/sdk/main/assets/brand/github-social-preview.png`.
-  Do not redraw, recolor, smooth, recrop, outline, shadow, or otherwise alter
-  the pixel logo; convert/export only from canonical SVG/PNG sources. Brand
-  colors are espresso `#3C2B24`, beer gold `#FFC61A`, edge black `#111011`, and
-  foam white `#FFFFFF`.
+- When adding or replacing LogBrew brand assets on public CLI README/docs/GitHub
+  Release/package/installer/marketplace surfaces, use only approved canonical
+  SVG/PNG exports supplied for the task, and never publish local/private source
+  paths. Clean old or stale logo files in the touched surface. Use
+  espresso-background assets for package, store, favicon, social-preview, and
+  square logo contexts; use transparent/no-background assets for in-product UI
+  or terminal/docs imagery only when the surrounding surface should remain
+  visible. Do not redraw, recolor, smooth, recrop, outline, shadow, recenter, or
+  otherwise alter the pixel logo. The final logo has a deliberate optical
+  centering shift; do not recenter it by bounding box. Prefer copying canonical
+  SVG/PNG exports or regenerating PNGs from canonical source SVGs. Verify PNG
+  exports match source-SVG renders and SVG files contain no embedded
+  bitmap/base64 data. Brand colors are espresso `#3C2B24`, beer gold `#FFC61A`,
+  edge black `#111011`, and foam white `#FFFFFF`.
 - Homebrew publishing uses the public `LogBrewCo/homebrew-tap` repository.
   Treat the tap repo as release plumbing; document user-facing Homebrew installs
   as `brew install LogBrewCo/tap/logbrew`. Treat Homebrew registry publishing as
