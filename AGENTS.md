@@ -27,6 +27,15 @@ This is the public LogBrew CLI repository. Everything committed here is public.
   cargo-dist config; `dist plan` rejects drift.
 - Preserve token safety: CLI output may say whether auth exists and where it
   came from, but must never print token material.
+- Keep public CLI dogfooding opt-in only and inert by default. Do not add
+  always-on telemetry to this public repo, published packages, installers, or
+  downstream user flows. Prefer local fake intakes, temporary package/CLI
+  smokes, and explicitly configured product-owned runtime surfaces for real
+  telemetry. Any dogfood instrumentation must be guarded by private secrets or
+  environment variables outside this repo, never affect downstream users, and
+  never commit or print dogfood credentials, account/session tokens, ingest
+  keys, cookies, headers, screenshots, private paths, or private backend
+  details.
 - Treat shared auth/account/session/API/ingest/WebSocket behavior as
   backend-owned contracts. The CLI should consume stable token-safe public
   contracts only; do not describe or implement provider setup, backend sessions,
