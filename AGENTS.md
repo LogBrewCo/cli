@@ -9,6 +9,13 @@ This is the public LogBrew CLI repository. Everything committed here is public.
   secrets, or private backend implementation details.
 - Keep this repo CLI-only. Do not add backend, mobile app, SDK, infrastructure,
   deployment, backup, ClickHouse schema, or private ops work here.
+- Keep public files limited to public CLI product work: CLI source, package
+  metadata, public examples, tests, verifier scripts, fake-intake/local smokes,
+  public CLI docs, and source-backed research directly tied to CLI behavior.
+  Do not add internal dogfooding strategy, private coordination, private repo
+  install plans, backend/team planning notes, ops or runbook details, private
+  paths, credentials, host/network details, or non-public strategy to this repo,
+  release notes, docs, examples, scripts, or research files.
 - Do not mirror SDK package surfaces in this repo. Language and framework SDK
   packages stay owned by public `LogBrewCo/sdk`; this repo publishes only the
   `logbrew` CLI binary and its install wrappers.
@@ -29,13 +36,13 @@ This is the public LogBrew CLI repository. Everything committed here is public.
   came from, but must never print token material.
 - Keep public CLI dogfooding opt-in only and inert by default. Do not add
   always-on telemetry to this public repo, published packages, installers, or
-  downstream user flows. Prefer local fake intakes, temporary package/CLI
-  smokes, and explicitly configured product-owned runtime surfaces for real
-  telemetry. Any dogfood instrumentation must be guarded by private secrets or
-  environment variables outside this repo, never affect downstream users, and
-  never commit or print dogfood credentials, account/session tokens, ingest
-  keys, cookies, headers, screenshots, private paths, or private backend
-  details.
+  downstream user flows. Any dogfood-related CLI proof in public files must be
+  reframed as generic local, fake-intake, or installed-artifact verification
+  with placeholders only and safe downstream defaults. Real dogfood telemetry
+  belongs only in private or product-owned runtime surfaces, or safe temporary
+  apps with secrets outside git. Never commit or print dogfood credentials,
+  account/session tokens, ingest keys, cookies, headers, screenshots, private
+  paths, or private backend details.
 - Treat shared auth/account/session/API/ingest/WebSocket behavior as
   backend-owned contracts. The CLI should consume stable token-safe public
   contracts only; do not describe or implement provider setup, backend sessions,
