@@ -644,39 +644,50 @@ async fn execute_login<W: std::io::Write>(
     json: bool,
     output: &mut W,
 ) -> Result<(), RuntimeError> {
-    if json {
-        let body = serde_json::json!({
-            "ok": true,
-            "browser_opened": false,
-            "mode": "human_browser_required",
-            "next": "run logbrew login to complete browser auth",
-        });
-        writeln!(output, "{body}")?;
-        return Ok(());
-    }
-
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let redirect_uri = format!("http://{}/callback", listener.local_addr()?);
     let state = login_state_nonce()?;
     let auth_url = cli_login_url(env.base_url.as_str(), redirect_uri.as_str(), state.as_str())?;
-    let opened = should_open_browser && open_browser(auth_url.as_str());
-
-    writeln!(output, "Open this URL to log in: {auth_url}")?;
-    writeln!(
-        output,
-        "Browser: {}",
-        if opened { "opened" } else { "not opened" }
-    )?;
-    writeln!(output, "Waiting for browser callback: {redirect_uri}")?;
+    if json {
+        let body = serde_json::json!({
+            "ok": true,
+            "stage": "auth_url",
+            "auth_url": auth_url,
+            "browser_opened": false,
+            "redirect_uri": redirect_uri,
+            "next": "open auth_url in a browser to complete login",
+        });
+        writeln!(output, "{body}")?;
+    } else {
+        let opened = should_open_browser && open_browser(auth_url.as_str());
+        writeln!(output, "Open this URL to log in: {auth_url}")?;
+        writeln!(
+            output,
+            "Browser: {}",
+            if opened { "opened" } else { "not opened" }
+        )?;
+        writeln!(output, "Waiting for browser callback: {redirect_uri}")?;
+    }
+    output.flush()?;
 
     let callback = wait_for_login_callback(listener, state.as_str()).await?;
     let token =
         exchange_cli_login_code(env, &callback, redirect_uri.as_str(), state.as_str()).await?;
     persist_token_to_home(env.home.as_deref(), token.as_str())?;
 
-    writeln!(output, "Logged in to LogBrew.")?;
-    writeln!(output, "Auth: logged in (local token)")?;
-    writeln!(output, "Next: run logbrew status")?;
+    if json {
+        let body = serde_json::json!({
+            "ok": true,
+            "stage": "complete",
+            "auth": "local_token",
+            "next": "run logbrew status",
+        });
+        writeln!(output, "{body}")?;
+    } else {
+        writeln!(output, "Logged in to LogBrew.")?;
+        writeln!(output, "Auth: logged in (local token)")?;
+        writeln!(output, "Next: run logbrew status")?;
+    }
     Ok(())
 }
 

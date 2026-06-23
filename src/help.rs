@@ -113,7 +113,7 @@ Usage:
 
 Starts browser login for the native CLI with a 127.0.0.1 callback.
 Use --no-open to print the URL and wait for a manually opened browser.
---json does not open a browser or print token material; run human login to complete auth.";
+--json prints token-safe auth and completion events without opening a browser.";
 
 /// Logout command help text.
 const LOGOUT_HELP: &str = "\

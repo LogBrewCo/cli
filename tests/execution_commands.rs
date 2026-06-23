@@ -32,32 +32,63 @@ async fn authenticated_reads_without_token_explain_login_step() {
 }
 
 #[tokio::test]
-async fn login_json_reports_human_browser_requirement_without_side_effect() {
+async fn login_json_emits_token_safe_handoff_and_completion_events()
+-> Result<(), Box<dyn std::error::Error>> {
+    let command = parse_command(["logbrew", "--json", "login"]).expect("command");
+    let home = setup_fixture("login-json-loopback-home")?;
+    let (base_url, server) = spawn_cli_auth_server().await;
     let env = CliEnvironment {
-        base_url: "https://example.test".to_owned(),
+        base_url,
         token: None,
-        home: Some(std::env::temp_dir().join("logbrew-login-no-open-test")),
+        home: Some(home.clone()),
         cwd: None,
     };
-    for args in [
-        &["logbrew", "login", "--no-open", "--json"][..],
-        &["logbrew", "--json", "login"][..],
-    ] {
-        let command = parse_command(args.iter().copied()).expect("command");
-        let mut output = Vec::new();
+    let output = SharedOutput::default();
+    let output_reader = output.clone();
 
-        execute_command(&command, &env, &mut output)
-            .await
-            .expect("login succeeds");
+    let login = tokio::spawn(async move {
+        let mut output = output;
+        execute_command(&command, &env, &mut output).await
+    });
 
-        let body: serde_json::Value =
-            serde_json::from_slice(output.as_slice()).expect("valid json");
-        assert_eq!(body["ok"], true);
-        assert!(body.get("auth_url").is_none());
-        assert_eq!(body["browser_opened"], false);
-        assert_eq!(body["mode"], "human_browser_required");
-        assert_eq!(body["next"], "run logbrew login to complete browser auth");
-    }
+    let handoff = wait_for_json_auth_url(&output_reader).await;
+    assert_eq!(handoff["ok"], true);
+    assert_eq!(handoff["stage"], "auth_url");
+    assert_eq!(handoff["browser_opened"], false);
+    assert_eq!(
+        handoff["next"],
+        "open auth_url in a browser to complete login"
+    );
+    assert!(
+        handoff["redirect_uri"]
+            .as_str()
+            .expect("redirect_uri is string")
+            .starts_with("http://127.0.0.1:")
+    );
+    let auth_url = handoff["auth_url"].as_str().expect("auth_url is string");
+    assert!(auth_url.contains("/api/auth/cli/login?"));
+
+    let browser_response = reqwest::get(auth_url).await?;
+    assert!(browser_response.status().is_success());
+
+    login.await??;
+    server.await.expect("auth server task succeeds");
+
+    let token_path = home.join(".logbrew").join("token");
+    assert_eq!(
+        fs::read_to_string(token_path)?.trim(),
+        "fixture-local-token"
+    );
+
+    let text = output_reader.text();
+    assert!(!text.contains("fixture-local-token"));
+    let events = output_reader.json_lines();
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[1]["ok"], true);
+    assert_eq!(events[1]["stage"], "complete");
+    assert_eq!(events[1]["auth"], "local_token");
+    assert_eq!(events[1]["next"], "run logbrew status");
+    Ok(())
 }
 
 #[tokio::test]
@@ -741,6 +772,23 @@ async fn wait_for_auth_url(output: &SharedOutput) -> String {
     panic!("timed out waiting for auth URL; output: {}", output.text());
 }
 
+async fn wait_for_json_auth_url(output: &SharedOutput) -> serde_json::Value {
+    for _ in 0..100 {
+        let events = output.json_lines();
+        if let Some(event) = events
+            .into_iter()
+            .find(|event| event["stage"] == "auth_url")
+        {
+            return event;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    panic!(
+        "timed out waiting for json auth URL; output: {}",
+        output.text()
+    );
+}
+
 #[derive(Clone, Default)]
 struct SharedOutput {
     inner: Arc<Mutex<Vec<u8>>>,
@@ -750,6 +798,13 @@ impl SharedOutput {
     fn text(&self) -> String {
         let output = self.inner.lock().expect("output lock");
         String::from_utf8(output.clone()).expect("output is utf8")
+    }
+
+    fn json_lines(&self) -> Vec<serde_json::Value> {
+        self.text()
+            .lines()
+            .map(|line| serde_json::from_str(line).expect("json line"))
+            .collect()
     }
 }
 

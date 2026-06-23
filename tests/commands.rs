@@ -200,8 +200,7 @@ fn login_help_explains_json_handoff_without_browser() {
         text.contains("Use --no-open to print the URL and wait for a manually opened browser.")
     );
     assert!(text.contains(
-        "--json does not open a browser or print token material; run human login to complete \
-             auth."
+        "--json prints token-safe auth and completion events without opening a browser."
     ));
 }
 
