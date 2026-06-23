@@ -1,6 +1,7 @@
 //! CLI execution tests for local command flows.
 
 use std::fs;
+use std::sync::{Arc, Mutex};
 
 use futures_util::SinkExt;
 use logbrew_cli::{
@@ -31,7 +32,7 @@ async fn authenticated_reads_without_token_explain_login_step() {
 }
 
 #[tokio::test]
-async fn login_no_open_json_prints_auth_url_without_browser_side_effect() {
+async fn login_json_reports_human_browser_requirement_without_side_effect() {
     let env = CliEnvironment {
         base_url: "https://example.test".to_owned(),
         token: None,
@@ -52,33 +53,52 @@ async fn login_no_open_json_prints_auth_url_without_browser_side_effect() {
         let body: serde_json::Value =
             serde_json::from_slice(output.as_slice()).expect("valid json");
         assert_eq!(body["ok"], true);
-        assert_eq!(body["auth_url"], "https://example.test/api/auth/cli/login");
+        assert!(body.get("auth_url").is_none());
         assert_eq!(body["browser_opened"], false);
-        assert_eq!(body["next"], "open auth_url in a browser");
+        assert_eq!(body["mode"], "human_browser_required");
+        assert_eq!(body["next"], "run logbrew login to complete browser auth");
     }
 }
 
 #[tokio::test]
-async fn login_no_open_human_prints_browser_state_and_next_step() {
+async fn login_no_open_human_completes_loopback_auth_without_leaking_token()
+-> Result<(), Box<dyn std::error::Error>> {
     let command = parse_command(["logbrew", "login", "--no-open"]).expect("command");
+    let home = setup_fixture("login-loopback-home")?;
+    let (base_url, server) = spawn_cli_auth_server().await;
     let env = CliEnvironment {
-        base_url: "https://example.test".to_owned(),
+        base_url,
         token: None,
-        home: Some(std::env::temp_dir().join("logbrew-login-no-open-human-test")),
+        home: Some(home.clone()),
         cwd: None,
     };
-    let mut output = Vec::new();
+    let output = SharedOutput::default();
+    let output_reader = output.clone();
 
-    execute_command(&command, &env, &mut output)
-        .await
-        .expect("login succeeds");
+    let login = tokio::spawn(async move {
+        let mut output = output;
+        execute_command(&command, &env, &mut output).await
+    });
 
-    let text = String::from_utf8(output).expect("utf8 output");
+    let auth_url = wait_for_auth_url(&output_reader).await;
+    let browser_response = reqwest::get(auth_url).await?;
+    assert!(browser_response.status().is_success());
+
+    login.await??;
+    server.await.expect("auth server task succeeds");
+
+    let token_path = home.join(".logbrew").join("token");
     assert_eq!(
-        text,
-        "Open this URL to log in: https://example.test/api/auth/cli/login\nBrowser: not \
-         opened\nNext: open the URL in a browser\n"
+        fs::read_to_string(token_path)?.trim(),
+        "fixture-local-token"
     );
+
+    let text = output_reader.text();
+    assert!(text.contains("Browser: not opened"));
+    assert!(text.contains("Logged in to LogBrew."));
+    assert!(text.contains("Next: run logbrew status"));
+    assert!(!text.contains("fixture-local-token"));
+    Ok(())
 }
 
 #[tokio::test]
@@ -521,6 +541,68 @@ async fn spawn_feed_server(
     (format!("http://{address}"), server)
 }
 
+async fn spawn_cli_auth_server() -> (String, tokio::task::JoinHandle<()>) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind auth server");
+    let address = listener.local_addr().expect("local auth server address");
+    let server = tokio::spawn(async move {
+        let (mut login_stream, _) = listener.accept().await.expect("login connection");
+        let login_request = read_http_request(&mut login_stream).await;
+        assert!(login_request.starts_with("GET /api/auth/cli/login?"));
+        let login_url = request_target_url(login_request.as_str());
+        let pairs = login_url
+            .query_pairs()
+            .map(|(key, value)| (key.into_owned(), value.into_owned()))
+            .collect::<std::collections::BTreeMap<_, _>>();
+        assert_eq!(pairs.get("provider").map(String::as_str), Some("github"));
+        let redirect_uri = pairs
+            .get("redirect_uri")
+            .expect("login request includes redirect_uri");
+        assert!(
+            redirect_uri.starts_with("http://127.0.0.1:"),
+            "redirect_uri must be loopback: {redirect_uri}"
+        );
+        assert!(
+            redirect_uri.ends_with("/callback"),
+            "redirect_uri must target callback: {redirect_uri}"
+        );
+        let state = pairs.get("state").expect("login request includes state");
+        assert!(state.len() >= 32, "state should be a nonce");
+        let callback_url = format!(
+            "{}?provider=github&code=fixture-code&state={}",
+            redirect_uri,
+            percent_encode(state)
+        );
+        let login_response = format!(
+            "HTTP/1.1 302 Found\r\nlocation: {callback_url}\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"
+        );
+        login_stream
+            .write_all(login_response.as_bytes())
+            .await
+            .expect("write login redirect");
+
+        let (mut exchange_stream, _) = listener.accept().await.expect("exchange connection");
+        let exchange_request = read_http_request_with_body(&mut exchange_stream).await;
+        assert!(exchange_request.starts_with("POST /api/auth/cli/token "));
+        assert!(exchange_request.contains("\"provider\":\"github\""));
+        assert!(exchange_request.contains("\"code\":\"fixture-code\""));
+        assert!(exchange_request.contains("\"state\":"));
+        assert!(exchange_request.contains("\"redirect_uri\":"));
+        let body = serde_json::json!({ "access_token": "fixture-local-token" }).to_string();
+        let exchange_response = format!(
+            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        exchange_stream
+            .write_all(exchange_response.as_bytes())
+            .await
+            .expect("write token response");
+    });
+    (format!("http://{address}"), server)
+}
+
 struct FeedSession {
     ticket: &'static str,
     messages: Vec<String>,
@@ -599,6 +681,90 @@ async fn read_http_request(stream: &mut tokio::net::TcpStream) -> String {
         }
     }
     String::from_utf8(request).expect("request is utf8")
+}
+
+async fn read_http_request_with_body(stream: &mut tokio::net::TcpStream) -> String {
+    let mut request = Vec::new();
+    let mut buffer = [0_u8; 1024];
+    let mut header_end = None;
+    loop {
+        let read = stream.read(&mut buffer).await.expect("read request");
+        if read == 0 {
+            break;
+        }
+        request.extend_from_slice(&buffer[..read]);
+        if header_end.is_none() {
+            header_end = request
+                .windows(4)
+                .position(|window| window == b"\r\n\r\n")
+                .map(|index| index + 4);
+        }
+        if let Some(end) = header_end {
+            let headers = String::from_utf8_lossy(&request[..end]);
+            let content_length = headers
+                .lines()
+                .find_map(|line| {
+                    let (name, value) = line.split_once(':')?;
+                    name.eq_ignore_ascii_case("content-length")
+                        .then(|| value.trim().parse::<usize>().ok())
+                        .flatten()
+                })
+                .unwrap_or(0);
+            if request.len() >= end + content_length {
+                break;
+            }
+        }
+    }
+    String::from_utf8(request).expect("request is utf8")
+}
+
+fn request_target_url(request: &str) -> reqwest::Url {
+    let target = request
+        .lines()
+        .next()
+        .and_then(|line| line.split_whitespace().nth(1))
+        .expect("request target");
+    reqwest::Url::parse(format!("http://127.0.0.1{target}").as_str()).expect("request url parses")
+}
+
+async fn wait_for_auth_url(output: &SharedOutput) -> String {
+    for _ in 0..100 {
+        let text = output.text();
+        if let Some(url) = text.lines().find_map(|line| {
+            line.strip_prefix("Open this URL to log in: ")
+                .map(str::to_owned)
+        }) {
+            return url;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    panic!("timed out waiting for auth URL; output: {}", output.text());
+}
+
+#[derive(Clone, Default)]
+struct SharedOutput {
+    inner: Arc<Mutex<Vec<u8>>>,
+}
+
+impl SharedOutput {
+    fn text(&self) -> String {
+        let output = self.inner.lock().expect("output lock");
+        String::from_utf8(output.clone()).expect("output is utf8")
+    }
+}
+
+impl std::io::Write for SharedOutput {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.inner
+            .lock()
+            .expect("output lock")
+            .extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
 }
 
 fn percent_encode(value: &str) -> String {

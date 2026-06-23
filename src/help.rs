@@ -111,8 +111,9 @@ const LOGIN_HELP: &str = "\
 Usage:
   logbrew login [--no-open] [--json]
 
-Starts browser login for the native CLI. Use --no-open to print the URL without opening a browser.
---json prints the auth handoff without opening a browser.";
+Starts browser login for the native CLI with a 127.0.0.1 callback.
+Use --no-open to print the URL and wait for a manually opened browser.
+--json does not open a browser or print token material; run human login to complete auth.";
 
 /// Logout command help text.
 const LOGOUT_HELP: &str = "\

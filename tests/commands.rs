@@ -195,7 +195,14 @@ fn status_help_advertises_identity_aliases() {
 fn login_help_explains_json_handoff_without_browser() {
     let text = help::help_text(HelpTopic::Login);
 
-    assert!(text.contains("--json prints the auth handoff without opening a browser."));
+    assert!(text.contains("Starts browser login for the native CLI with a 127.0.0.1 callback."));
+    assert!(
+        text.contains("Use --no-open to print the URL and wait for a manually opened browser.")
+    );
+    assert!(text.contains(
+        "--json does not open a browser or print token material; run human login to complete \
+             auth."
+    ));
 }
 
 #[test]

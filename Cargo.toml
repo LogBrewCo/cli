@@ -27,6 +27,7 @@ path = "src/main.rs"
 
 [dependencies]
 futures-util = { version = "0.3.32", features = ["sink"] }
+getrandom = "0.3"
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "http2"] }
 serde_json = "1"
 thiserror = "2"

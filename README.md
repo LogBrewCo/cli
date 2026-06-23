@@ -90,7 +90,11 @@ The default API URL is `https://api.logbrew.co`. Override it with
 `LOGBREW_API_URL` when testing against another LogBrew API.
 
 Authentication uses either `LOGBREW_TOKEN` or the local token file created by
-`logbrew login`. CLI output must never print token material.
+`logbrew login`. Human login opens a browser-backed loopback handoff on
+`127.0.0.1`; use `logbrew login --no-open` to print the URL and wait for a
+manually opened browser. `logbrew login --json` stays token-safe and does not
+print token material or complete browser auth by itself. CLI output must never
+print token material.
 
 For AI sessions, the default mode should be checking only when requested because
 it uses fewer AI tokens. `logbrew watch --json` opens a live WebSocket stream for

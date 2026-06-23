@@ -2,6 +2,9 @@
 
 use crate::{CliEnvironment, RuntimeError};
 
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt as _;
+
 /// Next step after status confirms both API reachability and local auth.
 const AUTHENTICATED_STATUS_NEXT: &str =
     "run logbrew releases or logbrew logs --release <release> --environment <environment>";
@@ -47,6 +50,36 @@ pub(crate) fn resolve_credential(env: &CliEnvironment) -> Result<AuthCredential,
         source: AuthSource::TokenFile.key(),
         label: AuthSource::TokenFile.human_label(),
     })
+}
+
+/// Persists a local CLI token below the user's home directory.
+pub(crate) fn persist_token_to_home(
+    home: Option<&std::path::Path>,
+    token: &str,
+) -> Result<(), RuntimeError> {
+    let Some(home) = home else {
+        return Err(RuntimeError::Unavailable {
+            message: "could not save login without a home directory",
+            next: "set HOME or use LOGBREW_TOKEN",
+        });
+    };
+    let trimmed = token.trim();
+    if trimmed.is_empty() {
+        return Err(RuntimeError::Unavailable {
+            message: "login response did not include a usable token",
+            next: "retry logbrew login",
+        });
+    }
+
+    let config_dir = home.join(".logbrew");
+    std::fs::create_dir_all(config_dir.as_path())?;
+    let token_path = config_dir.join("token");
+    let mut options = std::fs::OpenOptions::new();
+    let options = options.create(true).truncate(true).write(true);
+    #[cfg(unix)]
+    let options = options.mode(0o600);
+    std::io::Write::write_all(&mut options.open(token_path)?, trimmed.as_bytes())?;
+    Ok(())
 }
 
 /// Opens a URL in the user's default browser.

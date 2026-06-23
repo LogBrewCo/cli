@@ -26,13 +26,14 @@ pub mod status;
 #[doc(hidden)]
 pub mod version;
 
-use auth::{open_browser, resolve_credential, write_logout_result};
+use auth::{open_browser, persist_token_to_home, resolve_credential, write_logout_result};
 pub use error::{CliError, RuntimeError, write_cli_error, write_runtime_error};
 use futures_util::StreamExt as _;
 pub use parser::parse_command;
 use render::write_api_success;
 use setup::write_setup_plan;
 use status::execute_status;
+use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::{Error as WebSocketError, Message};
 use version::execute_version;
@@ -43,6 +44,14 @@ const WATCH_RECONNECT_INITIAL_DELAY: std::time::Duration = std::time::Duration::
 const WATCH_RECONNECT_MAX_DELAY: std::time::Duration = std::time::Duration::from_secs(30);
 /// Maximum jitter added to reconnect delays.
 const WATCH_RECONNECT_JITTER_MAX_MILLIS: u64 = 250;
+/// Default browser provider for native CLI login.
+const DEFAULT_LOGIN_PROVIDER: &str = "github";
+/// Backend-owned endpoint that starts browser-based CLI auth.
+const CLI_LOGIN_PATH: &str = "/api/auth/cli/login";
+/// Backend-owned endpoint that exchanges a callback code for a local CLI token.
+const CLI_TOKEN_PATH: &str = "/api/auth/cli/token";
+/// Maximum time to wait for the browser to return to the loopback callback.
+const LOGIN_CALLBACK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
 
 /// Accepted issue status values for generic recovery text.
 pub(crate) const ISSUE_STATUS_VALUES_NEXT_STEP: &str =
@@ -589,7 +598,9 @@ pub async fn execute_command<W: std::io::Write>(
 ) -> Result<(), RuntimeError> {
     match command {
         Command::Help { topic, json } => execute_help(*topic, *json, output),
-        Command::Login { open_browser, json } => execute_login(env, *open_browser, *json, output),
+        Command::Login { open_browser, json } => {
+            execute_login(env, *open_browser, *json, output).await
+        }
         Command::Logout { json } => execute_logout(env, *json, output),
         Command::Setup { auto, yes, json } => execute_setup(env, *auto, *yes, *json, output),
         Command::Status { json } => execute_status(env, *json, output).await,
@@ -627,33 +638,242 @@ fn execute_help<W: std::io::Write>(
 }
 
 /// Executes browser login bootstrap.
-fn execute_login<W: std::io::Write>(
+async fn execute_login<W: std::io::Write>(
     env: &CliEnvironment,
     should_open_browser: bool,
     json: bool,
     output: &mut W,
 ) -> Result<(), RuntimeError> {
-    let auth_url = format!("{}/api/auth/cli/login", env.base_url.trim_end_matches('/'));
-    let opened = should_open_browser && open_browser(auth_url.as_str());
-
     if json {
         let body = serde_json::json!({
             "ok": true,
-            "auth_url": auth_url,
-            "browser_opened": opened,
-            "next": "open auth_url in a browser",
+            "browser_opened": false,
+            "mode": "human_browser_required",
+            "next": "run logbrew login to complete browser auth",
         });
         writeln!(output, "{body}")?;
-    } else {
-        writeln!(output, "Open this URL to log in: {auth_url}")?;
-        writeln!(
-            output,
-            "Browser: {}",
-            if opened { "opened" } else { "not opened" }
-        )?;
-        writeln!(output, "Next: open the URL in a browser")?;
+        return Ok(());
     }
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let redirect_uri = format!("http://{}/callback", listener.local_addr()?);
+    let state = login_state_nonce()?;
+    let auth_url = cli_login_url(env.base_url.as_str(), redirect_uri.as_str(), state.as_str())?;
+    let opened = should_open_browser && open_browser(auth_url.as_str());
+
+    writeln!(output, "Open this URL to log in: {auth_url}")?;
+    writeln!(
+        output,
+        "Browser: {}",
+        if opened { "opened" } else { "not opened" }
+    )?;
+    writeln!(output, "Waiting for browser callback: {redirect_uri}")?;
+
+    let callback = wait_for_login_callback(listener, state.as_str()).await?;
+    let token =
+        exchange_cli_login_code(env, &callback, redirect_uri.as_str(), state.as_str()).await?;
+    persist_token_to_home(env.home.as_deref(), token.as_str())?;
+
+    writeln!(output, "Logged in to LogBrew.")?;
+    writeln!(output, "Auth: logged in (local token)")?;
+    writeln!(output, "Next: run logbrew status")?;
     Ok(())
+}
+
+/// Builds the backend auth URL for browser-based CLI login.
+fn cli_login_url(base_url: &str, redirect_uri: &str, state: &str) -> Result<String, RuntimeError> {
+    let login_url = format!("{}{}", base_url.trim_end_matches('/'), CLI_LOGIN_PATH);
+    let mut url =
+        reqwest::Url::parse(login_url.as_str()).map_err(|_| RuntimeError::Unavailable {
+            message: "could not build the CLI login URL",
+            next: "check LOGBREW_API_URL",
+        })?;
+    {
+        let mut query = url.query_pairs_mut();
+        let query = query.append_pair("provider", DEFAULT_LOGIN_PROVIDER);
+        let query = query.append_pair("redirect_uri", redirect_uri);
+        let _query = query.append_pair("state", state);
+    }
+    Ok(url.to_string())
+}
+
+/// Generates an unguessable OAuth state nonce for CLI login.
+fn login_state_nonce() -> Result<String, RuntimeError> {
+    let mut bytes = [0_u8; 16];
+    getrandom::fill(&mut bytes).map_err(|_| RuntimeError::Unavailable {
+        message: "could not generate CLI login state",
+        next: "retry logbrew login",
+    })?;
+    let mut nonce = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        nonce.push(hex_digit(byte >> 4));
+        nonce.push(hex_digit(byte & 0x0f));
+    }
+    Ok(nonce)
+}
+
+/// One successful loopback login callback.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LoginCallback {
+    /// Provider that completed auth.
+    provider: String,
+    /// Backend-issued callback code to exchange.
+    code: String,
+}
+
+/// Waits for the browser to return to the local loopback callback.
+async fn wait_for_login_callback(
+    listener: tokio::net::TcpListener,
+    expected_state: &str,
+) -> Result<LoginCallback, RuntimeError> {
+    let accept = tokio::time::timeout(LOGIN_CALLBACK_TIMEOUT, listener.accept())
+        .await
+        .map_err(|_| RuntimeError::Unavailable {
+            message: "timed out waiting for browser login",
+            next: "retry logbrew login",
+        })?;
+    let (mut stream, _) = accept?;
+    let request = read_loopback_request(&mut stream).await?;
+    let callback = parse_login_callback(request.as_str(), expected_state);
+    let response = if callback.is_ok() {
+        "HTTP/1.1 200 OK\r\ncontent-type: text/plain; charset=utf-8\r\ncontent-length: 57\r\nconnection: close\r\n\r\nLogBrew CLI login received. You can close this window.\n"
+    } else {
+        "HTTP/1.1 400 Bad Request\r\ncontent-type: text/plain; charset=utf-8\r\ncontent-length: 59\r\nconnection: close\r\n\r\nLogBrew CLI login failed. Return to the terminal to retry.\n"
+    };
+    stream.write_all(response.as_bytes()).await?;
+    callback
+}
+
+/// Reads one HTTP request from the loopback callback.
+async fn read_loopback_request(stream: &mut tokio::net::TcpStream) -> Result<String, RuntimeError> {
+    let mut request = Vec::new();
+    let mut buffer = [0_u8; 1024];
+    loop {
+        let read = stream.read(&mut buffer).await?;
+        if read == 0 {
+            break;
+        }
+        request.extend_from_slice(&buffer[..read]);
+        if request.windows(4).any(|window| window == b"\r\n\r\n") {
+            break;
+        }
+        if request.len() > 8192 {
+            return Err(RuntimeError::Unavailable {
+                message: "browser login callback was too large",
+                next: "retry logbrew login",
+            });
+        }
+    }
+    String::from_utf8(request).map_err(|_| RuntimeError::Unavailable {
+        message: "browser login callback was not valid UTF-8",
+        next: "retry logbrew login",
+    })
+}
+
+/// Parses and validates the callback request without exposing token material.
+fn parse_login_callback(
+    request: &str,
+    expected_state: &str,
+) -> Result<LoginCallback, RuntimeError> {
+    let target = request
+        .lines()
+        .next()
+        .and_then(|line| line.split_whitespace().nth(1))
+        .ok_or(RuntimeError::Unavailable {
+            message: "browser login callback was malformed",
+            next: "retry logbrew login",
+        })?;
+    let url = reqwest::Url::parse(format!("http://127.0.0.1{target}").as_str()).map_err(|_| {
+        RuntimeError::Unavailable {
+            message: "browser login callback was malformed",
+            next: "retry logbrew login",
+        }
+    })?;
+    if url.path() != "/callback" {
+        return Err(RuntimeError::Unavailable {
+            message: "browser login callback used an unexpected path",
+            next: "retry logbrew login",
+        });
+    }
+    let pairs = url
+        .query_pairs()
+        .map(|(key, value)| (key.into_owned(), value.into_owned()))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    if pairs.get("state").map(String::as_str) != Some(expected_state) {
+        return Err(RuntimeError::Unavailable {
+            message: "browser login callback state did not match",
+            next: "retry logbrew login",
+        });
+    }
+    if pairs.contains_key("error") {
+        return Err(RuntimeError::Unavailable {
+            message: "browser login was canceled or failed",
+            next: "retry logbrew login",
+        });
+    }
+    let provider = pairs
+        .get("provider")
+        .filter(|value| !value.trim().is_empty())
+        .cloned()
+        .ok_or(RuntimeError::Unavailable {
+            message: "browser login callback did not include a provider",
+            next: "retry logbrew login",
+        })?;
+    let code = pairs
+        .get("code")
+        .filter(|value| !value.trim().is_empty())
+        .cloned()
+        .ok_or(RuntimeError::Unavailable {
+            message: "browser login callback did not include a code",
+            next: "retry logbrew login",
+        })?;
+    Ok(LoginCallback { provider, code })
+}
+
+/// Exchanges the callback code for a local CLI token through the backend.
+async fn exchange_cli_login_code(
+    env: &CliEnvironment,
+    callback: &LoginCallback,
+    redirect_uri: &str,
+    state: &str,
+) -> Result<String, RuntimeError> {
+    let url = format!("{}{}", env.base_url.trim_end_matches('/'), CLI_TOKEN_PATH);
+    let body = serde_json::json!({
+        "provider": callback.provider,
+        "code": callback.code,
+        "redirect_uri": redirect_uri,
+        "state": state,
+    });
+    let response = reqwest::Client::new().post(url).json(&body).send().await?;
+    let status = response.status();
+    let body = response.text().await?;
+    if !status.is_success() {
+        return Err(RuntimeError::Api {
+            status: status.as_u16(),
+            body,
+            auth_source: "missing",
+            auth_label: "not logged in",
+        });
+    }
+    let value = serde_json::from_str::<serde_json::Value>(body.as_str()).map_err(|_| {
+        RuntimeError::Unavailable {
+            message: "login response was not valid JSON",
+            next: "retry logbrew login",
+        }
+    })?;
+    login_token_from_response(&value).ok_or(RuntimeError::Unavailable {
+        message: "login response did not include a usable token",
+        next: "retry logbrew login",
+    })
+}
+
+/// Extracts the local CLI token from supported backend response shapes.
+fn login_token_from_response(value: &serde_json::Value) -> Option<String> {
+    ["token", "access_token", "cli_token"]
+        .iter()
+        .find_map(|field| value.get(field).and_then(serde_json::Value::as_str))
+        .filter(|token| !token.trim().is_empty())
+        .map(str::to_owned)
 }
 
 /// Executes local logout.
