@@ -27,6 +27,12 @@ fail() {
   exit 1
 }
 
+fail_version_already_released() {
+  printf 'Release preflight failed: %s\n' "$1" >&2
+  printf 'Next: bump Cargo.toml to the next SemVer version, update package metadata, commit the version bump, then rerun %s v<next-version> before tagging.\n' "$0" >&2
+  exit 1
+}
+
 fail_missing_secrets() {
   printf 'Release preflight failed: missing GitHub Actions secret names: %s\n' "$*" >&2
   printf 'Next: add the missing repository secret names in GitHub Actions secrets before tagging:\n' >&2
@@ -297,15 +303,15 @@ if [[ "$local_head" != "$remote_head" ]]; then
 fi
 
 if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
-  fail "local tag ${TAG} already exists"
+  fail_version_already_released "local tag ${TAG} already exists"
 fi
 
 if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
-  fail "remote tag ${TAG} already exists"
+  fail_version_already_released "remote tag ${TAG} already exists"
 fi
 
 if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
-  fail "GitHub Release ${TAG} already exists"
+  fail_version_already_released "GitHub Release ${TAG} already exists"
 fi
 
 tmp_dir="$(mktemp -d)"

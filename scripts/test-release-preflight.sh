@@ -183,6 +183,9 @@ case "${1:-}" in
       exit 0
     fi
     if [[ "${2:-}" == "-q" && "${3:-}" == "--verify" ]]; then
+      if [[ "${LOGBREW_TEST_LOCAL_TAG:-missing}" == "exists" ]]; then
+        exit 0
+      fi
       exit 1
     fi
     ;;
@@ -239,6 +242,27 @@ expected_lines=(
 for line in "${expected_lines[@]}"; do
   if ! grep -Fq "$line" "$output_file"; then
     printf 'expected release preflight output to contain: %s\n' "$line" >&2
+    printf 'actual output:\n' >&2
+    cat "$output_file" >&2
+    exit 1
+  fi
+done
+
+: >"$output_file"
+if LOGBREW_TEST_LOCAL_TAG=exists PATH="$tmp_dir:$PATH" bash scripts/release-preflight.sh v0.1.0 >"$output_file" 2>&1; then
+  printf 'expected release preflight to fail when current version is already locally tagged\n' >&2
+  cat "$output_file" >&2
+  exit 1
+fi
+
+expected_existing_tag_lines=(
+  "Release preflight failed: local tag v0.1.0 already exists"
+  "Next: bump Cargo.toml to the next SemVer version, update package metadata, commit the version bump, then rerun scripts/release-preflight.sh v<next-version> before tagging."
+)
+
+for line in "${expected_existing_tag_lines[@]}"; do
+  if ! grep -Fq "$line" "$output_file"; then
+    printf 'expected existing tag output to contain: %s\n' "$line" >&2
     printf 'actual output:\n' >&2
     cat "$output_file" >&2
     exit 1
