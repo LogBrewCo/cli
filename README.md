@@ -67,8 +67,8 @@ bash scripts/release-preflight.sh vX.Y.Z
 
 The preflight checks the tag/version match, clean synced `main`, public
 crates.io/npm package bootstrap and version collisions, the public Homebrew tap
-repository, green CI, required GitHub Actions secret names, and existing
-release/tag collisions.
+repository, the default CLI login handoff route, green CI, required GitHub
+Actions secret names, and existing release/tag collisions.
 
 ## Basic Usage
 

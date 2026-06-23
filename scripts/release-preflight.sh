@@ -19,6 +19,7 @@ REQUIRED_WORKFLOWS=(
   Release
   "Publish crates.io"
 )
+CLI_LOGIN_HANDOFF_URL="https://api.logbrew.co/api/auth/cli/login"
 CARGO_AUDIT_VERSION="$(bash scripts/cargo-audit-version.sh)"
 
 fail() {
@@ -55,6 +56,15 @@ fail_missing_ci() {
 fail_audit() {
   printf 'Release preflight failed: cargo audit found RustSec advisories or could not complete\n' >&2
   printf 'Next: review cargo audit output, update affected dependencies, then rerun %s %s before tagging.\n' "$0" "$TAG" >&2
+  exit 1
+}
+
+fail_cli_login_handoff() {
+  local url="$1"
+  local detail="$2"
+
+  printf 'Release preflight failed: CLI login handoff %s %s\n' "$url" "$detail" >&2
+  printf 'Next: coordinate the backend-owned browser-to-CLI auth handoff route, verify it is deployed, then rerun %s %s before pushing a release tag.\n' "$0" "${TAG:-v<version>}" >&2
   exit 1
 }
 
@@ -99,6 +109,19 @@ http_json_status() {
     --silent \
     --show-error \
     --location \
+    --header 'User-Agent: logbrew-release-preflight' \
+    --output "$output_file" \
+    --write-out '%{http_code}' \
+    "$url"
+}
+
+http_status_no_redirect() {
+  local url="$1"
+  local output_file="$2"
+
+  curl \
+    --silent \
+    --show-error \
     --header 'User-Agent: logbrew-release-preflight' \
     --output "$output_file" \
     --write-out '%{http_code}' \
@@ -175,6 +198,23 @@ check_homebrew_tap_available() {
   if [[ -z "$default_branch" ]]; then
     fail "Homebrew tap repository ${tap_repo} has no default branch"
   fi
+}
+
+check_cli_login_handoff_available() {
+  local response_file="$1"
+  local status
+
+  if ! status="$(http_status_no_redirect "$CLI_LOGIN_HANDOFF_URL" "$response_file")"; then
+    fail_cli_login_handoff "$CLI_LOGIN_HANDOFF_URL" "could not be reached"
+  fi
+
+  case "$status" in
+    2* | 3*)
+      ;;
+    *)
+      fail_cli_login_handoff "$CLI_LOGIN_HANDOFF_URL" "returned HTTP ${status}"
+      ;;
+  esac
 }
 
 check_main_branch_protection() {
@@ -314,6 +354,7 @@ trap 'rm -rf "$tmp_dir"' EXIT
 check_crates_version_available "logbrew-cli" "$crate_version" "$tmp_dir/crates.json"
 check_npm_version_available "logbrew-cli" "$crate_version" "$tmp_dir/npm.json"
 check_homebrew_tap_available "$HOMEBREW_TAP_REPO"
+check_cli_login_handoff_available "$tmp_dir/cli-login-handoff"
 check_main_branch_protection
 check_required_workflows_active
 check_dependency_advisories

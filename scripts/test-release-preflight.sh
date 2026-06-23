@@ -75,6 +75,15 @@ case "$url" in
       printf '200'
     fi
     ;;
+  https://api.logbrew.co/api/auth/cli/login)
+    if [[ "${LOGBREW_TEST_CLI_LOGIN_HANDOFF:-ok}" == "missing" ]]; then
+      printf '{"code":"not_found","error":"API route not found"}\n' >"$output_file"
+      printf '404'
+    else
+      printf 'browser login handoff\n' >"$output_file"
+      printf '302'
+    fi
+    ;;
   *)
     printf 'unexpected curl url: %s\n' "$url" >&2
     exit 1
@@ -351,6 +360,27 @@ expected_ci_lines=(
 for line in "${expected_ci_lines[@]}"; do
   if ! grep -Fq "$line" "$output_file"; then
     printf 'expected stale CI output to contain: %s\n' "$line" >&2
+    printf 'actual output:\n' >&2
+    cat "$output_file" >&2
+    exit 1
+  fi
+done
+
+: >"$output_file"
+if LOGBREW_TEST_SECRETS=all LOGBREW_TEST_CLI_LOGIN_HANDOFF=missing PATH="$tmp_dir:$PATH" bash scripts/release-preflight.sh v0.1.0 >"$output_file" 2>&1; then
+  printf 'expected release preflight to fail when the public CLI login handoff is missing\n' >&2
+  cat "$output_file" >&2
+  exit 1
+fi
+
+expected_login_handoff_lines=(
+  "Release preflight failed: CLI login handoff https://api.logbrew.co/api/auth/cli/login returned HTTP 404"
+  "Next: coordinate the backend-owned browser-to-CLI auth handoff route, verify it is deployed, then rerun scripts/release-preflight.sh v0.1.0 before pushing a release tag."
+)
+
+for line in "${expected_login_handoff_lines[@]}"; do
+  if ! grep -Fq "$line" "$output_file"; then
+    printf 'expected login handoff output to contain: %s\n' "$line" >&2
     printf 'actual output:\n' >&2
     cat "$output_file" >&2
     exit 1

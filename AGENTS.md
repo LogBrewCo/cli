@@ -22,9 +22,10 @@ This is the public LogBrew CLI repository. Everything committed here is public.
   Do not add leading zero padding such as `v0.1.09` or `v0.1.010`.
 - Treat `scripts/release-preflight.sh` as the fail-before-hosting gate for tag
   pushes. It should verify public registry version availability before tag
-  creation and verify the public Homebrew tap is reachable. Do not hand-edit
-  cargo-dist generated workflow structure unless the change is supported by
-  cargo-dist config; `dist plan` rejects drift.
+  creation, verify the public Homebrew tap is reachable, and verify the default
+  CLI login handoff URL is deployed. Do not hand-edit cargo-dist generated
+  workflow structure unless the change is supported by cargo-dist config;
+  `dist plan` rejects drift.
 - Preserve token safety: CLI output may say whether auth exists and where it
   came from, but must never print token material.
 - Treat shared auth/account/session/API/ingest/WebSocket behavior as
