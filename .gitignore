@@ -9,3 +9,12 @@
 !.env.example
 .logbrew-confidential-denylist.local
 /work/
+
+# Local-only agent guidance and planning artifacts.
+AGENTS.md
+CLAUDE.md
+.agents/
+skills-lock.json
+docs/superpowers/
+plans/
+*plan*.md
