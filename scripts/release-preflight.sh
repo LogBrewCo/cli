@@ -257,6 +257,25 @@ check_dependency_advisories() {
   fi
 }
 
+check_release_blocked_paths() {
+  local tracked_files
+  local path
+
+  tracked_files="$(git ls-tree -r HEAD --name-only)"
+  while IFS= read -r path; do
+    case "$path" in
+      AGENTS.md|*/AGENTS.md|\
+      CLAUDE.md|*/CLAUDE.md|\
+      skills-lock.json|*/skills-lock.json|\
+      .agents|.agents/*|*/.agents|*/.agents/*|\
+      docs/superpowers|docs/superpowers/*|*/docs/superpowers|*/docs/superpowers/*|\
+      plans|plans/*|*/plans|*/plans/*)
+        fail "tracked local-only release-blocked path ${path}"
+        ;;
+    esac
+  done <<<"$tracked_files"
+}
+
 crate_version="$(
   cargo metadata --no-deps --format-version=1 |
     jq -r '.packages[] | select(.name == "logbrew-cli").version'
@@ -295,6 +314,8 @@ remote_head="$(git rev-parse origin/main)"
 if [[ "$local_head" != "$remote_head" ]]; then
   fail "local main is not synced with origin/main"
 fi
+
+check_release_blocked_paths
 
 if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
   fail "local tag ${TAG} already exists"

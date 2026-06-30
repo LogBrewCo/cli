@@ -189,6 +189,12 @@ case "${1:-}" in
   ls-remote)
     exit 2
     ;;
+  ls-tree)
+    if [[ "${LOGBREW_TEST_TRACKED_LOCAL_ARTIFACT:-absent}" != "absent" ]]; then
+      printf '%s\n' "$LOGBREW_TEST_TRACKED_LOCAL_ARTIFACT"
+    fi
+    exit 0
+    ;;
 esac
 
 printf 'unexpected git args: %s\n' "$*" >&2
@@ -356,6 +362,34 @@ for line in "${expected_ci_lines[@]}"; do
     exit 1
   fi
 done
+
+: >"$output_file"
+if LOGBREW_TEST_SECRETS=all LOGBREW_TEST_TRACKED_LOCAL_ARTIFACT=AGENTS.md PATH="$tmp_dir:$PATH" bash scripts/release-preflight.sh v0.1.0 >"$output_file" 2>&1; then
+  printf 'expected release preflight to fail when a local-only agent artifact is tracked\n' >&2
+  cat "$output_file" >&2
+  exit 1
+fi
+
+if ! grep -Fq "Release preflight failed: tracked local-only release-blocked path AGENTS.md" "$output_file"; then
+  printf 'expected release preflight to explain tracked local-only artifact\n' >&2
+  printf 'actual output:\n' >&2
+  cat "$output_file" >&2
+  exit 1
+fi
+
+: >"$output_file"
+if LOGBREW_TEST_SECRETS=all LOGBREW_TEST_TRACKED_LOCAL_ARTIFACT=docs/AGENTS.md PATH="$tmp_dir:$PATH" bash scripts/release-preflight.sh v0.1.0 >"$output_file" 2>&1; then
+  printf 'expected release preflight to fail when a nested local-only agent artifact is tracked\n' >&2
+  cat "$output_file" >&2
+  exit 1
+fi
+
+if ! grep -Fq "Release preflight failed: tracked local-only release-blocked path docs/AGENTS.md" "$output_file"; then
+  printf 'expected release preflight to explain nested tracked local-only artifact\n' >&2
+  printf 'actual output:\n' >&2
+  cat "$output_file" >&2
+  exit 1
+fi
 
 : >"$output_file"
 if ! LOGBREW_TEST_SECRETS=all PATH="$tmp_dir:$PATH" bash scripts/release-preflight.sh v0.1.0 >"$output_file" 2>&1; then
