@@ -22,7 +22,28 @@ require_command() {
   fi
 }
 
+check_cargo_audit_version() {
+  local version_output
+  local installed_version
+
+  if ! version_output="$(cargo-audit --version)"; then
+    printf 'Check failed: could not verify cargo-audit version\n' >&2
+    printf 'Next: install cargo-audit with:\n' >&2
+    printf '  cargo install cargo-audit --version %s --locked\n' "$CARGO_AUDIT_VERSION" >&2
+    exit 1
+  fi
+
+  read -r _ installed_version _ <<<"$version_output"
+  if [[ "$installed_version" != "$CARGO_AUDIT_VERSION" ]]; then
+    printf 'Check failed: cargo-audit version %s does not match pinned %s\n' "$installed_version" "$CARGO_AUDIT_VERSION" >&2
+    printf 'Next: install cargo-audit with:\n' >&2
+    printf '  cargo install cargo-audit --version %s --locked\n' "$CARGO_AUDIT_VERSION" >&2
+    exit 1
+  fi
+}
+
 require_command cargo-audit
+check_cargo_audit_version
 
 bash scripts/confidentiality-check.sh
 if [[ "${LOGBREW_CHECK_ALL_SELF_TEST:-1}" != "0" ]]; then
