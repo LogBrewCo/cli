@@ -58,6 +58,16 @@ fail_audit() {
   exit 1
 }
 
+fail_wrong_cargo_audit_version() {
+  local installed_version="$1"
+
+  printf 'Release preflight failed: cargo-audit version %s does not match pinned %s\n' "$installed_version" "$CARGO_AUDIT_VERSION" >&2
+  printf 'Next: install cargo-audit with:\n' >&2
+  printf '  cargo install cargo-audit --version %s --locked\n' "$CARGO_AUDIT_VERSION" >&2
+  printf 'Then rerun %s %s before pushing a release tag.\n' "$0" "${TAG:-v<version>}" >&2
+  exit 1
+}
+
 fail_missing_command() {
   local command_name="$1"
 
@@ -90,6 +100,20 @@ require_command gh
 require_command git
 require_command jq
 require_command cargo-audit
+
+check_cargo_audit_version() {
+  local version_output
+  local installed_version
+
+  if ! version_output="$(cargo-audit --version)"; then
+    fail "could not verify cargo-audit version"
+  fi
+
+  read -r _ installed_version _ <<<"$version_output"
+  if [[ "$installed_version" != "$CARGO_AUDIT_VERSION" ]]; then
+    fail_wrong_cargo_audit_version "$installed_version"
+  fi
+}
 
 http_json_status() {
   local url="$1"
@@ -297,6 +321,8 @@ fi
 if ! gh auth status >/dev/null 2>&1; then
   fail "GitHub CLI is not authenticated"
 fi
+
+check_cargo_audit_version
 
 git fetch origin main --tags --prune >/dev/null
 

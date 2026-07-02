@@ -86,6 +86,11 @@ cat >"$tmp_dir/cargo-audit" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [[ "${1:-}" == "--version" ]]; then
+  printf 'cargo-audit %s\n' "${LOGBREW_TEST_AUDIT_VERSION:-0.22.2}"
+  exit 0
+fi
+
 exit 0
 STUB
 
@@ -224,6 +229,29 @@ expected_missing_audit_lines=(
 for line in "${expected_missing_audit_lines[@]}"; do
   if ! grep -Fq "$line" "$output_file"; then
     printf 'expected missing cargo-audit output to contain: %s\n' "$line" >&2
+    printf 'actual output:\n' >&2
+    cat "$output_file" >&2
+    exit 1
+  fi
+done
+
+: >"$output_file"
+if LOGBREW_TEST_AUDIT_VERSION=0.0.0 PATH="$tmp_dir:$PATH" bash scripts/release-preflight.sh v0.1.0 >"$output_file" 2>&1; then
+  printf 'expected release preflight to fail when cargo-audit has the wrong version\n' >&2
+  cat "$output_file" >&2
+  exit 1
+fi
+
+expected_wrong_audit_version_lines=(
+  "Release preflight failed: cargo-audit version 0.0.0 does not match pinned ${cargo_audit_version}"
+  "Next: install cargo-audit with:"
+  "  cargo install cargo-audit --version ${cargo_audit_version} --locked"
+  "Then rerun scripts/release-preflight.sh v0.1.0 before pushing a release tag."
+)
+
+for line in "${expected_wrong_audit_version_lines[@]}"; do
+  if ! grep -Fq "$line" "$output_file"; then
+    printf 'expected wrong cargo-audit version output to contain: %s\n' "$line" >&2
     printf 'actual output:\n' >&2
     cat "$output_file" >&2
     exit 1
