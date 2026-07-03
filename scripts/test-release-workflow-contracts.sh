@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$ROOT_DIR"
+CONTRACT_ROOT="${LOGBREW_WORKFLOW_CONTRACT_ROOT:-$ROOT_DIR}"
 
 fail() {
   printf 'Release workflow contract check failed: %s\n' "$1" >&2
@@ -29,6 +29,8 @@ require_literal() {
     fail "${description} missing from ${file}"
   fi
 }
+
+cd "$CONTRACT_ROOT"
 
 release_workflow=".github/workflows/release.yml"
 crates_workflow=".github/workflows/publish-crates.yml"
