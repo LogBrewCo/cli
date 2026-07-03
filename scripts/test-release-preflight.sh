@@ -169,6 +169,23 @@ fi
 printf 'Dist source artifact smoke passed: test\n'
 STUB
 
+cat >"$tmp_dir/dist-checksums" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "${1:-}" != "v0.1.0" ]]; then
+  printf 'unexpected dist checksum tag: %s\n' "${1:-}" >&2
+  exit 1
+fi
+
+if [[ "${LOGBREW_TEST_DIST_CHECKSUMS:-pass}" == "fail" ]]; then
+  printf 'test dist checksums failed\n' >&2
+  exit 1
+fi
+
+printf 'Dist checksum check passed: test\n'
+STUB
+
 cat >"$tmp_dir/dist-local-artifacts" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -332,11 +349,12 @@ printf 'unexpected git args: %s\n' "$*" >&2
 exit 1
 STUB
 
-chmod +x "$tmp_dir/cargo" "$tmp_dir/cargo-audit" "$tmp_dir/curl" "$tmp_dir/gh" "$tmp_dir/git" "$tmp_dir/package-install-smoke" "$tmp_dir/dist-plan" "$tmp_dir/dist-global-artifacts" "$tmp_dir/dist-source-artifact-smoke" "$tmp_dir/dist-local-artifacts" "$tmp_dir/dist-npm-package-install-smoke" "$tmp_dir/dist-shell-installer-smoke"
+chmod +x "$tmp_dir/cargo" "$tmp_dir/cargo-audit" "$tmp_dir/curl" "$tmp_dir/gh" "$tmp_dir/git" "$tmp_dir/package-install-smoke" "$tmp_dir/dist-plan" "$tmp_dir/dist-global-artifacts" "$tmp_dir/dist-source-artifact-smoke" "$tmp_dir/dist-checksums" "$tmp_dir/dist-local-artifacts" "$tmp_dir/dist-npm-package-install-smoke" "$tmp_dir/dist-shell-installer-smoke"
 export LOGBREW_RELEASE_PACKAGE_INSTALL_SMOKE_SCRIPT="$tmp_dir/package-install-smoke"
 export LOGBREW_RELEASE_DIST_PLAN_SCRIPT="$tmp_dir/dist-plan"
 export LOGBREW_RELEASE_DIST_GLOBAL_ARTIFACTS_SCRIPT="$tmp_dir/dist-global-artifacts"
 export LOGBREW_RELEASE_DIST_SOURCE_ARTIFACT_SCRIPT="$tmp_dir/dist-source-artifact-smoke"
+export LOGBREW_RELEASE_DIST_CHECKSUMS_SCRIPT="$tmp_dir/dist-checksums"
 export LOGBREW_RELEASE_DIST_LOCAL_ARTIFACTS_SCRIPT="$tmp_dir/dist-local-artifacts"
 export LOGBREW_RELEASE_DIST_NPM_INSTALL_SCRIPT="$tmp_dir/dist-npm-package-install-smoke"
 export LOGBREW_RELEASE_DIST_SHELL_INSTALLER_SCRIPT="$tmp_dir/dist-shell-installer-smoke"
@@ -649,6 +667,28 @@ expected_source_artifact_lines=(
 for line in "${expected_source_artifact_lines[@]}"; do
   if ! grep -Fq "$line" "$output_file"; then
     printf 'expected dist source artifact output to contain: %s\n' "$line" >&2
+    printf 'actual output:\n' >&2
+    cat "$output_file" >&2
+    exit 1
+  fi
+done
+
+: >"$output_file"
+if LOGBREW_TEST_SECRETS=all LOGBREW_TEST_DIST_CHECKSUMS=fail PATH="$tmp_dir:$PATH" bash scripts/release-preflight.sh v0.1.0 >"$output_file" 2>&1; then
+  printf 'expected release preflight to fail when dist checksum check fails\n' >&2
+  cat "$output_file" >&2
+  exit 1
+fi
+
+expected_checksum_lines=(
+  "test dist checksums failed"
+  "Release preflight failed: cargo-dist checksum verification failed"
+  "Next: fix cargo-dist checksum artifacts, then rerun bash scripts/test-dist-checksums.sh and scripts/release-preflight.sh v0.1.0 before tagging."
+)
+
+for line in "${expected_checksum_lines[@]}"; do
+  if ! grep -Fq "$line" "$output_file"; then
+    printf 'expected dist checksum output to contain: %s\n' "$line" >&2
     printf 'actual output:\n' >&2
     cat "$output_file" >&2
     exit 1
