@@ -72,4 +72,12 @@ make_fixture
 remove_literal_line "$fixture_root/.github/workflows/publish-crates.yml" 'uses: rust-lang/crates-io-auth-action@v1.0.5'
 expect_contract_failure 'crates.io trusted publishing auth action missing from .github/workflows/publish-crates.yml'
 
+make_fixture
+remove_literal_line "$fixture_root/dist-workspace.toml" 'targets = ["aarch64-apple-darwin", "aarch64-unknown-linux-gnu", "x86_64-apple-darwin", "x86_64-unknown-linux-gnu", "x86_64-pc-windows-msvc"]'
+expect_contract_failure 'cargo-dist native target matrix missing from dist-workspace.toml'
+
+make_fixture
+remove_literal_line "$fixture_root/dist-workspace.toml" 'x86_64-pc-windows-msvc = "blacksmith-2vcpu-windows-2025"'
+expect_contract_failure 'cargo-dist custom runner x86_64-pc-windows-msvc missing from dist-workspace.toml'
+
 printf 'Release workflow contract self-test passed.\n'

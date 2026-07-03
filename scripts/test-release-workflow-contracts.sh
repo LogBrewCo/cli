@@ -52,6 +52,20 @@ require_literal "$dist_config" 'tap = "LogBrewCo/homebrew-tap"' \
   "public Homebrew tap target"
 require_literal "$dist_config" 'github-build-setup = "../build-setup.yml"' \
   "cargo-dist build setup hook"
+require_literal "$dist_config" 'targets = ["aarch64-apple-darwin", "aarch64-unknown-linux-gnu", "x86_64-apple-darwin", "x86_64-unknown-linux-gnu", "x86_64-pc-windows-msvc"]' \
+  "cargo-dist native target matrix"
+
+required_dist_runner_targets=(
+  "x86_64-unknown-linux-gnu"
+  "aarch64-unknown-linux-gnu"
+  "x86_64-apple-darwin"
+  "aarch64-apple-darwin"
+  "x86_64-pc-windows-msvc"
+)
+require_line "$dist_config" '^global[[:space:]]*=' "cargo-dist global custom runner"
+for target in "${required_dist_runner_targets[@]}"; do
+  require_line "$dist_config" "^${target}[[:space:]]*=" "cargo-dist custom runner ${target}"
+done
 
 require_line "$release_workflow" 'tags:' "release tag trigger"
 require_literal "$release_workflow" 'uses: ./.github/workflows/publish-npm-trusted.yml' \
