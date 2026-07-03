@@ -169,6 +169,23 @@ fi
 printf 'Dist local artifacts check passed: test\n'
 STUB
 
+cat >"$tmp_dir/dist-npm-package-install-smoke" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "${1:-}" != "v0.1.0" ]]; then
+  printf 'unexpected dist npm package install tag: %s\n' "${1:-}" >&2
+  exit 1
+fi
+
+if [[ "${LOGBREW_TEST_DIST_NPM_INSTALL:-pass}" == "fail" ]]; then
+  printf 'test dist npm package install failed\n' >&2
+  exit 1
+fi
+
+printf 'Dist npm package install smoke passed: test\n'
+STUB
+
 cat >"$tmp_dir/gh" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -281,11 +298,12 @@ printf 'unexpected git args: %s\n' "$*" >&2
 exit 1
 STUB
 
-chmod +x "$tmp_dir/cargo" "$tmp_dir/cargo-audit" "$tmp_dir/curl" "$tmp_dir/gh" "$tmp_dir/git" "$tmp_dir/package-install-smoke" "$tmp_dir/dist-plan" "$tmp_dir/dist-global-artifacts" "$tmp_dir/dist-local-artifacts"
+chmod +x "$tmp_dir/cargo" "$tmp_dir/cargo-audit" "$tmp_dir/curl" "$tmp_dir/gh" "$tmp_dir/git" "$tmp_dir/package-install-smoke" "$tmp_dir/dist-plan" "$tmp_dir/dist-global-artifacts" "$tmp_dir/dist-local-artifacts" "$tmp_dir/dist-npm-package-install-smoke"
 export LOGBREW_RELEASE_PACKAGE_INSTALL_SMOKE_SCRIPT="$tmp_dir/package-install-smoke"
 export LOGBREW_RELEASE_DIST_PLAN_SCRIPT="$tmp_dir/dist-plan"
 export LOGBREW_RELEASE_DIST_GLOBAL_ARTIFACTS_SCRIPT="$tmp_dir/dist-global-artifacts"
 export LOGBREW_RELEASE_DIST_LOCAL_ARTIFACTS_SCRIPT="$tmp_dir/dist-local-artifacts"
+export LOGBREW_RELEASE_DIST_NPM_INSTALL_SCRIPT="$tmp_dir/dist-npm-package-install-smoke"
 
 missing_audit_dir="$(mktemp -d)"
 cp "$tmp_dir/cargo" "$tmp_dir/curl" "$tmp_dir/gh" "$tmp_dir/git" "$missing_audit_dir"
@@ -595,6 +613,28 @@ expected_local_artifacts_lines=(
 for line in "${expected_local_artifacts_lines[@]}"; do
   if ! grep -Fq "$line" "$output_file"; then
     printf 'expected dist local artifacts output to contain: %s\n' "$line" >&2
+    printf 'actual output:\n' >&2
+    cat "$output_file" >&2
+    exit 1
+  fi
+done
+
+: >"$output_file"
+if LOGBREW_TEST_SECRETS=all LOGBREW_TEST_DIST_NPM_INSTALL=fail PATH="$tmp_dir:$PATH" bash scripts/release-preflight.sh v0.1.0 >"$output_file" 2>&1; then
+  printf 'expected release preflight to fail when dist npm package install smoke fails\n' >&2
+  cat "$output_file" >&2
+  exit 1
+fi
+
+expected_npm_install_lines=(
+  "test dist npm package install failed"
+  "Release preflight failed: cargo-dist npm package install smoke failed"
+  "Next: fix cargo-dist npm package installability, then rerun bash scripts/test-dist-npm-package-install-smoke.sh and scripts/release-preflight.sh v0.1.0 before tagging."
+)
+
+for line in "${expected_npm_install_lines[@]}"; do
+  if ! grep -Fq "$line" "$output_file"; then
+    printf 'expected dist npm package install output to contain: %s\n' "$line" >&2
     printf 'actual output:\n' >&2
     cat "$output_file" >&2
     exit 1
