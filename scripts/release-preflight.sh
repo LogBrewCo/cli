@@ -9,6 +9,7 @@ HOMEBREW_TAP_REPO="${LOGBREW_HOMEBREW_TAP_REPO:-LogBrewCo/homebrew-tap}"
 PACKAGE_INSTALL_SMOKE_SCRIPT="${LOGBREW_RELEASE_PACKAGE_INSTALL_SMOKE_SCRIPT:-scripts/test-package-install-smoke.sh}"
 DIST_PLAN_SCRIPT="${LOGBREW_RELEASE_DIST_PLAN_SCRIPT:-scripts/test-dist-plan.sh}"
 DIST_GLOBAL_ARTIFACTS_SCRIPT="${LOGBREW_RELEASE_DIST_GLOBAL_ARTIFACTS_SCRIPT:-scripts/test-dist-global-artifacts.sh}"
+DIST_SOURCE_ARTIFACT_SCRIPT="${LOGBREW_RELEASE_DIST_SOURCE_ARTIFACT_SCRIPT:-scripts/test-dist-source-artifact-smoke.sh}"
 DIST_LOCAL_ARTIFACTS_SCRIPT="${LOGBREW_RELEASE_DIST_LOCAL_ARTIFACTS_SCRIPT:-scripts/test-dist-local-artifacts.sh}"
 DIST_NPM_INSTALL_SCRIPT="${LOGBREW_RELEASE_DIST_NPM_INSTALL_SCRIPT:-scripts/test-dist-npm-package-install-smoke.sh}"
 DIST_SHELL_INSTALLER_SCRIPT="${LOGBREW_RELEASE_DIST_SHELL_INSTALLER_SCRIPT:-scripts/test-dist-shell-installer-smoke.sh}"
@@ -85,6 +86,12 @@ fail_dist_plan() {
 fail_dist_global_artifacts() {
   printf 'Release preflight failed: cargo-dist global artifact build failed\n' >&2
   printf 'Next: fix cargo-dist global installers or package metadata, then rerun bash scripts/test-dist-global-artifacts.sh and %s %s before tagging.\n' "$0" "$TAG" >&2
+  exit 1
+}
+
+fail_dist_source_artifact() {
+  printf 'Release preflight failed: cargo-dist source artifact smoke failed\n' >&2
+  printf 'Next: fix cargo-dist source artifact installability, then rerun bash scripts/test-dist-source-artifact-smoke.sh and %s %s before tagging.\n' "$0" "$TAG" >&2
   exit 1
 }
 
@@ -353,6 +360,12 @@ check_dist_global_artifacts() {
   fi
 }
 
+check_dist_source_artifact() {
+  if ! bash "$DIST_SOURCE_ARTIFACT_SCRIPT" "$TAG"; then
+    fail_dist_source_artifact
+  fi
+}
+
 check_dist_local_artifacts() {
   if ! bash "$DIST_LOCAL_ARTIFACTS_SCRIPT" "$TAG"; then
     fail_dist_local_artifacts
@@ -464,6 +477,7 @@ check_required_workflows_active
 check_dependency_advisories
 check_package_install_smoke
 check_dist_global_artifacts
+check_dist_source_artifact
 check_dist_local_artifacts
 check_dist_npm_install
 check_dist_shell_installer
