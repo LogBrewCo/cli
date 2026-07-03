@@ -211,6 +211,26 @@ chmod +x "$tmp_dir/cargo" "$tmp_dir/cargo-audit" "$tmp_dir/curl" "$tmp_dir/gh" "
 missing_audit_dir="$(mktemp -d)"
 cp "$tmp_dir/cargo" "$tmp_dir/curl" "$tmp_dir/gh" "$tmp_dir/git" "$missing_audit_dir"
 cargo_audit_version="$(bash scripts/cargo-audit-version.sh)"
+contract_fixture="$tmp_dir/contract-fixture"
+
+make_contract_fixture() {
+  rm -rf "$contract_fixture"
+  mkdir -p "$contract_fixture/.github/workflows"
+  cp dist-workspace.toml "$contract_fixture/dist-workspace.toml"
+  cp .github/workflows/release.yml "$contract_fixture/.github/workflows/release.yml"
+  cp .github/workflows/publish-crates.yml "$contract_fixture/.github/workflows/publish-crates.yml"
+  cp .github/workflows/publish-npm-trusted.yml "$contract_fixture/.github/workflows/publish-npm-trusted.yml"
+  cp .github/workflows/publish-homebrew-tap.yml "$contract_fixture/.github/workflows/publish-homebrew-tap.yml"
+}
+
+remove_literal_line() {
+  local file="$1"
+  local text="$2"
+  local temp_file="${file}.tmp"
+
+  grep -Fv "$text" "$file" >"$temp_file"
+  mv "$temp_file" "$file"
+}
 
 : >"$output_file"
 if PATH="$missing_audit_dir:/usr/bin:/bin" bash scripts/release-preflight.sh v0.1.0 >"$output_file" 2>&1; then
@@ -348,6 +368,29 @@ if ! grep -Fq "Release preflight failed: GitHub Actions workflow Publish crates.
   cat "$output_file" >&2
   exit 1
 fi
+
+make_contract_fixture
+remove_literal_line "$contract_fixture/.github/workflows/publish-npm-trusted.yml" 'id-token: write'
+: >"$output_file"
+if LOGBREW_TEST_SECRETS=all LOGBREW_WORKFLOW_CONTRACT_ROOT="$contract_fixture" PATH="$tmp_dir:$PATH" bash scripts/release-preflight.sh v0.1.0 >"$output_file" 2>&1; then
+  printf 'expected release preflight to fail with release workflow contract drift\n' >&2
+  cat "$output_file" >&2
+  exit 1
+fi
+
+expected_workflow_contract_lines=(
+  "Release workflow contract check failed: npm trusted publishing OIDC permission missing from .github/workflows/publish-npm-trusted.yml"
+  "Release preflight failed: release workflow contract drift must be fixed before tagging"
+)
+
+for line in "${expected_workflow_contract_lines[@]}"; do
+  if ! grep -Fq "$line" "$output_file"; then
+    printf 'expected release workflow contract output to contain: %s\n' "$line" >&2
+    printf 'actual output:\n' >&2
+    cat "$output_file" >&2
+    exit 1
+  fi
+done
 
 : >"$output_file"
 if LOGBREW_TEST_AUDIT=fail PATH="$tmp_dir:$PATH" bash scripts/release-preflight.sh v0.1.0 >"$output_file" 2>&1; then

@@ -300,6 +300,12 @@ check_release_blocked_paths() {
   done <<<"$tracked_files"
 }
 
+check_release_workflow_contract() {
+  if ! bash scripts/test-release-workflow-contracts.sh; then
+    fail "release workflow contract drift must be fixed before tagging"
+  fi
+}
+
 crate_version="$(
   cargo metadata --no-deps --format-version=1 |
     jq -r '.packages[] | select(.name == "logbrew-cli").version'
@@ -342,6 +348,7 @@ if [[ "$local_head" != "$remote_head" ]]; then
 fi
 
 check_release_blocked_paths
+check_release_workflow_contract
 
 if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
   fail "local tag ${TAG} already exists"
