@@ -50,6 +50,7 @@ if [[ "${LOGBREW_CHECK_ALL_SELF_TEST:-1}" != "0" ]]; then
   bash scripts/test-check-all.sh
 fi
 bash scripts/test-package-contents.sh
+bash scripts/test-package-install-smoke.sh
 bash scripts/test-release-preflight.sh
 cargo audit
 cargo fmt --all -- --check
