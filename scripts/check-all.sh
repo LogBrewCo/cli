@@ -56,6 +56,7 @@ bash scripts/test-package-install-smoke.sh
 bash scripts/test-release-workflow-contracts.sh
 bash scripts/test-release-workflow-contracts-self-test.sh
 bash scripts/test-dist-plan-self-test.sh
+bash scripts/test-dist-global-artifacts-self-test.sh
 bash scripts/test-release-preflight.sh
 cargo audit
 cargo fmt --all -- --check
