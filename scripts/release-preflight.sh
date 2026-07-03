@@ -6,6 +6,7 @@ cd "$ROOT_DIR"
 
 REPO="${LOGBREW_RELEASE_REPO:-LogBrewCo/cli}"
 HOMEBREW_TAP_REPO="${LOGBREW_HOMEBREW_TAP_REPO:-LogBrewCo/homebrew-tap}"
+PACKAGE_INSTALL_SMOKE_SCRIPT="${LOGBREW_RELEASE_PACKAGE_INSTALL_SMOKE_SCRIPT:-scripts/test-package-install-smoke.sh}"
 TAG="${1:-}"
 REQUIRED_SECRETS=(
   HOMEBREW_TAP_TOKEN
@@ -61,6 +62,12 @@ fail_audit() {
 fail_publish_dry_run() {
   printf 'Release preflight failed: cargo publish dry-run failed\n' >&2
   printf 'Next: fix package metadata or crate publish blockers, then rerun %s %s before tagging.\n' "$0" "$TAG" >&2
+  exit 1
+}
+
+fail_package_install_smoke() {
+  printf 'Release preflight failed: package install smoke failed\n' >&2
+  printf 'Next: fix the packaged crate install path, then rerun bash scripts/test-package-install-smoke.sh and %s %s before tagging.\n' "$0" "$TAG" >&2
   exit 1
 }
 
@@ -293,6 +300,12 @@ check_publish_dry_run() {
   fi
 }
 
+check_package_install_smoke() {
+  if ! bash "$PACKAGE_INSTALL_SMOKE_SCRIPT"; then
+    fail_package_install_smoke
+  fi
+}
+
 check_release_blocked_paths() {
   local tracked_files
   local path
@@ -383,6 +396,7 @@ check_homebrew_tap_available "$HOMEBREW_TAP_REPO"
 check_main_branch_protection
 check_required_workflows_active
 check_dependency_advisories
+check_package_install_smoke
 check_publish_dry_run
 
 secret_names="$(

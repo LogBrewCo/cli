@@ -106,6 +106,18 @@ fi
 exit 0
 STUB
 
+cat >"$tmp_dir/package-install-smoke" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "${LOGBREW_TEST_PACKAGE_INSTALL_SMOKE:-pass}" == "fail" ]]; then
+  printf 'test package install smoke failed\n' >&2
+  exit 1
+fi
+
+printf 'Package install smoke passed: test\n'
+STUB
+
 cat >"$tmp_dir/gh" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -218,7 +230,8 @@ printf 'unexpected git args: %s\n' "$*" >&2
 exit 1
 STUB
 
-chmod +x "$tmp_dir/cargo" "$tmp_dir/cargo-audit" "$tmp_dir/curl" "$tmp_dir/gh" "$tmp_dir/git"
+chmod +x "$tmp_dir/cargo" "$tmp_dir/cargo-audit" "$tmp_dir/curl" "$tmp_dir/gh" "$tmp_dir/git" "$tmp_dir/package-install-smoke"
+export LOGBREW_RELEASE_PACKAGE_INSTALL_SMOKE_SCRIPT="$tmp_dir/package-install-smoke"
 
 missing_audit_dir="$(mktemp -d)"
 cp "$tmp_dir/cargo" "$tmp_dir/curl" "$tmp_dir/gh" "$tmp_dir/git" "$missing_audit_dir"
@@ -440,6 +453,28 @@ expected_publish_dry_run_lines=(
 for line in "${expected_publish_dry_run_lines[@]}"; do
   if ! grep -Fq "$line" "$output_file"; then
     printf 'expected cargo publish dry-run output to contain: %s\n' "$line" >&2
+    printf 'actual output:\n' >&2
+    cat "$output_file" >&2
+    exit 1
+  fi
+done
+
+: >"$output_file"
+if LOGBREW_TEST_SECRETS=all LOGBREW_TEST_PACKAGE_INSTALL_SMOKE=fail PATH="$tmp_dir:$PATH" bash scripts/release-preflight.sh v0.1.0 >"$output_file" 2>&1; then
+  printf 'expected release preflight to fail when package install smoke fails\n' >&2
+  cat "$output_file" >&2
+  exit 1
+fi
+
+expected_package_install_lines=(
+  "test package install smoke failed"
+  "Release preflight failed: package install smoke failed"
+  "Next: fix the packaged crate install path, then rerun bash scripts/test-package-install-smoke.sh and scripts/release-preflight.sh v0.1.0 before tagging."
+)
+
+for line in "${expected_package_install_lines[@]}"; do
+  if ! grep -Fq "$line" "$output_file"; then
+    printf 'expected package install smoke output to contain: %s\n' "$line" >&2
     printf 'actual output:\n' >&2
     cat "$output_file" >&2
     exit 1
