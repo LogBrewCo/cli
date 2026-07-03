@@ -152,6 +152,23 @@ fi
 printf 'Dist global artifacts check passed: test\n'
 STUB
 
+cat >"$tmp_dir/dist-local-artifacts" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "${1:-}" != "v0.1.0" ]]; then
+  printf 'unexpected dist local artifact tag: %s\n' "${1:-}" >&2
+  exit 1
+fi
+
+if [[ "${LOGBREW_TEST_DIST_LOCAL_ARTIFACTS:-pass}" == "fail" ]]; then
+  printf 'test dist local artifacts failed\n' >&2
+  exit 1
+fi
+
+printf 'Dist local artifacts check passed: test\n'
+STUB
+
 cat >"$tmp_dir/gh" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -264,10 +281,11 @@ printf 'unexpected git args: %s\n' "$*" >&2
 exit 1
 STUB
 
-chmod +x "$tmp_dir/cargo" "$tmp_dir/cargo-audit" "$tmp_dir/curl" "$tmp_dir/gh" "$tmp_dir/git" "$tmp_dir/package-install-smoke" "$tmp_dir/dist-plan" "$tmp_dir/dist-global-artifacts"
+chmod +x "$tmp_dir/cargo" "$tmp_dir/cargo-audit" "$tmp_dir/curl" "$tmp_dir/gh" "$tmp_dir/git" "$tmp_dir/package-install-smoke" "$tmp_dir/dist-plan" "$tmp_dir/dist-global-artifacts" "$tmp_dir/dist-local-artifacts"
 export LOGBREW_RELEASE_PACKAGE_INSTALL_SMOKE_SCRIPT="$tmp_dir/package-install-smoke"
 export LOGBREW_RELEASE_DIST_PLAN_SCRIPT="$tmp_dir/dist-plan"
 export LOGBREW_RELEASE_DIST_GLOBAL_ARTIFACTS_SCRIPT="$tmp_dir/dist-global-artifacts"
+export LOGBREW_RELEASE_DIST_LOCAL_ARTIFACTS_SCRIPT="$tmp_dir/dist-local-artifacts"
 
 missing_audit_dir="$(mktemp -d)"
 cp "$tmp_dir/cargo" "$tmp_dir/curl" "$tmp_dir/gh" "$tmp_dir/git" "$missing_audit_dir"
@@ -555,6 +573,28 @@ expected_global_artifacts_lines=(
 for line in "${expected_global_artifacts_lines[@]}"; do
   if ! grep -Fq "$line" "$output_file"; then
     printf 'expected dist global artifacts output to contain: %s\n' "$line" >&2
+    printf 'actual output:\n' >&2
+    cat "$output_file" >&2
+    exit 1
+  fi
+done
+
+: >"$output_file"
+if LOGBREW_TEST_SECRETS=all LOGBREW_TEST_DIST_LOCAL_ARTIFACTS=fail PATH="$tmp_dir:$PATH" bash scripts/release-preflight.sh v0.1.0 >"$output_file" 2>&1; then
+  printf 'expected release preflight to fail when dist local artifacts check fails\n' >&2
+  cat "$output_file" >&2
+  exit 1
+fi
+
+expected_local_artifacts_lines=(
+  "test dist local artifacts failed"
+  "Release preflight failed: cargo-dist host native artifact build failed"
+  "Next: fix cargo-dist native archive generation, then rerun bash scripts/test-dist-local-artifacts.sh and scripts/release-preflight.sh v0.1.0 before tagging."
+)
+
+for line in "${expected_local_artifacts_lines[@]}"; do
+  if ! grep -Fq "$line" "$output_file"; then
+    printf 'expected dist local artifacts output to contain: %s\n' "$line" >&2
     printf 'actual output:\n' >&2
     cat "$output_file" >&2
     exit 1

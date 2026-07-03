@@ -9,6 +9,7 @@ HOMEBREW_TAP_REPO="${LOGBREW_HOMEBREW_TAP_REPO:-LogBrewCo/homebrew-tap}"
 PACKAGE_INSTALL_SMOKE_SCRIPT="${LOGBREW_RELEASE_PACKAGE_INSTALL_SMOKE_SCRIPT:-scripts/test-package-install-smoke.sh}"
 DIST_PLAN_SCRIPT="${LOGBREW_RELEASE_DIST_PLAN_SCRIPT:-scripts/test-dist-plan.sh}"
 DIST_GLOBAL_ARTIFACTS_SCRIPT="${LOGBREW_RELEASE_DIST_GLOBAL_ARTIFACTS_SCRIPT:-scripts/test-dist-global-artifacts.sh}"
+DIST_LOCAL_ARTIFACTS_SCRIPT="${LOGBREW_RELEASE_DIST_LOCAL_ARTIFACTS_SCRIPT:-scripts/test-dist-local-artifacts.sh}"
 TAG="${1:-}"
 REQUIRED_SECRETS=(
   HOMEBREW_TAP_TOKEN
@@ -82,6 +83,12 @@ fail_dist_plan() {
 fail_dist_global_artifacts() {
   printf 'Release preflight failed: cargo-dist global artifact build failed\n' >&2
   printf 'Next: fix cargo-dist global installers or package metadata, then rerun bash scripts/test-dist-global-artifacts.sh and %s %s before tagging.\n' "$0" "$TAG" >&2
+  exit 1
+}
+
+fail_dist_local_artifacts() {
+  printf 'Release preflight failed: cargo-dist host native artifact build failed\n' >&2
+  printf 'Next: fix cargo-dist native archive generation, then rerun bash scripts/test-dist-local-artifacts.sh and %s %s before tagging.\n' "$0" "$TAG" >&2
   exit 1
 }
 
@@ -332,6 +339,12 @@ check_dist_global_artifacts() {
   fi
 }
 
+check_dist_local_artifacts() {
+  if ! bash "$DIST_LOCAL_ARTIFACTS_SCRIPT" "$TAG"; then
+    fail_dist_local_artifacts
+  fi
+}
+
 check_release_blocked_paths() {
   local tracked_files
   local path
@@ -425,6 +438,7 @@ check_required_workflows_active
 check_dependency_advisories
 check_package_install_smoke
 check_dist_global_artifacts
+check_dist_local_artifacts
 check_publish_dry_run
 
 secret_names="$(
