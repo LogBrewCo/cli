@@ -11,6 +11,7 @@ DIST_PLAN_SCRIPT="${LOGBREW_RELEASE_DIST_PLAN_SCRIPT:-scripts/test-dist-plan.sh}
 DIST_GLOBAL_ARTIFACTS_SCRIPT="${LOGBREW_RELEASE_DIST_GLOBAL_ARTIFACTS_SCRIPT:-scripts/test-dist-global-artifacts.sh}"
 DIST_LOCAL_ARTIFACTS_SCRIPT="${LOGBREW_RELEASE_DIST_LOCAL_ARTIFACTS_SCRIPT:-scripts/test-dist-local-artifacts.sh}"
 DIST_NPM_INSTALL_SCRIPT="${LOGBREW_RELEASE_DIST_NPM_INSTALL_SCRIPT:-scripts/test-dist-npm-package-install-smoke.sh}"
+DIST_SHELL_INSTALLER_SCRIPT="${LOGBREW_RELEASE_DIST_SHELL_INSTALLER_SCRIPT:-scripts/test-dist-shell-installer-smoke.sh}"
 TAG="${1:-}"
 REQUIRED_SECRETS=(
   HOMEBREW_TAP_TOKEN
@@ -96,6 +97,12 @@ fail_dist_local_artifacts() {
 fail_dist_npm_install() {
   printf 'Release preflight failed: cargo-dist npm package install smoke failed\n' >&2
   printf 'Next: fix cargo-dist npm package installability, then rerun bash scripts/test-dist-npm-package-install-smoke.sh and %s %s before tagging.\n' "$0" "$TAG" >&2
+  exit 1
+}
+
+fail_dist_shell_installer() {
+  printf 'Release preflight failed: cargo-dist shell installer smoke failed\n' >&2
+  printf 'Next: fix cargo-dist shell installer installability, then rerun bash scripts/test-dist-shell-installer-smoke.sh and %s %s before tagging.\n' "$0" "$TAG" >&2
   exit 1
 }
 
@@ -358,6 +365,12 @@ check_dist_npm_install() {
   fi
 }
 
+check_dist_shell_installer() {
+  if ! bash "$DIST_SHELL_INSTALLER_SCRIPT" "$TAG"; then
+    fail_dist_shell_installer
+  fi
+}
+
 check_release_blocked_paths() {
   local tracked_files
   local path
@@ -453,6 +466,7 @@ check_package_install_smoke
 check_dist_global_artifacts
 check_dist_local_artifacts
 check_dist_npm_install
+check_dist_shell_installer
 check_publish_dry_run
 
 secret_names="$(
