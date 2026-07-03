@@ -54,29 +54,29 @@ STUB
 
 write_installer_stub() {
   cat >"$artifact_fixture/logbrew-cli-installer.sh" <<STUB
-#!/usr/bin/env bash
-set -euo pipefail
+#!/bin/sh
+set -eu
 
 archive="${archive}"
 download_url="\${LOGBREW_CLI_DOWNLOAD_URL:-}"
 install_root="\${LOGBREW_CLI_INSTALL_DIR:-\${CARGO_DIST_FORCE_INSTALL_DIR:-}}"
 
-if [[ -z "\$download_url" ]]; then
+if [ -z "\$download_url" ]; then
   printf 'missing LOGBREW_CLI_DOWNLOAD_URL\\n' >&2
   exit 1
 fi
 
-if [[ -z "\$install_root" ]]; then
+if [ -z "\$install_root" ]; then
   printf 'missing install dir override\\n' >&2
   exit 1
 fi
 
-if [[ "\${LOGBREW_CLI_NO_MODIFY_PATH:-}" != "1" ]]; then
+if [ "\${LOGBREW_CLI_NO_MODIFY_PATH:-}" != "1" ]; then
   printf 'missing LOGBREW_CLI_NO_MODIFY_PATH=1\\n' >&2
   exit 1
 fi
 
-if [[ "\${LOGBREW_CLI_DISABLE_UPDATE:-}" != "1" ]]; then
+if [ "\${LOGBREW_CLI_DISABLE_UPDATE:-}" != "1" ]; then
   printf 'missing LOGBREW_CLI_DISABLE_UPDATE=1\\n' >&2
   exit 1
 fi
