@@ -58,6 +58,12 @@ fail_audit() {
   exit 1
 }
 
+fail_publish_dry_run() {
+  printf 'Release preflight failed: cargo publish dry-run failed\n' >&2
+  printf 'Next: fix package metadata or crate publish blockers, then rerun %s %s before tagging.\n' "$0" "$TAG" >&2
+  exit 1
+}
+
 fail_wrong_cargo_audit_version() {
   local installed_version="$1"
 
@@ -281,6 +287,12 @@ check_dependency_advisories() {
   fi
 }
 
+check_publish_dry_run() {
+  if ! cargo publish --dry-run --locked; then
+    fail_publish_dry_run
+  fi
+}
+
 check_release_blocked_paths() {
   local tracked_files
   local path
@@ -371,6 +383,7 @@ check_homebrew_tap_available "$HOMEBREW_TAP_REPO"
 check_main_branch_protection
 check_required_workflows_active
 check_dependency_advisories
+check_publish_dry_run
 
 secret_names="$(
   gh secret list --repo "$REPO" --app actions --json name --jq '.[].name'

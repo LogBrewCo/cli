@@ -26,6 +26,18 @@ if [[ "${1:-}" == "audit" ]]; then
   exit 0
 fi
 
+if [[ "${1:-}" == "publish" ]]; then
+  if [[ "$*" != "publish --dry-run --locked" ]]; then
+    printf 'unexpected cargo publish args: %s\n' "$*" >&2
+    exit 1
+  fi
+  if [[ "${LOGBREW_TEST_PUBLISH_DRY_RUN:-pass}" == "fail" ]]; then
+    printf 'test cargo publish dry-run failed\n' >&2
+    exit 1
+  fi
+  exit 0
+fi
+
 printf 'unexpected cargo args: %s\n' "$*" >&2
 exit 1
 STUB
@@ -407,6 +419,27 @@ expected_audit_lines=(
 for line in "${expected_audit_lines[@]}"; do
   if ! grep -Fq "$line" "$output_file"; then
     printf 'expected cargo audit output to contain: %s\n' "$line" >&2
+    printf 'actual output:\n' >&2
+    cat "$output_file" >&2
+    exit 1
+  fi
+done
+
+: >"$output_file"
+if LOGBREW_TEST_SECRETS=all LOGBREW_TEST_PUBLISH_DRY_RUN=fail PATH="$tmp_dir:$PATH" bash scripts/release-preflight.sh v0.1.0 >"$output_file" 2>&1; then
+  printf 'expected release preflight to fail when cargo publish dry-run fails\n' >&2
+  cat "$output_file" >&2
+  exit 1
+fi
+
+expected_publish_dry_run_lines=(
+  "Release preflight failed: cargo publish dry-run failed"
+  "Next: fix package metadata or crate publish blockers, then rerun scripts/release-preflight.sh v0.1.0 before tagging."
+)
+
+for line in "${expected_publish_dry_run_lines[@]}"; do
+  if ! grep -Fq "$line" "$output_file"; then
+    printf 'expected cargo publish dry-run output to contain: %s\n' "$line" >&2
     printf 'actual output:\n' >&2
     cat "$output_file" >&2
     exit 1
