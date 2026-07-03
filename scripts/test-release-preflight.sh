@@ -118,6 +118,23 @@ fi
 printf 'Package install smoke passed: test\n'
 STUB
 
+cat >"$tmp_dir/dist-plan" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "${1:-}" != "v0.1.0" ]]; then
+  printf 'unexpected dist plan tag: %s\n' "${1:-}" >&2
+  exit 1
+fi
+
+if [[ "${LOGBREW_TEST_DIST_PLAN:-pass}" == "fail" ]]; then
+  printf 'test dist plan failed\n' >&2
+  exit 1
+fi
+
+printf 'Dist plan check passed: test\n'
+STUB
+
 cat >"$tmp_dir/gh" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -230,8 +247,9 @@ printf 'unexpected git args: %s\n' "$*" >&2
 exit 1
 STUB
 
-chmod +x "$tmp_dir/cargo" "$tmp_dir/cargo-audit" "$tmp_dir/curl" "$tmp_dir/gh" "$tmp_dir/git" "$tmp_dir/package-install-smoke"
+chmod +x "$tmp_dir/cargo" "$tmp_dir/cargo-audit" "$tmp_dir/curl" "$tmp_dir/gh" "$tmp_dir/git" "$tmp_dir/package-install-smoke" "$tmp_dir/dist-plan"
 export LOGBREW_RELEASE_PACKAGE_INSTALL_SMOKE_SCRIPT="$tmp_dir/package-install-smoke"
+export LOGBREW_RELEASE_DIST_PLAN_SCRIPT="$tmp_dir/dist-plan"
 
 missing_audit_dir="$(mktemp -d)"
 cp "$tmp_dir/cargo" "$tmp_dir/curl" "$tmp_dir/gh" "$tmp_dir/git" "$missing_audit_dir"
@@ -411,6 +429,28 @@ expected_workflow_contract_lines=(
 for line in "${expected_workflow_contract_lines[@]}"; do
   if ! grep -Fq "$line" "$output_file"; then
     printf 'expected release workflow contract output to contain: %s\n' "$line" >&2
+    printf 'actual output:\n' >&2
+    cat "$output_file" >&2
+    exit 1
+  fi
+done
+
+: >"$output_file"
+if LOGBREW_TEST_DIST_PLAN=fail LOGBREW_TEST_SECRETS=all PATH="$tmp_dir:$PATH" bash scripts/release-preflight.sh v0.1.0 >"$output_file" 2>&1; then
+  printf 'expected release preflight to fail when dist plan check fails\n' >&2
+  cat "$output_file" >&2
+  exit 1
+fi
+
+expected_dist_plan_lines=(
+  "test dist plan failed"
+  "Release preflight failed: cargo-dist release plan failed"
+  "Next: fix cargo-dist release config, then rerun bash scripts/test-dist-plan.sh and scripts/release-preflight.sh v0.1.0 before tagging."
+)
+
+for line in "${expected_dist_plan_lines[@]}"; do
+  if ! grep -Fq "$line" "$output_file"; then
+    printf 'expected dist plan output to contain: %s\n' "$line" >&2
     printf 'actual output:\n' >&2
     cat "$output_file" >&2
     exit 1
