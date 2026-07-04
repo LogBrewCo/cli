@@ -53,6 +53,8 @@ bash scripts/test-package-contents.sh
 bash scripts/test-package-metadata.sh
 bash scripts/test-package-metadata-self-test.sh
 bash scripts/test-package-install-smoke.sh
+bash scripts/test-release-docs.sh
+bash scripts/test-release-docs-self-test.sh
 bash scripts/test-release-workflow-contracts.sh
 bash scripts/test-release-workflow-contracts-self-test.sh
 bash scripts/test-dist-plan-self-test.sh
