@@ -120,6 +120,8 @@ require_contains "$artifact_dir/logbrew-cli-installer.sh" "releases/download/${T
 require_contains "$artifact_dir/logbrew-cli-installer.ps1" "\$app_name = 'logbrew-cli'" "logbrew-cli-installer.ps1"
 require_contains "$artifact_dir/logbrew-cli-installer.ps1" "\$app_version = '${crate_version}'" "logbrew-cli-installer.ps1"
 require_contains "$artifact_dir/logbrew-cli-installer.ps1" "releases/download/${TAG}" "logbrew-cli-installer.ps1"
+require_contains "$artifact_dir/logbrew-cli-installer.ps1" "logbrew-cli-x86_64-pc-windows-msvc.zip" "logbrew-cli-installer.ps1"
+require_contains "$artifact_dir/logbrew-cli-installer.ps1" "logbrew.exe" "logbrew-cli-installer.ps1"
 
 require_contains "$artifact_dir/logbrew.rb" 'class Logbrew < Formula' "logbrew.rb"
 require_contains "$artifact_dir/logbrew.rb" "version \"${crate_version}\"" "logbrew.rb"

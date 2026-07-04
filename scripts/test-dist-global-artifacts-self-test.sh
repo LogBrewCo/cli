@@ -27,8 +27,13 @@ make_fixture() {
 
   printf 'APP_NAME="logbrew-cli"\nAPP_VERSION="%s"\nhttps://github.com/LogBrewCo/cli/releases/download/v%s\n' \
     "$crate_version" "$crate_version" >"$artifact_fixture/logbrew-cli-installer.sh"
-  printf "\$app_name = 'logbrew-cli'\n\$app_version = '%s'\nhttps://github.com/LogBrewCo/cli/releases/download/v%s\n" \
-    "$crate_version" "$crate_version" >"$artifact_fixture/logbrew-cli-installer.ps1"
+  {
+    printf "\$app_name = 'logbrew-cli'\n"
+    printf "\$app_version = '%s'\n" "$crate_version"
+    printf "https://github.com/LogBrewCo/cli/releases/download/v%s\n" "$crate_version"
+    printf '"artifact_name" = "logbrew-cli-x86_64-pc-windows-msvc.zip"\n'
+    printf '"bins" = @("logbrew.exe")\n'
+  } >"$artifact_fixture/logbrew-cli-installer.ps1"
   cat >"$artifact_fixture/logbrew.rb" <<RUBY
 class Logbrew < Formula
   desc "Public command-line interface for LogBrew."
@@ -113,6 +118,14 @@ expect_failure "Dist global artifacts check failed: npm package metadata must ma
 make_fixture
 sed -i.bak '/releases\/download/d' "$artifact_fixture/logbrew.rb"
 expect_failure "Dist global artifacts check failed: logbrew.rb must contain releases/download/v${crate_version}"
+
+make_fixture
+sed -i.bak '/logbrew-cli-x86_64-pc-windows-msvc.zip/d' "$artifact_fixture/logbrew-cli-installer.ps1"
+expect_failure 'Dist global artifacts check failed: logbrew-cli-installer.ps1 must contain logbrew-cli-x86_64-pc-windows-msvc.zip'
+
+make_fixture
+sed -i.bak '/logbrew.exe/d' "$artifact_fixture/logbrew-cli-installer.ps1"
+expect_failure 'Dist global artifacts check failed: logbrew-cli-installer.ps1 must contain logbrew.exe'
 
 make_fixture
 sed -i.bak '/logbrew-cli-npm-package.tar.gz/d' "$artifact_fixture/sha256.sum"
