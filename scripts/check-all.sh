@@ -57,6 +57,7 @@ bash scripts/test-release-workflow-contracts.sh
 bash scripts/test-release-workflow-contracts-self-test.sh
 bash scripts/test-dist-plan-self-test.sh
 bash scripts/test-dist-global-artifacts-self-test.sh
+bash scripts/test-dist-homebrew-formula-smoke-self-test.sh
 bash scripts/test-dist-source-artifact-smoke-self-test.sh
 bash scripts/test-dist-checksums-self-test.sh
 bash scripts/test-dist-local-artifacts-self-test.sh

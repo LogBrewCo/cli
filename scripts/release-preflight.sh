@@ -9,6 +9,7 @@ HOMEBREW_TAP_REPO="${LOGBREW_HOMEBREW_TAP_REPO:-LogBrewCo/homebrew-tap}"
 PACKAGE_INSTALL_SMOKE_SCRIPT="${LOGBREW_RELEASE_PACKAGE_INSTALL_SMOKE_SCRIPT:-scripts/test-package-install-smoke.sh}"
 DIST_PLAN_SCRIPT="${LOGBREW_RELEASE_DIST_PLAN_SCRIPT:-scripts/test-dist-plan.sh}"
 DIST_GLOBAL_ARTIFACTS_SCRIPT="${LOGBREW_RELEASE_DIST_GLOBAL_ARTIFACTS_SCRIPT:-scripts/test-dist-global-artifacts.sh}"
+DIST_HOMEBREW_FORMULA_SCRIPT="${LOGBREW_RELEASE_DIST_HOMEBREW_FORMULA_SCRIPT:-scripts/test-dist-homebrew-formula-smoke.sh}"
 DIST_SOURCE_ARTIFACT_SCRIPT="${LOGBREW_RELEASE_DIST_SOURCE_ARTIFACT_SCRIPT:-scripts/test-dist-source-artifact-smoke.sh}"
 DIST_CHECKSUMS_SCRIPT="${LOGBREW_RELEASE_DIST_CHECKSUMS_SCRIPT:-scripts/test-dist-checksums.sh}"
 DIST_LOCAL_ARTIFACTS_SCRIPT="${LOGBREW_RELEASE_DIST_LOCAL_ARTIFACTS_SCRIPT:-scripts/test-dist-local-artifacts.sh}"
@@ -87,6 +88,12 @@ fail_dist_plan() {
 fail_dist_global_artifacts() {
   printf 'Release preflight failed: cargo-dist global artifact build failed\n' >&2
   printf 'Next: fix cargo-dist global installers or package metadata, then rerun bash scripts/test-dist-global-artifacts.sh and %s %s before tagging.\n' "$0" "$TAG" >&2
+  exit 1
+}
+
+fail_dist_homebrew_formula() {
+  printf 'Release preflight failed: cargo-dist Homebrew formula smoke failed\n' >&2
+  printf 'Next: fix cargo-dist Homebrew formula installability, then rerun bash scripts/test-dist-homebrew-formula-smoke.sh and %s %s before tagging.\n' "$0" "$TAG" >&2
   exit 1
 }
 
@@ -367,6 +374,12 @@ check_dist_global_artifacts() {
   fi
 }
 
+check_dist_homebrew_formula() {
+  if ! bash "$DIST_HOMEBREW_FORMULA_SCRIPT" "$TAG"; then
+    fail_dist_homebrew_formula
+  fi
+}
+
 check_dist_source_artifact() {
   if ! bash "$DIST_SOURCE_ARTIFACT_SCRIPT" "$TAG"; then
     fail_dist_source_artifact
@@ -490,6 +503,7 @@ check_required_workflows_active
 check_dependency_advisories
 check_package_install_smoke
 check_dist_global_artifacts
+check_dist_homebrew_formula
 check_dist_source_artifact
 check_dist_checksums
 check_dist_local_artifacts
