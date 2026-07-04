@@ -612,7 +612,13 @@ async fn api_auth_error_reports_token_file_source_without_leaking_token()
         .and(header("authorization", "Bearer expired"))
         .respond_with(ResponseTemplate::new(401).set_body_json(serde_json::json!({
             "ok": false,
-            "error": "not_logged_in"
+            "error": "not_logged_in",
+            "code": "unauthorized",
+            "next": "run logbrew login",
+            "next_action": {
+                "code": "authenticate_cli",
+                "target": "cli_login"
+            }
         })))
         .mount(&server)
         .await;
@@ -640,6 +646,10 @@ async fn api_auth_error_reports_token_file_source_without_leaking_token()
     assert_eq!(body["ok"], false);
     assert_eq!(body["error"], "api_error");
     assert_eq!(body["status"], 401);
+    assert_eq!(body["api_code"], "unauthorized");
+    assert_eq!(body["api_next"], "run logbrew login");
+    assert_eq!(body["api_next_action"]["code"], "authenticate_cli");
+    assert_eq!(body["api_next_action"]["target"], "cli_login");
     assert_eq!(body["auth_source"], "token_file");
     assert_eq!(body["next"], "run logbrew login");
     Ok(())

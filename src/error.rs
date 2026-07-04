@@ -271,6 +271,7 @@ fn runtime_error_json(error: &RuntimeError) -> serde_json::Value {
                 "api_error": api_details.error.as_deref(),
                 "api_code": api_details.code.as_deref(),
                 "api_next": api_details.next.as_deref(),
+                "api_next_action": api_details.next_action.as_ref().map(ApiNextAction::to_json),
                 "auth_source": auth_source,
                 "next": next,
             })
@@ -366,6 +367,27 @@ struct ApiErrorDetails {
     code: Option<String>,
     /// Backend-provided recovery step.
     next: Option<String>,
+    /// Backend-provided machine-readable recovery action.
+    next_action: Option<ApiNextAction>,
+}
+
+/// Parsed machine-readable API recovery action.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ApiNextAction {
+    /// Stable backend action code.
+    code: String,
+    /// Stable backend action target.
+    target: String,
+}
+
+impl ApiNextAction {
+    /// Returns a JSON object that preserves the public backend action shape.
+    fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "code": self.code,
+            "target": self.target,
+        })
+    }
 }
 
 impl ApiErrorDetails {
@@ -379,8 +401,18 @@ impl ApiErrorDetails {
             error: json_string_field(&value, "error"),
             code: json_string_field(&value, "code"),
             next: json_string_field(&value, "next"),
+            next_action: parse_next_action(&value),
         }
     }
+}
+
+/// Extracts the backend `next_action` object when both required fields exist.
+fn parse_next_action(value: &serde_json::Value) -> Option<ApiNextAction> {
+    let action = value.get("next_action")?;
+    Some(ApiNextAction {
+        code: json_string_field(action, "code")?,
+        target: json_string_field(action, "target")?,
+    })
 }
 
 /// Extracts a non-empty string field from a JSON object.
