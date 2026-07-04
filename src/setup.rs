@@ -44,6 +44,7 @@ pub(crate) fn write_setup_plan<W: std::io::Write>(
             "install_ready": false,
             "detected": detected,
             "next": plan.next_step(),
+            "next_action": plan.next_action(),
         });
         return writeln!(output, "{body}");
     }
@@ -99,6 +100,21 @@ impl SetupPlan {
             EMPTY_NEXT_STEP
         } else {
             SDK_NEXT_STEP
+        }
+    }
+
+    /// Returns stable machine-readable setup recovery metadata.
+    fn next_action(&self) -> serde_json::Value {
+        if self.detected.is_empty() {
+            serde_json::json!({
+                "code": "run_setup_from_supported_project",
+                "target": "project_manifest",
+            })
+        } else {
+            serde_json::json!({
+                "code": "install_sdk_package",
+                "target": "sdk",
+            })
         }
     }
 }

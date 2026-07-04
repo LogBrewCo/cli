@@ -115,6 +115,8 @@ async fn setup_json_detects_node_project_without_claiming_install()
             "install the matching LogBrew SDK package when packages are ready; send release and \
              environment with logs, issues, actions, and traces"
         );
+        assert_eq!(body["next_action"]["code"], "install_sdk_package");
+        assert_eq!(body["next_action"]["target"], "sdk");
     }
     Ok(())
 }
@@ -167,6 +169,38 @@ async fn setup_json_detects_xcodegen_ios_project() -> Result<(), Box<dyn std::er
     assert_eq!(body["detected"][0]["runtime"], "swift-ios");
     assert_eq!(body["detected"][0]["package_manager"], "xcodegen");
     assert_eq!(body["detected"][0]["manifest"], "project.yml");
+    Ok(())
+}
+
+#[tokio::test]
+async fn setup_json_exposes_empty_project_next_action() -> Result<(), Box<dyn std::error::Error>> {
+    let project_dir = setup_fixture("setup-empty-json")?;
+    let command = parse_command(["logbrew", "setup", "--json"])?;
+    let env = CliEnvironment {
+        base_url: "https://example.test".to_owned(),
+        token: None,
+        home: Some(std::env::temp_dir().join("logbrew-setup-empty-json-home")),
+        cwd: Some(project_dir),
+    };
+    let mut output = Vec::new();
+
+    execute_command(&command, &env, &mut output).await?;
+
+    let body: serde_json::Value = serde_json::from_slice(output.as_slice())?;
+    assert_eq!(body["ok"], true);
+    assert_eq!(body["install_ready"], false);
+    assert_eq!(body["detected"], serde_json::json!([]));
+    assert_eq!(
+        body["next"],
+        "run logbrew setup from a project containing package.json, pyproject.toml, Pipfile, \
+         Cargo.toml, Package.swift, project.yml, project.yaml, .xcodeproj, .xcworkspace, go.mod, \
+         or composer.json."
+    );
+    assert_eq!(
+        body["next_action"]["code"],
+        "run_setup_from_supported_project"
+    );
+    assert_eq!(body["next_action"]["target"], "project_manifest");
     Ok(())
 }
 
