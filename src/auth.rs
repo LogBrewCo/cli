@@ -84,6 +84,7 @@ pub(crate) fn write_status_success<W: std::io::Write>(
             "authenticated": auth_status.authenticated,
             "auth_source": auth_status.source,
             "next": auth_status.next,
+            "next_action": status_next_action(&auth_status),
         });
         if auth_status.authenticated {
             if let Some(object) = response.as_object_mut() {
@@ -101,6 +102,15 @@ pub(crate) fn write_status_success<W: std::io::Write>(
         writeln!(output, "Next: {}", auth_status.next)?;
     }
     Ok(())
+}
+
+/// Returns stable machine-readable status recovery metadata.
+fn status_next_action(status: &AuthSnapshot) -> serde_json::Value {
+    if status.authenticated {
+        json_next_action("read_telemetry", "telemetry_reads")
+    } else {
+        json_next_action("authenticate_cli", "login")
+    }
 }
 
 /// Agent-readable user choice prompt for authenticated status responses.
@@ -193,6 +203,7 @@ pub(crate) fn write_logout_result<W: std::io::Write>(
             "auth_source": auth_source,
             "env_token_active": env_token_active,
             "next": next,
+            "next_action": logout_next_action(env_token_active),
         });
         writeln!(output, "{response}")?;
     } else if env_token_active {
@@ -212,6 +223,23 @@ pub(crate) fn write_logout_result<W: std::io::Write>(
         writeln!(output, "Next: {next}")?;
     }
     Ok(())
+}
+
+/// Returns stable machine-readable logout recovery metadata.
+fn logout_next_action(env_token_active: bool) -> serde_json::Value {
+    if env_token_active {
+        json_next_action("unset_env_token", "LOGBREW_TOKEN")
+    } else {
+        json_next_action("authenticate_cli", "login")
+    }
+}
+
+/// Builds a public-safe machine-readable next action object.
+fn json_next_action(code: &'static str, target: &'static str) -> serde_json::Value {
+    serde_json::json!({
+        "code": code,
+        "target": target,
+    })
 }
 
 /// Inspects local auth and returns only redacted status metadata.

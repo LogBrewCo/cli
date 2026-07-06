@@ -34,6 +34,8 @@ async fn status_json_reports_api_and_missing_auth_for_agents() {
     assert_eq!(body["authenticated"], false);
     assert_eq!(body["auth_source"], "missing");
     assert_eq!(body["next"], "run logbrew login");
+    assert_eq!(body["next_action"]["code"], "authenticate_cli");
+    assert_eq!(body["next_action"]["target"], "login");
     assert!(body.get("agent_use").is_none());
 }
 
@@ -65,6 +67,8 @@ async fn status_json_reports_env_auth_without_exposing_token() {
         body["next"],
         "run logbrew releases or logbrew logs --release <release> --environment <environment>"
     );
+    assert_eq!(body["next_action"]["code"], "read_telemetry");
+    assert_eq!(body["next_action"]["target"], "telemetry_reads");
     assert_eq!(
         body["agent_use"]["prompt"],
         "How should your AI use LogBrew?"

@@ -55,6 +55,8 @@ async fn login_no_open_json_prints_auth_url_without_browser_side_effect() {
         assert_eq!(body["auth_url"], "https://example.test/api/auth/cli/login");
         assert_eq!(body["browser_opened"], false);
         assert_eq!(body["next"], "open auth_url in a browser");
+        assert_eq!(body["next_action"]["code"], "open_auth_url");
+        assert_eq!(body["next_action"]["target"], "browser");
     }
 }
 

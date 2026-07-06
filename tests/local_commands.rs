@@ -271,6 +271,8 @@ async fn logout_json_removes_local_token_without_leaking_it()
         assert_eq!(body["auth_source"], "token_file");
         assert_eq!(body["env_token_active"], false);
         assert_eq!(body["next"], "run logbrew login to authenticate again");
+        assert_eq!(body["next_action"]["code"], "authenticate_cli");
+        assert_eq!(body["next_action"]["target"], "login");
         assert!(!token_path.exists());
     }
     Ok(())

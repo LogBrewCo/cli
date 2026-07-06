@@ -187,7 +187,9 @@ Usage:
 
 Use --json before or after commands for stable machine-readable output.
 Stable JSON keeps server response shapes for reads and mutations.
-Errors include ok, error, message, and next.";
+Errors include ok, error, message, and next.
+Local auth and setup JSON include next_action.
+API runtime errors include api_next_action when the server provides it.";
 
 /// First-run examples and common workflows.
 const EXAMPLES_HELP: &str = "\

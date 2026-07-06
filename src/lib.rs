@@ -642,6 +642,10 @@ fn execute_login<W: std::io::Write>(
             "auth_url": auth_url,
             "browser_opened": opened,
             "next": "open auth_url in a browser",
+            "next_action": {
+                "code": "open_auth_url",
+                "target": "browser",
+            },
         });
         writeln!(output, "{body}")?;
     } else {
