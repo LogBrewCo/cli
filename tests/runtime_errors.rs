@@ -15,6 +15,8 @@ fn writes_runtime_errors_as_json_for_agents() {
     assert_eq!(body["error"], "not_logged_in");
     assert_eq!(body["message"], "not logged in: run logbrew login");
     assert_eq!(body["next"], "run logbrew login");
+    assert_eq!(body["next_action"]["code"], "authenticate_cli");
+    assert_eq!(body["next_action"]["target"], "login");
 }
 
 #[test]
@@ -28,6 +30,8 @@ fn writes_io_errors_as_json_with_local_next_step() {
     assert_eq!(body["ok"], false);
     assert_eq!(body["error"], "io_error");
     assert_eq!(body["next"], "check local files and permissions");
+    assert_eq!(body["next_action"]["code"], "check_local_files");
+    assert_eq!(body["next_action"]["target"], "filesystem");
 }
 
 #[tokio::test]
@@ -52,6 +56,8 @@ async fn writes_http_errors_as_json_with_network_next_step() {
     assert_eq!(body["ok"], false);
     assert_eq!(body["error"], "http_error");
     assert_eq!(body["next"], "check LOGBREW_API_URL or network");
+    assert_eq!(body["next_action"]["code"], "check_api_url");
+    assert_eq!(body["next_action"]["target"], "LOGBREW_API_URL");
 }
 
 #[test]

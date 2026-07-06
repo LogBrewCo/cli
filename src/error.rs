@@ -253,6 +253,7 @@ fn runtime_error_json(error: &RuntimeError) -> serde_json::Value {
             "error": runtime_error_code(error),
             "message": error.to_string(),
             "next": runtime_error_next_step(error),
+            "next_action": runtime_error_next_action(error).map(RuntimeNextAction::to_json),
         }),
         RuntimeError::Api {
             status,
@@ -295,6 +296,7 @@ fn runtime_error_json(error: &RuntimeError) -> serde_json::Value {
             "auth_source": auth_source,
             "message": message,
             "next": runtime_error_next_step(error),
+            "next_action": runtime_error_next_action(error).map(RuntimeNextAction::to_json),
         }),
         RuntimeError::Cli(error) => serde_json::json!({
             "ok": false,
@@ -380,6 +382,25 @@ struct ApiNextAction {
     target: String,
 }
 
+/// Machine-readable CLI-owned recovery action for runtime errors.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct RuntimeNextAction {
+    /// Stable CLI action code.
+    code: &'static str,
+    /// Stable CLI action target.
+    target: &'static str,
+}
+
+impl RuntimeNextAction {
+    /// Returns a JSON object with the same public shape as backend actions.
+    fn to_json(self) -> serde_json::Value {
+        serde_json::json!({
+            "code": self.code,
+            "target": self.target,
+        })
+    }
+}
+
 impl ApiNextAction {
     /// Returns a JSON object that preserves the public backend action shape.
     fn to_json(&self) -> serde_json::Value {
@@ -440,6 +461,25 @@ fn runtime_error_next_step(error: &RuntimeError) -> Cow<'static, str> {
         | RuntimeError::Unavailable { .. } => {
             Cow::Borrowed(fallback_runtime_error_next_step(error))
         }
+    }
+}
+
+/// Returns a stable machine-readable recovery action for CLI-owned failures.
+const fn runtime_error_next_action(error: &RuntimeError) -> Option<RuntimeNextAction> {
+    match error {
+        RuntimeError::MissingToken => Some(RuntimeNextAction {
+            code: "authenticate_cli",
+            target: "login",
+        }),
+        RuntimeError::Http(_) | RuntimeError::StatusUnavailable { .. } => Some(RuntimeNextAction {
+            code: "check_api_url",
+            target: "LOGBREW_API_URL",
+        }),
+        RuntimeError::Io(_) => Some(RuntimeNextAction {
+            code: "check_local_files",
+            target: "filesystem",
+        }),
+        RuntimeError::Api { .. } | RuntimeError::Cli(_) | RuntimeError::Unavailable { .. } => None,
     }
 }
 

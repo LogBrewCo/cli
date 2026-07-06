@@ -211,6 +211,8 @@ async fn status_json_reports_unreachable_api_without_exposing_token() {
     assert_eq!(body["authenticated"], true);
     assert_eq!(body["auth_source"], "env");
     assert_eq!(body["next"], "check LOGBREW_API_URL or network");
+    assert_eq!(body["next_action"]["code"], "check_api_url");
+    assert_eq!(body["next_action"]["target"], "LOGBREW_API_URL");
     assert!(!body.to_string().contains("fixture-token"));
 }
 
