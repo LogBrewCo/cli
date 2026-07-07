@@ -78,6 +78,9 @@ fn set_summary(target: &SetTarget, value: &serde_json::Value) -> Option<String> 
             append_labeled_field(&mut output, "trace", issue, "trace_id");
             output.push_str(release_environment_suffix(issue).as_str());
             output.push_str(".\n");
+            if let Some(next) = response_next(value, issue) {
+                append_next(&mut output, next);
+            }
             Some(output)
         }
     }
@@ -308,9 +311,11 @@ fn issue_detail_summary(value: &serde_json::Value) -> Option<String> {
         output.push_str(last_seen);
         output.push('\n');
     }
-    output.push_str("Next: ");
-    output.push_str(issue_next_step(id, status).as_str());
-    output.push('\n');
+    if let Some(next) = response_next(value, issue) {
+        append_next(&mut output, next);
+    } else {
+        append_next(&mut output, issue_next_step(id, status).as_str());
+    }
     Some(output)
 }
 
@@ -319,6 +324,21 @@ fn issue_value(value: &serde_json::Value) -> Option<&serde_json::Value> {
     value
         .get("issue")
         .or_else(|| value.as_object().map(|_| value))
+}
+
+/// Returns backend-provided next-step copy from a response wrapper or item.
+fn response_next<'a>(
+    value: &'a serde_json::Value,
+    nested: &'a serde_json::Value,
+) -> Option<&'a str> {
+    field(value, "next").or_else(|| field(nested, "next"))
+}
+
+/// Appends a next-step line to a human summary.
+fn append_next(output: &mut String, next: &str) {
+    output.push_str("Next: ");
+    output.push_str(next);
+    output.push('\n');
 }
 
 /// Returns a string field value.

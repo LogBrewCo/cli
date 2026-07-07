@@ -391,7 +391,7 @@ async fn human_read_trace_summarizes_real_api_array_shape() {
 }
 
 #[tokio::test]
-async fn human_read_issue_summarizes_real_api_object_shape_with_next_action() {
+async fn human_read_issue_summarizes_real_api_object_shape_with_backend_next() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/api/telemetry/issues/issue_123"))
@@ -407,7 +407,12 @@ async fn human_read_issue_summarizes_real_api_object_shape_with_next_action() {
             "last_seen_at": "2026-06-02T20:00:00Z",
             "trace_id": "trace_123",
             "release": "checkout@1.2.3",
-            "environment": "production"
+            "environment": "production",
+            "next": "open the trace for issue_123",
+            "next_action": {
+                "code": "read_trace",
+                "target": "trace_123"
+            }
         })))
         .mount(&server)
         .await;
@@ -422,8 +427,8 @@ async fn human_read_issue_summarizes_real_api_object_shape_with_next_action() {
         text,
         "Issue issue_123 unresolved error trace=trace_123 [checkout@1.2.3 / production]\nTitle: \
          PaymentError\nMessage: card declined\nOccurrences: 2\nFirst seen: \
-         2026-06-02T19:00:00Z\nLast seen: 2026-06-02T20:00:00Z\nNext: logbrew resolve issue_123 \
-         or logbrew ignore issue_123\n"
+         2026-06-02T19:00:00Z\nLast seen: 2026-06-02T20:00:00Z\nNext: open the trace for \
+         issue_123\n"
     );
 }
 
@@ -440,6 +445,11 @@ async fn human_set_issue_status_prints_confirmation() {
                 "trace_id": "trace_123",
                 "release": "checkout@1.2.3",
                 "environment": "production"
+            },
+            "next": "read issue issue_123",
+            "next_action": {
+                "code": "read_issue",
+                "target": "issue_123"
             }
         })))
         .mount(&server)
@@ -453,7 +463,8 @@ async fn human_set_issue_status_prints_confirmation() {
     .expect("set succeeds");
     assert_eq!(
         text,
-        "Issue issue_123 marked resolved trace=trace_123 [checkout@1.2.3 / production].\n"
+        "Issue issue_123 marked resolved trace=trace_123 [checkout@1.2.3 / production].\nNext: \
+         read issue issue_123\n"
     );
 }
 
