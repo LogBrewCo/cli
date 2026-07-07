@@ -721,6 +721,7 @@ fn parses_json_help_as_agent_output_topic() {
     assert!(text.contains("logbrew status --json"));
     assert!(text.contains("Stable JSON keeps server response shapes"));
     assert!(text.contains("Errors include ok, error, message, and next."));
+    assert!(text.contains("Parse errors and CLI runtime errors include next_action."));
     assert!(text.contains("Local auth and setup JSON include next_action."));
     assert!(
         text.contains("API runtime errors include api_next_action when the server provides it.")

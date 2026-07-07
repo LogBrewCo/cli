@@ -162,6 +162,7 @@ pub fn write_cli_error<W: std::io::Write>(
             "error": cli_error_code(error),
             "message": error.to_string(),
             "next": cli_error_next_step(error),
+            "next_action": cli_error_next_action(error).to_json(),
         });
         writeln!(output, "{body}")
     } else {
@@ -303,6 +304,7 @@ fn runtime_error_json(error: &RuntimeError) -> serde_json::Value {
             "error": cli_error_code(error),
             "message": error.to_string(),
             "next": cli_error_next_step(error),
+            "next_action": cli_error_next_action(error).to_json(),
         }),
     }
 }
@@ -341,6 +343,47 @@ const fn cli_error_next_step(error: &CliError) -> &'static str {
         CliError::UnknownCommand => "run logbrew --help",
         CliError::UnknownStatus(_) => ISSUE_STATUS_VALUES_NEXT_STEP,
         CliError::UnknownLogLevel(_) => "use one of info, warning, error, critical",
+    }
+}
+
+/// Returns a stable machine-readable recovery action for parse errors.
+fn cli_error_next_action(error: &CliError) -> CliNextAction {
+    match error {
+        CliError::UnknownCommand => cli_next_action("show_help", "root_help"),
+        CliError::UnknownCommandName { command, .. } => CliNextAction {
+            code: "check_command",
+            target: Cow::Owned(command.clone()),
+        },
+        CliError::MissingArgument { argument, .. } => cli_next_action("provide_argument", argument),
+        CliError::MissingFlagValue { flag, .. } => cli_next_action("provide_flag_value", flag),
+        CliError::DuplicateFlag { flag, .. } => cli_next_action("remove_duplicate_flag", flag),
+        CliError::UnexpectedArgument { command, .. } => {
+            cli_next_action("review_command_usage", command)
+        }
+        CliError::UnknownFlag { flag, .. } => CliNextAction {
+            code: "remove_unknown_flag",
+            target: Cow::Owned(flag.clone()),
+        },
+        CliError::UnsupportedFlag { flag, .. } => CliNextAction {
+            code: "remove_unsupported_flag",
+            target: Cow::Owned(flag.clone()),
+        },
+        CliError::UnknownResource { resource, .. } => CliNextAction {
+            code: "choose_resource",
+            target: Cow::Owned(resource.clone()),
+        },
+        CliError::UnknownStatus(_) => cli_next_action("choose_issue_status", "issue_status"),
+        CliError::UnknownLogLevel(_) => cli_next_action("choose_log_level", "log_level"),
+        CliError::InvalidLimit(_) => cli_next_action("set_limit", "--limit"),
+        CliError::InvalidSetupSource(_) => cli_next_action("choose_setup_source", "--source"),
+    }
+}
+
+/// Builds a parse-error action for static targets.
+const fn cli_next_action(code: &'static str, target: &'static str) -> CliNextAction {
+    CliNextAction {
+        code,
+        target: Cow::Borrowed(target),
     }
 }
 
@@ -389,6 +432,25 @@ struct RuntimeNextAction {
     code: &'static str,
     /// Stable CLI action target.
     target: &'static str,
+}
+
+/// Machine-readable CLI-owned recovery action for parse errors.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CliNextAction {
+    /// Stable CLI action code.
+    code: &'static str,
+    /// Stable CLI action target.
+    target: Cow<'static, str>,
+}
+
+impl CliNextAction {
+    /// Returns a JSON object with the same public shape as backend actions.
+    fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "code": self.code,
+            "target": self.target,
+        })
+    }
 }
 
 impl RuntimeNextAction {

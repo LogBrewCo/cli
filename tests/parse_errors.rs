@@ -18,6 +18,90 @@ fn rejects_non_numeric_limit_with_agent_next_step() {
 }
 
 #[test]
+fn writes_parse_errors_as_json_with_machine_readable_next_actions() {
+    for (args, error_code, action_code, action_target) in [
+        (
+            &["logbrew", "logs", "--limit", "banana", "--json"][..],
+            "invalid_limit",
+            "set_limit",
+            "--limit",
+        ),
+        (
+            &["logbrew", "issues", "--status", "done", "--json"][..],
+            "unknown_status",
+            "choose_issue_status",
+            "issue_status",
+        ),
+        (
+            &["logbrew", "logs", "--release", "--json"][..],
+            "missing_flag_value",
+            "provide_flag_value",
+            "--release",
+        ),
+        (
+            &["logbrew", "--json", "status", "--json"][..],
+            "duplicate_flag",
+            "remove_duplicate_flag",
+            "--json",
+        ),
+        (
+            &["logbrew", "--bogus", "--json"][..],
+            "unknown_flag",
+            "remove_unknown_flag",
+            "--bogus",
+        ),
+        (
+            &["logbrew", "status", "production", "--json"][..],
+            "unexpected_argument",
+            "review_command_usage",
+            "status",
+        ),
+        (
+            &["logbrew", "read", "metrics", "--json"][..],
+            "unknown_resource",
+            "choose_resource",
+            "metrics",
+        ),
+        (
+            &["logbrew", "read", "trace", "--json"][..],
+            "missing_argument",
+            "provide_argument",
+            "trace_id",
+        ),
+        (
+            &["logbrew", "login", "--release", "api@1", "--json"][..],
+            "unsupported_flag",
+            "remove_unsupported_flag",
+            "--release",
+        ),
+        (
+            &["logbrew", "logs", "--level", "panic", "--json"][..],
+            "unknown_log_level",
+            "choose_log_level",
+            "log_level",
+        ),
+        (
+            &["logbrew", "logg", "--json"][..],
+            "unknown_command",
+            "check_command",
+            "logg",
+        ),
+    ] {
+        let error = parse_command(args.iter().copied()).expect_err("parse error");
+        let mut output = Vec::new();
+
+        write_cli_error(&error, true, &mut output).expect("error writes");
+
+        let body: serde_json::Value =
+            serde_json::from_slice(output.as_slice()).expect("valid json");
+        assert_eq!(body["ok"], false);
+        assert_eq!(body["error"], error_code);
+        assert_eq!(body["next_action"]["code"], action_code);
+        assert_eq!(body["next_action"]["target"], action_target);
+    }
+}
+
+#[test]
 fn rejects_zero_limit_with_human_next_step() {
     let error = parse_command(["logbrew", "issues", "--limit", "0"]).expect_err("bad limit");
     let mut output = Vec::new();
