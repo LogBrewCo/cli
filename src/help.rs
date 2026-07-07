@@ -190,7 +190,7 @@ Stable JSON keeps server response shapes for reads and mutations.
 Errors include ok, error, message, and next.
 Parse errors and CLI runtime errors include next_action.
 Local auth and setup JSON include next_action.
-API runtime errors include api_next_action when the server provides it.";
+API runtime errors include next_action and preserve api_next_action when the server provides it.";
 
 /// First-run examples and common workflows.
 const EXAMPLES_HELP: &str = "\

@@ -91,6 +91,8 @@ fn writes_api_auth_errors_as_json_with_login_next_step() {
     assert_eq!(body["status"], 401);
     assert_eq!(body["auth_source"], "token_file");
     assert_eq!(body["next"], "run logbrew login");
+    assert_eq!(body["next_action"]["code"], "authenticate_cli");
+    assert_eq!(body["next_action"]["target"], "login");
 }
 
 #[test]
@@ -131,6 +133,8 @@ fn writes_api_server_errors_as_json_with_retry_next_step() {
     assert_eq!(body["status"], 500);
     assert_eq!(body["auth_source"], "token_file");
     assert_eq!(body["next"], "check LOGBREW_API_URL or retry later");
+    assert_eq!(body["next_action"]["code"], "check_api_url");
+    assert_eq!(body["next_action"]["target"], "LOGBREW_API_URL");
 }
 
 #[test]
@@ -154,6 +158,8 @@ fn writes_api_rate_limit_errors_with_retry_next_step() {
     assert_eq!(body["status"], 429);
     assert_eq!(body["auth_source"], "token_file");
     assert_eq!(body["next"], "retry later");
+    assert_eq!(body["next_action"]["code"], "retry_request");
+    assert_eq!(body["next_action"]["target"], "retry_later");
 
     let text = String::from_utf8(text_output).expect("utf8 output");
     assert_eq!(
@@ -165,7 +171,8 @@ fn writes_api_rate_limit_errors_with_retry_next_step() {
 
 #[test]
 fn writes_api_not_found_errors_with_human_next_step() {
-    let mut output = Vec::new();
+    let mut text_output = Vec::new();
+    let mut json_output = Vec::new();
     let error = RuntimeError::Api {
         status: 404,
         body: String::from(r#"{"ok":false,"error":"not_found"}"#),
@@ -173,14 +180,20 @@ fn writes_api_not_found_errors_with_human_next_step() {
         auth_label: "logged in (local token)",
     };
 
-    write_runtime_error(&error, false, &mut output).expect("error writes");
+    write_runtime_error(&error, false, &mut text_output).expect("human error writes");
+    write_runtime_error(&error, true, &mut json_output).expect("json error writes");
 
-    let text = String::from_utf8(output).expect("utf8 output");
+    let text = String::from_utf8(text_output).expect("utf8 output");
     assert_eq!(
         text,
         "api returned status 404: {\"ok\":false,\"error\":\"not_found\"}\nAuth: logged in (local \
          token)\nNext: check the resource id or filters\n",
     );
+
+    let body: serde_json::Value =
+        serde_json::from_slice(json_output.as_slice()).expect("valid json");
+    assert_eq!(body["next_action"]["code"], "check_resource");
+    assert_eq!(body["next_action"]["target"], "resource_id_or_filters");
 }
 
 #[test]
@@ -201,6 +214,8 @@ fn writes_api_validation_errors_as_json_with_argument_next_step() {
     assert_eq!(body["status"], 422);
     assert_eq!(body["auth_source"], "token_file");
     assert_eq!(body["next"], "check command arguments or filters");
+    assert_eq!(body["next_action"]["code"], "check_arguments");
+    assert_eq!(body["next_action"]["target"], "command_arguments");
 }
 
 #[test]
@@ -209,7 +224,7 @@ fn writes_backend_api_code_and_next_for_agents() {
     let error = RuntimeError::Api {
         status: 422,
         body: String::from(
-            r#"{"error":"release is required","code":"validation_failed","next":"provide --release <release>"}"#,
+            r#"{"error":"release is required","code":"validation_failed","next":"provide --release <release>","next_action":{"code":"provide_flag_value","target":"--release"}}"#,
         ),
         auth_source: "token_file",
         auth_label: "logged in (local token)",
@@ -223,7 +238,11 @@ fn writes_backend_api_code_and_next_for_agents() {
     assert_eq!(body["api_error"], "release is required");
     assert_eq!(body["api_code"], "validation_failed");
     assert_eq!(body["api_next"], "provide --release <release>");
+    assert_eq!(body["api_next_action"]["code"], "provide_flag_value");
+    assert_eq!(body["api_next_action"]["target"], "--release");
     assert_eq!(body["next"], "provide --release <release>");
+    assert_eq!(body["next_action"]["code"], "provide_flag_value");
+    assert_eq!(body["next_action"]["target"], "--release");
 }
 
 #[test]

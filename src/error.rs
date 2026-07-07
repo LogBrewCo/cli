@@ -276,6 +276,7 @@ fn runtime_error_json(error: &RuntimeError) -> serde_json::Value {
                 "api_next_action": api_details.next_action.as_ref().map(ApiNextAction::to_json),
                 "auth_source": auth_source,
                 "next": next,
+                "next_action": api_next_action(*status, &api_details),
             })
         }
         RuntimeError::StatusUnavailable {
@@ -434,6 +435,15 @@ struct RuntimeNextAction {
     target: &'static str,
 }
 
+/// Machine-readable CLI-owned recovery action for API error fallbacks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct FallbackApiNextAction {
+    /// Stable CLI action code.
+    code: &'static str,
+    /// Stable CLI action target.
+    target: &'static str,
+}
+
 /// Machine-readable CLI-owned recovery action for parse errors.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct CliNextAction {
@@ -454,6 +464,16 @@ impl CliNextAction {
 }
 
 impl RuntimeNextAction {
+    /// Returns a JSON object with the same public shape as backend actions.
+    fn to_json(self) -> serde_json::Value {
+        serde_json::json!({
+            "code": self.code,
+            "target": self.target,
+        })
+    }
+}
+
+impl FallbackApiNextAction {
     /// Returns a JSON object with the same public shape as backend actions.
     fn to_json(self) -> serde_json::Value {
         serde_json::json!({
@@ -526,6 +546,14 @@ fn runtime_error_next_step(error: &RuntimeError) -> Cow<'static, str> {
     }
 }
 
+/// Returns the effective machine-readable API recovery action.
+fn api_next_action(status: u16, api_details: &ApiErrorDetails) -> serde_json::Value {
+    api_details.next_action.as_ref().map_or_else(
+        || fallback_api_next_action(status).to_json(),
+        ApiNextAction::to_json,
+    )
+}
+
 /// Returns a stable machine-readable recovery action for CLI-owned failures.
 const fn runtime_error_next_action(error: &RuntimeError) -> Option<RuntimeNextAction> {
     match error {
@@ -551,6 +579,36 @@ fn api_next_step(status: u16, api_details: &ApiErrorDetails) -> Cow<'static, str
         || Cow::Borrowed(fallback_api_next_step(status)),
         |next| Cow::Owned(next.clone()),
     )
+}
+
+/// Returns the CLI fallback machine-readable action for an API status.
+const fn fallback_api_next_action(status: u16) -> FallbackApiNextAction {
+    match status {
+        401 | 403 => FallbackApiNextAction {
+            code: "authenticate_cli",
+            target: "login",
+        },
+        400 | 422 => FallbackApiNextAction {
+            code: "check_arguments",
+            target: "command_arguments",
+        },
+        404 => FallbackApiNextAction {
+            code: "check_resource",
+            target: "resource_id_or_filters",
+        },
+        429 => FallbackApiNextAction {
+            code: "retry_request",
+            target: "retry_later",
+        },
+        500..=599 => FallbackApiNextAction {
+            code: "check_api_url",
+            target: "LOGBREW_API_URL",
+        },
+        _ => FallbackApiNextAction {
+            code: "check_arguments_or_retry",
+            target: "command_or_api",
+        },
+    }
 }
 
 /// Returns the CLI fallback next step for an API status.
