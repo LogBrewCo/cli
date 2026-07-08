@@ -84,7 +84,7 @@ pub(crate) fn write_status_success_with_auth_snapshot<W: std::io::Write>(
             "authenticated": auth_status.authenticated,
             "auth_source": auth_status.source,
             "next": auth_status.next,
-            "next_action": status_next_action(&auth_status),
+            "next_action": status_next_action(auth_status),
         });
         if auth_status.authenticated {
             if let Some(object) = response.as_object_mut() {
