@@ -105,9 +105,9 @@ case "${1:-} ${2:-}" in
     ;;
   "api repos/LogBrewCo/cli/branches/main/protection")
     if [[ "${LOGBREW_TEST_PROTECTION:-ok}" == "missing-plan" ]]; then
-      printf '{"required_pull_request_reviews":{"required_approving_review_count":1,"dismiss_stale_reviews":true},"enforce_admins":{"enabled":true},"required_status_checks":{"strict":true,"checks":[{"context":"check"}],"contexts":["check"]}}\n'
+      printf '{"required_pull_request_reviews":{"required_approving_review_count":1,"dismiss_stale_reviews":true,"require_last_push_approval":true},"enforce_admins":{"enabled":true},"required_status_checks":{"strict":true,"checks":[{"context":"check"}],"contexts":["check"]}}\n'
     else
-      printf '{"required_pull_request_reviews":{"required_approving_review_count":1,"dismiss_stale_reviews":true},"enforce_admins":{"enabled":true},"required_status_checks":{"strict":true,"checks":[{"context":"check"},{"context":"plan"}],"contexts":["check","plan"]}}\n'
+      printf '{"required_pull_request_reviews":{"required_approving_review_count":1,"dismiss_stale_reviews":true,"require_last_push_approval":true},"enforce_admins":{"enabled":true},"required_status_checks":{"strict":true,"checks":[{"context":"check"},{"context":"plan"}],"contexts":["check","plan"]}}\n'
     fi
     ;;
   "api repos/LogBrewCo/cli/actions/workflows")

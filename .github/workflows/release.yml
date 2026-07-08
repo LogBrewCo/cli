@@ -15,7 +15,7 @@
 
 name: Release
 permissions:
-  "contents": "write"
+  "contents": "read"
 
 # This task will run whenever you push a git tag that looks like a version
 # like "1.0.0", "v0.1.0-prerelease.1", "my-app/0.1.0", "releases/v1.0.0", etc.
@@ -229,6 +229,8 @@ jobs:
     runs-on: "blacksmith-2vcpu-ubuntu-2404"
     outputs:
       val: ${{ steps.host.outputs.manifest }}
+    permissions:
+      "contents": "write"
     steps:
       - uses: actions/checkout@v6
         with:
@@ -322,6 +324,8 @@ jobs:
     # "host" however must run to completion, no skipping allowed!
     if: ${{ always() && needs.host.result == 'success' && (needs.custom-publish-npm-trusted.result == 'skipped' || needs.custom-publish-npm-trusted.result == 'success') && (needs.custom-publish-homebrew-tap.result == 'skipped' || needs.custom-publish-homebrew-tap.result == 'success') }}
     runs-on: "blacksmith-2vcpu-ubuntu-2404"
+    permissions:
+      "contents": "write"
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:

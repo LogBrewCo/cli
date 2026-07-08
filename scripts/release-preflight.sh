@@ -181,6 +181,7 @@ check_main_branch_protection() {
   local metadata
   local required_reviews
   local dismiss_stale_reviews
+  local require_last_push_approval
   local enforce_admins
   local strict_status_checks
   local status_checks
@@ -195,6 +196,9 @@ check_main_branch_protection() {
   dismiss_stale_reviews="$(
     jq -r '.required_pull_request_reviews.dismiss_stale_reviews // false' <<<"$metadata"
   )"
+  require_last_push_approval="$(
+    jq -r '.required_pull_request_reviews.require_last_push_approval // false' <<<"$metadata"
+  )"
   enforce_admins="$(jq -r '.enforce_admins.enabled // false' <<<"$metadata")"
   strict_status_checks="$(jq -r '.required_status_checks.strict // false' <<<"$metadata")"
   status_checks="$(
@@ -208,6 +212,10 @@ check_main_branch_protection() {
 
   if [[ "$dismiss_stale_reviews" != "true" ]]; then
     fail "main branch protection must dismiss stale pull request reviews"
+  fi
+
+  if [[ "$require_last_push_approval" != "true" ]]; then
+    fail "main branch protection must require approval after the latest push"
   fi
 
   if [[ "$enforce_admins" != "true" ]]; then
