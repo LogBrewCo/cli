@@ -47,6 +47,13 @@ async fn status_json_reports_env_auth_without_exposing_token() {
         .respond_with(ResponseTemplate::new(200).set_body_string("ok"))
         .mount(&server)
         .await;
+    Mock::given(method("GET"))
+        .and(path("/api/auth/account"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": "00000000-0000-4000-8000-000000000001"
+        })))
+        .mount(&server)
+        .await;
     let command = parse_command(["logbrew", "status", "--json"]).expect("command parses");
     let env = CliEnvironment {
         base_url: server.uri(),
@@ -110,6 +117,51 @@ async fn status_json_reports_env_auth_without_exposing_token() {
 }
 
 #[tokio::test]
+async fn status_json_reports_expired_token_as_unauthenticated() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/health"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("ok"))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/auth/account"))
+        .respond_with(ResponseTemplate::new(401).set_body_json(serde_json::json!({
+            "code": "unauthorized",
+            "error": "Invalid or expired token",
+            "next_action": {
+                "code": "sign_in",
+                "target": "auth"
+            }
+        })))
+        .mount(&server)
+        .await;
+    let command = parse_command(["logbrew", "status", "--json"]).expect("command parses");
+    let env = CliEnvironment {
+        base_url: server.uri(),
+        token: Some("expired-token".to_owned()),
+        home: Some(std::env::temp_dir().join("logbrew-status-expired-auth-test")),
+        cwd: None,
+    };
+    let mut output = Vec::new();
+
+    execute_command(&command, &env, &mut output)
+        .await
+        .expect("status succeeds");
+
+    let body: serde_json::Value = serde_json::from_slice(output.as_slice()).expect("valid json");
+    assert_eq!(body["ok"], true);
+    assert_eq!(body["status"], "reachable");
+    assert_eq!(body["authenticated"], false);
+    assert_eq!(body["auth_source"], "expired");
+    assert_eq!(body["next"], "run logbrew login");
+    assert_eq!(body["next_action"]["code"], "authenticate_cli");
+    assert_eq!(body["next_action"]["target"], "login");
+    assert!(body.get("agent_use").is_none());
+    assert!(!body.to_string().contains("expired-token"));
+}
+
+#[tokio::test]
 async fn status_human_output_includes_api_and_auth_next_step() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
@@ -146,6 +198,13 @@ async fn status_human_authenticated_output_points_to_first_read_without_leaking_
     Mock::given(method("GET"))
         .and(path("/health"))
         .respond_with(ResponseTemplate::new(200).set_body_string("ok"))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/auth/account"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": "00000000-0000-4000-8000-000000000001"
+        })))
         .mount(&server)
         .await;
     let command = parse_command(["logbrew", "status"]).expect("command parses");

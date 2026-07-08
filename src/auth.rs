@@ -65,15 +65,15 @@ pub(crate) fn open_browser(url: &str) -> bool {
         .is_ok_and(|status| status.success())
 }
 
-/// Writes the successful `status` command response.
-pub(crate) fn write_status_success<W: std::io::Write>(
+/// Writes the successful `status` command response with already validated auth metadata.
+pub(crate) fn write_status_success_with_auth_snapshot<W: std::io::Write>(
     env: &CliEnvironment,
     status_code: u16,
     body: &str,
     json: bool,
     output: &mut W,
+    auth_status: &AuthSnapshot,
 ) -> Result<(), RuntimeError> {
-    let auth_status = inspect_auth_snapshot(env)?;
     if json {
         let mut response = serde_json::json!({
             "ok": true,
