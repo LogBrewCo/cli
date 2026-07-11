@@ -1,7 +1,7 @@
 //! Status command execution and diagnostics.
 
 use crate::auth::{
-    AuthSnapshot, inspect_auth_snapshot, resolve_credential,
+    AuthSnapshot, inspect_auth_snapshot, send_authenticated_with_refresh,
     write_status_success_with_auth_snapshot,
 };
 use crate::{CliEnvironment, RuntimeError};
@@ -57,36 +57,33 @@ async fn validated_auth_snapshot(
     client: &reqwest::Client,
     env: &CliEnvironment,
 ) -> Result<AuthSnapshot, RuntimeError> {
-    let credential = match resolve_credential(env) {
-        Ok(credential) => credential,
-        Err(RuntimeError::MissingToken) => return inspect_auth_snapshot(env),
-        Err(error) => return Err(error),
-    };
     let url = format!("{}/api/auth/account", env.base_url.trim_end_matches('/'));
-    let response = match client
-        .get(url)
-        .bearer_auth(credential.token.as_str())
-        .send()
+    let (response, credential) =
+        match send_authenticated_with_refresh(client, env, |client, credential| {
+            client.get(url.as_str()).bearer_auth(credential.token())
+        })
         .await
-    {
-        Ok(response) => response,
-        Err(error) => {
-            return Err(status_unavailable_error(
-                env,
-                None,
-                None,
-                error.to_string(),
-            )?);
-        }
-    };
+        {
+            Ok(result) => result,
+            Err(RuntimeError::MissingToken) => return inspect_auth_snapshot(env),
+            Err(RuntimeError::Http(error)) => {
+                return Err(status_unavailable_error(
+                    env,
+                    None,
+                    None,
+                    error.to_string(),
+                )?);
+            }
+            Err(error) => return Err(error),
+        };
     let status = response.status();
     let body = response.text().await?;
 
     if status.is_success() {
         return Ok(AuthSnapshot {
             authenticated: true,
-            source: credential.source,
-            label: credential.label,
+            source: credential.source(),
+            label: credential.label(),
             next: "run logbrew releases or logbrew logs --release <release> --environment <environment>",
         });
     }
@@ -103,7 +100,7 @@ async fn validated_auth_snapshot(
     Err(status_unavailable_error(
         env,
         Some(status.as_u16()),
-        Some(body),
+        Some(credential.redact_response_body(body.as_str())),
         format!("account returned status {}", status.as_u16()),
     )?)
 }

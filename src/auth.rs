@@ -2,9 +2,40 @@
 
 use crate::{CliEnvironment, RuntimeError};
 
+mod login;
+mod session;
+mod store;
+
+use session::AuthSource;
+
 /// Next step after status confirms both API reachability and local auth.
 const AUTHENTICATED_STATUS_NEXT: &str =
     "run logbrew releases or logbrew logs --release <release> --environment <environment>";
+
+/// Canonicalizes the API base used to bind persisted credentials to one origin.
+fn normalized_api_base(base_url: &str) -> Result<String, RuntimeError> {
+    let mut url = reqwest::Url::parse(base_url).map_err(|_| invalid_api_url())?;
+    if !matches!(url.scheme(), "http" | "https")
+        || url.host_str().is_none()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return Err(invalid_api_url());
+    }
+    let normalized_path = url.path().trim_end_matches('/').to_owned();
+    url.set_path(normalized_path.as_str());
+    Ok(url.as_str().trim_end_matches('/').to_owned())
+}
+
+/// Returns a stable error for an API base that cannot safely own credentials.
+const fn invalid_api_url() -> RuntimeError {
+    RuntimeError::Unavailable {
+        message: "the configured API URL is invalid",
+        next: "set LOGBREW_API_URL to an http or https API base and retry",
+    }
+}
 /// Redacted local authentication status for CLI diagnostics.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct AuthSnapshot {
@@ -19,50 +50,71 @@ pub(crate) struct AuthSnapshot {
 }
 
 /// Bearer token plus redacted source metadata for API calls.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub(crate) struct AuthCredential {
     /// Bearer token value. Never render this in user output.
-    pub(crate) token: String,
+    token: String,
     /// Stable machine-readable auth source key.
-    pub(crate) source: &'static str,
+    source: &'static str,
     /// Concise human auth label.
-    pub(crate) label: &'static str,
+    label: &'static str,
+    /// Whether this credential may use the persisted refresh token.
+    refreshable: bool,
 }
 
-/// Resolves the bearer token and redacted source from env or local file.
-pub(crate) fn resolve_credential(env: &CliEnvironment) -> Result<AuthCredential, RuntimeError> {
-    if let Some(token) = env.token.as_ref().filter(|token| !token.trim().is_empty()) {
-        return Ok(AuthCredential {
-            token: token.clone(),
-            source: AuthSource::Env.key(),
-            label: AuthSource::Env.human_label(),
-        });
+impl AuthCredential {
+    /// Returns the bearer value for request construction only.
+    pub(crate) const fn token(&self) -> &str {
+        self.token.as_str()
     }
 
-    let Some(home) = &env.home else {
-        return Err(RuntimeError::MissingToken);
-    };
-    Ok(AuthCredential {
-        token: read_token_from_home(home)?,
-        source: AuthSource::TokenFile.key(),
-        label: AuthSource::TokenFile.human_label(),
-    })
+    /// Returns the stable redacted source key.
+    pub(crate) const fn source(&self) -> &'static str {
+        self.source
+    }
+
+    /// Returns the concise redacted source label.
+    pub(crate) const fn label(&self) -> &'static str {
+        self.label
+    }
+
+    /// Redacts the exact bearer token if an upstream error echoes it.
+    pub(crate) fn redact_response_body(&self, body: &str) -> String {
+        body.replace(self.token.as_str(), "[redacted]")
+    }
 }
 
-/// Opens a URL in the user's default browser.
-pub(crate) fn open_browser(url: &str) -> bool {
-    let command = if cfg!(target_os = "macos") {
-        ("open", vec![url])
-    } else if cfg!(target_os = "windows") {
-        ("rundll32", vec!["url.dll,FileProtocolHandler", url])
-    } else {
-        ("xdg-open", vec![url])
-    };
+impl std::fmt::Debug for AuthCredential {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AuthCredential")
+            .field("token", &"[redacted]")
+            .field("source", &self.source)
+            .field("label", &self.label)
+            .field("refreshable", &self.refreshable)
+            .finish()
+    }
+}
 
-    std::process::Command::new(command.0)
-        .args(command.1)
-        .status()
-        .is_ok_and(|status| status.success())
+/// Executes interactive login or a non-mutating handoff mode.
+pub(crate) async fn execute_login<W: std::io::Write>(
+    env: &CliEnvironment,
+    should_open_browser: bool,
+    json: bool,
+    output: &mut W,
+) -> Result<(), RuntimeError> {
+    login::execute_login(env, should_open_browser, json, output).await
+}
+
+/// Sends one authenticated request and retries once after a local 401 refresh.
+pub(crate) async fn send_authenticated_with_refresh<F>(
+    client: &reqwest::Client,
+    env: &CliEnvironment,
+    build_request: F,
+) -> Result<(reqwest::Response, AuthCredential), RuntimeError>
+where
+    F: Fn(&reqwest::Client, &AuthCredential) -> reqwest::RequestBuilder,
+{
+    session::send_authenticated_with_refresh(client, env, build_request).await
 }
 
 /// Writes the successful `status` command response with already validated auth metadata.
@@ -176,7 +228,7 @@ pub(crate) fn write_logout_result<W: std::io::Write>(
         .token
         .as_ref()
         .is_some_and(|token| !token.trim().is_empty());
-    let removed = remove_token_from_home(env.home.as_deref())?;
+    let removed = store::remove_credentials(env.home.as_deref())?;
     let auth_source = if env_token_active {
         "env"
     } else if removed {
@@ -238,23 +290,11 @@ fn inspect_auth_status(env: &CliEnvironment) -> Result<AuthStatus, RuntimeError>
     let Some(home) = &env.home else {
         return Ok(AuthStatus::Missing);
     };
-    match read_token_from_home(home) {
+    let origin = normalized_api_base(env.base_url.as_str())?;
+    match store::read_access_token(home, origin.as_str()) {
         Ok(_) => Ok(AuthStatus::Configured(AuthSource::TokenFile)),
         Err(RuntimeError::MissingToken) => Ok(AuthStatus::Missing),
         Err(error) => Err(error),
-    }
-}
-
-/// Removes a persisted token if it exists.
-fn remove_token_from_home(home: Option<&std::path::Path>) -> Result<bool, RuntimeError> {
-    let Some(home) = home else {
-        return Ok(false);
-    };
-    let token_path = home.join(".logbrew").join("token");
-    match std::fs::remove_file(token_path) {
-        Ok(()) => Ok(true),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
-        Err(error) => Err(RuntimeError::Io(error)),
     }
 }
 
@@ -266,24 +306,6 @@ const fn logout_next_step(env_token_active: bool, removed: bool) -> &'static str
         "run logbrew login to authenticate again"
     } else {
         "run logbrew login to authenticate"
-    }
-}
-
-/// Reads a persisted CLI token from a home directory.
-fn read_token_from_home(home: &std::path::Path) -> Result<String, RuntimeError> {
-    let token_path = home.join(".logbrew").join("token");
-    let token = match std::fs::read_to_string(token_path) {
-        Ok(token) => token,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Err(RuntimeError::MissingToken);
-        }
-        Err(error) => return Err(RuntimeError::Io(error)),
-    };
-    let trimmed = token.trim();
-    if trimmed.is_empty() {
-        Err(RuntimeError::MissingToken)
-    } else {
-        Ok(trimmed.to_owned())
     }
 }
 
@@ -323,33 +345,6 @@ impl AuthStatus {
         match self {
             Self::Configured(_) => AUTHENTICATED_STATUS_NEXT,
             Self::Missing => "run logbrew login",
-        }
-    }
-}
-
-/// Source of a configured local credential.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum AuthSource {
-    /// `LOGBREW_TOKEN` process environment variable.
-    Env,
-    /// Persisted token file below the user home directory.
-    TokenFile,
-}
-
-impl AuthSource {
-    /// Returns the stable JSON key for this source.
-    const fn key(self) -> &'static str {
-        match self {
-            Self::Env => "env",
-            Self::TokenFile => "token_file",
-        }
-    }
-
-    /// Returns a concise human status label for this source.
-    const fn human_label(self) -> &'static str {
-        match self {
-            Self::Env => "logged in (env token)",
-            Self::TokenFile => "logged in (local token)",
         }
     }
 }

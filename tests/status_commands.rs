@@ -1,7 +1,7 @@
 //! CLI status command output tests.
 
 use logbrew_cli::{CliEnvironment, execute_command, parse_command, write_runtime_error};
-use wiremock::matchers::{method, path};
+use wiremock::matchers::{body_json, header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 #[tokio::test]
@@ -156,6 +156,81 @@ async fn status_json_reports_expired_token_as_unauthenticated() {
 }
 
 #[tokio::test]
+async fn status_refreshes_expired_local_auth_before_reporting_authenticated()
+-> Result<(), Box<dyn std::error::Error>> {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/health"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("ok"))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/auth/account"))
+        .and(header("authorization", "Bearer expired-local"))
+        .respond_with(ResponseTemplate::new(401))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/api/auth/refresh"))
+        .and(body_json(serde_json::json!({
+            "refresh_token": "old-local-refresh"
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "access_token": "fresh-local",
+            "refresh_token": "fresh-local-refresh"
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/auth/account"))
+        .and(header("authorization", "Bearer fresh-local"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": "00000000-0000-4000-8000-000000000001"
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let home = status_home("refresh-local")?;
+    let auth_dir = home.join(".logbrew");
+    std::fs::create_dir_all(auth_dir.as_path())?;
+    std::fs::write(
+        auth_dir.join("session.json"),
+        serde_json::json!({
+            "access_token": "expired-local",
+            "refresh_token": "old-local-refresh",
+            "origin": server.uri(),
+        })
+        .to_string(),
+    )?;
+    let command = parse_command(["logbrew", "status", "--json"])?;
+    let env = CliEnvironment {
+        base_url: server.uri(),
+        token: None,
+        home: Some(home),
+        cwd: None,
+    };
+    let mut output = Vec::new();
+
+    execute_command(&command, &env, &mut output).await?;
+
+    let text = String::from_utf8(output)?;
+    let body: serde_json::Value = serde_json::from_str(text.as_str())?;
+    assert_eq!(body["authenticated"], true);
+    assert_eq!(body["auth_source"], "token_file");
+    for secret in [
+        "expired-local",
+        "old-local-refresh",
+        "fresh-local",
+        "fresh-local-refresh",
+    ] {
+        assert!(!text.contains(secret));
+    }
+    Ok(())
+}
+
+#[tokio::test]
 async fn status_human_output_includes_api_and_auth_next_step() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
@@ -184,6 +259,18 @@ async fn status_human_output_includes_api_and_auth_next_step() {
             server.uri()
         )
     );
+}
+
+fn status_home(name: &str) -> Result<std::path::PathBuf, std::io::Error> {
+    let home =
+        std::env::temp_dir().join(format!("logbrew-cli-status-{name}-{}", std::process::id()));
+    match std::fs::remove_dir_all(home.as_path()) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
+    std::fs::create_dir_all(home.as_path())?;
+    Ok(home)
 }
 
 #[tokio::test]

@@ -26,7 +26,7 @@ pub mod status;
 #[doc(hidden)]
 pub mod version;
 
-use auth::{open_browser, resolve_credential, write_logout_result};
+use auth::{AuthCredential, execute_login, send_authenticated_with_refresh, write_logout_result};
 pub use error::{CliError, RuntimeError, write_cli_error, write_runtime_error};
 use futures_util::StreamExt as _;
 pub use parser::parse_command;
@@ -589,7 +589,9 @@ pub async fn execute_command<W: std::io::Write>(
 ) -> Result<(), RuntimeError> {
     match command {
         Command::Help { topic, json } => execute_help(*topic, *json, output),
-        Command::Login { open_browser, json } => execute_login(env, *open_browser, *json, output),
+        Command::Login { open_browser, json } => {
+            execute_login(env, *open_browser, *json, output).await
+        }
         Command::Logout { json } => execute_logout(env, *json, output),
         Command::Setup { auto, yes, json } => execute_setup(env, *auto, *yes, *json, output),
         Command::Status { json } => execute_status(env, *json, output).await,
@@ -622,36 +624,6 @@ fn execute_help<W: std::io::Write>(
         writeln!(output, "{body}")?;
     } else {
         writeln!(output, "{help}")?;
-    }
-    Ok(())
-}
-
-/// Executes browser login bootstrap.
-fn execute_login<W: std::io::Write>(
-    env: &CliEnvironment,
-    should_open_browser: bool,
-    json: bool,
-    output: &mut W,
-) -> Result<(), RuntimeError> {
-    let auth_url = format!("{}/api/auth/cli/login", env.base_url.trim_end_matches('/'));
-    let opened = should_open_browser && open_browser(auth_url.as_str());
-
-    if json {
-        let body = serde_json::json!({
-            "ok": true,
-            "auth_url": auth_url,
-            "browser_opened": opened,
-            "next": "open auth_url in a browser",
-        });
-        writeln!(output, "{body}")?;
-    } else {
-        writeln!(output, "Open this URL to log in: {auth_url}")?;
-        writeln!(
-            output,
-            "Browser: {}",
-            if opened { "opened" } else { "not opened" }
-        )?;
-        writeln!(output, "Next: open the URL in a browser")?;
     }
     Ok(())
 }
@@ -691,34 +663,44 @@ async fn execute_http<W: std::io::Write>(
         .connect_timeout(std::time::Duration::from_secs(10))
         .build()?;
 
-    let mut request = match command.http_method().unwrap_or(HttpMethod::Get) {
-        HttpMethod::Get => client.get(url),
-        HttpMethod::Post => client.post(url),
-        HttpMethod::Patch => client.patch(url),
-    };
-
-    let credential = resolve_credential(env)?;
-    request = request.bearer_auth(credential.token.as_str());
-
-    if let Some(body) = command.request_body_for_token(Some(credential.token.as_str())) {
-        request = request.json(&body);
-    }
-
-    let response = request.send().await?;
+    let (response, credential) =
+        send_authenticated_with_refresh(&client, env, |client, credential| {
+            build_command_request(client, command, url.as_str(), credential)
+        })
+        .await?;
     let status = response.status();
     let body = response.text().await?;
 
     if !status.is_success() {
         return Err(RuntimeError::Api {
             status: status.as_u16(),
-            body,
-            auth_source: credential.source,
-            auth_label: credential.label,
+            body: credential.redact_response_body(body.as_str()),
+            auth_source: credential.source(),
+            auth_label: credential.label(),
         });
     }
 
     write_api_success(command, body.as_str(), output)?;
     Ok(())
+}
+
+/// Builds one command request with the supplied credential.
+fn build_command_request(
+    client: &reqwest::Client,
+    command: &Command,
+    url: &str,
+    credential: &AuthCredential,
+) -> reqwest::RequestBuilder {
+    let mut request = match command.http_method().unwrap_or(HttpMethod::Get) {
+        HttpMethod::Get => client.get(url),
+        HttpMethod::Post => client.post(url),
+        HttpMethod::Patch => client.patch(url),
+    }
+    .bearer_auth(credential.token());
+    if let Some(body) = command.request_body_for_token(Some(credential.token())) {
+        request = request.json(&body);
+    }
+    request
 }
 
 /// Executes the public live WebSocket watch flow.
@@ -736,10 +718,9 @@ async fn execute_watch<W: std::io::Write>(
         });
     }
 
-    let credential = resolve_credential(env)?;
     let mut reconnect_backoff = WatchReconnectBackoff::default();
     loop {
-        let ticket = match request_feed_ticket(env, &credential).await {
+        let ticket = match request_feed_ticket(env).await {
             Ok(ticket) => ticket,
             Err(error) if reconnect_backoff.connected_once() && !runtime_error_is_auth(&error) => {
                 tokio::time::sleep(reconnect_backoff.next_delay()).await;
@@ -858,28 +839,25 @@ fn websocket_error_is_auth(error: &WebSocketError) -> bool {
 }
 
 /// Requests a short-lived WebSocket feed ticket from the public API.
-async fn request_feed_ticket(
-    env: &CliEnvironment,
-    credential: &auth::AuthCredential,
-) -> Result<String, RuntimeError> {
+async fn request_feed_ticket(env: &CliEnvironment) -> Result<String, RuntimeError> {
     let url = format!("{}/api/feed/ticket", env.base_url.trim_end_matches('/'));
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
         .connect_timeout(std::time::Duration::from_secs(10))
         .build()?;
-    let response = client
-        .post(url)
-        .bearer_auth(credential.token.as_str())
-        .send()
+    let (response, credential) =
+        send_authenticated_with_refresh(&client, env, |client, credential| {
+            client.post(url.as_str()).bearer_auth(credential.token())
+        })
         .await?;
     let status = response.status();
     let body = response.text().await?;
     if !status.is_success() {
         return Err(RuntimeError::Api {
             status: status.as_u16(),
-            body,
-            auth_source: credential.source,
-            auth_label: credential.label,
+            body: credential.redact_response_body(body.as_str()),
+            auth_source: credential.source(),
+            auth_label: credential.label(),
         });
     }
 

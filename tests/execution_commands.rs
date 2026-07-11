@@ -305,6 +305,48 @@ async fn watch_json_streams_websocket_events_without_leaking_ticket() {
 }
 
 #[tokio::test]
+async fn watch_json_refreshes_local_auth_before_requesting_a_ticket()
+-> Result<(), Box<dyn std::error::Error>> {
+    let (base_url, server) = spawn_refreshing_feed_server().await;
+    let home = setup_fixture("watch-refresh")?;
+    let auth_dir = home.join(".logbrew");
+    fs::create_dir_all(auth_dir.as_path())?;
+    fs::write(
+        auth_dir.join("session.json"),
+        serde_json::json!({
+            "access_token": "watch-expired",
+            "refresh_token": "watch-refresh",
+            "origin": base_url.as_str(),
+        })
+        .to_string(),
+    )?;
+    let command = parse_command(["logbrew", "watch", "logs", "--json"])?;
+    let env = CliEnvironment {
+        base_url,
+        token: None,
+        home: Some(home),
+        cwd: None,
+    };
+    let mut output = Vec::new();
+
+    execute_command(&command, &env, &mut output).await?;
+    server.await?;
+
+    let text = String::from_utf8(output)?;
+    assert!(text.contains("log_after_refresh"));
+    for secret in [
+        "watch-expired",
+        "watch-refresh",
+        "watch-fresh",
+        "watch-next-refresh",
+        "watch-ticket",
+    ] {
+        assert!(!text.contains(secret));
+    }
+    Ok(())
+}
+
+#[tokio::test]
 async fn watch_json_filters_error_and_critical_events_client_side() {
     let messages = vec![
         serde_json::json!({
@@ -521,6 +563,97 @@ async fn spawn_feed_server(
     (format!("http://{address}"), server)
 }
 
+async fn spawn_refreshing_feed_server() -> (String, tokio::task::JoinHandle<()>) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind refreshing feed server");
+    let address = listener
+        .local_addr()
+        .expect("refreshing feed server address");
+    let server = tokio::spawn(async move {
+        let (mut expired_stream, _) = listener.accept().await.expect("expired ticket request");
+        let expired_request = read_http_request(&mut expired_stream).await;
+        assert!(expired_request.starts_with("POST /api/feed/ticket "));
+        assert!(
+            expired_request
+                .to_ascii_lowercase()
+                .contains("authorization: bearer watch-expired")
+        );
+        expired_stream
+            .write_all(
+                b"HTTP/1.1 401 Unauthorized\r\ncontent-length: 0\r\nconnection: close\r\n\r\n",
+            )
+            .await
+            .expect("write expired response");
+
+        let (mut refresh_stream, _) = listener.accept().await.expect("refresh request");
+        let refresh_request = read_http_request(&mut refresh_stream).await;
+        assert!(refresh_request.starts_with("POST /api/auth/refresh "));
+        assert!(refresh_request.contains(r#"{"refresh_token":"watch-refresh"}"#));
+        let refresh_body = serde_json::json!({
+            "access_token": "watch-fresh",
+            "refresh_token": "watch-next-refresh"
+        })
+        .to_string();
+        let refresh_response = format!(
+            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+            refresh_body.len(),
+            refresh_body
+        );
+        refresh_stream
+            .write_all(refresh_response.as_bytes())
+            .await
+            .expect("write refresh response");
+
+        let (mut ticket_stream, _) = listener.accept().await.expect("fresh ticket request");
+        let ticket_request = read_http_request(&mut ticket_stream).await;
+        assert!(ticket_request.starts_with("POST /api/feed/ticket "));
+        assert!(
+            ticket_request
+                .to_ascii_lowercase()
+                .contains("authorization: bearer watch-fresh")
+        );
+        let ticket_body = serde_json::json!({ "ticket": "watch-ticket" }).to_string();
+        let ticket_response = format!(
+            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+            ticket_body.len(),
+            ticket_body
+        );
+        ticket_stream
+            .write_all(ticket_response.as_bytes())
+            .await
+            .expect("write ticket response");
+
+        let (live_stream, _) = listener.accept().await.expect("websocket request");
+        let callback =
+            |request: &tokio_tungstenite::tungstenite::handshake::server::Request,
+             response: tokio_tungstenite::tungstenite::handshake::server::Response| {
+                assert_eq!(request.uri().path(), "/api/feed/live");
+                assert_eq!(request.uri().query(), Some("ticket=watch-ticket"));
+                Ok(response)
+            };
+        let mut websocket = accept_hdr_async(live_stream, callback)
+            .await
+            .expect("accept refreshed websocket");
+        websocket
+            .send(Message::Text(
+                serde_json::json!({
+                    "type": "native_log",
+                    "data": { "id": "log_after_refresh", "severity": "error" }
+                })
+                .to_string()
+                .into(),
+            ))
+            .await
+            .expect("send refreshed event");
+        websocket
+            .close(None)
+            .await
+            .expect("close refreshed websocket");
+    });
+    (format!("http://{address}"), server)
+}
+
 struct FeedSession {
     ticket: &'static str,
     messages: Vec<String>,
@@ -594,8 +727,20 @@ async fn read_http_request(stream: &mut tokio::net::TcpStream) -> String {
             break;
         }
         request.extend_from_slice(&buffer[..read]);
-        if request.windows(4).any(|window| window == b"\r\n\r\n") {
-            break;
+        if let Some(header_end) = request.windows(4).position(|window| window == b"\r\n\r\n") {
+            let headers = String::from_utf8_lossy(&request[..header_end]);
+            let content_length = headers
+                .lines()
+                .find_map(|line| {
+                    let (name, value) = line.split_once(':')?;
+                    name.eq_ignore_ascii_case("content-length")
+                        .then(|| value.trim().parse::<usize>().ok())
+                        .flatten()
+                })
+                .unwrap_or(0);
+            if request.len() >= header_end + 4 + content_length {
+                break;
+            }
         }
     }
     String::from_utf8(request).expect("request is utf8")
