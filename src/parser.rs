@@ -1158,6 +1158,9 @@ fn read_value_canonical_flag(flag: &str) -> Option<&'static str> {
         "--status" => "--status",
         "--limit" => "--limit",
         "--min-duration-ms" => "--min-duration-ms",
+        "--pagination" => "--pagination",
+        "--cursor-time" => "--cursor-time",
+        "--cursor-id" => "--cursor-id",
         _ => return None,
     };
     Some(canonical)
@@ -1179,6 +1182,7 @@ fn has_invalid_supported_read_value(flag: &str, value: &str) -> bool {
         "--status" => !is_known_issue_status(value),
         "--limit" => value.parse::<u32>().map_or(true, |limit| limit == 0),
         "--min-duration-ms" => validate_min_duration(value).is_err(),
+        "--pagination" => value != "cursor",
         _ => false,
     }
 }
@@ -1221,6 +1225,9 @@ fn is_read_value_flag(flag: &str) -> bool {
             | "--status"
             | "--limit"
             | "--min-duration-ms"
+            | "--pagination"
+            | "--cursor-time"
+            | "--cursor-id"
     )
 }
 
@@ -1330,7 +1337,28 @@ fn validate_read_filters(target: &ReadTarget, filters: &ReadOptions) -> Result<(
             next,
         });
     }
+    if matches!(target, ReadTarget::Actions) {
+        validate_action_cursor(filters)?;
+    }
     Ok(())
+}
+
+/// Validates the explicit first-page or continuation action cursor shape.
+fn validate_action_cursor(filters: &ReadOptions) -> Result<(), CliError> {
+    match (
+        filters.pagination.as_deref(),
+        filters.cursor_time.as_ref(),
+        filters.cursor_id.as_ref(),
+    ) {
+        (None | Some("cursor"), None, None) | (Some("cursor"), Some(_), Some(_)) => Ok(()),
+        (None, _, _) => Err(CliError::InvalidActionCursor(String::from(
+            "cursor fields require --pagination cursor",
+        ))),
+        (Some("cursor"), _, _) => Err(CliError::InvalidActionCursor(String::from(
+            "--cursor-time and --cursor-id must be used together",
+        ))),
+        (Some(_), _, _) => Err(CliError::UnknownPagination),
+    }
 }
 
 /// Parses `explain`.

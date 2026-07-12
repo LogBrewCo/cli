@@ -332,12 +332,19 @@ const READ_ACTIONS_HELP: &str = "\
 Usage:
   logbrew read actions [--release <release>] [--environment production] [--name checkout_failed] \
                                  [--user <distinct_id>] [--service <service_name>] [--since 24h] \
-                                 [--project <project_id>] [--limit 100] [--json]
+                                 [--project <project_id>] [--pagination cursor] [--limit 100] \
+                                 [--json]
+  logbrew read actions [filters] --pagination cursor --cursor-time <RFC3339> --cursor-id <uuid> \
+                                 [--limit 100] [--json]
   logbrew events checkout_failed [--release <release>] [--environment production] [--json]
 
 Reads product actions. Use distinct_id to follow one actor or session.
 Action/event aliases accept one positional name as the same filter as --name.
 --service-name <service_name> is accepted as an alias for --service <service_name>.
+Cursor pagination preserves JSON as {actions,next_cursor}; next_cursor is either {time,id} or null.
+Use --pagination cursor alone for the first page. Continue with --cursor-time and --cursor-id from \
+                                 next_cursor.
+Keep the same active filters and pagination limit on every continuation page.
 Limit must be a positive whole number.";
 
 /// Read releases help text.

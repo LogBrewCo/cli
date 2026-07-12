@@ -142,6 +142,10 @@ impl FlagScope {
             (Self::Read, "min-duration-ms") => {
                 "use --min-duration-ms with a non-negative whole number"
             }
+            (Self::Read, "pagination") => "use --pagination cursor",
+            (Self::Read, "cursor-time" | "cursor-id") => {
+                "use --cursor-time and --cursor-id together with --pagination cursor"
+            }
             (Self::Read, "limit") => "use --limit with a positive whole number",
             (Self::Read, _) => "use --release <release> or run logbrew read --help",
             (Self::Login, _) => "run logbrew login --help",
@@ -315,6 +319,9 @@ pub(crate) fn is_read_filter_word(value: &str) -> bool {
             | "service-name"
             | "since"
             | "min-duration-ms"
+            | "pagination"
+            | "cursor-time"
+            | "cursor-id"
             | "limit"
     )
 }
@@ -458,6 +465,12 @@ enum ReadFilterKind {
     Limit,
     /// Minimum end-to-end trace duration filter.
     MinDuration,
+    /// Explicit pagination mode.
+    Pagination,
+    /// Action continuation timestamp.
+    CursorTime,
+    /// Action continuation identifier.
+    CursorId,
 }
 
 /// Resolves a raw flag name to read filter metadata.
@@ -493,6 +506,15 @@ fn read_filter_spec(flag: &str) -> Option<ReadFilterSpec> {
             "--min-duration-ms",
             "--min-duration-ms",
         ),
+        "--pagination" => {
+            ReadFilterSpec::new(ReadFilterKind::Pagination, "--pagination", "--pagination")
+        }
+        "--cursor-time" => {
+            ReadFilterSpec::new(ReadFilterKind::CursorTime, "--cursor-time", "--cursor-time")
+        }
+        "--cursor-id" => {
+            ReadFilterSpec::new(ReadFilterKind::CursorId, "--cursor-id", "--cursor-id")
+        }
         _ => return None,
     };
     Some(spec)
@@ -526,6 +548,9 @@ fn apply_read_filter(
         ReadFilterKind::MinDuration => {
             read.min_duration_ms = Some(validate_min_duration(&value)?);
         }
+        ReadFilterKind::Pagination => read.pagination = Some(normalize_pagination(&value)?),
+        ReadFilterKind::CursorTime => read.cursor_time = Some(value),
+        ReadFilterKind::CursorId => read.cursor_id = Some(value),
     }
     Ok(())
 }
@@ -595,6 +620,9 @@ fn duplicate_flag_next(flag: &'static str) -> &'static str {
         "--status" => "use --status once",
         "--limit" => "use --limit once",
         "--min-duration-ms" => "use --min-duration-ms once",
+        "--pagination" => "use --pagination once",
+        "--cursor-time" => "use --cursor-time once",
+        "--cursor-id" => "use --cursor-id once",
         _ => "use the flag once",
     }
 }
@@ -651,6 +679,15 @@ pub(crate) fn validate_min_duration(duration: &str) -> Result<String, CliError> 
     }
 }
 
+/// Accepts only the deployed explicit action pagination mode.
+fn normalize_pagination(pagination: &str) -> Result<String, CliError> {
+    if pagination == "cursor" {
+        Ok(String::from("cursor"))
+    } else {
+        Err(CliError::UnknownPagination)
+    }
+}
+
 /// Takes a flag value from `args`.
 fn take_value(args: &[String], index: usize, flag: &'static str) -> Result<String, CliError> {
     let value = args.get(index).ok_or_else(|| missing_flag_value(flag))?;
@@ -698,6 +735,9 @@ fn missing_flag_value_next(flag: &'static str) -> &'static str {
         "--status" => "provide a value after --status",
         "--limit" => "provide a value after --limit",
         "--min-duration-ms" => "provide a value after --min-duration-ms",
+        "--pagination" => "provide a value after --pagination",
+        "--cursor-time" => "provide a value after --cursor-time",
+        "--cursor-id" => "provide a value after --cursor-id",
         _ => "provide a value after the flag",
     }
 }

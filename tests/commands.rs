@@ -177,6 +177,9 @@ fn parses_global_json_before_read_shortcut_for_agents() {
                 status: None,
                 limit: None,
                 min_duration_ms: None,
+                pagination: None,
+                cursor_time: None,
+                cursor_id: None,
             }),
             json: true,
         }
@@ -1048,6 +1051,9 @@ fn parses_agent_friendly_read_actions() {
                 status: None,
                 limit: None,
                 min_duration_ms: None,
+                pagination: None,
+                cursor_time: None,
+                cursor_id: None,
             }),
             json: true,
         }
@@ -1231,6 +1237,9 @@ fn parses_read_filter_aliases_for_real_user_terms() {
                 status: None,
                 limit: None,
                 min_duration_ms: None,
+                pagination: None,
+                cursor_time: None,
+                cursor_id: None,
             }),
             json: true,
         }
@@ -1267,6 +1276,9 @@ fn parses_read_filter_aliases_for_real_user_terms() {
                 status: None,
                 limit: None,
                 min_duration_ms: None,
+                pagination: None,
+                cursor_time: None,
+                cursor_id: None,
             }),
             json: true,
         }
@@ -1307,6 +1319,9 @@ fn parses_release_filter_for_logs() {
                 status: None,
                 limit: None,
                 min_duration_ms: None,
+                pagination: None,
+                cursor_time: None,
+                cursor_id: None,
             }),
             json: true,
         }
@@ -1340,6 +1355,9 @@ fn parses_positive_limit_for_logs() {
                 status: None,
                 limit: Some("25".to_owned()),
                 min_duration_ms: None,
+                pagination: None,
+                cursor_time: None,
+                cursor_id: None,
             }),
             json: true,
         }
@@ -1458,6 +1476,9 @@ fn parses_release_summaries_with_environment_filter() {
                 status: None,
                 limit: None,
                 min_duration_ms: None,
+                pagination: None,
+                cursor_time: None,
+                cursor_id: None,
             }),
             json: true,
         }
@@ -1497,6 +1518,9 @@ fn parses_top_level_releases_shortcut_with_environment_filter() {
                 status: None,
                 limit: None,
                 min_duration_ms: None,
+                pagination: None,
+                cursor_time: None,
+                cursor_id: None,
             }),
             json: true,
         }
@@ -1532,6 +1556,9 @@ fn parses_read_trace_as_singular_target() {
                 status: None,
                 limit: None,
                 min_duration_ms: None,
+                pagination: None,
+                cursor_time: None,
+                cursor_id: None,
             }),
             json: true,
         }

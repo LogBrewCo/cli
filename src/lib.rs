@@ -266,6 +266,12 @@ pub struct ReadOptions {
     pub limit: Option<String>,
     /// Optional minimum end-to-end trace duration in milliseconds.
     pub min_duration_ms: Option<String>,
+    /// Optional pagination mode for endpoints with explicit page envelopes.
+    pub pagination: Option<String>,
+    /// Optional action continuation timestamp.
+    pub cursor_time: Option<String>,
+    /// Optional action continuation identifier.
+    pub cursor_id: Option<String>,
 }
 
 impl ReadOptions {
@@ -283,6 +289,9 @@ impl ReadOptions {
             (self.status.is_some(), "--status"),
             (self.limit.is_some(), "--limit"),
             (self.min_duration_ms.is_some(), "--min-duration-ms"),
+            (self.pagination.is_some(), "--pagination"),
+            (self.cursor_time.is_some(), "--cursor-time"),
+            (self.cursor_id.is_some(), "--cursor-id"),
         ])
     }
 
@@ -303,6 +312,9 @@ impl ReadOptions {
             (self.status.is_some(), "--status"),
             (self.limit.is_some(), "--limit"),
             (self.min_duration_ms.is_some(), "--min-duration-ms"),
+            (self.pagination.is_some(), "--pagination"),
+            (self.cursor_time.is_some(), "--cursor-time"),
+            (self.cursor_id.is_some(), "--cursor-id"),
         ])
     }
 
@@ -314,6 +326,9 @@ impl ReadOptions {
             (self.user.is_some(), "--user"),
             (self.status.is_some(), "--status"),
             (self.min_duration_ms.is_some(), "--min-duration-ms"),
+            (self.pagination.is_some(), "--pagination"),
+            (self.cursor_time.is_some(), "--cursor-time"),
+            (self.cursor_id.is_some(), "--cursor-id"),
         ])
     }
 
@@ -327,6 +342,9 @@ impl ReadOptions {
             (self.level.is_some(), "--severity"),
             (self.search.is_some(), "--search"),
             (self.min_duration_ms.is_some(), "--min-duration-ms"),
+            (self.pagination.is_some(), "--pagination"),
+            (self.cursor_time.is_some(), "--cursor-time"),
+            (self.cursor_id.is_some(), "--cursor-id"),
         ])
     }
 
@@ -353,6 +371,9 @@ impl ReadOptions {
             (self.search.is_some(), "--search"),
             (self.status.is_some(), "--status"),
             (self.min_duration_ms.is_some(), "--min-duration-ms"),
+            (self.pagination.is_some(), "--pagination"),
+            (self.cursor_time.is_some(), "--cursor-time"),
+            (self.cursor_id.is_some(), "--cursor-id"),
         ])
     }
 
@@ -365,6 +386,9 @@ impl ReadOptions {
             (self.trace.is_some(), "--trace"),
             (self.level.is_some(), "--severity"),
             (self.search.is_some(), "--search"),
+            (self.pagination.is_some(), "--pagination"),
+            (self.cursor_time.is_some(), "--cursor-time"),
+            (self.cursor_id.is_some(), "--cursor-id"),
         ])
     }
 }
@@ -478,6 +502,9 @@ impl Command {
                     status: options.status.as_deref(),
                     limit: options.limit.as_deref(),
                     min_duration_ms: options.min_duration_ms.as_deref(),
+                    pagination: options.pagination.as_deref(),
+                    cursor_time: options.cursor_time.as_deref(),
+                    cursor_id: options.cursor_id.as_deref(),
                 },
             )),
             Self::Explain { target, .. } => Some(explain_path(target)),
@@ -1067,6 +1094,12 @@ struct ReadPathFilters<'a> {
     limit: Option<&'a str>,
     /// Optional minimum end-to-end trace duration in milliseconds.
     min_duration_ms: Option<&'a str>,
+    /// Optional pagination mode.
+    pagination: Option<&'a str>,
+    /// Optional action continuation timestamp.
+    cursor_time: Option<&'a str>,
+    /// Optional action continuation identifier.
+    cursor_id: Option<&'a str>,
 }
 
 /// Builds a read endpoint path.
@@ -1108,6 +1141,9 @@ fn read_path(target: &ReadTarget, filters: &ReadPathFilters<'_>) -> String {
                 ("project_id", filters.project),
                 ("release", filters.release),
                 ("environment", filters.environment),
+                ("pagination", filters.pagination),
+                ("cursor_time", filters.cursor_time),
+                ("cursor_id", filters.cursor_id),
                 ("limit", filters.limit),
             ],
         ),

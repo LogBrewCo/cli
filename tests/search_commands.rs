@@ -99,6 +99,9 @@ fn parses_search_as_log_search_shortcut() {
                     status: None,
                     limit: None,
                     min_duration_ms: None,
+                    pagination: None,
+                    cursor_time: None,
+                    cursor_id: None,
                 }),
                 json: true,
             }
@@ -162,6 +165,9 @@ fn parses_search_separator_as_literal_log_search_shortcut() {
                     status: None,
                     limit: None,
                     min_duration_ms: None,
+                    pagination: None,
+                    cursor_time: None,
+                    cursor_id: None,
                 }),
                 json,
             }
@@ -342,6 +348,9 @@ fn parses_find_and_grep_as_log_search_shortcuts() {
                     status: None,
                     limit: None,
                     min_duration_ms: None,
+                    pagination: None,
+                    cursor_time: None,
+                    cursor_id: None,
                 }),
                 json: true,
             }

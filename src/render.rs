@@ -50,7 +50,7 @@ fn read_summary(target: &ReadTarget, value: &serde_json::Value) -> Option<String
     match target {
         ReadTarget::Logs => list_summary("Logs", list_items(value, "logs")?, log_line),
         ReadTarget::Issues => list_summary("Issues", list_items(value, "issues")?, issue_line),
-        ReadTarget::Actions => list_summary("Actions", list_items(value, "actions")?, action_line),
+        ReadTarget::Actions => action_list_summary(value),
         ReadTarget::Releases => {
             list_summary("Releases", list_items(value, "releases")?, release_line)
         }
@@ -140,6 +140,163 @@ fn empty_list_message(title: &str) -> String {
         "No {} found.\nNext: widen filters or check --release/--environment.\n",
         title.to_ascii_lowercase()
     )
+}
+
+/// Builds legacy or cursor-paginated action output without clearing prior pages.
+fn action_list_summary(value: &serde_json::Value) -> Option<String> {
+    if value.is_array() {
+        return list_summary("Actions", list_items(value, "actions")?, action_line);
+    }
+
+    let Some(actions) = value.get("actions").and_then(serde_json::Value::as_array) else {
+        return Some(invalid_action_cursor_message());
+    };
+    let Some(next_cursor) = value.get("next_cursor") else {
+        return Some(invalid_action_cursor_message());
+    };
+    let cursor = if next_cursor.is_null() {
+        None
+    } else {
+        let Some(time) = field(next_cursor, "time") else {
+            return Some(invalid_action_cursor_message());
+        };
+        let Some(id) = field(next_cursor, "id") else {
+            return Some(invalid_action_cursor_message());
+        };
+        if !is_rfc3339_utc(time) || !is_uuid(id) {
+            return Some(invalid_action_cursor_message());
+        }
+        Some((time, id))
+    };
+
+    let mut output = format!("Actions ({})\n", actions.len());
+    if actions.is_empty() {
+        output.push_str("No actions found on this page.\n");
+    } else {
+        for action in actions {
+            let Some(line) = action_line(action) else {
+                return Some(invalid_action_cursor_message());
+            };
+            output.push_str("- ");
+            output.push_str(line.as_str());
+            output.push('\n');
+        }
+    }
+
+    let Some((time, id)) = cursor else {
+        output.push_str("End of action history.\n");
+        return Some(output);
+    };
+    output.push_str("Next page: set --cursor-time ");
+    output.push_str(time);
+    output.push_str(" --cursor-id ");
+    output.push_str(id);
+    output.push_str(
+        " on the same command; keep --pagination cursor, --limit, and active filters unchanged.\n",
+    );
+    output.push_str("Retry: rerun that same command; the rows above remain visible.\n");
+    Some(output)
+}
+
+/// Builds a value-safe recovery when a cursor response violates its public shape.
+fn invalid_action_cursor_message() -> String {
+    String::from(
+        "Actions response could not be rendered safely.\nNext: retry the same command with --json and inspect next_cursor.\n",
+    )
+}
+
+/// Checks the UTC RFC3339 shape returned by the action cursor endpoint.
+fn is_rfc3339_utc(value: &str) -> bool {
+    let Some(without_zone) = value
+        .strip_suffix('Z')
+        .or_else(|| value.strip_suffix("+00:00"))
+    else {
+        return false;
+    };
+    let (seconds, fraction) = match without_zone.split_once('.') {
+        Some((seconds, fraction)) => (seconds, Some(fraction)),
+        None => (without_zone, None),
+    };
+    if fraction.is_some_and(|digits| {
+        digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit())
+    }) {
+        return false;
+    }
+
+    let bytes = seconds.as_bytes();
+    if bytes.len() != 19
+        || bytes[4] != b'-'
+        || bytes[7] != b'-'
+        || bytes[10] != b'T'
+        || bytes[13] != b':'
+        || bytes[16] != b':'
+    {
+        return false;
+    }
+    for index in [0, 1, 2, 3, 5, 6, 8, 9, 11, 12, 14, 15, 17, 18] {
+        if !bytes[index].is_ascii_digit() {
+            return false;
+        }
+    }
+
+    let Some(year) = ascii_number(&bytes[0..4]) else {
+        return false;
+    };
+    let Some(month) = ascii_number(&bytes[5..7]) else {
+        return false;
+    };
+    let Some(day) = ascii_number(&bytes[8..10]) else {
+        return false;
+    };
+    let Some(hour) = ascii_number(&bytes[11..13]) else {
+        return false;
+    };
+    let Some(minute) = ascii_number(&bytes[14..16]) else {
+        return false;
+    };
+    let Some(second) = ascii_number(&bytes[17..19]) else {
+        return false;
+    };
+
+    (1..=12).contains(&month)
+        && (1..=days_in_month(year, month)).contains(&day)
+        && hour < 24
+        && minute < 60
+        && second <= 60
+}
+
+/// Parses an ASCII decimal field without accepting signs or whitespace.
+fn ascii_number(bytes: &[u8]) -> Option<u32> {
+    bytes.iter().try_fold(0_u32, |value, byte| {
+        byte.is_ascii_digit()
+            .then(|| value * 10 + u32::from(*byte - b'0'))
+    })
+}
+
+/// Returns the number of calendar days in one month.
+const fn days_in_month(year: u32, month: u32) -> u32 {
+    match month {
+        4 | 6 | 9 | 11 => 30,
+        2 if is_leap_year(year) => 29,
+        2 => 28,
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        _ => 0,
+    }
+}
+
+/// Reports whether a Gregorian year has a leap day.
+const fn is_leap_year(year: u32) -> bool {
+    year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400))
+}
+
+/// Checks the canonical hyphenated UUID shape returned by the action endpoint.
+fn is_uuid(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    bytes.len() == 36
+        && bytes.iter().enumerate().all(|(index, byte)| match index {
+            8 | 13 | 18 | 23 => *byte == b'-',
+            _ => byte.is_ascii_hexdigit(),
+        })
 }
 
 /// Formats one log list item.
