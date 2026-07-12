@@ -111,7 +111,8 @@ pub(super) fn help_topic(head: &str, tail: &[String]) -> Result<HelpTopic, CliEr
         "releases" => {
             help_topic_without_positionals(HelpTopic::ReadReleases, positionals.as_slice())
         }
-        "trace" | "traces" | "span" | "spans" => trace_help_topic(positionals.as_slice()),
+        "trace" | "span" => trace_help_topic(positionals.as_slice()),
+        "traces" | "spans" => trace_collection_help_topic(positionals.as_slice()),
         "issue" => singular_issue_help_topic(positionals.as_slice()),
         "resolve" | "close" | "ignore" | "reopen" => {
             issue_mutation_help_topic(positionals.as_slice())
@@ -156,9 +157,8 @@ pub(super) fn command_shaped_help_topic(head: &str, tail: &[String]) -> Option<H
         status if is_known_issue_status(status) => {
             status_first_issue_command_shaped_help_topic(positionals.as_slice())
         }
-        "trace" | "traces" | "span" | "spans" => {
-            trace_command_shaped_help_topic(positionals.as_slice())
-        }
+        "trace" | "span" => trace_command_shaped_help_topic(positionals.as_slice()),
+        "traces" | "spans" => trace_collection_command_shaped_help_topic(positionals.as_slice()),
         "issue" => issue_command_shaped_help_topic(positionals.as_slice()),
         alias if is_issue_collection_alias(alias) => {
             issue_alias_command_shaped_help_topic(positionals.as_slice())
@@ -199,7 +199,9 @@ fn read_command_shaped_help_topic(positionals: &[&str]) -> Option<HelpTopic> {
         ["trace" | "traces" | "span" | "spans", id, "explain"] if is_trace_id(id) => {
             Some(HelpTopic::Explain)
         }
-        ["trace" | "traces" | "span" | "spans", _] => Some(HelpTopic::ReadTrace),
+        ["trace" | "span", _] => Some(HelpTopic::ReadTrace),
+        ["traces" | "spans", id] if is_trace_id(id) => Some(HelpTopic::ReadTrace),
+        ["traces" | "spans", _] => Some(HelpTopic::ReadTraces),
         ["issue", status] if is_known_issue_status(status) => Some(HelpTopic::ReadIssues),
         ["issue", _] => Some(HelpTopic::ReadIssue),
         ["logs" | "log", tail @ ..] => log_list_command_shaped_help_topic(tail),
@@ -219,7 +221,9 @@ fn natural_read_command_shaped_help_topic(positionals: &[&str]) -> Option<HelpTo
         ["trace" | "traces" | "span" | "spans", id, "explain"] if is_trace_id(id) => {
             Some(HelpTopic::Explain)
         }
-        ["trace" | "traces" | "span" | "spans", _] => Some(HelpTopic::ReadTrace),
+        ["trace" | "span", _] => Some(HelpTopic::ReadTrace),
+        ["traces" | "spans", id] if is_trace_id(id) => Some(HelpTopic::ReadTrace),
+        ["traces" | "spans", _] => Some(HelpTopic::ReadTraces),
         ["issue", status] if is_known_issue_status(status) => Some(HelpTopic::ReadIssues),
         ["issue", _] => Some(HelpTopic::ReadIssue),
         [resource, tail @ ..] if is_issue_collection_alias(resource) => {
@@ -249,11 +253,33 @@ fn trace_help_topic(args: &[&str]) -> Result<HelpTopic, CliError> {
     }
 }
 
+/// Resolves recent trace discovery help while preserving copied trace IDs.
+fn trace_collection_help_topic(args: &[&str]) -> Result<HelpTopic, CliError> {
+    match args {
+        [] => Ok(HelpTopic::ReadTraces),
+        [id] if is_trace_id(id) => Ok(HelpTopic::ReadTrace),
+        [id, "explain"] if is_trace_id(id) => Ok(HelpTopic::Explain),
+        [id, "explain", extra, ..] if is_trace_id(id) => Err(unexpected_help_argument(extra)),
+        [id, extra, ..] if is_trace_id(id) => Err(unexpected_help_argument(extra)),
+        [extra, ..] => Err(unexpected_help_argument(extra)),
+    }
+}
+
 /// Resolves command-shaped trace detail help plus explain suffixes.
 fn trace_command_shaped_help_topic(positionals: &[&str]) -> Option<HelpTopic> {
     match positionals {
         [id, "explain"] if is_trace_id(id) => Some(HelpTopic::Explain),
         [_] => Some(HelpTopic::ReadTrace),
+        _ => None,
+    }
+}
+
+/// Resolves command-shaped recent trace discovery help.
+fn trace_collection_command_shaped_help_topic(positionals: &[&str]) -> Option<HelpTopic> {
+    match positionals {
+        [id, "explain"] if is_trace_id(id) => Some(HelpTopic::Explain),
+        [id] if is_trace_id(id) => Some(HelpTopic::ReadTrace),
+        [] | [_] => Some(HelpTopic::ReadTraces),
         _ => None,
     }
 }
@@ -521,7 +547,8 @@ fn explicit_help_topic(args: &[&str]) -> Result<HelpTopic, CliError> {
         }
         ["actions" | "action" | "events" | "event", tail @ ..] => action_alias_help_topic(tail),
         ["releases", tail @ ..] => help_topic_without_positionals(HelpTopic::ReadReleases, tail),
-        ["trace" | "traces" | "span" | "spans", tail @ ..] => trace_help_topic(tail),
+        ["trace" | "span", tail @ ..] => trace_help_topic(tail),
+        ["traces" | "spans", tail @ ..] => trace_collection_help_topic(tail),
         ["issue", tail @ ..] => singular_issue_help_topic(tail),
         ["resolve" | "close" | "ignore" | "reopen", tail @ ..] => issue_mutation_help_topic(tail),
         [topic, tail @ ..] if is_read_filter_help_alias(topic) => {
@@ -709,7 +736,8 @@ fn read_resource_help_topic(resource: &str) -> Result<HelpTopic, CliError> {
         "issues" | "errors" | "error" | "exceptions" | "exception" => Ok(HelpTopic::ReadIssues),
         "actions" | "action" | "events" | "event" => Ok(HelpTopic::ReadActions),
         "releases" | "release" => Ok(HelpTopic::ReadReleases),
-        "trace" | "traces" | "span" | "spans" => Ok(HelpTopic::ReadTrace),
+        "trace" | "span" => Ok(HelpTopic::ReadTrace),
+        "traces" | "spans" => Ok(HelpTopic::ReadTraces),
         "issue" => Ok(HelpTopic::ReadIssue),
         "project" | "projects" => Ok(HelpTopic::Read),
         alias if is_read_filter_help_alias(alias) => Ok(HelpTopic::Read),

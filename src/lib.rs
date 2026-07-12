@@ -173,6 +173,8 @@ pub enum HelpTopic {
     ReadActions,
     /// Release reading command.
     ReadReleases,
+    /// Recent trace discovery command.
+    ReadTraces,
     /// Trace reading command.
     ReadTrace,
     /// Single issue reading command.
@@ -206,6 +208,7 @@ impl HelpTopic {
             Self::ReadIssues => "read_issues",
             Self::ReadActions => "read_actions",
             Self::ReadReleases => "read_releases",
+            Self::ReadTraces => "read_traces",
             Self::ReadTrace => "read_trace",
             Self::ReadIssue => "read_issue",
             Self::Watch => "watch",
@@ -226,6 +229,8 @@ pub enum ReadTarget {
     Actions,
     /// Release summaries.
     Releases,
+    /// Recent trace summaries.
+    Traces,
     /// One trace by ID.
     Trace(String),
     /// One issue by ID.
@@ -259,6 +264,8 @@ pub struct ReadOptions {
     pub status: Option<String>,
     /// Optional row limit.
     pub limit: Option<String>,
+    /// Optional minimum end-to-end trace duration in milliseconds.
+    pub min_duration_ms: Option<String>,
 }
 
 impl ReadOptions {
@@ -275,6 +282,7 @@ impl ReadOptions {
             (self.search.is_some(), "--search"),
             (self.status.is_some(), "--status"),
             (self.limit.is_some(), "--limit"),
+            (self.min_duration_ms.is_some(), "--min-duration-ms"),
         ])
     }
 
@@ -294,6 +302,7 @@ impl ReadOptions {
             (self.environment.is_some(), "--environment"),
             (self.status.is_some(), "--status"),
             (self.limit.is_some(), "--limit"),
+            (self.min_duration_ms.is_some(), "--min-duration-ms"),
         ])
     }
 
@@ -304,6 +313,7 @@ impl ReadOptions {
             (self.name.is_some(), "--name"),
             (self.user.is_some(), "--user"),
             (self.status.is_some(), "--status"),
+            (self.min_duration_ms.is_some(), "--min-duration-ms"),
         ])
     }
 
@@ -316,6 +326,7 @@ impl ReadOptions {
             (self.trace.is_some(), "--trace"),
             (self.level.is_some(), "--severity"),
             (self.search.is_some(), "--search"),
+            (self.min_duration_ms.is_some(), "--min-duration-ms"),
         ])
     }
 
@@ -327,6 +338,7 @@ impl ReadOptions {
             (self.level.is_some(), "--severity"),
             (self.search.is_some(), "--search"),
             (self.status.is_some(), "--status"),
+            (self.min_duration_ms.is_some(), "--min-duration-ms"),
         ])
     }
 
@@ -340,6 +352,19 @@ impl ReadOptions {
             (self.level.is_some(), "--severity"),
             (self.search.is_some(), "--search"),
             (self.status.is_some(), "--status"),
+            (self.min_duration_ms.is_some(), "--min-duration-ms"),
+        ])
+    }
+
+    /// Returns the first filter that recent trace discovery cannot apply.
+    #[must_use]
+    pub(crate) fn first_trace_list_unsupported_flag(&self) -> Option<&'static str> {
+        first_present_flag([
+            (self.name.is_some(), "--name"),
+            (self.user.is_some(), "--user"),
+            (self.trace.is_some(), "--trace"),
+            (self.level.is_some(), "--severity"),
+            (self.search.is_some(), "--search"),
         ])
     }
 }
@@ -452,6 +477,7 @@ impl Command {
                     environment: options.environment.as_deref(),
                     status: options.status.as_deref(),
                     limit: options.limit.as_deref(),
+                    min_duration_ms: options.min_duration_ms.as_deref(),
                 },
             )),
             Self::Explain { target, .. } => Some(explain_path(target)),
@@ -1039,6 +1065,8 @@ struct ReadPathFilters<'a> {
     status: Option<&'a str>,
     /// Optional row limit.
     limit: Option<&'a str>,
+    /// Optional minimum end-to-end trace duration in milliseconds.
+    min_duration_ms: Option<&'a str>,
 }
 
 /// Builds a read endpoint path.
@@ -1091,6 +1119,19 @@ fn read_path(target: &ReadTarget, filters: &ReadPathFilters<'_>) -> String {
                 ("project_id", filters.project),
                 ("release", filters.release),
                 ("environment", filters.environment),
+                ("limit", filters.limit),
+            ],
+        ),
+        ReadTarget::Traces => path_with_query(
+            "/api/telemetry/traces",
+            &[
+                ("project_id", filters.project),
+                ("service_name", filters.service),
+                ("release", filters.release),
+                ("environment", filters.environment),
+                ("status", filters.status),
+                ("since", filters.since),
+                ("min_duration_ms", filters.min_duration_ms),
                 ("limit", filters.limit),
             ],
         ),

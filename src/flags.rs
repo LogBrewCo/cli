@@ -17,6 +17,15 @@ pub(crate) struct Flags {
     read: ReadOptions,
 }
 
+/// Target-specific vocabulary for the shared `--status` read flag.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReadStatusKind {
+    /// Grouped issue lifecycle status.
+    Issue,
+    /// Recent trace error status.
+    Trace,
+}
+
 /// Command-specific flag policy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum FlagScope {
@@ -130,6 +139,9 @@ impl FlagScope {
                 "use --service <service_name> or --service-name <service_name>"
             }
             (Self::Read, "since") => "use --since <duration>",
+            (Self::Read, "min-duration-ms") => {
+                "use --min-duration-ms with a non-negative whole number"
+            }
             (Self::Read, "limit") => "use --limit with a positive whole number",
             (Self::Read, _) => "use --release <release> or run logbrew read --help",
             (Self::Login, _) => "run logbrew login --help",
@@ -244,6 +256,20 @@ impl Flags {
 
 /// Parses common CLI flags.
 pub(crate) fn parse_flags(args: &[String], scope: FlagScope) -> Result<Flags, CliError> {
+    parse_flags_with_status(args, scope, ReadStatusKind::Issue)
+}
+
+/// Parses trace-discovery flags with the trace-specific status vocabulary.
+pub(crate) fn parse_trace_flags(args: &[String]) -> Result<Flags, CliError> {
+    parse_flags_with_status(args, FlagScope::Read, ReadStatusKind::Trace)
+}
+
+/// Parses common CLI flags with target-specific read-status validation.
+fn parse_flags_with_status(
+    args: &[String],
+    scope: FlagScope,
+    status_kind: ReadStatusKind,
+) -> Result<Flags, CliError> {
     let mut flags = Flags::default();
     let mut seen = Vec::new();
     let mut index = 0;
@@ -254,6 +280,7 @@ pub(crate) fn parse_flags(args: &[String], scope: FlagScope) -> Result<Flags, Cl
             args,
             &mut index,
             scope,
+            status_kind,
             &mut flags,
             &mut seen,
         )?;
@@ -287,6 +314,7 @@ pub(crate) fn is_read_filter_word(value: &str) -> bool {
             | "service"
             | "service-name"
             | "since"
+            | "min-duration-ms"
             | "limit"
     )
 }
@@ -297,11 +325,12 @@ fn parse_one_flag(
     args: &[String],
     index: &mut usize,
     scope: FlagScope,
+    status_kind: ReadStatusKind,
     flags: &mut Flags,
     seen: &mut Vec<&'static str>,
 ) -> Result<(), CliError> {
     if parse_simple_flag(flag, scope, flags, seen)?
-        || parse_read_filter(flag, args, index, scope, flags, seen)?
+        || parse_read_filter(flag, args, index, scope, status_kind, flags, seen)?
     {
         return Ok(());
     }
@@ -361,6 +390,7 @@ fn parse_read_filter(
     args: &[String],
     index: &mut usize,
     scope: FlagScope,
+    status_kind: ReadStatusKind,
     flags: &mut Flags,
     seen: &mut Vec<&'static str>,
 ) -> Result<bool, CliError> {
@@ -369,7 +399,7 @@ fn parse_read_filter(
         return Ok(false);
     };
     let value = read_filter_value(args, index, scope, seen, spec, inline_value)?;
-    apply_read_filter(&mut flags.read, spec.kind, value)?;
+    apply_read_filter(&mut flags.read, spec.kind, value, status_kind)?;
     Ok(true)
 }
 
@@ -426,6 +456,8 @@ enum ReadFilterKind {
     Status,
     /// Result limit filter.
     Limit,
+    /// Minimum end-to-end trace duration filter.
+    MinDuration,
 }
 
 /// Resolves a raw flag name to read filter metadata.
@@ -456,6 +488,11 @@ fn read_filter_spec(flag: &str) -> Option<ReadFilterSpec> {
         "--env" => ReadFilterSpec::new(ReadFilterKind::Environment, "--environment", "--env"),
         "--status" => ReadFilterSpec::new(ReadFilterKind::Status, "--status", "--status"),
         "--limit" => ReadFilterSpec::new(ReadFilterKind::Limit, "--limit", "--limit"),
+        "--min-duration-ms" => ReadFilterSpec::new(
+            ReadFilterKind::MinDuration,
+            "--min-duration-ms",
+            "--min-duration-ms",
+        ),
         _ => return None,
     };
     Some(spec)
@@ -466,6 +503,7 @@ fn apply_read_filter(
     read: &mut ReadOptions,
     kind: ReadFilterKind,
     value: String,
+    status_kind: ReadStatusKind,
 ) -> Result<(), CliError> {
     match kind {
         ReadFilterKind::Name => read.name = Some(value),
@@ -478,8 +516,16 @@ fn apply_read_filter(
         ReadFilterKind::Project => read.project = Some(value),
         ReadFilterKind::Release => read.release = Some(value),
         ReadFilterKind::Environment => read.environment = Some(value),
-        ReadFilterKind::Status => read.status = Some(normalize_status(&value)?),
+        ReadFilterKind::Status => {
+            read.status = Some(match status_kind {
+                ReadStatusKind::Issue => normalize_status(&value)?,
+                ReadStatusKind::Trace => normalize_trace_status(&value)?,
+            });
+        }
         ReadFilterKind::Limit => read.limit = Some(validate_limit(&value)?),
+        ReadFilterKind::MinDuration => {
+            read.min_duration_ms = Some(validate_min_duration(&value)?);
+        }
     }
     Ok(())
 }
@@ -505,6 +551,15 @@ fn read_filter_value(
         return take_inline_value(value, spec.visible_flag);
     }
     *index += 1;
+    if matches!(spec.kind, ReadFilterKind::MinDuration)
+        && args.get(*index).is_some_and(|value| {
+            value.strip_prefix('-').is_some_and(|digits| {
+                !digits.is_empty() && digits.bytes().all(|byte| byte.is_ascii_digit())
+            })
+        })
+    {
+        return Ok(args[*index].clone());
+    }
     take_value(args, *index, spec.visible_flag)
 }
 
@@ -539,6 +594,7 @@ fn duplicate_flag_next(flag: &'static str) -> &'static str {
         "--environment" => "use --environment once",
         "--status" => "use --status once",
         "--limit" => "use --limit once",
+        "--min-duration-ms" => "use --min-duration-ms once",
         _ => "use the flag once",
     }
 }
@@ -550,6 +606,15 @@ pub(crate) fn normalize_status(status: &str) -> Result<String, CliError> {
         "resolved" | "closed" => Ok(String::from("resolved")),
         "ignored" => Ok(String::from("ignored")),
         other => Err(CliError::UnknownStatus(other.to_owned())),
+    }
+}
+
+/// Normalizes recent-trace status values.
+fn normalize_trace_status(status: &str) -> Result<String, CliError> {
+    match status.to_ascii_lowercase().as_str() {
+        "error" => Ok(String::from("error")),
+        "ok" => Ok(String::from("ok")),
+        other => Err(CliError::UnknownTraceStatus(other.to_owned())),
     }
 }
 
@@ -571,6 +636,18 @@ fn validate_limit(limit: &str) -> Result<String, CliError> {
         Ok(limit.to_owned())
     } else {
         Err(CliError::InvalidLimit(limit.to_owned()))
+    }
+}
+
+/// Validates a non-negative whole-number trace duration.
+pub(crate) fn validate_min_duration(duration: &str) -> Result<String, CliError> {
+    if !duration.is_empty()
+        && duration.bytes().all(|byte| byte.is_ascii_digit())
+        && duration.parse::<i64>().is_ok()
+    {
+        Ok(duration.to_owned())
+    } else {
+        Err(CliError::InvalidMinDuration(duration.to_owned()))
     }
 }
 
@@ -620,6 +697,7 @@ fn missing_flag_value_next(flag: &'static str) -> &'static str {
         "--env" => "provide a value after --env",
         "--status" => "provide a value after --status",
         "--limit" => "provide a value after --limit",
+        "--min-duration-ms" => "provide a value after --min-duration-ms",
         _ => "provide a value after the flag",
     }
 }

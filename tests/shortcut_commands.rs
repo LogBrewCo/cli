@@ -26,6 +26,7 @@ fn parses_top_level_singular_collection_shortcuts() {
                 environment: None,
                 status: None,
                 limit: None,
+                min_duration_ms: None,
             }),
             json: true,
         }
@@ -60,6 +61,7 @@ fn parses_top_level_singular_collection_shortcuts() {
                 environment: Some("production".to_owned()),
                 status: None,
                 limit: None,
+                min_duration_ms: None,
             }),
             json: true,
         }
@@ -100,6 +102,7 @@ fn parses_common_human_terms_as_read_shortcuts() {
                 environment: None,
                 status: Some("unresolved".to_owned()),
                 limit: None,
+                min_duration_ms: None,
             }),
             json: true,
         }
@@ -137,6 +140,7 @@ fn parses_common_human_terms_as_read_shortcuts() {
                 environment: Some("production".to_owned()),
                 status: None,
                 limit: None,
+                min_duration_ms: None,
             }),
             json: true,
         }
@@ -165,6 +169,7 @@ fn parses_common_human_terms_as_read_shortcuts() {
                 environment: None,
                 status: None,
                 limit: None,
+                min_duration_ms: None,
             }),
             json: true,
         }
@@ -188,6 +193,7 @@ fn parses_common_human_terms_as_read_shortcuts() {
                 environment: None,
                 status: None,
                 limit: None,
+                min_duration_ms: None,
             }),
             json: true,
         }
@@ -375,6 +381,7 @@ fn parses_recency_words_as_read_shortcuts() {
                 environment: None,
                 status: None,
                 limit: Some("20".to_owned()),
+                min_duration_ms: None,
             }),
             json: true,
         }
@@ -821,6 +828,7 @@ fn parses_action_aliases_with_names_as_name_filters() {
                 environment: Some("production".to_owned()),
                 status: None,
                 limit: None,
+                min_duration_ms: None,
             }),
             json: true,
         }
@@ -858,6 +866,7 @@ fn parses_action_aliases_with_names_as_name_filters() {
                 environment: Some("production".to_owned()),
                 status: None,
                 limit: None,
+                min_duration_ms: None,
             }),
             json: true,
         }
@@ -888,6 +897,7 @@ fn parses_action_aliases_with_names_as_name_filters() {
                 environment: None,
                 status: None,
                 limit: None,
+                min_duration_ms: None,
             }),
             json: true,
         }
@@ -1187,6 +1197,7 @@ fn parses_common_read_verbs_as_read_shortcuts() {
                 environment: None,
                 status: None,
                 limit: None,
+                min_duration_ms: None,
             }),
             json: true,
         }
@@ -1215,6 +1226,7 @@ fn parses_common_read_verbs_as_read_shortcuts() {
                 environment: None,
                 status: Some("unresolved".to_owned()),
                 limit: None,
+                min_duration_ms: None,
             }),
             json: false,
         }
@@ -1301,6 +1313,7 @@ fn parses_common_read_verbs_as_read_shortcuts() {
                 environment: None,
                 status: None,
                 limit: None,
+                min_duration_ms: None,
             }),
             json: true,
         }

@@ -176,6 +176,7 @@ fn parses_global_json_before_read_shortcut_for_agents() {
                 environment: None,
                 status: None,
                 limit: None,
+                min_duration_ms: None,
             }),
             json: true,
         }
@@ -313,9 +314,12 @@ fn parses_common_help_terms_as_real_user_topics() {
     for (args, topic) in [
         (
             ["logbrew", "help", "traces", "--json"],
-            HelpTopic::ReadTrace,
+            HelpTopic::ReadTraces,
         ),
-        (["logbrew", "help", "spans", "--json"], HelpTopic::ReadTrace),
+        (
+            ["logbrew", "help", "spans", "--json"],
+            HelpTopic::ReadTraces,
+        ),
         (
             ["logbrew", "help", "errors", "--json"],
             HelpTopic::ReadIssues,
@@ -359,14 +363,14 @@ fn parses_common_help_terms_as_real_user_topics() {
     assert_eq!(
         parse_command(["logbrew", "traces", "--help"]).expect("trace shortcut help parses"),
         Command::Help {
-            topic: HelpTopic::ReadTrace,
+            topic: HelpTopic::ReadTraces,
             json: false
         }
     );
     assert_eq!(
         parse_command(["logbrew", "help", "read", "traces"]).expect("read trace help parses"),
         Command::Help {
-            topic: HelpTopic::ReadTrace,
+            topic: HelpTopic::ReadTraces,
             json: false
         }
     );
@@ -522,22 +526,39 @@ fn parses_project_setup_seen_contract_call() {
 }
 
 #[test]
-fn parses_bare_trace_terms_as_top_level_discovery_help() {
+fn parses_bare_singular_trace_terms_as_detail_help() {
     for args in [
         &["logbrew", "trace", "--json"][..],
-        &["logbrew", "traces", "--json"],
         &["logbrew", "span", "--json"],
-        &["logbrew", "spans", "--json"],
-        &["logbrew", "traces"],
-        &["logbrew", "--json", "spans"],
     ] {
-        let command = parse_command(args.iter().copied()).expect("trace discovery help parses");
+        let command = parse_command(args.iter().copied()).expect("trace detail help parses");
 
         assert_eq!(
             command,
             Command::Help {
                 topic: HelpTopic::ReadTrace,
                 json: args.contains(&"--json")
+            }
+        );
+    }
+}
+
+#[test]
+fn parses_bare_plural_trace_terms_as_recent_discovery() {
+    for args in [
+        &["logbrew", "traces", "--json"][..],
+        &["logbrew", "spans", "--json"],
+        &["logbrew", "traces"],
+        &["logbrew", "--json", "spans"],
+    ] {
+        let command = parse_command(args.iter().copied()).expect("trace discovery parses");
+
+        assert_eq!(
+            command,
+            Command::Read {
+                target: ReadTarget::Traces,
+                options: Box::new(ReadOptions::default()),
+                json: args.contains(&"--json"),
             }
         );
     }
@@ -1026,6 +1047,7 @@ fn parses_agent_friendly_read_actions() {
                 environment: None,
                 status: None,
                 limit: None,
+                min_duration_ms: None,
             }),
             json: true,
         }
@@ -1208,6 +1230,7 @@ fn parses_read_filter_aliases_for_real_user_terms() {
                 environment: Some("production".to_owned()),
                 status: None,
                 limit: None,
+                min_duration_ms: None,
             }),
             json: true,
         }
@@ -1243,6 +1266,7 @@ fn parses_read_filter_aliases_for_real_user_terms() {
                 environment: Some("production".to_owned()),
                 status: None,
                 limit: None,
+                min_duration_ms: None,
             }),
             json: true,
         }
@@ -1282,6 +1306,7 @@ fn parses_release_filter_for_logs() {
                 environment: None,
                 status: None,
                 limit: None,
+                min_duration_ms: None,
             }),
             json: true,
         }
@@ -1314,6 +1339,7 @@ fn parses_positive_limit_for_logs() {
                 environment: None,
                 status: None,
                 limit: Some("25".to_owned()),
+                min_duration_ms: None,
             }),
             json: true,
         }
@@ -1431,6 +1457,7 @@ fn parses_release_summaries_with_environment_filter() {
                 environment: Some("production".to_owned()),
                 status: None,
                 limit: None,
+                min_duration_ms: None,
             }),
             json: true,
         }
@@ -1469,6 +1496,7 @@ fn parses_top_level_releases_shortcut_with_environment_filter() {
                 environment: Some("production".to_owned()),
                 status: None,
                 limit: None,
+                min_duration_ms: None,
             }),
             json: true,
         }
@@ -1503,6 +1531,7 @@ fn parses_read_trace_as_singular_target() {
                 environment: None,
                 status: None,
                 limit: None,
+                min_duration_ms: None,
             }),
             json: true,
         }

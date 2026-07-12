@@ -294,6 +294,7 @@ fn is_log_filter_with_tail_search(flag: &str) -> bool {
             | "--release"
             | "--environment"
             | "--env"
+            | "--min-duration-ms"
             | "--limit"
     )
 }

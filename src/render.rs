@@ -54,6 +54,7 @@ fn read_summary(target: &ReadTarget, value: &serde_json::Value) -> Option<String
         ReadTarget::Releases => {
             list_summary("Releases", list_items(value, "releases")?, release_line)
         }
+        ReadTarget::Traces => trace_list_summary(list_items(value, "traces")?),
         ReadTarget::Trace(id) => trace_summary(value, id.as_str()),
         ReadTarget::Issue(_) => issue_detail_summary(value),
     }
@@ -206,6 +207,58 @@ fn release_line(value: &serde_json::Value) -> Option<String> {
     append_labeled_field(&mut output, "service", value, "service_name");
     output
         .push_str(format!(" logs={logs} issues={issues} spans={spans} actions={actions}").as_str());
+    Some(output)
+}
+
+/// Builds a concise recent-trace list with a detail-read next step.
+fn trace_list_summary(items: &[serde_json::Value]) -> Option<String> {
+    let mut output = format!("Traces ({})\n", items.len());
+    if items.is_empty() {
+        output.push_str(
+            "No traces found.\nNext: widen --project/--service/--release/--environment/--status/\
+             --since/--min-duration-ms filters.\n",
+        );
+        return Some(output);
+    }
+    for item in items {
+        output.push_str("- ");
+        output.push_str(trace_list_line(item)?.as_str());
+        output.push('\n');
+    }
+    output.push_str("Next: logbrew trace <trace_id> or logbrew explain trace <trace_id>\n");
+    Some(output)
+}
+
+/// Formats one recent trace summary.
+fn trace_list_line(value: &serde_json::Value) -> Option<String> {
+    let trace_id = field(value, "trace_id")?;
+    let errors = count_field(value, "error_span_count");
+    let status = if value
+        .get("error_span_count")
+        .and_then(serde_json::Value::as_u64)
+        .is_some_and(|count| count > 0)
+    {
+        "error"
+    } else {
+        "ok"
+    };
+    let mut output = format!("{trace_id} {status}");
+    if let Some(name) = field(value, "root_span_name") {
+        output.push(' ');
+        output.push_str(name);
+    }
+    append_labeled_field(&mut output, "service", value, "root_service_name");
+    append_labeled_field(&mut output, "operation", value, "root_operation");
+    output.push_str(" spans=");
+    output.push_str(count_field(value, "span_count").as_str());
+    output.push_str(" errors=");
+    output.push_str(errors.as_str());
+    output.push_str(" services=");
+    output.push_str(count_field(value, "service_count").as_str());
+    output.push_str(" duration=");
+    output.push_str(count_field(value, "duration_ms").as_str());
+    output.push_str("ms");
+    append_labeled_field(&mut output, "started", value, "started_at");
     Some(output)
 }
 

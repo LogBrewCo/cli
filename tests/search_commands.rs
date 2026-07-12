@@ -98,6 +98,7 @@ fn parses_search_as_log_search_shortcut() {
                     environment: environment.map(str::to_owned),
                     status: None,
                     limit: None,
+                    min_duration_ms: None,
                 }),
                 json: true,
             }
@@ -160,6 +161,7 @@ fn parses_search_separator_as_literal_log_search_shortcut() {
                     environment: None,
                     status: None,
                     limit: None,
+                    min_duration_ms: None,
                 }),
                 json,
             }
@@ -339,6 +341,7 @@ fn parses_find_and_grep_as_log_search_shortcuts() {
                     environment: Some("production".to_owned()),
                     status: None,
                     limit: None,
+                    min_duration_ms: None,
                 }),
                 json: true,
             }

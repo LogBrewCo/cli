@@ -80,12 +80,18 @@ pub enum CliError {
     /// Issue status is unsupported.
     #[error("unknown issue status: {0}")]
     UnknownStatus(String),
+    /// Trace status is unsupported.
+    #[error("unknown trace status: {0}")]
+    UnknownTraceStatus(String),
     /// Log level is unsupported.
     #[error("unknown log level: {0}")]
     UnknownLogLevel(String),
     /// Row limit is malformed.
     #[error("invalid limit: {0}")]
     InvalidLimit(String),
+    /// Minimum trace duration is malformed.
+    #[error("invalid minimum duration: {0}")]
+    InvalidMinDuration(String),
     /// Project setup source is malformed.
     #[error("invalid setup source: {0}")]
     InvalidSetupSource(String),
@@ -316,8 +322,10 @@ const fn cli_error_code(error: &CliError) -> &'static str {
         CliError::UnsupportedFlag { .. } => "unsupported_flag",
         CliError::UnknownResource { .. } => "unknown_resource",
         CliError::UnknownStatus(_) => "unknown_status",
+        CliError::UnknownTraceStatus(_) => "unknown_trace_status",
         CliError::UnknownLogLevel(_) => "unknown_log_level",
         CliError::InvalidLimit(_) => "invalid_limit",
+        CliError::InvalidMinDuration(_) => "invalid_min_duration",
         CliError::InvalidSetupSource(_) => "invalid_setup_source",
     }
 }
@@ -326,6 +334,7 @@ const fn cli_error_code(error: &CliError) -> &'static str {
 const fn cli_error_next_step(error: &CliError) -> &'static str {
     match error {
         CliError::InvalidLimit(_) => "use --limit with a positive whole number",
+        CliError::InvalidMinDuration(_) => "use --min-duration-ms with a non-negative whole number",
         CliError::InvalidSetupSource(_) => "use --source api, cli, or sdk",
         CliError::MissingArgument { next, .. }
         | CliError::MissingFlagValue { next, .. }
@@ -337,6 +346,7 @@ const fn cli_error_next_step(error: &CliError) -> &'static str {
         | CliError::UnknownCommandName { next, .. } => next,
         CliError::UnknownCommand => "run logbrew --help",
         CliError::UnknownStatus(_) => ISSUE_STATUS_VALUES_NEXT_STEP,
+        CliError::UnknownTraceStatus(_) => "use --status error or --status ok",
         CliError::UnknownLogLevel(_) => "use one of info, warning, error, critical",
     }
 }

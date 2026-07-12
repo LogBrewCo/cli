@@ -19,7 +19,7 @@ const WATCH_ACTION_FILTER_NEXT_STEP: &str = "use logbrew actions with filters fo
 const WATCH_ACTION_POSITIONAL_NEXT_STEP: &str = "use logbrew actions --name <name> for historical data, or logbrew watch actions --json for live actions";
 /// Trace/span recovery for unsupported live watch resources.
 const WATCH_TRACE_RESOURCE_NEXT_STEP: &str =
-    "watch streams logs, issues, and actions; use logbrew trace <trace_id> to read a trace";
+    "use logbrew traces for recent traces, or logbrew trace <trace_id> for one trace";
 
 /// Parses `watch`.
 pub(super) fn parse_watch(args: &[String]) -> Result<Command, CliError> {

@@ -22,6 +22,7 @@ pub const fn help_text(topic: HelpTopic) -> &'static str {
         HelpTopic::ReadIssues => READ_ISSUES_HELP,
         HelpTopic::ReadActions => READ_ACTIONS_HELP,
         HelpTopic::ReadReleases => READ_RELEASES_HELP,
+        HelpTopic::ReadTraces => READ_TRACES_HELP,
         HelpTopic::ReadTrace => READ_TRACE_HELP,
         HelpTopic::ReadIssue => READ_ISSUE_HELP,
         HelpTopic::Watch => WATCH_HELP,
@@ -71,6 +72,7 @@ Usage:
                          [--json]
   logbrew events checkout_failed [--release <release>] [--environment production] [--json]
   logbrew read releases [--environment production] [--json]
+  logbrew traces [--service <service_name>] [--status error] [--since 24h] [--json]
   logbrew read trace <trace_id> [--release <release>] [--environment production] [--json]
   logbrew trace <trace_id> [--release <release>] [--environment production] [--json]
   logbrew issue <issue_id> [--json]
@@ -267,6 +269,7 @@ Usage:
   logbrew read actions [filters] [--json]
   logbrew read releases [filters] [--json]
   logbrew read release [filters] [--json]
+  logbrew read traces [filters] [--json]
   logbrew read trace <trace_id> [--json]
   logbrew read issue <issue_id> [--json]
 
@@ -350,11 +353,31 @@ Since accepts positive compact durations such as 24h or 7d, or an RFC3339 timest
                                   2026-05-01T00:00:00Z.
 Limit must be a positive whole number.";
 
+/// Recent trace discovery help text.
+const READ_TRACES_HELP: &str = "\
+Usage:
+  logbrew traces [--project <project_id>] [--service <service_name>] [--release <release>] \
+                               [--environment <environment>] [--status <error|ok>] \
+                               [--since <24h|7d|RFC3339>] \
+                               [--min-duration-ms <milliseconds>] [--limit 100] [--json]
+  logbrew spans [filters] [--json]
+  logbrew latest traces [--limit 100] [--json]
+
+Lists recent distributed traces for incident investigation. JSON preserves the backend bare array.
+Status accepts error or ok, case-insensitively. Minimum duration is a non-negative whole number.
+Since accepts positive compact durations such as 24h or 7d, or an RFC3339 timestamp such as \
+                               2026-05-01T00:00:00Z.
+The backend defaults limit to 100 and clamps it to 1..500.
+CLI aliases --project-id, --service-name, and --env still serialize only canonical API query keys.
+Next: run logbrew trace <trace_id> or logbrew explain trace <trace_id>.";
+
 /// Read trace help text.
 const READ_TRACE_HELP: &str = "\
 Usage:
   logbrew read trace <trace_id> [--release <release>] [--environment production] [--project \
                                <project_id>] [--json]
+  logbrew trace <trace_id> [--release <release>] [--environment production] [--project \
+                          <project_id>] [--json]
 
 Reads spans for one distributed trace.";
 

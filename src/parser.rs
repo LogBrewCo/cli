@@ -3,6 +3,7 @@
 mod help_topics;
 mod issue_shortcuts;
 mod log_shortcuts;
+mod trace_reads;
 mod watch;
 
 use help_topics::{
@@ -16,11 +17,12 @@ use issue_shortcuts::{
     parse_status_first_issue_id_shortcut,
 };
 use log_shortcuts::{literal_log_search_separator_index, log_shortcut_args};
+use trace_reads::{parse_trace_detail_or_explain, parse_trace_list_read};
 use watch::parse_watch;
 
 use crate::flags::{
     FlagScope, is_read_filter_word, is_simple_flag, normalize_log_level, normalize_status,
-    parse_flags,
+    parse_flags, validate_min_duration,
 };
 use crate::ids::{infer_explain_target, is_issue_id, is_pasted_detail_id, is_trace_id};
 use crate::{
@@ -31,7 +33,8 @@ use crate::{
 /// Standard next step for malformed help invocations.
 const HELP_NEXT_STEP: &str = "run logbrew --help";
 /// Valid resources for historical reads.
-const READ_RESOURCE_NEXT_STEP: &str = "choose one of logs, issues, actions, releases, trace, issue";
+const READ_RESOURCE_NEXT_STEP: &str =
+    "choose one of logs, issues, actions, releases, traces, trace, issue";
 /// Recovery hint for users who type plural trace resources.
 const READ_TRACE_ALIAS_NEXT_STEP: &str =
     "use singular trace with an id: logbrew read trace <trace_id>";
@@ -52,6 +55,8 @@ const READ_ISSUES_NEXT_STEP: &str = "run logbrew read issues --help";
 const READ_ACTIONS_NEXT_STEP: &str = "run logbrew read actions --help";
 /// Help for release list reads.
 const READ_RELEASES_NEXT_STEP: &str = "run logbrew read releases --help";
+/// Help for recent trace discovery.
+const READ_TRACES_NEXT_STEP: &str = "run logbrew read traces --help";
 /// Help for backend-owned project setup discovery.
 const PROJECTS_NEXT_STEP: &str = "run logbrew projects --help";
 /// Help for backend-owned project setup seen calls.
@@ -79,6 +84,7 @@ const TRACE_DETAIL_UNSUPPORTED_FLAGS: &[&str] = &[
     "--search",
     "--status",
     "--limit",
+    "--min-duration-ms",
 ];
 /// Filters issue detail reads cannot apply.
 const ISSUE_DETAIL_UNSUPPORTED_FLAGS: &[&str] = &[
@@ -100,6 +106,7 @@ const ISSUE_DETAIL_UNSUPPORTED_FLAGS: &[&str] = &[
     "--env",
     "--status",
     "--limit",
+    "--min-duration-ms",
 ];
 /// Filters action list reads cannot apply.
 const ACTION_LIST_UNSUPPORTED_FLAGS: &[&str] = &[
@@ -109,6 +116,7 @@ const ACTION_LIST_UNSUPPORTED_FLAGS: &[&str] = &[
     "--severity",
     "--search",
     "--status",
+    "--min-duration-ms",
 ];
 
 /// # Errors
@@ -196,16 +204,18 @@ fn parse_values(values: &[String]) -> Result<Command, CliError> {
         }
         "log" => parse_read_resource("logs", tail),
         "release" => parse_read_resource("releases", tail),
-        alias if is_trace_term(alias) && !has_position_candidate(tail) => {
+        alias if matches!(alias, "trace" | "span") && !has_position_candidate(tail) => {
             parse_help_alias(HelpTopic::ReadTrace, tail)
         }
+        alias if matches!(alias, "traces" | "spans") && has_trace_id_candidate(tail) => {
+            parse_read_resource("trace", tail)
+        }
+        "traces" | "spans" => parse_read_resource("traces", tail),
         "logs" | "issues" | "errors" | "error" | "exceptions" | "exception" | "actions"
         | "events" | "event" | "action" | "releases" | "trace" | "issue" => {
             parse_read_resource(head, tail)
         }
-        "traces" | "span" | "spans" if has_position_candidate(tail) => {
-            parse_read_resource("trace", tail)
-        }
+        "span" if has_position_candidate(tail) => parse_read_resource("trace", tail),
         "resolve" | "close" | "ignore" | "reopen" => parse_issue_status_shortcut(head, tail),
         alias if is_watch_command_alias(alias) => parse_watch(tail),
         "explain" => parse_explain(tail),
@@ -341,11 +351,6 @@ fn is_project_help_alias(value: &str) -> bool {
 /// Returns whether a word should use the live watch placeholder flow.
 fn is_watch_command_alias(value: &str) -> bool {
     matches!(value, "watch" | "tail" | "follow" | "stream")
-}
-
-/// Returns whether a word names trace/span vocabulary.
-fn is_trace_term(value: &str) -> bool {
-    matches!(value, "trace" | "traces" | "span" | "spans")
 }
 
 /// Returns whether a value is a version flag.
@@ -646,6 +651,13 @@ fn has_position_candidate(args: &[String]) -> bool {
         .is_some_and(|arg| !arg.starts_with('-'))
 }
 
+/// Returns whether args begin with an obvious copied trace id after optional `--json`.
+fn has_trace_id_candidate(args: &[String]) -> bool {
+    move_leading_json_to_tail(args)
+        .first()
+        .is_some_and(|arg| is_trace_id(arg))
+}
+
 /// Takes a required positional argument after tolerating a leading JSON flag.
 fn take_required_position(
     args: &[String],
@@ -850,10 +862,15 @@ fn parse_read_resource(resource: &str, rest: &[String]) -> Result<Command, CliEr
                 "--severity",
                 "--search",
                 "--status",
+                "--min-duration-ms",
             ],
         )?,
+        "traces" | "spans" if has_trace_id_candidate(rest) => {
+            return parse_trace_detail_or_explain(rest);
+        }
+        "traces" | "spans" => parse_trace_list_read(rest)?,
         "trace" => return parse_trace_detail_or_explain(rest),
-        "traces" | "span" | "spans" if has_position_candidate(rest) => {
+        "span" if has_position_candidate(rest) => {
             return parse_trace_detail_or_explain(rest);
         }
         "issue" if has_issue_status_candidate(rest) => parse_issue_list_read(rest)?,
@@ -911,7 +928,13 @@ fn parse_log_list_read(rest: &[String]) -> Result<(ReadTarget, crate::flags::Fla
         args.as_slice(),
         "read logs",
         READ_LOGS_NEXT_STEP,
-        &["--name", "--user", "--distinct-id", "--status"],
+        &[
+            "--name",
+            "--user",
+            "--distinct-id",
+            "--status",
+            "--min-duration-ms",
+        ],
     )
 }
 
@@ -932,6 +955,7 @@ fn parse_issue_list_read(rest: &[String]) -> Result<(ReadTarget, crate::flags::F
             "--level",
             "--severity",
             "--search",
+            "--min-duration-ms",
         ],
     )
 }
@@ -1133,6 +1157,7 @@ fn read_value_canonical_flag(flag: &str) -> Option<&'static str> {
         "--environment" | "--env" => "--environment",
         "--status" => "--status",
         "--limit" => "--limit",
+        "--min-duration-ms" => "--min-duration-ms",
         _ => return None,
     };
     Some(canonical)
@@ -1153,6 +1178,7 @@ fn has_invalid_supported_read_value(flag: &str, value: &str) -> bool {
         "--level" | "--severity" => !is_known_log_level(value),
         "--status" => !is_known_issue_status(value),
         "--limit" => value.parse::<u32>().map_or(true, |limit| limit == 0),
+        "--min-duration-ms" => validate_min_duration(value).is_err(),
         _ => false,
     }
 }
@@ -1194,33 +1220,8 @@ fn is_read_value_flag(flag: &str) -> bool {
             | "--env"
             | "--status"
             | "--limit"
+            | "--min-duration-ms"
     )
-}
-
-/// Parses one trace detail read or trace explain suffix.
-fn parse_trace_detail_or_explain(rest: &[String]) -> Result<Command, CliError> {
-    let (id, tail) = take_required_position(rest, "trace_id", "provide a trace id")?;
-    if let Some(command) =
-        parse_detail_explain_suffix(ExplainTarget::Trace(id.clone()), tail.as_slice())?
-    {
-        return Ok(command);
-    }
-    let target = ReadTarget::Trace(id);
-    let flags = parse_detail_read_flags(
-        tail.as_slice(),
-        "read trace",
-        READ_TRACE_NEXT_STEP,
-        TRACE_DETAIL_UNSUPPORTED_FLAGS,
-    )?;
-    let json = flags.is_json();
-    let options = flags.into_read_options();
-    validate_read_filters(&target, &options)?;
-
-    Ok(Command::Read {
-        target,
-        options: Box::new(options),
-        json,
-    })
 }
 
 /// Parses a trailing `explain` action after an issue or trace detail id.
@@ -1311,6 +1312,9 @@ fn validate_read_filters(target: &ReadTarget, filters: &ReadOptions) -> Result<(
         ReadTarget::Releases => filters
             .first_release_unsupported_flag()
             .map(|flag| (flag, "read releases", READ_RELEASES_NEXT_STEP)),
+        ReadTarget::Traces => filters
+            .first_trace_list_unsupported_flag()
+            .map(|flag| (flag, "read traces", READ_TRACES_NEXT_STEP)),
         ReadTarget::Trace(_) => filters
             .first_trace_detail_unsupported_flag()
             .map(|flag| (flag, "read trace", READ_TRACE_NEXT_STEP)),

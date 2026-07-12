@@ -70,12 +70,12 @@ fn rejects_unknown_resources_with_command_specific_next_steps() {
         (
             &["logbrew", "read", "metrics", "--json"][..],
             "unknown resource: metrics",
-            "choose one of logs, issues, actions, releases, trace, issue",
+            "choose one of logs, issues, actions, releases, traces, trace, issue",
         ),
         (
             &["logbrew", "watch", "traces", "--json"][..],
             "unknown resource: traces",
-            "watch streams logs, issues, and actions; use logbrew trace <trace_id> to read a trace",
+            "use logbrew traces for recent traces, or logbrew trace <trace_id> for one trace",
         ),
         (
             &["logbrew", "explain", "logs", "--json"][..],
@@ -152,23 +152,6 @@ fn rejects_inline_values_on_simple_command_flags_with_command_help() {
             command: "read logs",
             next: "run logbrew read logs --help",
         })
-    );
-}
-
-#[test]
-fn rejects_plural_trace_read_resource_with_singular_next_step() {
-    let error = parse_command(["logbrew", "read", "traces", "--json"]).expect_err("bad resource");
-    let mut output = Vec::new();
-
-    write_cli_error(&error, true, &mut output).expect("error writes");
-
-    let body: serde_json::Value = serde_json::from_slice(output.as_slice()).expect("valid json");
-    assert_eq!(body["ok"], false);
-    assert_eq!(body["error"], "unknown_resource");
-    assert_eq!(body["message"], "unknown resource: traces");
-    assert_eq!(
-        body["next"],
-        "use singular trace with an id: logbrew read trace <trace_id>"
     );
 }
 
@@ -631,7 +614,7 @@ fn rejects_missing_resources_with_command_specific_next_steps() {
     for (args, next) in [
         (
             &["logbrew", "read", "--json"][..],
-            "choose one of logs, issues, actions, releases, trace, issue",
+            "choose one of logs, issues, actions, releases, traces, trace, issue",
         ),
         (
             &["logbrew", "explain", "--json"][..],
