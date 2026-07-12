@@ -126,6 +126,9 @@ impl FlagScope {
                 "use --user <distinct_id> or --distinct-id <distinct_id>"
             }
             (Self::Read, "name") => "use --name <name>",
+            (Self::Read, "service" | "service-name") => {
+                "use --service <service_name> or --service-name <service_name>"
+            }
             (Self::Read, "since") => "use --since <duration>",
             (Self::Read, "limit") => "use --limit with a positive whole number",
             (Self::Read, _) => "use --release <release> or run logbrew read --help",
@@ -281,6 +284,8 @@ pub(crate) fn is_read_filter_word(value: &str) -> bool {
             | "user"
             | "distinct-id"
             | "name"
+            | "service"
+            | "service-name"
             | "since"
             | "limit"
     )
@@ -399,6 +404,8 @@ impl ReadFilterSpec {
 enum ReadFilterKind {
     /// Action/event name filter.
     Name,
+    /// Service name filter.
+    Service,
     /// Relative or absolute time filter.
     Since,
     /// Actor/distinct-id filter.
@@ -425,6 +432,10 @@ enum ReadFilterKind {
 fn read_filter_spec(flag: &str) -> Option<ReadFilterSpec> {
     let spec = match flag {
         "--name" => ReadFilterSpec::new(ReadFilterKind::Name, "--name", "--name"),
+        "--service" => ReadFilterSpec::new(ReadFilterKind::Service, "--service", "--service"),
+        "--service-name" => {
+            ReadFilterSpec::new(ReadFilterKind::Service, "--service", "--service-name")
+        }
         "--since" => ReadFilterSpec::new(ReadFilterKind::Since, "--since", "--since"),
         "--user" => ReadFilterSpec::new(ReadFilterKind::User, "--user", "--user"),
         "--distinct-id" => ReadFilterSpec::new(ReadFilterKind::User, "--user", "--distinct-id"),
@@ -458,6 +469,7 @@ fn apply_read_filter(
 ) -> Result<(), CliError> {
     match kind {
         ReadFilterKind::Name => read.name = Some(value),
+        ReadFilterKind::Service => read.service = Some(value),
         ReadFilterKind::Since => read.since = Some(value),
         ReadFilterKind::User => read.user = Some(value),
         ReadFilterKind::Trace => read.trace = Some(value),
@@ -516,6 +528,7 @@ fn duplicate_flag_next(flag: &'static str) -> &'static str {
         "--yes" => "use --yes once",
         "--no-open" => "use --no-open once",
         "--name" => "use --name once",
+        "--service" => "use --service once",
         "--since" => "use --since once",
         "--user" => "use --user once",
         "--trace" => "use --trace once",
@@ -590,6 +603,8 @@ fn missing_flag_value(flag: &'static str) -> CliError {
 fn missing_flag_value_next(flag: &'static str) -> &'static str {
     match flag {
         "--name" => "provide a value after --name",
+        "--service" => "provide a value after --service",
+        "--service-name" => "provide a value after --service-name",
         "--since" => "provide a value after --since",
         "--user" => "provide a value after --user",
         "--distinct-id" => "provide a value after --distinct-id",

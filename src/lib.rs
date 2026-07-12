@@ -237,6 +237,8 @@ pub enum ReadTarget {
 pub struct ReadOptions {
     /// Optional action name filter.
     pub name: Option<String>,
+    /// Optional service name filter.
+    pub service: Option<String>,
     /// Optional relative or absolute lower time bound.
     pub since: Option<String>,
     /// Optional user or actor filter.
@@ -265,6 +267,7 @@ impl ReadOptions {
     pub(crate) fn first_trace_detail_unsupported_flag(&self) -> Option<&'static str> {
         first_present_flag([
             (self.name.is_some(), "--name"),
+            (self.service.is_some(), "--service"),
             (self.since.is_some(), "--since"),
             (self.user.is_some(), "--user"),
             (self.trace.is_some(), "--trace"),
@@ -280,6 +283,7 @@ impl ReadOptions {
     pub(crate) fn first_issue_detail_unsupported_flag(&self) -> Option<&'static str> {
         first_present_flag([
             (self.name.is_some(), "--name"),
+            (self.service.is_some(), "--service"),
             (self.since.is_some(), "--since"),
             (self.user.is_some(), "--user"),
             (self.trace.is_some(), "--trace"),
@@ -308,7 +312,6 @@ impl ReadOptions {
     pub(crate) fn first_issue_list_unsupported_flag(&self) -> Option<&'static str> {
         first_present_flag([
             (self.name.is_some(), "--name"),
-            (self.since.is_some(), "--since"),
             (self.user.is_some(), "--user"),
             (self.trace.is_some(), "--trace"),
             (self.level.is_some(), "--severity"),
@@ -332,7 +335,6 @@ impl ReadOptions {
     pub(crate) fn first_release_unsupported_flag(&self) -> Option<&'static str> {
         first_present_flag([
             (self.name.is_some(), "--name"),
-            (self.since.is_some(), "--since"),
             (self.user.is_some(), "--user"),
             (self.trace.is_some(), "--trace"),
             (self.level.is_some(), "--severity"),
@@ -439,6 +441,7 @@ impl Command {
                 target,
                 &ReadPathFilters {
                     name: options.name.as_deref(),
+                    service: options.service.as_deref(),
                     since: options.since.as_deref(),
                     user: options.user.as_deref(),
                     trace: options.trace.as_deref(),
@@ -1014,6 +1017,8 @@ fn map_websocket_stream_error(error: WebSocketError) -> RuntimeError {
 struct ReadPathFilters<'a> {
     /// Optional action name filter.
     name: Option<&'a str>,
+    /// Optional service name filter.
+    service: Option<&'a str>,
     /// Optional lower time bound.
     since: Option<&'a str>,
     /// Optional user or actor filter.
@@ -1042,6 +1047,7 @@ fn read_path(target: &ReadTarget, filters: &ReadPathFilters<'_>) -> String {
         ReadTarget::Logs => path_with_query(
             "/api/logs",
             &[
+                ("service_name", filters.service),
                 ("severity", filters.level),
                 ("search", filters.search),
                 ("since", filters.since),
@@ -1055,6 +1061,8 @@ fn read_path(target: &ReadTarget, filters: &ReadPathFilters<'_>) -> String {
         ReadTarget::Issues => path_with_query(
             "/api/telemetry/issues",
             &[
+                ("service_name", filters.service),
+                ("since", filters.since),
                 ("status", filters.status),
                 ("project_id", filters.project),
                 ("release", filters.release),
@@ -1065,6 +1073,7 @@ fn read_path(target: &ReadTarget, filters: &ReadPathFilters<'_>) -> String {
         ReadTarget::Actions => path_with_query(
             "/api/telemetry/actions",
             &[
+                ("service_name", filters.service),
                 ("name", filters.name),
                 ("since", filters.since),
                 ("distinct_id", filters.user),
@@ -1077,6 +1086,8 @@ fn read_path(target: &ReadTarget, filters: &ReadPathFilters<'_>) -> String {
         ReadTarget::Releases => path_with_query(
             "/api/telemetry/releases",
             &[
+                ("service_name", filters.service),
+                ("since", filters.since),
                 ("project_id", filters.project),
                 ("release", filters.release),
                 ("environment", filters.environment),

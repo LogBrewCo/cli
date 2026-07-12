@@ -436,7 +436,14 @@ fn set_command_shaped_help_topic(positionals: &[&str]) -> Option<HelpTopic> {
 pub(super) fn is_read_filter_help_alias(value: &str) -> bool {
     matches!(
         value,
-        "env" | "environment" | "environments" | "filter" | "filters" | "project-id"
+        "env"
+            | "environment"
+            | "environments"
+            | "filter"
+            | "filters"
+            | "project-id"
+            | "service"
+            | "service-name"
     )
 }
 
@@ -444,7 +451,14 @@ pub(super) fn is_read_filter_help_alias(value: &str) -> bool {
 pub(super) fn is_direct_filter_help_alias(value: &str) -> bool {
     matches!(
         value,
-        "env" | "environment" | "environments" | "filter" | "filters" | "project-id"
+        "env"
+            | "environment"
+            | "environments"
+            | "filter"
+            | "filters"
+            | "project-id"
+            | "service"
+            | "service-name"
     )
 }
 

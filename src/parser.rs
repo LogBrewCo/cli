@@ -67,6 +67,8 @@ const SET_RESOURCE_NEXT_STEP: &str = "choose issue";
 /// Filters trace detail reads cannot apply.
 const TRACE_DETAIL_UNSUPPORTED_FLAGS: &[&str] = &[
     "--name",
+    "--service",
+    "--service-name",
     "--since",
     "--user",
     "--distinct-id",
@@ -81,6 +83,8 @@ const TRACE_DETAIL_UNSUPPORTED_FLAGS: &[&str] = &[
 /// Filters issue detail reads cannot apply.
 const ISSUE_DETAIL_UNSUPPORTED_FLAGS: &[&str] = &[
     "--name",
+    "--service",
+    "--service-name",
     "--since",
     "--user",
     "--distinct-id",
@@ -838,7 +842,6 @@ fn parse_read_resource(resource: &str, rest: &[String]) -> Result<Command, CliEr
             READ_RELEASES_NEXT_STEP,
             &[
                 "--name",
-                "--since",
                 "--user",
                 "--distinct-id",
                 "--trace",
@@ -922,7 +925,6 @@ fn parse_issue_list_read(rest: &[String]) -> Result<(ReadTarget, crate::flags::F
         READ_ISSUES_NEXT_STEP,
         &[
             "--name",
-            "--since",
             "--user",
             "--distinct-id",
             "--trace",
@@ -1120,6 +1122,7 @@ fn reject_unsupported_read_flags(
 fn read_value_canonical_flag(flag: &str) -> Option<&'static str> {
     let canonical = match flag {
         "--name" => "--name",
+        "--service" | "--service-name" => "--service",
         "--since" => "--since",
         "--user" | "--distinct-id" => "--user",
         "--trace" | "--trace-id" => "--trace",
@@ -1139,6 +1142,7 @@ fn read_value_canonical_flag(flag: &str) -> Option<&'static str> {
 fn user_facing_read_flag(flag: &str) -> &str {
     match flag {
         "--level" => "--severity",
+        "--service-name" => "--service",
         other => other,
     }
 }
@@ -1173,6 +1177,8 @@ fn is_read_value_flag(flag: &str) -> bool {
     matches!(
         flag,
         "--name"
+            | "--service"
+            | "--service-name"
             | "--since"
             | "--user"
             | "--distinct-id"

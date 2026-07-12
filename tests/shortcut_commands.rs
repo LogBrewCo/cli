@@ -15,6 +15,7 @@ fn parses_top_level_singular_collection_shortcuts() {
             target: ReadTarget::Logs,
             options: Box::new(ReadOptions {
                 name: None,
+                service: None,
                 since: None,
                 user: None,
                 trace: None,
@@ -48,6 +49,7 @@ fn parses_top_level_singular_collection_shortcuts() {
             target: ReadTarget::Releases,
             options: Box::new(ReadOptions {
                 name: None,
+                service: None,
                 since: None,
                 user: None,
                 trace: None,
@@ -87,6 +89,7 @@ fn parses_common_human_terms_as_read_shortcuts() {
             target: ReadTarget::Issues,
             options: Box::new(ReadOptions {
                 name: None,
+                service: None,
                 since: None,
                 user: None,
                 trace: None,
@@ -123,6 +126,7 @@ fn parses_common_human_terms_as_read_shortcuts() {
             target: ReadTarget::Actions,
             options: Box::new(ReadOptions {
                 name: Some("checkout_failed".to_owned()),
+                service: None,
                 since: None,
                 user: None,
                 trace: None,
@@ -150,6 +154,7 @@ fn parses_common_human_terms_as_read_shortcuts() {
             target: ReadTarget::Issues,
             options: Box::new(ReadOptions {
                 name: None,
+                service: None,
                 since: None,
                 user: None,
                 trace: None,
@@ -172,6 +177,7 @@ fn parses_common_human_terms_as_read_shortcuts() {
             target: ReadTarget::Actions,
             options: Box::new(ReadOptions {
                 name: None,
+                service: None,
                 since: None,
                 user: None,
                 trace: None,
@@ -358,6 +364,7 @@ fn parses_recency_words_as_read_shortcuts() {
             target: ReadTarget::Logs,
             options: Box::new(ReadOptions {
                 name: None,
+                service: None,
                 since: None,
                 user: None,
                 trace: None,
@@ -721,6 +728,18 @@ fn parses_natural_log_search_after_explicit_log_filters() {
             ],
             "/api/logs?search=checkout%20failed&trace_id=trace_123",
         ),
+        (
+            &[
+                "logbrew",
+                "logs",
+                "--service-name",
+                "checkout-api",
+                "checkout",
+                "failed",
+                "--json",
+            ],
+            "/api/logs?service_name=checkout-api&search=checkout%20failed",
+        ),
     ] {
         let command = parse_command(args.iter().copied()).expect("explicit filter search parses");
 
@@ -791,6 +810,7 @@ fn parses_action_aliases_with_names_as_name_filters() {
             target: ReadTarget::Actions,
             options: Box::new(ReadOptions {
                 name: Some("checkout_failed".to_owned()),
+                service: None,
                 since: None,
                 user: None,
                 trace: None,
@@ -827,6 +847,7 @@ fn parses_action_aliases_with_names_as_name_filters() {
             target: ReadTarget::Actions,
             options: Box::new(ReadOptions {
                 name: Some("checkout_failed".to_owned()),
+                service: None,
                 since: None,
                 user: None,
                 trace: None,
@@ -856,6 +877,7 @@ fn parses_action_aliases_with_names_as_name_filters() {
             target: ReadTarget::Actions,
             options: Box::new(ReadOptions {
                 name: Some("checkout_failed".to_owned()),
+                service: None,
                 since: None,
                 user: None,
                 trace: None,
@@ -1154,6 +1176,7 @@ fn parses_common_read_verbs_as_read_shortcuts() {
             target: ReadTarget::Logs,
             options: Box::new(ReadOptions {
                 name: None,
+                service: None,
                 since: None,
                 user: None,
                 trace: None,
@@ -1181,6 +1204,7 @@ fn parses_common_read_verbs_as_read_shortcuts() {
             target: ReadTarget::Issues,
             options: Box::new(ReadOptions {
                 name: None,
+                service: None,
                 since: None,
                 user: None,
                 trace: None,
@@ -1266,6 +1290,7 @@ fn parses_common_read_verbs_as_read_shortcuts() {
             target: ReadTarget::Issue("issue_123".to_owned()),
             options: Box::new(ReadOptions {
                 name: None,
+                service: None,
                 since: None,
                 user: None,
                 trace: None,

@@ -870,6 +870,32 @@ fn rejects_detail_filters_before_validating_list_only_values() {
             "unsupported flag for read issue: --status",
             "run logbrew read issue --help",
         ),
+        (
+            &[
+                "logbrew",
+                "read",
+                "trace",
+                "4bf92f3577b34da6a3ce929d0e0e4736",
+                "--service",
+                "checkout-api",
+                "--json",
+            ][..],
+            "unsupported flag for read trace: --service",
+            "run logbrew read trace --help",
+        ),
+        (
+            &[
+                "logbrew",
+                "read",
+                "issue",
+                "issue_123",
+                "--service-name",
+                "checkout-api",
+                "--json",
+            ][..],
+            "unsupported flag for read issue: --service",
+            "run logbrew read issue --help",
+        ),
     ] {
         let error = parse_command(args.iter().copied()).expect_err("detail filter is unsupported");
         let mut output = Vec::new();

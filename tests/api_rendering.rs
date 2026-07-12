@@ -299,6 +299,182 @@ async fn human_read_actions_and_issues_summarize_pivot_context() {
 }
 
 #[tokio::test]
+async fn collection_reads_preserve_json_shape_and_render_service_name() {
+    struct ServiceCase {
+        route: &'static str,
+        body: serde_json::Value,
+        args: &'static [&'static str],
+        home: &'static str,
+        expected: &'static str,
+    }
+
+    let cases = [
+        ServiceCase {
+            route: "/api/logs",
+            body: serde_json::json!([{
+                "level": "warning",
+                "message": "checkout failed",
+                "service_name": "checkout-api",
+                "trace_id": "trace_123"
+            }]),
+            args: &[
+                "logbrew",
+                "logs",
+                "--service",
+                "checkout-api",
+                "--since",
+                "24h",
+            ],
+            home: "human-service-logs",
+            expected: "Logs (1)\n- warning checkout failed service=checkout-api trace=trace_123\n",
+        },
+        ServiceCase {
+            route: "/api/telemetry/issues",
+            body: serde_json::json!([{
+                "id": "issue_123",
+                "status": "unresolved",
+                "severity": "error",
+                "title": "PaymentError",
+                "occurrence_count": 2,
+                "service_name": "checkout-api",
+                "trace_id": "trace_123"
+            }]),
+            args: &[
+                "logbrew",
+                "issues",
+                "--service",
+                "checkout-api",
+                "--since",
+                "24h",
+            ],
+            home: "human-service-issues",
+            expected: "Issues (1)\n- issue_123 unresolved error PaymentError occurrences=2 \
+                       service=checkout-api trace=trace_123\n",
+        },
+        ServiceCase {
+            route: "/api/telemetry/actions",
+            body: serde_json::json!([{
+                "name": "checkout_failed",
+                "severity": "warning",
+                "service_name": "checkout-api",
+                "distinct_id": "user_123"
+            }]),
+            args: &[
+                "logbrew",
+                "actions",
+                "--service",
+                "checkout-api",
+                "--since",
+                "24h",
+            ],
+            home: "human-service-actions",
+            expected: "Actions (1)\n- checkout_failed warning service=checkout-api user=user_123\n",
+        },
+        ServiceCase {
+            route: "/api/telemetry/releases",
+            body: serde_json::json!([{
+                "release": "checkout@1.2.3",
+                "environment": "production",
+                "service_name": "checkout-api",
+                "log_count": 1,
+                "issue_count": 1,
+                "trace_span_count": 1,
+                "action_count": 1
+            }]),
+            args: &[
+                "logbrew",
+                "releases",
+                "--service",
+                "checkout-api",
+                "--since",
+                "24h",
+            ],
+            home: "human-service-releases",
+            expected: "Releases (1)\n- checkout@1.2.3 production service=checkout-api logs=1 issues=1 \
+                       spans=1 actions=1\n",
+        },
+    ];
+
+    for case in cases {
+        let server = MockServer::start().await;
+        mount_authenticated_json(
+            &server,
+            "GET",
+            case.route,
+            [("service_name", "checkout-api"), ("since", "24h")],
+            case.body,
+        )
+        .await;
+
+        let text = successful_human_output(&server, case.args.iter().copied(), case.home)
+            .await
+            .expect("service-scoped read succeeds");
+        assert_eq!(text, case.expected);
+
+        let mut json_args = case.args.to_vec();
+        json_args.push("--json");
+        let command = parse_command(json_args.iter().copied()).expect("JSON read parses");
+        let env = authenticated_env(&server, case.home);
+        let mut output = Vec::new();
+
+        execute_command(&command, &env, &mut output)
+            .await
+            .expect("JSON read succeeds");
+
+        let body: serde_json::Value =
+            serde_json::from_slice(output.as_slice()).expect("valid JSON response");
+        let rows = body.as_array().expect("backend list shape stays bare");
+        assert_eq!(rows[0]["service_name"], "checkout-api");
+    }
+}
+
+#[tokio::test]
+async fn invalid_since_preserves_backend_validation_recovery_for_agents()
+-> Result<(), Box<dyn std::error::Error>> {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/telemetry/issues"))
+        .and(query_param("service_name", "checkout-api"))
+        .and(query_param("since", "0h"))
+        .and(header("authorization", "Bearer test-token"))
+        .respond_with(ResponseTemplate::new(422).set_body_json(serde_json::json!({
+            "code": "validation_failed",
+            "error": "invalid since value",
+            "next": "use since=24h, since=7d, or an RFC3339 timestamp"
+        })))
+        .mount(&server)
+        .await;
+    let command = parse_command([
+        "logbrew",
+        "issues",
+        "--service",
+        "checkout-api",
+        "--since",
+        "0h",
+        "--json",
+    ])?;
+    let env = authenticated_env(&server, "invalid-since-recovery");
+    let mut output = Vec::new();
+
+    let error = execute_command(&command, &env, &mut output)
+        .await
+        .expect_err("invalid since fails");
+    write_runtime_error(&error, command.wants_json(), &mut output)?;
+
+    let body: serde_json::Value = serde_json::from_slice(output.as_slice())?;
+    assert_eq!(body["ok"], false);
+    assert_eq!(body["error"], "api_error");
+    assert_eq!(body["status"], 422);
+    assert_eq!(body["api_code"], "validation_failed");
+    assert_eq!(body["api_error"], "invalid since value");
+    assert_eq!(
+        body["next"],
+        "use since=24h, since=7d, or an RFC3339 timestamp"
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn human_read_releases_prints_all_telemetry_counts() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))

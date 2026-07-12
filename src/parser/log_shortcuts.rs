@@ -284,7 +284,9 @@ fn is_log_level_shortcut_candidate(level: &str, tail: &[String]) -> bool {
 fn is_log_filter_with_tail_search(flag: &str) -> bool {
     matches!(
         flag,
-        "--since"
+        "--service"
+            | "--service-name"
+            | "--since"
             | "--trace"
             | "--trace-id"
             | "--project"

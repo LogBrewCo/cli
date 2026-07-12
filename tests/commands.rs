@@ -165,6 +165,7 @@ fn parses_global_json_before_read_shortcut_for_agents() {
             target: ReadTarget::Logs,
             options: Box::new(ReadOptions {
                 name: None,
+                service: None,
                 since: None,
                 user: None,
                 trace: None,
@@ -414,10 +415,9 @@ fn parses_common_help_terms_as_real_user_topics() {
     assert!(help::help_text(HelpTopic::Read).contains(
         "Use --environment <environment> with logs, issues, actions, releases, or traces."
     ));
-    assert!(
-        help::help_text(HelpTopic::Read)
-            .contains("Filter aliases: --env, --project-id, --trace-id, and --distinct-id.")
-    );
+    assert!(help::help_text(HelpTopic::Read).contains(
+        "Filter aliases: --service-name, --env, --project-id, --trace-id, and --distinct-id."
+    ));
 }
 
 #[test]
@@ -428,6 +428,8 @@ fn parses_filter_terms_as_top_level_discovery_help() {
         ["logbrew", "environments", "--json"],
         ["logbrew", "filters", "--json"],
         ["logbrew", "project-id", "--json"],
+        ["logbrew", "service", "--json"],
+        ["logbrew", "service-name", "--json"],
     ] {
         let command = parse_command(args).expect("filter discovery help parses");
 
@@ -1013,6 +1015,7 @@ fn parses_agent_friendly_read_actions() {
             target: ReadTarget::Actions,
             options: Box::new(ReadOptions {
                 name: Some("checkout_failed".to_owned()),
+                service: None,
                 since: Some("24h".to_owned()),
                 user: None,
                 trace: None,
@@ -1031,6 +1034,89 @@ fn parses_agent_friendly_read_actions() {
         command.http_path().expect("read actions has endpoint"),
         "/api/telemetry/actions?name=checkout_failed&since=24h"
     );
+}
+
+#[test]
+fn parses_common_incident_scope_filters_for_collection_reads() {
+    for (resource, expected_path) in [
+        ("logs", "/api/logs?service_name=checkout-api&since=24h"),
+        (
+            "issues",
+            "/api/telemetry/issues?service_name=checkout-api&since=24h",
+        ),
+        (
+            "actions",
+            "/api/telemetry/actions?service_name=checkout-api&since=24h",
+        ),
+        (
+            "releases",
+            "/api/telemetry/releases?service_name=checkout-api&since=24h",
+        ),
+    ] {
+        let command = parse_command([
+            "logbrew",
+            resource,
+            "--service",
+            "checkout-api",
+            "--since",
+            "24h",
+            "--json",
+        ])
+        .expect("incident scope filters parse");
+
+        assert_eq!(
+            command.http_path().expect("collection read has endpoint"),
+            expected_path
+        );
+    }
+
+    let alias = parse_command([
+        "logbrew",
+        "issues",
+        "--service-name",
+        "checkout-api",
+        "--since",
+        "2026-05-01T00:00:00Z",
+        "--json",
+    ])
+    .expect("backend-aligned service alias parses");
+    assert_eq!(
+        alias.http_path().expect("issue read has endpoint"),
+        "/api/telemetry/issues?service_name=checkout-api&since=2026-05-01T00%3A00%3A00Z"
+    );
+
+    let duplicate = parse_command([
+        "logbrew",
+        "logs",
+        "--service",
+        "checkout-api",
+        "--service-name",
+        "payments-api",
+    ])
+    .expect_err("service aliases are one canonical filter");
+    assert_eq!(duplicate.to_string(), "duplicate flag: --service");
+}
+
+#[test]
+fn collection_help_documents_incident_scope_forms() {
+    for topic in [
+        HelpTopic::ReadLogs,
+        HelpTopic::ReadIssues,
+        HelpTopic::ReadActions,
+        HelpTopic::ReadReleases,
+    ] {
+        let text = help::help_text(topic);
+
+        assert!(text.contains("--service <service_name>"));
+        assert!(text.contains("--service-name <service_name>"));
+    }
+
+    for topic in [HelpTopic::ReadIssues, HelpTopic::ReadReleases] {
+        let text = help::help_text(topic);
+
+        assert!(text.contains("--since <24h|7d|RFC3339>"));
+        assert!(text.contains("2026-05-01T00:00:00Z"));
+    }
 }
 
 #[test]
@@ -1111,6 +1197,7 @@ fn parses_read_filter_aliases_for_real_user_terms() {
             target: ReadTarget::Logs,
             options: Box::new(ReadOptions {
                 name: None,
+                service: None,
                 since: None,
                 user: None,
                 trace: Some("trace_123".to_owned()),
@@ -1145,6 +1232,7 @@ fn parses_read_filter_aliases_for_real_user_terms() {
             target: ReadTarget::Actions,
             options: Box::new(ReadOptions {
                 name: None,
+                service: None,
                 since: None,
                 user: Some("user_123".to_owned()),
                 trace: None,
@@ -1183,6 +1271,7 @@ fn parses_release_filter_for_logs() {
             target: ReadTarget::Logs,
             options: Box::new(ReadOptions {
                 name: None,
+                service: None,
                 since: None,
                 user: None,
                 trace: None,
@@ -1214,6 +1303,7 @@ fn parses_positive_limit_for_logs() {
             target: ReadTarget::Logs,
             options: Box::new(ReadOptions {
                 name: None,
+                service: None,
                 since: None,
                 user: None,
                 trace: None,
@@ -1330,6 +1420,7 @@ fn parses_release_summaries_with_environment_filter() {
             target: ReadTarget::Releases,
             options: Box::new(ReadOptions {
                 name: None,
+                service: None,
                 since: None,
                 user: None,
                 trace: None,
@@ -1367,6 +1458,7 @@ fn parses_top_level_releases_shortcut_with_environment_filter() {
             target: ReadTarget::Releases,
             options: Box::new(ReadOptions {
                 name: None,
+                service: None,
                 since: None,
                 user: None,
                 trace: None,
@@ -1400,6 +1492,7 @@ fn parses_read_trace_as_singular_target() {
             target: ReadTarget::Trace("trace-123".to_owned()),
             options: Box::new(ReadOptions {
                 name: None,
+                service: None,
                 since: None,
                 user: None,
                 trace: None,

@@ -150,6 +150,7 @@ fn log_line(value: &serde_json::Value) -> Option<String> {
         output.push(' ');
     }
     output.push_str(message);
+    append_labeled_field(&mut output, "service", value, "service_name");
     append_labeled_field(&mut output, "trace", value, "trace_id");
     output.push_str(release_environment_suffix(value).as_str());
     Some(output)
@@ -172,6 +173,7 @@ fn issue_line(value: &serde_json::Value) -> Option<String> {
         output.push_str(" occurrences=");
         output.push_str(occurrences.to_string().as_str());
     }
+    append_labeled_field(&mut output, "service", value, "service_name");
     append_labeled_field(&mut output, "trace", value, "trace_id");
     output.push_str(release_environment_suffix(value).as_str());
     Some(output)
@@ -185,6 +187,7 @@ fn action_line(value: &serde_json::Value) -> Option<String> {
         output.push(' ');
         output.push_str(&severity);
     }
+    append_labeled_field(&mut output, "service", value, "service_name");
     append_labeled_field(&mut output, "user", value, "distinct_id");
     append_labeled_field(&mut output, "trace", value, "trace_id");
     output.push_str(release_environment_suffix(value).as_str());
@@ -199,9 +202,11 @@ fn release_line(value: &serde_json::Value) -> Option<String> {
     let issues = count_field(value, "issue_count");
     let spans = count_field(value, "trace_span_count");
     let actions = count_field(value, "action_count");
-    Some(format!(
-        "{release} {environment} logs={logs} issues={issues} spans={spans} actions={actions}"
-    ))
+    let mut output = format!("{release} {environment}");
+    append_labeled_field(&mut output, "service", value, "service_name");
+    output
+        .push_str(format!(" logs={logs} issues={issues} spans={spans} actions={actions}").as_str());
+    Some(output)
 }
 
 /// Builds a single trace summary from bare API span arrays or wrapper objects.

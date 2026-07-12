@@ -274,14 +274,15 @@ Reads historical observability data for agents and developers.
 Singular read aliases: logbrew read log, read release, show log, list issue, get release.
 Recency counts are limit shortcuts: logbrew last 10 logs or logbrew recent 5 issues.
 Use --environment <environment> with logs, issues, actions, releases, or traces.
-Filter aliases: --env, --project-id, --trace-id, and --distinct-id.";
+Use --service <service_name> with logs, issues, actions, or releases.
+Filter aliases: --service-name, --env, --project-id, --trace-id, and --distinct-id.";
 
 /// Read logs help text.
 const READ_LOGS_HELP: &str = "\
 Usage:
   logbrew read logs [--severity error] [--search checkout] [--release <release>] [--environment \
-                              production] [--since 24h] [--trace <trace_id>] [--project \
-                              <project_id>] [--limit 100] [--json]
+                              production] [--service <service_name>] [--since 24h] [--trace \
+                              <trace_id>] [--project <project_id>] [--limit 100] [--json]
   logbrew logs checkout failed [--severity error] [--release <release>] [--environment \
                               production] [--json]
   logbrew logs error checkout failed [--release <release>] [--environment production] [--json]
@@ -297,13 +298,15 @@ Explicit filters accept unquoted search text too, such as logbrew logs --severit
                               failed or logbrew logs --search checkout failed.
 Use -- before literal flag-looking search text, such as logbrew logs -- --timeout --json.
 Filter by severity, message search, release, or trace_id to correlate logs with spans.
+--service-name <service_name> is accepted as an alias for --service <service_name>.
 Limit must be a positive whole number.";
 
 /// Read issues help text.
 const READ_ISSUES_HELP: &str = "\
 Usage:
   logbrew read issues [--release <release>] [--environment production] [--status unresolved] \
-                                [--project <project_id>] [--limit 100] [--json]
+                                [--service <service_name>] [--since <24h|7d|RFC3339>] [--project \
+                                <project_id>] [--limit 100] [--json]
   logbrew issues open [--release <release>] [--environment production] [--json]
   logbrew issue open [--release <release>] [--environment production] [--json]
   logbrew open issues [--release <release>] [--environment production] [--json]
@@ -316,27 +319,35 @@ Status accepts unresolved/open, resolved/closed, or ignored, case-insensitively.
 Issue shortcuts accept status words, such as logbrew issues open, logbrew issue open, logbrew open \
                                 issues, logbrew open issue, or logbrew errors closed.
 Recency issue shortcuts can include status and count, such as logbrew last 5 open issues.
+--service-name <service_name> is accepted as an alias for --service <service_name>.
+Since accepts positive compact durations such as 24h or 7d, or an RFC3339 timestamp such as \
+                                2026-05-01T00:00:00Z.
 Limit must be a positive whole number.";
 
 /// Read actions help text.
 const READ_ACTIONS_HELP: &str = "\
 Usage:
   logbrew read actions [--release <release>] [--environment production] [--name checkout_failed] \
-                                 [--user <distinct_id>] [--since 24h] [--project <project_id>] \
-                                 [--limit 100] [--json]
+                                 [--user <distinct_id>] [--service <service_name>] [--since 24h] \
+                                 [--project <project_id>] [--limit 100] [--json]
   logbrew events checkout_failed [--release <release>] [--environment production] [--json]
 
 Reads product actions. Use distinct_id to follow one actor or session.
 Action/event aliases accept one positional name as the same filter as --name.
+--service-name <service_name> is accepted as an alias for --service <service_name>.
 Limit must be a positive whole number.";
 
 /// Read releases help text.
 const READ_RELEASES_HELP: &str = "\
 Usage:
-  logbrew read releases [--release <release>] [--environment production] [--project <project_id>] \
-                                  [--limit 100] [--json]
+  logbrew read releases [--release <release>] [--environment production] [--service \
+                                  <service_name>] [--since <24h|7d|RFC3339>] [--project \
+                                  <project_id>] [--limit 100] [--json]
 
 Reads release summaries with counts for issues, logs, trace spans, and actions.
+--service-name <service_name> is accepted as an alias for --service <service_name>.
+Since accepts positive compact durations such as 24h or 7d, or an RFC3339 timestamp such as \
+                                  2026-05-01T00:00:00Z.
 Limit must be a positive whole number.";
 
 /// Read trace help text.

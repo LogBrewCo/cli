@@ -208,25 +208,25 @@ fn historical_filter_flag(target: WatchTarget, arg: &str) -> Option<&str> {
     match target {
         WatchTarget::All => match flag {
             "--search" | "--trace" | "--trace-id" | "--project" | "--project-id" | "--release"
-            | "--environment" | "--env" | "--since" | "--limit" | "--name" | "--user"
-            | "--distinct-id" | "--status" => Some(flag),
+            | "--environment" | "--env" | "--service" | "--service-name" | "--since"
+            | "--limit" | "--name" | "--user" | "--distinct-id" | "--status" => Some(flag),
             _ => None,
         },
         WatchTarget::Logs => match flag {
             "--search" | "--trace" | "--trace-id" | "--project" | "--project-id" | "--release"
-            | "--environment" | "--env" | "--since" | "--limit" => Some(flag),
+            | "--environment" | "--env" | "--service" | "--service-name" | "--since"
+            | "--limit" => Some(flag),
             _ => None,
         },
         WatchTarget::Issues => match flag {
-            "--project" | "--project-id" | "--release" | "--environment" | "--env" | "--status"
-            | "--limit" => Some(flag),
+            "--project" | "--project-id" | "--release" | "--environment" | "--env"
+            | "--service" | "--service-name" | "--since" | "--status" | "--limit" => Some(flag),
             _ => None,
         },
         WatchTarget::Actions => match flag {
             "--name" | "--user" | "--distinct-id" | "--project" | "--project-id" | "--release"
-            | "--environment" | "--env" | "--since" | "--limit" | "--severity" | "--level" => {
-                Some(flag)
-            }
+            | "--environment" | "--env" | "--service" | "--service-name" | "--since"
+            | "--limit" | "--severity" | "--level" => Some(flag),
             _ => None,
         },
     }
