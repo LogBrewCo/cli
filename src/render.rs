@@ -1,6 +1,6 @@
 //! Human-readable API response rendering.
 
-use crate::{Command, ExplainTarget, ReadTarget, RuntimeError, SetTarget};
+use crate::{Command, ExplainTarget, ReadOptions, ReadTarget, RuntimeError, SetTarget};
 
 /// Maximum span names shown in concise human trace summaries.
 const SPAN_SUMMARY_LIMIT: usize = 5;
@@ -17,7 +17,11 @@ pub(crate) fn write_api_success<W: std::io::Write>(
     }
 
     let Ok(value) = serde_json::from_str::<serde_json::Value>(body) else {
-        writeln!(output, "{body}")?;
+        if let Some(title) = cursor_response_title(command) {
+            write!(output, "{}", invalid_cursor_message(title))?;
+        } else {
+            writeln!(output, "{body}")?;
+        }
         return Ok(());
     };
     if let Some(summary) = human_summary(command, &value) {
@@ -28,10 +32,34 @@ pub(crate) fn write_api_success<W: std::io::Write>(
     Ok(())
 }
 
+/// Returns the human title for a cursor-mode collection read.
+fn cursor_response_title(command: &Command) -> Option<&'static str> {
+    let Command::Read {
+        target, options, ..
+    } = command
+    else {
+        return None;
+    };
+    if options.pagination.as_deref() != Some("cursor") {
+        return None;
+    }
+    match target {
+        ReadTarget::Logs => Some("Logs"),
+        ReadTarget::Actions => Some("Actions"),
+        ReadTarget::Issues
+        | ReadTarget::Releases
+        | ReadTarget::Traces
+        | ReadTarget::Trace(_)
+        | ReadTarget::Issue(_) => None,
+    }
+}
+
 /// Builds a concise human summary for a successful API response.
 fn human_summary(command: &Command, value: &serde_json::Value) -> Option<String> {
     match command {
-        Command::Read { target, .. } => read_summary(target, value),
+        Command::Read {
+            target, options, ..
+        } => read_summary(target, options, value),
         Command::Explain { target, .. } => explain_summary(target, value),
         Command::Set { target, .. } => set_summary(target, value),
         Command::ProjectSetupSeen { .. } => project_setup_seen_summary(value),
@@ -46,11 +74,21 @@ fn human_summary(command: &Command, value: &serde_json::Value) -> Option<String>
 }
 
 /// Builds a human summary for read responses.
-fn read_summary(target: &ReadTarget, value: &serde_json::Value) -> Option<String> {
+fn read_summary(
+    target: &ReadTarget,
+    options: &ReadOptions,
+    value: &serde_json::Value,
+) -> Option<String> {
     match target {
+        ReadTarget::Logs if options.pagination.as_deref() == Some("cursor") => {
+            Some(cursor_list_summary("Logs", "log", "logs", value, log_line))
+        }
         ReadTarget::Logs => list_summary("Logs", list_items(value, "logs")?, log_line),
         ReadTarget::Issues => list_summary("Issues", list_items(value, "issues")?, issue_line),
-        ReadTarget::Actions => action_list_summary(value),
+        ReadTarget::Actions if options.pagination.as_deref() == Some("cursor") => Some(
+            cursor_list_summary("Actions", "action", "actions", value, action_line),
+        ),
+        ReadTarget::Actions => list_summary("Actions", list_items(value, "actions")?, action_line),
         ReadTarget::Releases => {
             list_summary("Releases", list_items(value, "releases")?, release_line)
         }
@@ -142,40 +180,43 @@ fn empty_list_message(title: &str) -> String {
     )
 }
 
-/// Builds legacy or cursor-paginated action output without clearing prior pages.
-fn action_list_summary(value: &serde_json::Value) -> Option<String> {
-    if value.is_array() {
-        return list_summary("Actions", list_items(value, "actions")?, action_line);
-    }
-
-    let Some(actions) = value.get("actions").and_then(serde_json::Value::as_array) else {
-        return Some(invalid_action_cursor_message());
+/// Builds cursor-paginated output without clearing prior pages.
+fn cursor_list_summary(
+    title: &str,
+    history_name: &str,
+    wrapper_key: &str,
+    value: &serde_json::Value,
+    line_builder: fn(&serde_json::Value) -> Option<String>,
+) -> String {
+    let Some(items) = value.get(wrapper_key).and_then(serde_json::Value::as_array) else {
+        return invalid_cursor_message(title);
     };
     let Some(next_cursor) = value.get("next_cursor") else {
-        return Some(invalid_action_cursor_message());
+        return invalid_cursor_message(title);
     };
     let cursor = if next_cursor.is_null() {
         None
     } else {
         let Some(time) = field(next_cursor, "time") else {
-            return Some(invalid_action_cursor_message());
+            return invalid_cursor_message(title);
         };
         let Some(id) = field(next_cursor, "id") else {
-            return Some(invalid_action_cursor_message());
+            return invalid_cursor_message(title);
         };
         if !is_rfc3339_utc(time) || !is_uuid(id) {
-            return Some(invalid_action_cursor_message());
+            return invalid_cursor_message(title);
         }
         Some((time, id))
     };
 
-    let mut output = format!("Actions ({})\n", actions.len());
-    if actions.is_empty() {
-        output.push_str("No actions found on this page.\n");
+    let mut output = format!("{title} ({})\n", items.len());
+    if items.is_empty() {
+        output
+            .push_str(format!("No {} found on this page.\n", title.to_ascii_lowercase()).as_str());
     } else {
-        for action in actions {
-            let Some(line) = action_line(action) else {
-                return Some(invalid_action_cursor_message());
+        for item in items {
+            let Some(line) = line_builder(item) else {
+                return invalid_cursor_message(title);
             };
             output.push_str("- ");
             output.push_str(line.as_str());
@@ -184,8 +225,8 @@ fn action_list_summary(value: &serde_json::Value) -> Option<String> {
     }
 
     let Some((time, id)) = cursor else {
-        output.push_str("End of action history.\n");
-        return Some(output);
+        output.push_str(format!("End of {history_name} history.\n").as_str());
+        return output;
     };
     output.push_str("Next page: set --cursor-time ");
     output.push_str(time);
@@ -195,17 +236,17 @@ fn action_list_summary(value: &serde_json::Value) -> Option<String> {
         " on the same command; keep --pagination cursor, --limit, and active filters unchanged.\n",
     );
     output.push_str("Retry: rerun that same command; the rows above remain visible.\n");
-    Some(output)
+    output
 }
 
 /// Builds a value-safe recovery when a cursor response violates its public shape.
-fn invalid_action_cursor_message() -> String {
-    String::from(
-        "Actions response could not be rendered safely.\nNext: retry the same command with --json and inspect next_cursor.\n",
+fn invalid_cursor_message(title: &str) -> String {
+    format!(
+        "{title} response could not be rendered safely.\nNext: retry the same command with --json and inspect next_cursor.\n",
     )
 }
 
-/// Checks the UTC RFC3339 shape returned by the action cursor endpoint.
+/// Checks the UTC RFC3339 shape returned by cursor endpoints.
 fn is_rfc3339_utc(value: &str) -> bool {
     let Some(without_zone) = value
         .strip_suffix('Z')
@@ -289,7 +330,7 @@ const fn is_leap_year(year: u32) -> bool {
     year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400))
 }
 
-/// Checks the canonical hyphenated UUID shape returned by the action endpoint.
+/// Checks the canonical hyphenated UUID shape returned by cursor endpoints.
 fn is_uuid(value: &str) -> bool {
     let bytes = value.as_bytes();
     bytes.len() == 36

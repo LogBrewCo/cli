@@ -98,6 +98,9 @@ pub enum CliError {
     /// Action cursor fields are inconsistent.
     #[error("invalid action cursor: {0}")]
     InvalidActionCursor(String),
+    /// Log cursor fields are inconsistent.
+    #[error("invalid log cursor: {0}")]
+    InvalidLogCursor(String),
     /// Project setup source is malformed.
     #[error("invalid setup source: {0}")]
     InvalidSetupSource(String),
@@ -334,6 +337,7 @@ const fn cli_error_code(error: &CliError) -> &'static str {
         CliError::InvalidMinDuration(_) => "invalid_min_duration",
         CliError::UnknownPagination => "unknown_pagination",
         CliError::InvalidActionCursor(_) => "invalid_action_cursor",
+        CliError::InvalidLogCursor(_) => "invalid_log_cursor",
         CliError::InvalidSetupSource(_) => "invalid_setup_source",
     }
 }
@@ -343,7 +347,9 @@ const fn cli_error_next_step(error: &CliError) -> &'static str {
     match error {
         CliError::InvalidLimit(_) => "use --limit with a positive whole number",
         CliError::InvalidMinDuration(_) => "use --min-duration-ms with a non-negative whole number",
-        CliError::UnknownPagination | CliError::InvalidActionCursor(_) => {
+        CliError::UnknownPagination
+        | CliError::InvalidActionCursor(_)
+        | CliError::InvalidLogCursor(_) => {
             "use --pagination cursor alone for the first page, then use --cursor-time and --cursor-id together from next_cursor"
         }
         CliError::InvalidSetupSource(_) => "use --source api, cli, or sdk",

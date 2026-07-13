@@ -1337,24 +1337,33 @@ fn validate_read_filters(target: &ReadTarget, filters: &ReadOptions) -> Result<(
             next,
         });
     }
-    if matches!(target, ReadTarget::Actions) {
-        validate_action_cursor(filters)?;
+    match target {
+        ReadTarget::Logs => validate_read_cursor(filters, CliError::InvalidLogCursor)?,
+        ReadTarget::Actions => validate_read_cursor(filters, CliError::InvalidActionCursor)?,
+        ReadTarget::Issues
+        | ReadTarget::Releases
+        | ReadTarget::Traces
+        | ReadTarget::Trace(_)
+        | ReadTarget::Issue(_) => {}
     }
     Ok(())
 }
 
-/// Validates the explicit first-page or continuation action cursor shape.
-fn validate_action_cursor(filters: &ReadOptions) -> Result<(), CliError> {
+/// Validates an explicit first-page or continuation cursor shape.
+fn validate_read_cursor(
+    filters: &ReadOptions,
+    invalid_cursor: fn(String) -> CliError,
+) -> Result<(), CliError> {
     match (
         filters.pagination.as_deref(),
         filters.cursor_time.as_ref(),
         filters.cursor_id.as_ref(),
     ) {
         (None | Some("cursor"), None, None) | (Some("cursor"), Some(_), Some(_)) => Ok(()),
-        (None, _, _) => Err(CliError::InvalidActionCursor(String::from(
+        (None, _, _) => Err(invalid_cursor(String::from(
             "cursor fields require --pagination cursor",
         ))),
-        (Some("cursor"), _, _) => Err(CliError::InvalidActionCursor(String::from(
+        (Some("cursor"), _, _) => Err(invalid_cursor(String::from(
             "--cursor-time and --cursor-id must be used together",
         ))),
         (Some(_), _, _) => Err(CliError::UnknownPagination),

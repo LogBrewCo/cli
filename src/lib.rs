@@ -268,9 +268,9 @@ pub struct ReadOptions {
     pub min_duration_ms: Option<String>,
     /// Optional pagination mode for endpoints with explicit page envelopes.
     pub pagination: Option<String>,
-    /// Optional action continuation timestamp.
+    /// Optional continuation timestamp.
     pub cursor_time: Option<String>,
-    /// Optional action continuation identifier.
+    /// Optional continuation identifier.
     pub cursor_id: Option<String>,
 }
 
@@ -326,9 +326,6 @@ impl ReadOptions {
             (self.user.is_some(), "--user"),
             (self.status.is_some(), "--status"),
             (self.min_duration_ms.is_some(), "--min-duration-ms"),
-            (self.pagination.is_some(), "--pagination"),
-            (self.cursor_time.is_some(), "--cursor-time"),
-            (self.cursor_id.is_some(), "--cursor-id"),
         ])
     }
 
@@ -1096,9 +1093,9 @@ struct ReadPathFilters<'a> {
     min_duration_ms: Option<&'a str>,
     /// Optional pagination mode.
     pagination: Option<&'a str>,
-    /// Optional action continuation timestamp.
+    /// Optional continuation timestamp.
     cursor_time: Option<&'a str>,
-    /// Optional action continuation identifier.
+    /// Optional continuation identifier.
     cursor_id: Option<&'a str>,
 }
 
@@ -1116,6 +1113,9 @@ fn read_path(target: &ReadTarget, filters: &ReadPathFilters<'_>) -> String {
                 ("project_id", filters.project),
                 ("release", filters.release),
                 ("environment", filters.environment),
+                ("pagination", filters.pagination),
+                ("cursor_time", filters.cursor_time),
+                ("cursor_id", filters.cursor_id),
                 ("limit", filters.limit),
             ],
         ),

@@ -285,7 +285,10 @@ const READ_LOGS_HELP: &str = "\
 Usage:
   logbrew read logs [--severity error] [--search checkout] [--release <release>] [--environment \
                               production] [--service <service_name>] [--since 24h] [--trace \
-                              <trace_id>] [--project <project_id>] [--limit 100] [--json]
+                              <trace_id>] [--project <project_id>] [--pagination cursor] [--limit \
+                              100] [--json]
+  logbrew read logs [filters] --pagination cursor --cursor-time <RFC3339> --cursor-id <uuid> \
+                              [--limit 100] [--json]
   logbrew logs checkout failed [--severity error] [--release <release>] [--environment \
                               production] [--json]
   logbrew logs error checkout failed [--release <release>] [--environment production] [--json]
@@ -302,6 +305,10 @@ Explicit filters accept unquoted search text too, such as logbrew logs --severit
 Use -- before literal flag-looking search text, such as logbrew logs -- --timeout --json.
 Filter by severity, message search, release, or trace_id to correlate logs with spans.
 --service-name <service_name> is accepted as an alias for --service <service_name>.
+Cursor pagination preserves JSON as {logs,next_cursor}; next_cursor is either {time,id} or null.
+Use --pagination cursor alone for the first page. Continue with --cursor-time and --cursor-id from \
+                              next_cursor.
+Keep the same active filters and pagination limit on every continuation page.
 Limit must be a positive whole number.";
 
 /// Read issues help text.
