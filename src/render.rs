@@ -46,11 +46,10 @@ fn cursor_response_title(command: &Command) -> Option<&'static str> {
     match target {
         ReadTarget::Logs => Some("Logs"),
         ReadTarget::Actions => Some("Actions"),
-        ReadTarget::Issues
-        | ReadTarget::Releases
-        | ReadTarget::Traces
-        | ReadTarget::Trace(_)
-        | ReadTarget::Issue(_) => None,
+        ReadTarget::Issues => Some("Issues"),
+        ReadTarget::Releases | ReadTarget::Traces | ReadTarget::Trace(_) | ReadTarget::Issue(_) => {
+            None
+        }
     }
 }
 
@@ -84,6 +83,9 @@ fn read_summary(
             Some(cursor_list_summary("Logs", "log", "logs", value, log_line))
         }
         ReadTarget::Logs => list_summary("Logs", list_items(value, "logs")?, log_line),
+        ReadTarget::Issues if options.pagination.as_deref() == Some("cursor") => Some(
+            cursor_list_summary("Issues", "issue", "issues", value, issue_cursor_line),
+        ),
         ReadTarget::Issues => list_summary("Issues", list_items(value, "issues")?, issue_line),
         ReadTarget::Actions if options.pagination.as_deref() == Some("cursor") => Some(
             cursor_list_summary("Actions", "action", "actions", value, action_line),
@@ -372,10 +374,30 @@ fn issue_line(value: &serde_json::Value) -> Option<String> {
         output.push_str(" occurrences=");
         output.push_str(occurrences.to_string().as_str());
     }
+    append_labeled_field(&mut output, "last_seen", value, "last_seen_at");
     append_labeled_field(&mut output, "service", value, "service_name");
     append_labeled_field(&mut output, "trace", value, "trace_id");
     output.push_str(release_environment_suffix(value).as_str());
     Some(output)
+}
+
+/// Formats a cursor issue only when every bounded list field has the public type.
+fn issue_cursor_line(value: &serde_json::Value) -> Option<String> {
+    let id = field(value, "id")?;
+    let status = field(value, "status")?;
+    let (_severity, _title, _occurrences) = (
+        field(value, "severity")?,
+        field(value, "title")?,
+        value.get("occurrence_count")?.as_u64()?,
+    );
+    let last_seen = field(value, "last_seen_at")?;
+    if !is_uuid(id)
+        || !matches!(status, "unresolved" | "resolved" | "ignored")
+        || !is_rfc3339_utc(last_seen)
+    {
+        return None;
+    }
+    issue_line(value)
 }
 
 /// Formats one action list item.

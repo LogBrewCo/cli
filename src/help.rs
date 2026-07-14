@@ -316,7 +316,9 @@ const READ_ISSUES_HELP: &str = "\
 Usage:
   logbrew read issues [--release <release>] [--environment production] [--status unresolved] \
                                 [--service <service_name>] [--since <24h|7d|RFC3339>] [--project \
-                                <project_id>] [--limit 100] [--json]
+                                <project_id>] [--pagination cursor] [--limit 100] [--json]
+  logbrew read issues [filters] --pagination cursor --cursor-time <RFC3339> --cursor-id <uuid> \
+                                [--limit 100] [--json]
   logbrew issues open [--release <release>] [--environment production] [--json]
   logbrew issue open [--release <release>] [--environment production] [--json]
   logbrew open issues [--release <release>] [--environment production] [--json]
@@ -332,6 +334,10 @@ Recency issue shortcuts can include status and count, such as logbrew last 5 ope
 --service-name <service_name> is accepted as an alias for --service <service_name>.
 Since accepts positive compact durations such as 24h or 7d, or an RFC3339 timestamp such as \
                                 2026-05-01T00:00:00Z.
+Cursor pagination preserves JSON as {issues,next_cursor}; next_cursor is either {time,id} or null.
+Use --pagination cursor alone for the first page. Continue with --cursor-time and --cursor-id from \
+                                next_cursor.
+Keep the same active filters and pagination limit on every continuation page.
 Limit must be a positive whole number.";
 
 /// Read actions help text.

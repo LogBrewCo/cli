@@ -1340,11 +1340,9 @@ fn validate_read_filters(target: &ReadTarget, filters: &ReadOptions) -> Result<(
     match target {
         ReadTarget::Logs => validate_read_cursor(filters, CliError::InvalidLogCursor)?,
         ReadTarget::Actions => validate_read_cursor(filters, CliError::InvalidActionCursor)?,
-        ReadTarget::Issues
-        | ReadTarget::Releases
-        | ReadTarget::Traces
-        | ReadTarget::Trace(_)
-        | ReadTarget::Issue(_) => {}
+        ReadTarget::Issues => validate_read_cursor(filters, CliError::InvalidIssueCursor)?,
+        ReadTarget::Releases | ReadTarget::Traces | ReadTarget::Trace(_) | ReadTarget::Issue(_) => {
+        }
     }
     Ok(())
 }

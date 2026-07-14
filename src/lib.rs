@@ -339,9 +339,6 @@ impl ReadOptions {
             (self.level.is_some(), "--severity"),
             (self.search.is_some(), "--search"),
             (self.min_duration_ms.is_some(), "--min-duration-ms"),
-            (self.pagination.is_some(), "--pagination"),
-            (self.cursor_time.is_some(), "--cursor-time"),
-            (self.cursor_id.is_some(), "--cursor-id"),
         ])
     }
 
@@ -1128,6 +1125,9 @@ fn read_path(target: &ReadTarget, filters: &ReadPathFilters<'_>) -> String {
                 ("project_id", filters.project),
                 ("release", filters.release),
                 ("environment", filters.environment),
+                ("pagination", filters.pagination),
+                ("cursor_time", filters.cursor_time),
+                ("cursor_id", filters.cursor_id),
                 ("limit", filters.limit),
             ],
         ),
