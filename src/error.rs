@@ -104,6 +104,12 @@ pub enum CliError {
     /// Issue cursor fields are inconsistent.
     #[error("invalid issue cursor: {0}")]
     InvalidIssueCursor(String),
+    /// Support-ticket cursor fields are inconsistent.
+    #[error("invalid support cursor: {0}")]
+    InvalidSupportCursor(String),
+    /// Support-ticket category is unsupported.
+    #[error("unknown support category")]
+    UnknownSupportCategory,
     /// Project setup source is malformed.
     #[error("invalid setup source: {0}")]
     InvalidSetupSource(String),
@@ -342,6 +348,8 @@ const fn cli_error_code(error: &CliError) -> &'static str {
         CliError::InvalidActionCursor(_) => "invalid_action_cursor",
         CliError::InvalidLogCursor(_) => "invalid_log_cursor",
         CliError::InvalidIssueCursor(_) => "invalid_issue_cursor",
+        CliError::InvalidSupportCursor(_) => "invalid_support_cursor",
+        CliError::UnknownSupportCategory => "unknown_support_category",
         CliError::InvalidSetupSource(_) => "invalid_setup_source",
     }
 }
@@ -354,8 +362,12 @@ const fn cli_error_next_step(error: &CliError) -> &'static str {
         CliError::UnknownPagination
         | CliError::InvalidActionCursor(_)
         | CliError::InvalidLogCursor(_)
-        | CliError::InvalidIssueCursor(_) => {
+        | CliError::InvalidIssueCursor(_)
+        | CliError::InvalidSupportCursor(_) => {
             "use --pagination cursor alone for the first page, then use --cursor-time and --cursor-id together from next_cursor"
+        }
+        CliError::UnknownSupportCategory => {
+            "use sdk_install_failure, ingest_failure, auth_failure, project_setup, dashboard_issue, docs_confusion, cli_issue, mobile_issue, billing_question, or other"
         }
         CliError::InvalidSetupSource(_) => "use --source api, cli, or sdk",
         CliError::MissingArgument { next, .. }

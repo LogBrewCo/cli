@@ -1,9 +1,24 @@
 //! Human-readable API response rendering.
 
-use crate::{Command, ExplainTarget, ReadOptions, ReadTarget, RuntimeError, SetTarget};
+use crate::{
+    Command, ExplainTarget, ReadOptions, ReadTarget, RuntimeError, SetTarget, SupportTarget,
+    SupportTicketListOptions,
+};
 
 /// Maximum span names shown in concise human trace summaries.
 const SPAN_SUMMARY_LIMIT: usize = 5;
+/// Maximum support-ticket rows rendered in one human response.
+const SUPPORT_HUMAN_ROW_LIMIT: usize = 100;
+/// Maximum accepted support timestamp length, including a bounded fraction.
+const SUPPORT_TIMESTAMP_LIMIT: usize = 48;
+
+/// One validated optional support field.
+enum OptionalSupportField {
+    /// Field is absent or null.
+    Missing,
+    /// Field contains bounded display text.
+    Present(String),
+}
 
 /// Writes successful API output for JSON or human command modes.
 pub(crate) fn write_api_success<W: std::io::Write>(
@@ -17,7 +32,9 @@ pub(crate) fn write_api_success<W: std::io::Write>(
     }
 
     let Ok(value) = serde_json::from_str::<serde_json::Value>(body) else {
-        if let Some(title) = cursor_response_title(command) {
+        if matches!(command, Command::Support { .. }) {
+            write!(output, "{}", invalid_support_response())?;
+        } else if let Some(title) = cursor_response_title(command) {
             write!(output, "{}", invalid_cursor_message(title))?;
         } else {
             writeln!(output, "{body}")?;
@@ -34,21 +51,46 @@ pub(crate) fn write_api_success<W: std::io::Write>(
 
 /// Returns the human title for a cursor-mode collection read.
 fn cursor_response_title(command: &Command) -> Option<&'static str> {
-    let Command::Read {
-        target, options, ..
-    } = command
-    else {
-        return None;
-    };
-    if options.pagination.as_deref() != Some("cursor") {
-        return None;
+    match command {
+        Command::Read {
+            target, options, ..
+        } if options.pagination.as_deref() == Some("cursor") => match target {
+            ReadTarget::Logs => Some("Logs"),
+            ReadTarget::Actions => Some("Actions"),
+            ReadTarget::Issues => Some("Issues"),
+            ReadTarget::Releases
+            | ReadTarget::Traces
+            | ReadTarget::Trace(_)
+            | ReadTarget::Issue(_) => None,
+        },
+        Command::Support {
+            target: SupportTarget::List(options),
+            ..
+        } if options.pagination.as_deref() == Some("cursor") => Some("Support tickets"),
+        Command::Read { .. }
+        | Command::Help { .. }
+        | Command::Login { .. }
+        | Command::Logout { .. }
+        | Command::Status { .. }
+        | Command::Version { .. }
+        | Command::Watch { .. }
+        | Command::Explain { .. }
+        | Command::Set { .. }
+        | Command::ProjectSetupSeen { .. }
+        | Command::Support { .. }
+        | Command::Setup { .. } => None,
     }
+}
+
+/// Returns a bounded support response summary or a value-safe recovery.
+fn support_summary(target: &SupportTarget, value: &serde_json::Value) -> String {
     match target {
-        ReadTarget::Logs => Some("Logs"),
-        ReadTarget::Actions => Some("Actions"),
-        ReadTarget::Issues => Some("Issues"),
-        ReadTarget::Releases | ReadTarget::Traces | ReadTarget::Trace(_) | ReadTarget::Issue(_) => {
-            None
+        SupportTarget::Create(_) => {
+            support_created_summary(value).unwrap_or_else(invalid_support_response)
+        }
+        SupportTarget::List(options) => support_list_summary(options, value),
+        SupportTarget::Detail(_) => {
+            support_detail_summary(value).unwrap_or_else(invalid_support_response)
         }
     }
 }
@@ -62,6 +104,7 @@ fn human_summary(command: &Command, value: &serde_json::Value) -> Option<String>
         Command::Explain { target, .. } => explain_summary(target, value),
         Command::Set { target, .. } => set_summary(target, value),
         Command::ProjectSetupSeen { .. } => project_setup_seen_summary(value),
+        Command::Support { target, .. } => Some(support_summary(target, value)),
         Command::Help { .. }
         | Command::Login { .. }
         | Command::Logout { .. }
@@ -141,6 +184,259 @@ fn project_setup_seen_summary(value: &serde_json::Value) -> Option<String> {
         output.push_str("Next: send telemetry for this project\n");
     }
     Some(output)
+}
+
+/// Builds the concise result of support-ticket creation.
+fn support_created_summary(value: &serde_json::Value) -> Option<String> {
+    let ticket_id = field(value, "ticket_id")?;
+    let status = required_support_field(value, "status", 64)?;
+    let created_at = bounded_support_timestamp(field(value, "created_at")?)?;
+    let next = bounded_display_text(field(value, "next")?, 240)?;
+    if !is_uuid(ticket_id) {
+        return None;
+    }
+    validate_next_action(value.get("next_action")?)?;
+    Some(format!(
+        "Support ticket {ticket_id} created ({status})\nCreated: {created_at}\nNext: {next}\n"
+    ))
+}
+
+/// Builds support-ticket history for legacy and cursor envelopes.
+fn support_list_summary(options: &SupportTicketListOptions, value: &serde_json::Value) -> String {
+    let Some(tickets) = value.get("tickets").and_then(serde_json::Value::as_array) else {
+        return invalid_support_response();
+    };
+    let Some(next) = value
+        .get("next")
+        .and_then(serde_json::Value::as_str)
+        .and_then(|value| bounded_display_text(value, 240))
+    else {
+        return invalid_support_response();
+    };
+    if value
+        .get("next_action")
+        .and_then(validate_next_action)
+        .is_none()
+    {
+        return invalid_support_response();
+    }
+    let cursor = if options.pagination.as_deref() == Some("cursor") {
+        let Some(cursor) = value.get("next_cursor") else {
+            return invalid_support_response();
+        };
+        if cursor.is_null() {
+            Some(None)
+        } else {
+            let Some(time) = field(cursor, "time").and_then(bounded_support_timestamp) else {
+                return invalid_support_response();
+            };
+            let Some(id) = field(cursor, "id") else {
+                return invalid_support_response();
+            };
+            if !is_uuid(id) {
+                return invalid_support_response();
+            }
+            Some(Some((time, id)))
+        }
+    } else {
+        None
+    };
+
+    let mut output = format!("Support tickets ({})\n", tickets.len());
+    if tickets.is_empty() {
+        output.push_str("No support tickets found.\n");
+    } else {
+        for ticket in tickets.iter().take(SUPPORT_HUMAN_ROW_LIMIT) {
+            let Some(line) = support_ticket_line(ticket) else {
+                return invalid_support_response();
+            };
+            output.push_str("- ");
+            output.push_str(line.as_str());
+            output.push('\n');
+        }
+        if tickets.len() > SUPPORT_HUMAN_ROW_LIMIT {
+            output.push_str(
+                format!(
+                    "Showing first {SUPPORT_HUMAN_ROW_LIMIT} of {} tickets. Use filters or a smaller --limit to narrow the page.\n",
+                    tickets.len()
+                )
+                .as_str(),
+            );
+        }
+    }
+
+    match cursor {
+        Some(Some((time, id))) => {
+            output.push_str("Next page: set --cursor-time ");
+            output.push_str(time.as_str());
+            output.push_str(" --cursor-id ");
+            output.push_str(id);
+            output.push_str(
+                " on the same command; keep --pagination cursor, --limit, and active filters unchanged.\n",
+            );
+            output.push_str("Retry: rerun that same command; the rows above remain visible.\n");
+        }
+        Some(None) => output.push_str("End of support ticket history.\n"),
+        None => {}
+    }
+    output.push_str("Next: ");
+    output.push_str(next.as_str());
+    output.push('\n');
+    output
+}
+
+/// Builds one privacy-bounded support-ticket detail summary.
+fn support_detail_summary(value: &serde_json::Value) -> Option<String> {
+    let ticket_id = field(value, "ticket_id")?;
+    let status = required_support_field(value, "status", 64)?;
+    let category = required_support_field(value, "category", 64)?;
+    let title = bounded_display_text(field(value, "title")?, 120)?;
+    let created_at = bounded_support_timestamp(field(value, "created_at")?)?;
+    if !is_uuid(ticket_id) {
+        return None;
+    }
+    let mut output = format!(
+        "Support ticket {ticket_id} {status}\nCategory: {category}\nTitle: {title}\nCreated: {created_at}\n"
+    );
+    if let OptionalSupportField::Present(project_id) =
+        optional_support_field(value, "project_id", 64)?
+    {
+        output.push_str("Project: ");
+        output.push_str(project_id.as_str());
+        output.push('\n');
+    }
+    if let OptionalSupportField::Present(scope) = support_scope_suffix(value)? {
+        output.push_str("Scope: ");
+        output.push_str(scope.as_str());
+        output.push('\n');
+    }
+    if let Some(next) = field(value, "next").and_then(|value| bounded_display_text(value, 240)) {
+        output.push_str("Next: ");
+        output.push_str(next.as_str());
+        output.push('\n');
+    }
+    Some(output)
+}
+
+/// Formats one support-ticket list row without description or diagnostics.
+fn support_ticket_line(value: &serde_json::Value) -> Option<String> {
+    let ticket_id = field(value, "ticket_id")?;
+    let status = required_support_field(value, "status", 64)?;
+    let category = required_support_field(value, "category", 64)?;
+    let title = bounded_display_text(field(value, "title")?, 120)?;
+    let created_at = bounded_support_timestamp(field(value, "created_at")?)?;
+    if !is_uuid(ticket_id) {
+        return None;
+    }
+    let mut output = format!("{ticket_id} {status} {category} {title} created={created_at}");
+    append_optional_support_field(&mut output, "project", value, "project_id", 64)?;
+    append_optional_support_field(&mut output, "source", value, "source", 32)?;
+    if let OptionalSupportField::Present(scope) = support_scope_suffix(value)? {
+        output.push(' ');
+        output.push_str(scope.as_str());
+    }
+    Some(output)
+}
+
+/// Builds release/environment scope only when at least one field is present.
+fn support_scope_suffix(value: &serde_json::Value) -> Option<OptionalSupportField> {
+    let release = optional_support_field(value, "release", 120)?;
+    let environment = optional_support_field(value, "environment", 120)?;
+    match (release, environment) {
+        (OptionalSupportField::Missing, OptionalSupportField::Missing) => {
+            Some(OptionalSupportField::Missing)
+        }
+        (release, environment) => Some(OptionalSupportField::Present(format!(
+            "[{} / {}]",
+            support_field_or(&release, "unknown release"),
+            support_field_or(&environment, "unknown environment")
+        ))),
+    }
+}
+
+/// Returns the present support field or a fixed fallback.
+const fn support_field_or<'a>(field: &'a OptionalSupportField, fallback: &'a str) -> &'a str {
+    match field {
+        OptionalSupportField::Missing => fallback,
+        OptionalSupportField::Present(value) => value.as_str(),
+    }
+}
+
+/// Returns one required bounded, control-safe support field.
+fn required_support_field(value: &serde_json::Value, key: &str, limit: usize) -> Option<String> {
+    bounded_display_text(field(value, key)?, limit)
+}
+
+/// Returns one bounded UTC RFC3339 timestamp for human output.
+fn bounded_support_timestamp(value: &str) -> Option<String> {
+    if value.chars().count() > SUPPORT_TIMESTAMP_LIMIT || !is_rfc3339_utc(value) {
+        None
+    } else {
+        Some(value.to_owned())
+    }
+}
+
+/// Returns one optional bounded, control-safe support field.
+fn optional_support_field(
+    value: &serde_json::Value,
+    key: &str,
+    limit: usize,
+) -> Option<OptionalSupportField> {
+    match value.get(key) {
+        None | Some(serde_json::Value::Null) => Some(OptionalSupportField::Missing),
+        Some(serde_json::Value::String(value)) => {
+            bounded_display_text(value.as_str(), limit).map(OptionalSupportField::Present)
+        }
+        Some(_) => None,
+    }
+}
+
+/// Appends one optional bounded support field.
+fn append_optional_support_field(
+    output: &mut String,
+    label: &str,
+    value: &serde_json::Value,
+    key: &str,
+    limit: usize,
+) -> Option<()> {
+    if let OptionalSupportField::Present(field) = optional_support_field(value, key, limit)? {
+        output.push(' ');
+        output.push_str(label);
+        output.push('=');
+        output.push_str(field.as_str());
+    }
+    Some(())
+}
+
+/// Validates one public next-action object without rendering it.
+fn validate_next_action(value: &serde_json::Value) -> Option<()> {
+    let code = field(value, "code")?;
+    let target = field(value, "target")?;
+    (!code.is_empty() && !target.is_empty()).then_some(())
+}
+
+/// Collapses and bounds one human-facing server string.
+fn bounded_display_text(value: &str, limit: usize) -> Option<String> {
+    if value.chars().any(char::is_control) {
+        return None;
+    }
+    let normalized = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    if normalized.is_empty() {
+        return None;
+    }
+    let mut chars = normalized.chars();
+    let mut output = chars.by_ref().take(limit).collect::<String>();
+    if chars.next().is_some() {
+        output.push_str("...");
+    }
+    Some(output)
+}
+
+/// Returns value-safe recovery for malformed support success responses.
+fn invalid_support_response() -> String {
+    String::from(
+        "Support response could not be rendered safely.\nNext: retry the same command with --json and inspect the public response shape.\n",
+    )
 }
 
 /// Returns list items from either real bare API arrays or legacy wrapper objects.

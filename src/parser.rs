@@ -3,6 +3,7 @@
 mod help_topics;
 mod issue_shortcuts;
 mod log_shortcuts;
+mod support;
 mod trace_reads;
 mod watch;
 
@@ -17,6 +18,7 @@ use issue_shortcuts::{
     parse_status_first_issue_id_shortcut,
 };
 use log_shortcuts::{literal_log_search_separator_index, log_shortcut_args};
+use support::parse_support;
 use trace_reads::{parse_trace_detail_or_explain, parse_trace_list_read};
 use watch::parse_watch;
 
@@ -187,6 +189,7 @@ fn parse_values(values: &[String]) -> Result<Command, CliError> {
         alias if is_examples_help_alias(alias) => parse_help_alias(HelpTopic::Examples, tail),
         alias if is_project_help_alias(alias) => parse_project(tail),
         "usage" => parse_discovery_help(HelpTopic::Usage, tail),
+        "support" => parse_support(tail),
         alias if is_direct_filter_help_alias(alias) => parse_help_alias(HelpTopic::Read, tail),
         "read" => parse_read(tail),
         alias if is_read_verb(alias) => parse_read_verb(alias, tail),

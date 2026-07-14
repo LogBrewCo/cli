@@ -23,6 +23,7 @@ pub mod render;
 pub mod setup;
 #[doc(hidden)]
 pub mod status;
+mod support;
 #[doc(hidden)]
 pub mod version;
 
@@ -136,6 +137,13 @@ pub enum Command {
         /// Emit machine-readable JSON.
         json: bool,
     },
+    /// Creates or reads account support tickets.
+    Support {
+        /// Support-ticket operation.
+        target: SupportTarget,
+        /// Emit machine-readable JSON.
+        json: bool,
+    },
 }
 
 /// Help topic for CLI usage output.
@@ -185,6 +193,8 @@ pub enum HelpTopic {
     Explain,
     /// State mutation command.
     Set,
+    /// Support-ticket workflow.
+    Support,
 }
 
 impl HelpTopic {
@@ -214,6 +224,7 @@ impl HelpTopic {
             Self::Watch => "watch",
             Self::Explain => "explain",
             Self::Set => "set",
+            Self::Support => "support",
         }
     }
 }
@@ -425,6 +436,71 @@ pub struct ProjectSetupSeenOptions {
     pub environment: Option<String>,
 }
 
+/// Support-ticket operation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SupportTarget {
+    /// Create one support ticket.
+    Create(Box<SupportTicketCreateOptions>),
+    /// List support-ticket history.
+    List(Box<SupportTicketListOptions>),
+    /// Read one support ticket by public identifier.
+    Detail(String),
+}
+
+/// Fields accepted when creating a support ticket.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SupportTicketCreateOptions {
+    /// Public support category.
+    pub category: String,
+    /// Concise ticket title.
+    pub title: String,
+    /// Reproducible description supplied by the user.
+    pub description: String,
+    /// Optional project identifier.
+    pub project_id: Option<String>,
+    /// Optional deployment environment.
+    pub environment: Option<String>,
+    /// Optional runtime.
+    pub runtime: Option<String>,
+    /// Optional framework.
+    pub framework: Option<String>,
+    /// Optional SDK package.
+    pub sdk_package: Option<String>,
+    /// Optional SDK version.
+    pub sdk_version: Option<String>,
+    /// Optional release.
+    pub release: Option<String>,
+    /// Optional trace identifier.
+    pub trace_id: Option<String>,
+    /// Optional event identifier.
+    pub event_id: Option<String>,
+    /// Include bounded locally generated diagnostics.
+    pub diagnostics: bool,
+}
+
+/// Filters for support-ticket history.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SupportTicketListOptions {
+    /// Optional project identifier.
+    pub project_id: Option<String>,
+    /// Optional ticket status.
+    pub status: Option<String>,
+    /// Optional ticket source.
+    pub source: Option<String>,
+    /// Optional support category.
+    pub category: Option<String>,
+    /// Optional release.
+    pub release: Option<String>,
+    /// Optional result limit.
+    pub limit: Option<String>,
+    /// Optional explicit pagination mode.
+    pub pagination: Option<String>,
+    /// Optional continuation timestamp.
+    pub cursor_time: Option<String>,
+    /// Optional continuation identifier.
+    pub cursor_id: Option<String>,
+}
+
 /// Context target for `explain`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExplainTarget {
@@ -506,6 +582,7 @@ impl Command {
             Self::ProjectSetupSeen { project_id, .. } => {
                 Some(format!("/api/projects/{project_id}/setup/seen"))
             }
+            Self::Support { target, .. } => Some(support::path(target)),
             Self::Help { .. }
             | Self::Login { .. }
             | Self::Logout { .. }
@@ -530,6 +607,7 @@ impl Command {
             | Self::Explain { json, .. }
             | Self::Set { json, .. }
             | Self::ProjectSetupSeen { json, .. }
+            | Self::Support { json, .. }
             | Self::Setup { json, .. } => *json,
         }
     }
@@ -538,8 +616,14 @@ impl Command {
     #[must_use]
     pub const fn http_method(&self) -> Option<HttpMethod> {
         match self {
-            Self::Read { .. } | Self::Explain { .. } => Some(HttpMethod::Get),
-            Self::ProjectSetupSeen { .. } => Some(HttpMethod::Post),
+            Self::ProjectSetupSeen { .. }
+            | Self::Support {
+                target: SupportTarget::Create(_),
+                ..
+            } => Some(HttpMethod::Post),
+            Self::Read { .. } | Self::Explain { .. } | Self::Support { .. } => {
+                Some(HttpMethod::Get)
+            }
             Self::Set { .. } => Some(HttpMethod::Patch),
             Self::Help { .. }
             | Self::Login { .. }
@@ -566,6 +650,10 @@ impl Command {
                 ..
             } => Some(serde_json::json!({ "status": status })),
             Self::ProjectSetupSeen { options, .. } => Some(project_setup_seen_body(options, token)),
+            Self::Support {
+                target: SupportTarget::Create(options),
+                ..
+            } => Some(support::create_body(options)),
             Self::Help { .. }
             | Self::Login { .. }
             | Self::Logout { .. }
@@ -574,7 +662,8 @@ impl Command {
             | Self::Version { .. }
             | Self::Read { .. }
             | Self::Watch { .. }
-            | Self::Explain { .. } => None,
+            | Self::Explain { .. }
+            | Self::Support { .. } => None,
         }
     }
 }
@@ -649,7 +738,8 @@ pub async fn execute_command<W: std::io::Write>(
         Command::Read { .. }
         | Command::Explain { .. }
         | Command::Set { .. }
-        | Command::ProjectSetupSeen { .. } => execute_http(command, env, output).await,
+        | Command::ProjectSetupSeen { .. }
+        | Command::Support { .. } => execute_http(command, env, output).await,
         Command::Watch {
             target,
             options,
@@ -722,9 +812,14 @@ async fn execute_http<W: std::io::Write>(
     let body = response.text().await?;
 
     if !status.is_success() {
+        let body = if matches!(command, Command::Support { .. }) {
+            support::safe_error_body(status.as_u16())
+        } else {
+            credential.redact_response_body(body.as_str())
+        };
         return Err(RuntimeError::Api {
             status: status.as_u16(),
-            body: credential.redact_response_body(body.as_str()),
+            body,
             auth_source: credential.source(),
             auth_label: credential.label(),
         });

@@ -28,6 +28,7 @@ pub const fn help_text(topic: HelpTopic) -> &'static str {
         HelpTopic::Watch => WATCH_HELP,
         HelpTopic::Explain => EXPLAIN_HELP,
         HelpTopic::Set => SET_HELP,
+        HelpTopic::Support => SUPPORT_HELP,
     }
 }
 
@@ -47,6 +48,9 @@ Usage:
   logbrew whoami [--json]
   logbrew me [--json]
   logbrew version [--json]
+  logbrew support create --category <category> --title <title> --description <description> [--json]
+  logbrew support list [--status <status>] [--category <category>] [--json]
+  logbrew support show <ticket_id> [--json]
   logbrew read logs [--severity error] [--search checkout] [--release <release>] [--environment \
                          production] [--since 24h] [--json]
   logbrew logs checkout failed [--severity error] [--release <release>] [--environment \
@@ -89,7 +93,7 @@ Usage:
   logbrew reopen <issue_id> [--json]
 
 Popular terms: auth, status, health, setup, projects, usage, logs, issues, errors, traces, spans, \
-                         actions, events, releases, environments.
+                         actions, events, releases, environments, support.
 Health aliases: logbrew status, logbrew health, logbrew ping, logbrew doctor.
 Setup aliases (non-mutating plan): logbrew init, logbrew install, logbrew configure, logbrew sdk.
 Shortcuts: logbrew auth, logbrew whoami, logbrew me, logbrew log, logbrew logs, logbrew issues, \
@@ -461,3 +465,28 @@ Updates grouped issue status. Resolve/close map to resolved; ignore maps to igno
 Close is an alias for resolved.
 Issue-first, pasted-ID, and status-first aliases are useful after reading issue detail.
 Status values are case-insensitive.";
+
+/// Support-ticket workflow help text.
+const SUPPORT_HELP: &str = "\
+Usage:
+  logbrew support create --category <category> --title <title> --description <description> \
+                           [--project <project_id>] [--environment <environment>] \
+                           [--runtime <runtime>] [--framework <framework>] \
+                           [--sdk-package <package>] [--sdk-version <version>] \
+                           [--release <release>] [--trace-id <trace_id>] [--event-id <event_id>] \
+                           [--diagnostics] [--json]
+  logbrew support list [--project <project_id>] [--status <status>] [--source <source>] \
+                         [--category <category>] [--release <release>] [--limit 100] \
+                         [--pagination cursor] [--json]
+  logbrew support list [filters] --pagination cursor --cursor-time <RFC3339> \
+                         --cursor-id <uuid> [--json]
+  logbrew support show <ticket_id> [--json]
+
+Creates and reads authenticated account support tickets. Creation source is always cli.
+Categories: sdk_install_failure, ingest_failure, auth_failure, project_setup, dashboard_issue, \
+                         docs_confusion, cli_issue, mobile_issue, billing_question, other.
+--diagnostics adds only binary, CLI version, operating system, and architecture. It never reads \
+                         arbitrary environment variables or files.
+Cursor continuations repeat --pagination cursor, all active filters, and the paired cursor from \
+                         next_cursor. JSON preserves the server response exactly.
+Ticket follow-ups are not part of this command.";
