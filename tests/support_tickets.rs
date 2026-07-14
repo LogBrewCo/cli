@@ -9,7 +9,7 @@ use wiremock::matchers::{body_json, header, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 const PROJECT_ID: &str = "123e4567-e89b-12d3-a456-426614174000";
-const TICKET_ID: &str = "9b2b4b3a-bd4e-4f85-a0f6-48118f037c17";
+const TICKET_ID: &str = "sup_9b2b4b3abd4e4f85a0f648118f037c17";
 const CURSOR_TIME: &str = "2026-07-14T08:00:00.123456Z";
 const CREATED_AT: &str = "2026-07-14T07:00:00Z";
 const CURSOR_RECOVERY: &str = "use --pagination cursor alone for the first page, then use --cursor-time and --cursor-id together from next_cursor";
@@ -327,10 +327,197 @@ fn support_help_documents_create_list_detail_and_safe_diagnostics() {
     assert!(text.contains("support create"));
     assert!(text.contains("support list"));
     assert!(text.contains("support show <ticket_id>"));
+    assert!(text.contains("support close <ticket_id>"));
+    assert!(text.contains("support reopen <ticket_id>"));
+    assert!(text.contains("--cursor-id <ticket_id>"));
+    assert!(!text.contains("--cursor-id <uuid>"));
     assert!(text.contains("--diagnostics"));
     assert!(text.contains("never reads arbitrary environment variables or files"));
     assert!(!text.contains("reply"));
     assert!(!text.contains("message"));
+}
+
+#[test]
+fn support_lifecycle_builds_exact_patch_and_rejects_non_public_ids() {
+    for (action, status) in [("close", "closed"), ("reopen", "open")] {
+        let command = parse_command(["logbrew", "support", action, TICKET_ID, "--json"])
+            .expect("support lifecycle parses");
+        assert_eq!(command.http_method(), Some(HttpMethod::Patch));
+        assert_eq!(
+            command.http_path().as_deref(),
+            Some(format!("/api/support/tickets/{TICKET_ID}").as_str())
+        );
+        assert_eq!(
+            command.request_body(),
+            Some(serde_json::json!({"status": status}))
+        );
+    }
+
+    for action in ["close", "reopen"] {
+        for invalid in [
+            "9b2b4b3a-bd4e-4f85-a0f6-48118f037c17",
+            "sup_9B2B4B3ABD4E4F85A0F648118F037C17",
+            "sup_9b2b4b3abd4e4f85a0f648118f037c17/extra",
+            "sup_9b2b4b3abd4e4f85a0f648118f037c17?admin=true",
+            "non-public-ticket-id-proof",
+        ] {
+            let error = parse_command(["logbrew", "support", action, invalid, "--json"])
+                .expect_err("non-public ticket id fails locally");
+            let mut output = Vec::new();
+            write_cli_error(&error, true, &mut output).expect("error writes");
+            let text = String::from_utf8(output).expect("UTF-8");
+            let body: serde_json::Value = serde_json::from_str(&text).expect("JSON");
+            assert_eq!(body["error"], "invalid_support_ticket_id");
+            assert_eq!(body["message"], "invalid support ticket id");
+            assert_eq!(
+                body["next"],
+                "use the ticket_id returned by logbrew support create or list"
+            );
+            assert!(!text.contains(invalid));
+        }
+    }
+}
+
+#[test]
+fn support_detail_and_cursor_reject_non_public_ids() {
+    for args in [
+        vec![
+            "logbrew",
+            "support",
+            "show",
+            "9b2b4b3a-bd4e-4f85-a0f6-48118f037c17",
+        ],
+        vec![
+            "logbrew",
+            "support",
+            "list",
+            "--pagination",
+            "cursor",
+            "--cursor-time",
+            CURSOR_TIME,
+            "--cursor-id",
+            "sup_9B2B4B3ABD4E4F85A0F648118F037C17",
+        ],
+    ] {
+        let error = parse_command(args).expect_err("non-public support id fails locally");
+        let mut output = Vec::new();
+        write_cli_error(&error, true, &mut output).expect("error writes");
+        let body: serde_json::Value =
+            serde_json::from_slice(&output).expect("safe JSON error is returned");
+        assert_eq!(body["error"], "invalid_support_ticket_id");
+        assert_eq!(
+            body["next"],
+            "use the ticket_id returned by logbrew support create or list"
+        );
+    }
+}
+
+#[tokio::test]
+async fn support_lifecycle_preserves_json_and_exact_retry_is_stable()
+-> Result<(), Box<dyn std::error::Error>> {
+    let server = MockServer::start().await;
+    let mut closed = ticket_value();
+    closed["status"] = serde_json::Value::String(String::from("closed"));
+    let reopened = ticket_value();
+    Mock::given(method("PATCH"))
+        .and(path(format!("/api/support/tickets/{TICKET_ID}")))
+        .and(header("authorization", "Bearer test-token"))
+        .and(body_json(serde_json::json!({"status": "closed"})))
+        .respond_with(ResponseTemplate::new(200).set_body_json(closed.clone()))
+        .expect(2)
+        .mount(&server)
+        .await;
+    Mock::given(method("PATCH"))
+        .and(path(format!("/api/support/tickets/{TICKET_ID}")))
+        .and(header("authorization", "Bearer test-token"))
+        .and(body_json(serde_json::json!({"status": "open"})))
+        .respond_with(ResponseTemplate::new(200).set_body_json(reopened.clone()))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let first = run_command(
+        &server,
+        ["logbrew", "support", "close", TICKET_ID],
+        "support-close-first",
+    )
+    .await?;
+    let retry = run_command(
+        &server,
+        ["logbrew", "support", "close", TICKET_ID],
+        "support-close-retry",
+    )
+    .await?;
+    assert_eq!(first, retry);
+    assert!(first.starts_with(&format!("Support ticket {TICKET_ID} closed\n")));
+    assert!(!first.contains("description-proof-sentinel"));
+    assert!(!first.contains("diagnostic-proof-sentinel"));
+
+    let json = run_command(
+        &server,
+        ["logbrew", "support", "reopen", TICKET_ID, "--json"],
+        "support-reopen-json",
+    )
+    .await?;
+    assert_eq!(serde_json::from_str::<serde_json::Value>(&json)?, reopened);
+    Ok(())
+}
+
+#[tokio::test]
+async fn support_lifecycle_uses_local_safe_404_and_422_recovery()
+-> Result<(), Box<dyn std::error::Error>> {
+    for (status, action, api_code, api_error, next) in [
+        (
+            404,
+            "close",
+            "not_found",
+            "support ticket not found",
+            "check the support ticket id and retry",
+        ),
+        (
+            422,
+            "reopen",
+            "validation_failed",
+            "invalid support request",
+            "check support command flags and retry",
+        ),
+    ] {
+        let server = MockServer::start().await;
+        Mock::given(method("PATCH"))
+            .and(path(format!("/api/support/tickets/{TICKET_ID}")))
+            .respond_with(
+                ResponseTemplate::new(status).set_body_json(serde_json::json!({
+                    "error": "private backend error proof",
+                    "code": "private_code_proof",
+                    "next": "private backend recovery proof",
+                    "internal": {"body": "private body proof"}
+                })),
+            )
+            .mount(&server)
+            .await;
+        let command = parse_command(["logbrew", "support", action, TICKET_ID, "--json"])?;
+        let env = authenticated_env(&server, "support-lifecycle-error");
+        let mut output = Vec::new();
+        let error = execute_command(&command, &env, &mut output)
+            .await
+            .expect_err("support lifecycle error fails");
+        write_runtime_error(&error, true, &mut output)?;
+        let text = String::from_utf8(output)?;
+        let body: serde_json::Value = serde_json::from_str(&text)?;
+        assert_eq!(body["status"], status);
+        assert_eq!(body["api_code"], api_code);
+        assert_eq!(body["api_error"], api_error);
+        assert_eq!(body["next"], next);
+        for hidden in [
+            "private backend error proof",
+            "private_code_proof",
+            "private backend recovery proof",
+            "private body proof",
+        ] {
+            assert!(!text.contains(hidden));
+        }
+    }
+    Ok(())
 }
 
 #[tokio::test]
@@ -372,7 +559,9 @@ async fn support_create_preserves_json_and_renders_concise_human_output()
     let human = run_command(&server, args, "support-create-human").await?;
     assert_eq!(
         human,
-        "Support ticket 9b2b4b3a-bd4e-4f85-a0f6-48118f037c17 created (open)\nCreated: 2026-07-14T07:00:00Z\nNext: track this ticket with logbrew support show\n"
+        format!(
+            "Support ticket {TICKET_ID} created (open)\nCreated: 2026-07-14T07:00:00Z\nNext: track this ticket with logbrew support show\n"
+        )
     );
     let json = run_command(
         &server,
@@ -479,9 +668,12 @@ async fn support_list_human_output_is_bounded_and_cursor_recovery_keeps_rows()
         "support-list-human",
     )
     .await?;
-    assert!(human.starts_with(
-        "Support tickets (1)\n- 9b2b4b3a-bd4e-4f85-a0f6-48118f037c17 open cli_issue Cursor output is unclear"
-    ));
+    assert!(
+        human.starts_with(
+            format!("Support tickets (1)\n- {TICKET_ID} open cli_issue Cursor output is unclear")
+                .as_str()
+        )
+    );
     assert!(human.contains("created=2026-07-14T07:00:00Z"));
     assert!(human.contains("project=123e4567-e89b-12d3-a456-426614174000"));
     assert!(human.contains("[cli@0.1.18 / production]"));
@@ -654,7 +846,7 @@ async fn support_terminal_cursor_and_detail_are_explicit_and_json_exact()
         "support-detail-human",
     )
     .await?;
-    assert!(human.starts_with("Support ticket 9b2b4b3a-bd4e-4f85-a0f6-48118f037c17 open\n"));
+    assert!(human.starts_with(format!("Support ticket {TICKET_ID} open\n").as_str()));
     assert!(human.contains("Category: cli_issue\n"));
     assert!(human.contains("Title: Cursor output is unclear\n"));
     assert!(!human.contains("description-proof-sentinel"));

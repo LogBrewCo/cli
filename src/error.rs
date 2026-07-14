@@ -110,6 +110,9 @@ pub enum CliError {
     /// Support-ticket category is unsupported.
     #[error("unknown support category")]
     UnknownSupportCategory,
+    /// Support-ticket identifier is not in the public `sup_` form.
+    #[error("invalid support ticket id")]
+    InvalidSupportTicketId,
     /// Project setup source is malformed.
     #[error("invalid setup source: {0}")]
     InvalidSetupSource(String),
@@ -350,6 +353,7 @@ const fn cli_error_code(error: &CliError) -> &'static str {
         CliError::InvalidIssueCursor(_) => "invalid_issue_cursor",
         CliError::InvalidSupportCursor(_) => "invalid_support_cursor",
         CliError::UnknownSupportCategory => "unknown_support_category",
+        CliError::InvalidSupportTicketId => "invalid_support_ticket_id",
         CliError::InvalidSetupSource(_) => "invalid_setup_source",
     }
 }
@@ -368,6 +372,9 @@ const fn cli_error_next_step(error: &CliError) -> &'static str {
         }
         CliError::UnknownSupportCategory => {
             "use sdk_install_failure, ingest_failure, auth_failure, project_setup, dashboard_issue, docs_confusion, cli_issue, mobile_issue, billing_question, or other"
+        }
+        CliError::InvalidSupportTicketId => {
+            "use the ticket_id returned by logbrew support create or list"
         }
         CliError::InvalidSetupSource(_) => "use --source api, cli, or sdk",
         CliError::MissingArgument { next, .. }

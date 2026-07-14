@@ -24,10 +24,12 @@ pub(super) fn path(target: &SupportTarget) -> String {
                 ("cursor_id", options.cursor_id.as_deref()),
             ],
         ),
-        SupportTarget::Detail(ticket_id) => format!(
-            "/api/support/tickets/{}",
-            super::encode_component(ticket_id)
-        ),
+        SupportTarget::Detail(ticket_id) | SupportTarget::UpdateStatus { ticket_id, .. } => {
+            format!(
+                "/api/support/tickets/{}",
+                super::encode_component(ticket_id)
+            )
+        }
     }
 }
 

@@ -46,3 +46,13 @@ fn is_uuid(value: &str) -> bool {
             || !matches!(index, 8 | 13 | 18 | 23) && byte.is_ascii_hexdigit()
     })
 }
+
+/// Returns whether a value is a canonical public support-ticket identifier.
+pub(crate) fn is_support_ticket_id(value: &str) -> bool {
+    value.strip_prefix("sup_").is_some_and(|raw| {
+        raw.len() == 32
+            && raw
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+    })
+}

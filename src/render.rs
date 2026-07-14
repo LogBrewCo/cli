@@ -1,5 +1,6 @@
 //! Human-readable API response rendering.
 
+use crate::ids::is_support_ticket_id;
 use crate::{
     Command, ExplainTarget, ReadOptions, ReadTarget, RuntimeError, SetTarget, SupportTarget,
     SupportTicketListOptions,
@@ -91,6 +92,9 @@ fn support_summary(target: &SupportTarget, value: &serde_json::Value) -> String 
         SupportTarget::List(options) => support_list_summary(options, value),
         SupportTarget::Detail(_) => {
             support_detail_summary(value).unwrap_or_else(invalid_support_response)
+        }
+        SupportTarget::UpdateStatus { status, .. } => {
+            support_lifecycle_summary(value, *status).unwrap_or_else(invalid_support_response)
         }
     }
 }
@@ -192,7 +196,7 @@ fn support_created_summary(value: &serde_json::Value) -> Option<String> {
     let status = required_support_field(value, "status", 64)?;
     let created_at = bounded_support_timestamp(field(value, "created_at")?)?;
     let next = bounded_display_text(field(value, "next")?, 240)?;
-    if !is_uuid(ticket_id) {
+    if !is_support_ticket_id(ticket_id) {
         return None;
     }
     validate_next_action(value.get("next_action")?)?;
@@ -233,7 +237,7 @@ fn support_list_summary(options: &SupportTicketListOptions, value: &serde_json::
             let Some(id) = field(cursor, "id") else {
                 return invalid_support_response();
             };
-            if !is_uuid(id) {
+            if !is_support_ticket_id(id) {
                 return invalid_support_response();
             }
             Some(Some((time, id)))
@@ -292,7 +296,7 @@ fn support_detail_summary(value: &serde_json::Value) -> Option<String> {
     let category = required_support_field(value, "category", 64)?;
     let title = bounded_display_text(field(value, "title")?, 120)?;
     let created_at = bounded_support_timestamp(field(value, "created_at")?)?;
-    if !is_uuid(ticket_id) {
+    if !is_support_ticket_id(ticket_id) {
         return None;
     }
     let mut output = format!(
@@ -318,6 +322,17 @@ fn support_detail_summary(value: &serde_json::Value) -> Option<String> {
     Some(output)
 }
 
+/// Builds one bounded lifecycle result and verifies the requested status won.
+fn support_lifecycle_summary(
+    value: &serde_json::Value,
+    expected: crate::SupportTicketLifecycleStatus,
+) -> Option<String> {
+    if field(value, "status")? != expected.as_str() {
+        return None;
+    }
+    support_detail_summary(value)
+}
+
 /// Formats one support-ticket list row without description or diagnostics.
 fn support_ticket_line(value: &serde_json::Value) -> Option<String> {
     let ticket_id = field(value, "ticket_id")?;
@@ -325,7 +340,7 @@ fn support_ticket_line(value: &serde_json::Value) -> Option<String> {
     let category = required_support_field(value, "category", 64)?;
     let title = bounded_display_text(field(value, "title")?, 120)?;
     let created_at = bounded_support_timestamp(field(value, "created_at")?)?;
-    if !is_uuid(ticket_id) {
+    if !is_support_ticket_id(ticket_id) {
         return None;
     }
     let mut output = format!("{ticket_id} {status} {category} {title} created={created_at}");

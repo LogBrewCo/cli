@@ -51,6 +51,8 @@ Usage:
   logbrew support create --category <category> --title <title> --description <description> [--json]
   logbrew support list [--status <status>] [--category <category>] [--json]
   logbrew support show <ticket_id> [--json]
+  logbrew support close <ticket_id> [--json]
+  logbrew support reopen <ticket_id> [--json]
   logbrew read logs [--severity error] [--search checkout] [--release <release>] [--environment \
                          production] [--since 24h] [--json]
   logbrew logs checkout failed [--severity error] [--release <release>] [--environment \
@@ -479,10 +481,13 @@ Usage:
                          [--category <category>] [--release <release>] [--limit 100] \
                          [--pagination cursor] [--json]
   logbrew support list [filters] --pagination cursor --cursor-time <RFC3339> \
-                         --cursor-id <uuid> [--json]
+                         --cursor-id <ticket_id> [--json]
   logbrew support show <ticket_id> [--json]
+  logbrew support close <ticket_id> [--json]
+  logbrew support reopen <ticket_id> [--json]
 
-Creates and reads authenticated account support tickets. Creation source is always cli.
+Creates, reads, closes, and reopens authenticated account support tickets. Creation source is \
+                         always cli.
 Categories: sdk_install_failure, ingest_failure, auth_failure, project_setup, dashboard_issue, \
                          docs_confusion, cli_issue, mobile_issue, billing_question, other.
 --diagnostics adds only binary, CLI version, operating system, and architecture. It never reads \

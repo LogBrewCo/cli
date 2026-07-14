@@ -445,6 +445,33 @@ pub enum SupportTarget {
     List(Box<SupportTicketListOptions>),
     /// Read one support ticket by public identifier.
     Detail(String),
+    /// Update one support ticket's public lifecycle status.
+    UpdateStatus {
+        /// Public ticket identifier.
+        ticket_id: String,
+        /// User-owned lifecycle status.
+        status: SupportTicketLifecycleStatus,
+    },
+}
+
+/// User-owned support-ticket lifecycle status.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SupportTicketLifecycleStatus {
+    /// Reopen a ticket.
+    Open,
+    /// Close a ticket.
+    Closed,
+}
+
+impl SupportTicketLifecycleStatus {
+    /// Returns the canonical API status value.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Open => "open",
+            Self::Closed => "closed",
+        }
+    }
 }
 
 /// Fields accepted when creating a support ticket.
@@ -621,10 +648,14 @@ impl Command {
                 target: SupportTarget::Create(_),
                 ..
             } => Some(HttpMethod::Post),
+            Self::Support {
+                target: SupportTarget::UpdateStatus { .. },
+                ..
+            }
+            | Self::Set { .. } => Some(HttpMethod::Patch),
             Self::Read { .. } | Self::Explain { .. } | Self::Support { .. } => {
                 Some(HttpMethod::Get)
             }
-            Self::Set { .. } => Some(HttpMethod::Patch),
             Self::Help { .. }
             | Self::Login { .. }
             | Self::Logout { .. }
@@ -654,6 +685,10 @@ impl Command {
                 target: SupportTarget::Create(options),
                 ..
             } => Some(support::create_body(options)),
+            Self::Support {
+                target: SupportTarget::UpdateStatus { status, .. },
+                ..
+            } => Some(serde_json::json!({"status": status.as_str()})),
             Self::Help { .. }
             | Self::Login { .. }
             | Self::Logout { .. }

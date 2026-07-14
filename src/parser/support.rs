@@ -3,7 +3,7 @@
 use super::unknown_resource;
 use crate::{
     CliError, Command, HelpTopic, SupportTarget, SupportTicketCreateOptions,
-    SupportTicketListOptions,
+    SupportTicketLifecycleStatus, SupportTicketListOptions,
 };
 
 /// Recovery shown for invalid support command shapes.
@@ -66,6 +66,8 @@ pub(super) fn parse_support(args: &[String]) -> Result<Command, CliError> {
         "create" => parse_create(tail),
         "list" | "tickets" => parse_list(tail),
         "show" | "ticket" => parse_detail(tail),
+        "close" => parse_lifecycle(tail, SupportTicketLifecycleStatus::Closed, "support close"),
+        "reopen" => parse_lifecycle(tail, SupportTicketLifecycleStatus::Open, "support reopen"),
         other => Err(unknown_resource(other, SUPPORT_NEXT_STEP)),
     }
 }
@@ -301,6 +303,9 @@ fn parse_detail(args: &[String]) -> Result<Command, CliError> {
             next: "provide a support ticket id",
         });
     }
+    if !crate::ids::is_support_ticket_id(ticket_id) {
+        return Err(CliError::InvalidSupportTicketId);
+    }
     let mut json = false;
     let mut seen = Vec::new();
     for value in tail {
@@ -319,8 +324,51 @@ fn parse_detail(args: &[String]) -> Result<Command, CliError> {
     })
 }
 
+/// Parses one public support-ticket lifecycle update.
+fn parse_lifecycle(
+    args: &[String],
+    status: SupportTicketLifecycleStatus,
+    command: &'static str,
+) -> Result<Command, CliError> {
+    let Some((ticket_id, tail)) = args.split_first() else {
+        return Err(CliError::MissingArgument {
+            argument: "ticket_id",
+            next: "provide a support ticket id",
+        });
+    };
+    if !crate::ids::is_support_ticket_id(ticket_id) {
+        return Err(CliError::InvalidSupportTicketId);
+    }
+    let mut json = false;
+    let mut seen = Vec::new();
+    for value in tail {
+        if value == "--json" {
+            mark_seen(&mut seen, "--json")?;
+            json = true;
+        } else if value.starts_with('-') {
+            return Err(unknown_flag(value));
+        } else {
+            return Err(unexpected_argument(value, command));
+        }
+    }
+    Ok(Command::Support {
+        target: SupportTarget::UpdateStatus {
+            ticket_id: ticket_id.clone(),
+            status,
+        },
+        json,
+    })
+}
+
 /// Validates the opt-in support cursor shape.
 fn validate_cursor(options: &SupportTicketListOptions) -> Result<(), CliError> {
+    if options
+        .cursor_id
+        .as_deref()
+        .is_some_and(|value| !crate::ids::is_support_ticket_id(value))
+    {
+        return Err(CliError::InvalidSupportTicketId);
+    }
     match (
         options.pagination.as_deref(),
         options.cursor_time.as_ref(),
