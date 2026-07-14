@@ -307,8 +307,8 @@ fn support_cursor_flags_fail_closed_and_followups_are_not_implemented() {
         assert_eq!(body["next"], CURSOR_RECOVERY);
     }
 
-    let error = parse_command(["logbrew", "support", "reply", TICKET_ID, "hello"])
-        .expect_err("follow-up API stays unavailable");
+    let error = parse_command(["logbrew", "support", "message", TICKET_ID, "hello"])
+        .expect_err("unapproved message API stays unavailable");
     let mut output = Vec::new();
     write_cli_error(&error, true, &mut output).expect("error writes");
     let body: serde_json::Value = serde_json::from_slice(&output).expect("valid JSON");
@@ -317,7 +317,7 @@ fn support_cursor_flags_fail_closed_and_followups_are_not_implemented() {
 }
 
 #[test]
-fn support_help_documents_create_list_detail_and_safe_diagnostics() {
+fn support_help_documents_context_reply_and_safe_diagnostics() {
     let Command::Help { topic, .. } =
         parse_command(["logbrew", "support", "--help"]).expect("support help parses")
     else {
@@ -333,8 +333,11 @@ fn support_help_documents_create_list_detail_and_safe_diagnostics() {
     assert!(!text.contains("--cursor-id <uuid>"));
     assert!(text.contains("--diagnostics"));
     assert!(text.contains("never reads arbitrary environment variables or files"));
-    assert!(!text.contains("reply"));
-    assert!(!text.contains("message"));
+    assert!(text.contains("support context <ticket_id>"));
+    assert!(text.contains("support reply <ticket_id>"));
+    assert!(text.contains("--retry-key <key>"));
+    assert!(!text.contains("support message"));
+    assert!(text.contains("Chat, messages, and internal notes are not part"));
 }
 
 #[test]

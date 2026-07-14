@@ -1,6 +1,6 @@
 //! Privacy-bounded support-ticket request helpers.
 
-use crate::{SupportTarget, SupportTicketCreateOptions};
+use crate::{SupportContextReplyOptions, SupportTarget, SupportTicketCreateOptions};
 
 /// Builds the public support-ticket endpoint for one operation.
 #[expect(
@@ -30,7 +30,29 @@ pub(super) fn path(target: &SupportTarget) -> String {
                 super::encode_component(ticket_id)
             )
         }
+        SupportTarget::ContextHistory { ticket_id } => format!(
+            "/api/support/tickets/{}/context",
+            super::encode_component(ticket_id)
+        ),
+        SupportTarget::ReplyContext(options) => format!(
+            "/api/support/tickets/{}/context",
+            super::encode_component(options.ticket_id.as_str())
+        ),
     }
+}
+
+/// Builds the strict support-context reply body.
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "the parent command executor consumes this private-module helper"
+)]
+pub(super) fn context_body(options: &SupportContextReplyOptions) -> serde_json::Value {
+    let mut body = serde_json::Map::new();
+    insert_string(&mut body, "context", options.context.as_str());
+    if options.diagnostics {
+        drop(body.insert(String::from("diagnostics"), generated_diagnostics()));
+    }
+    serde_json::Value::Object(body)
 }
 
 /// Builds a support-ticket create body with fixed CLI source metadata.
@@ -74,7 +96,7 @@ fn generated_diagnostics() -> serde_json::Value {
     clippy::redundant_pub_crate,
     reason = "the parent command executor consumes this private-module helper"
 )]
-pub(super) fn safe_error_body(status: u16) -> String {
+pub(super) fn safe_error_body(target: &SupportTarget, status: u16) -> String {
     let (error, code, next, action_code, action_target) = match status {
         400 | 422 => (
             "invalid support request",
@@ -95,6 +117,20 @@ pub(super) fn safe_error_body(status: u16) -> String {
             "not_found",
             "check the support ticket id and retry",
             "fix_request",
+            "support_ticket",
+        ),
+        409 if matches!(target, SupportTarget::ReplyContext(_)) => (
+            "support context conflict",
+            "support_context_conflict",
+            "read support context; reply only when provide_context is requested, and use a new retry key if the context changed",
+            "inspect_support_context",
+            "support_context",
+        ),
+        409 => (
+            "support request conflict",
+            "support_conflict",
+            "inspect the support ticket and retry",
+            "inspect_support_ticket",
             "support_ticket",
         ),
         429 => (
@@ -210,6 +246,7 @@ fn insert_optional(
 #[cfg(test)]
 mod tests {
     use super::{safe_error_body, sanitize_diagnostics};
+    use crate::{SupportContextReplyOptions, SupportTarget};
 
     #[test]
     fn diagnostics_remove_sensitive_keys_and_redact_sensitive_values() {
@@ -242,11 +279,24 @@ mod tests {
 
     #[test]
     fn support_error_body_uses_local_guidance_instead_of_backend_text() {
-        let safe = safe_error_body(422);
+        let target = SupportTarget::Detail(String::from("sup_9b2b4b3abd4e4f85a0f648118f037c17"));
+        let safe = safe_error_body(&target, 422);
         let value: serde_json::Value = serde_json::from_str(&safe).expect("safe JSON");
         assert_eq!(value["code"], "validation_failed");
         assert_eq!(value["error"], "invalid support request");
         assert_eq!(value["next"], "check support command flags and retry");
         assert_eq!(value["next_action"]["code"], "fix_request");
+    }
+
+    #[test]
+    fn support_conflicts_are_scoped_to_context_replies() {
+        let detail = SupportTarget::Detail(String::from("sup_9b2b4b3abd4e4f85a0f648118f037c17"));
+        let reply = SupportTarget::ReplyContext(Box::new(SupportContextReplyOptions::default()));
+        let detail_body: serde_json::Value =
+            serde_json::from_str(&safe_error_body(&detail, 409)).expect("safe detail JSON");
+        let reply_body: serde_json::Value =
+            serde_json::from_str(&safe_error_body(&reply, 409)).expect("safe reply JSON");
+        assert_eq!(detail_body["code"], "support_conflict");
+        assert_eq!(reply_body["code"], "support_context_conflict");
     }
 }

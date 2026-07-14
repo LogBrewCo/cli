@@ -445,6 +445,13 @@ pub enum SupportTarget {
     List(Box<SupportTicketListOptions>),
     /// Read one support ticket by public identifier.
     Detail(String),
+    /// Read public context history for one support ticket.
+    ContextHistory {
+        /// Public ticket identifier.
+        ticket_id: String,
+    },
+    /// Add requested context to one support ticket.
+    ReplyContext(Box<SupportContextReplyOptions>),
     /// Update one support ticket's public lifecycle status.
     UpdateStatus {
         /// Public ticket identifier.
@@ -452,6 +459,19 @@ pub enum SupportTarget {
         /// User-owned lifecycle status.
         status: SupportTicketLifecycleStatus,
     },
+}
+
+/// Fields accepted when replying with requested support context.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SupportContextReplyOptions {
+    /// Public ticket identifier.
+    pub ticket_id: String,
+    /// User-provided support context.
+    pub context: String,
+    /// Required idempotency key used for exact retries.
+    pub retry_key: String,
+    /// Include bounded locally generated diagnostics.
+    pub diagnostics: bool,
 }
 
 /// User-owned support-ticket lifecycle status.
@@ -647,6 +667,10 @@ impl Command {
             | Self::Support {
                 target: SupportTarget::Create(_),
                 ..
+            }
+            | Self::Support {
+                target: SupportTarget::ReplyContext(_),
+                ..
             } => Some(HttpMethod::Post),
             Self::Support {
                 target: SupportTarget::UpdateStatus { .. },
@@ -686,6 +710,10 @@ impl Command {
                 ..
             } => Some(support::create_body(options)),
             Self::Support {
+                target: SupportTarget::ReplyContext(options),
+                ..
+            } => Some(support::context_body(options)),
+            Self::Support {
                 target: SupportTarget::UpdateStatus { status, .. },
                 ..
             } => Some(serde_json::json!({"status": status.as_str()})),
@@ -698,6 +726,28 @@ impl Command {
             | Self::Read { .. }
             | Self::Watch { .. }
             | Self::Explain { .. }
+            | Self::Support { .. } => None,
+        }
+    }
+
+    /// Returns an idempotency key for support context replies.
+    fn idempotency_key(&self) -> Option<&str> {
+        match self {
+            Self::Support {
+                target: SupportTarget::ReplyContext(options),
+                ..
+            } => Some(options.retry_key.as_str()),
+            Self::Help { .. }
+            | Self::Login { .. }
+            | Self::Logout { .. }
+            | Self::Setup { .. }
+            | Self::Status { .. }
+            | Self::Version { .. }
+            | Self::Read { .. }
+            | Self::Watch { .. }
+            | Self::Explain { .. }
+            | Self::Set { .. }
+            | Self::ProjectSetupSeen { .. }
             | Self::Support { .. } => None,
         }
     }
@@ -838,17 +888,26 @@ async fn execute_http<W: std::io::Write>(
         .connect_timeout(std::time::Duration::from_secs(10))
         .build()?;
 
-    let (response, credential) =
-        send_authenticated_with_refresh(&client, env, |client, credential| {
-            build_command_request(client, command, url.as_str(), credential)
-        })
-        .await?;
+    let support_command = matches!(command, Command::Support { .. });
+    let response_result = send_authenticated_with_refresh(&client, env, |client, credential| {
+        build_command_request(client, command, url.as_str(), credential)
+    })
+    .await;
+    let (response, credential) = match response_result {
+        Ok(response) => response,
+        Err(RuntimeError::Http(_)) if support_command => return Err(support_transport_error()),
+        Err(error) => return Err(error),
+    };
     let status = response.status();
-    let body = response.text().await?;
+    let body = match response.text().await {
+        Ok(body) => body,
+        Err(_) if support_command => return Err(support_transport_error()),
+        Err(error) => return Err(RuntimeError::Http(error)),
+    };
 
     if !status.is_success() {
-        let body = if matches!(command, Command::Support { .. }) {
-            support::safe_error_body(status.as_u16())
+        let body = if let Command::Support { target, .. } = command {
+            support::safe_error_body(target, status.as_u16())
         } else {
             credential.redact_response_body(body.as_str())
         };
@@ -862,6 +921,14 @@ async fn execute_http<W: std::io::Write>(
 
     write_api_success(command, body.as_str(), output)?;
     Ok(())
+}
+
+/// Returns a fixed, path-free support transport failure.
+const fn support_transport_error() -> RuntimeError {
+    RuntimeError::Unavailable {
+        message: "support request could not be completed",
+        next: "check network connectivity and retry the support command",
+    }
 }
 
 /// Builds one command request with the supplied credential.
@@ -879,6 +946,9 @@ fn build_command_request(
     .bearer_auth(credential.token());
     if let Some(body) = command.request_body_for_token(Some(credential.token())) {
         request = request.json(&body);
+    }
+    if let Some(key) = command.idempotency_key() {
+        request = request.header("Idempotency-Key", key);
     }
     request
 }

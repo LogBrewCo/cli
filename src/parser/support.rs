@@ -2,8 +2,8 @@
 
 use super::unknown_resource;
 use crate::{
-    CliError, Command, HelpTopic, SupportTarget, SupportTicketCreateOptions,
-    SupportTicketLifecycleStatus, SupportTicketListOptions,
+    CliError, Command, HelpTopic, SupportContextReplyOptions, SupportTarget,
+    SupportTicketCreateOptions, SupportTicketLifecycleStatus, SupportTicketListOptions,
 };
 
 /// Recovery shown for invalid support command shapes.
@@ -66,10 +66,124 @@ pub(super) fn parse_support(args: &[String]) -> Result<Command, CliError> {
         "create" => parse_create(tail),
         "list" | "tickets" => parse_list(tail),
         "show" | "ticket" => parse_detail(tail),
+        "context" => parse_context_history(tail),
+        "reply" => parse_context_reply(tail),
         "close" => parse_lifecycle(tail, SupportTicketLifecycleStatus::Closed, "support close"),
         "reopen" => parse_lifecycle(tail, SupportTicketLifecycleStatus::Open, "support reopen"),
         other => Err(unknown_resource(other, SUPPORT_NEXT_STEP)),
     }
+}
+
+/// Parses one support context history read.
+fn parse_context_history(args: &[String]) -> Result<Command, CliError> {
+    let (ticket_id, json) = parse_ticket_id_and_json(args)?;
+    Ok(Command::Support {
+        target: SupportTarget::ContextHistory { ticket_id },
+        json,
+    })
+}
+
+/// Parses one idempotent support context reply.
+fn parse_context_reply(args: &[String]) -> Result<Command, CliError> {
+    let Some((ticket_id, tail)) = args.split_first() else {
+        return Err(CliError::MissingArgument {
+            argument: "ticket_id",
+            next: "provide a support ticket id",
+        });
+    };
+    if !crate::ids::is_support_ticket_id(ticket_id) {
+        return Err(CliError::InvalidSupportTicketId);
+    }
+
+    let mut options = SupportContextReplyOptions {
+        ticket_id: ticket_id.clone(),
+        ..SupportContextReplyOptions::default()
+    };
+    let mut json = false;
+    let mut seen = Vec::new();
+    let mut index = 0;
+    while let Some(raw) = tail.get(index) {
+        let (flag, inline_value) = split_flag(raw);
+        match flag {
+            "--context" => {
+                options.context = take_support_reply_value(
+                    tail,
+                    &mut index,
+                    inline_value,
+                    &mut seen,
+                    "--context",
+                    "--context",
+                )?;
+            }
+            "--retry-key" | "--idempotency-key" => {
+                options.retry_key = take_support_reply_value(
+                    tail,
+                    &mut index,
+                    inline_value,
+                    &mut seen,
+                    "--retry-key",
+                    if flag == "--idempotency-key" {
+                        "--idempotency-key"
+                    } else {
+                        "--retry-key"
+                    },
+                )?;
+            }
+            "--diagnostics" => {
+                reject_inline(inline_value, "--diagnostics")?;
+                mark_seen(&mut seen, "--diagnostics")?;
+                options.diagnostics = true;
+            }
+            "--json" => {
+                reject_inline(inline_value, "--json")?;
+                mark_seen(&mut seen, "--json")?;
+                json = true;
+            }
+            _ => return Err(CliError::InvalidSupportContextReply),
+        }
+        index += 1;
+    }
+    let context = options.context.trim().to_owned();
+    if !(1..=4000).contains(&context.chars().count()) {
+        return Err(CliError::InvalidSupportContext);
+    }
+    options.context = context;
+    if !(1..=128).contains(&options.retry_key.len())
+        || !options
+            .retry_key
+            .bytes()
+            .all(|byte| matches!(byte, b'!'..=b'~'))
+    {
+        return Err(CliError::InvalidSupportRetryKey);
+    }
+    Ok(Command::Support {
+        target: SupportTarget::ReplyContext(Box::new(options)),
+        json,
+    })
+}
+
+/// Parses one exact public ticket id followed only by optional JSON output.
+fn parse_ticket_id_and_json(args: &[String]) -> Result<(String, bool), CliError> {
+    let Some((ticket_id, tail)) = args.split_first() else {
+        return Err(CliError::MissingArgument {
+            argument: "ticket_id",
+            next: "provide a support ticket id",
+        });
+    };
+    if !crate::ids::is_support_ticket_id(ticket_id) {
+        return Err(CliError::InvalidSupportTicketId);
+    }
+    let mut json = false;
+    let mut seen = Vec::new();
+    for value in tail {
+        if value == "--json" {
+            mark_seen(&mut seen, "--json")?;
+            json = true;
+        } else {
+            return Err(CliError::InvalidSupportContextCommand);
+        }
+    }
+    Ok((ticket_id.clone(), json))
 }
 
 /// Parses support-ticket creation flags.
@@ -454,6 +568,30 @@ fn take_flag_value(
     }
 }
 
+/// Reads one context-reply value across the full public string domain.
+fn take_support_reply_value(
+    args: &[String],
+    index: &mut usize,
+    inline_value: Option<&str>,
+    seen: &mut Vec<&'static str>,
+    canonical_flag: &'static str,
+    visible_flag: &'static str,
+) -> Result<String, CliError> {
+    mark_seen(seen, canonical_flag)?;
+    let value = inline_value.unwrap_or_else(|| {
+        *index += 1;
+        args.get(*index).map_or("", String::as_str)
+    });
+    if value.is_empty() {
+        Err(CliError::MissingFlagValue {
+            flag: visible_flag,
+            next: missing_value_next(visible_flag),
+        })
+    } else {
+        Ok(value.to_owned())
+    }
+}
+
 /// Rejects `--flag=value` for valueless flags.
 fn reject_inline(value: Option<&str>, flag: &'static str) -> Result<(), CliError> {
     if value.is_some() {
@@ -530,6 +668,9 @@ fn missing_value_next(flag: &'static str) -> &'static str {
         "--pagination" => "provide a value after --pagination",
         "--cursor-time" => "provide a value after --cursor-time",
         "--cursor-id" => "provide a value after --cursor-id",
+        "--context" => "provide a value after --context",
+        "--retry-key" => "provide a value after --retry-key",
+        "--idempotency-key" => "provide a value after --idempotency-key",
         _ => "provide a value after the flag",
     }
 }

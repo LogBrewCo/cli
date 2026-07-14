@@ -56,3 +56,13 @@ pub(crate) fn is_support_ticket_id(value: &str) -> bool {
                 .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
     })
 }
+
+/// Returns whether a value is a canonical public support-context identifier.
+pub(crate) fn is_support_context_id(value: &str) -> bool {
+    value.strip_prefix("ctx_").is_some_and(|raw| {
+        raw.len() == 32
+            && raw
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+    })
+}

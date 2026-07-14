@@ -51,6 +51,8 @@ Usage:
   logbrew support create --category <category> --title <title> --description <description> [--json]
   logbrew support list [--status <status>] [--category <category>] [--json]
   logbrew support show <ticket_id> [--json]
+  logbrew support context <ticket_id> [--json]
+  logbrew support reply <ticket_id> --context <text> --retry-key <key> [--diagnostics] [--json]
   logbrew support close <ticket_id> [--json]
   logbrew support reopen <ticket_id> [--json]
   logbrew read logs [--severity error] [--search checkout] [--release <release>] [--environment \
@@ -483,10 +485,13 @@ Usage:
   logbrew support list [filters] --pagination cursor --cursor-time <RFC3339> \
                          --cursor-id <ticket_id> [--json]
   logbrew support show <ticket_id> [--json]
+  logbrew support context <ticket_id> [--json]
+  logbrew support reply <ticket_id> --context <text> --retry-key <key> [--diagnostics] [--json]
   logbrew support close <ticket_id> [--json]
   logbrew support reopen <ticket_id> [--json]
 
-Creates, reads, closes, and reopens authenticated account support tickets. Creation source is \
+Creates, reads, adds requested context to, closes, and reopens authenticated account support \
+                         tickets. Creation source is \
                          always cli.
 Categories: sdk_install_failure, ingest_failure, auth_failure, project_setup, dashboard_issue, \
                          docs_confusion, cli_issue, mobile_issue, billing_question, other.
@@ -494,4 +499,5 @@ Categories: sdk_install_failure, ingest_failure, auth_failure, project_setup, da
                          arbitrary environment variables or files.
 Cursor continuations repeat --pagination cursor, all active filters, and the paired cursor from \
                          next_cursor. JSON preserves the server response exactly.
-Ticket follow-ups are not part of this command.";
+Context replies require a retry key. Reuse the key only when retrying the exact same context. \
+                         Chat, messages, and internal notes are not part of this command.";

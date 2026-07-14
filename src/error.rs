@@ -113,6 +113,18 @@ pub enum CliError {
     /// Support-ticket identifier is not in the public `sup_` form.
     #[error("invalid support ticket id")]
     InvalidSupportTicketId,
+    /// Support context retry key cannot be sent as an HTTP header value.
+    #[error("invalid support retry key")]
+    InvalidSupportRetryKey,
+    /// Support context reply syntax is malformed.
+    #[error("invalid support context reply")]
+    InvalidSupportContextReply,
+    /// Support context history syntax is malformed.
+    #[error("invalid support context command")]
+    InvalidSupportContextCommand,
+    /// Support context text is blank or exceeds the public limit.
+    #[error("invalid support context")]
+    InvalidSupportContext,
     /// Project setup source is malformed.
     #[error("invalid setup source: {0}")]
     InvalidSetupSource(String),
@@ -354,6 +366,10 @@ const fn cli_error_code(error: &CliError) -> &'static str {
         CliError::InvalidSupportCursor(_) => "invalid_support_cursor",
         CliError::UnknownSupportCategory => "unknown_support_category",
         CliError::InvalidSupportTicketId => "invalid_support_ticket_id",
+        CliError::InvalidSupportRetryKey => "invalid_support_retry_key",
+        CliError::InvalidSupportContextReply => "invalid_support_context_reply",
+        CliError::InvalidSupportContextCommand => "invalid_support_context_command",
+        CliError::InvalidSupportContext => "invalid_support_context",
         CliError::InvalidSetupSource(_) => "invalid_setup_source",
     }
 }
@@ -375,6 +391,18 @@ const fn cli_error_next_step(error: &CliError) -> &'static str {
         }
         CliError::InvalidSupportTicketId => {
             "use the ticket_id returned by logbrew support create or list"
+        }
+        CliError::InvalidSupportRetryKey => {
+            "use --retry-key with 1 to 128 visible ASCII characters and reuse it only for an exact retry"
+        }
+        CliError::InvalidSupportContextReply => {
+            "use support reply <ticket_id> --context <text> --retry-key <key>"
+        }
+        CliError::InvalidSupportContextCommand => {
+            "use support context <ticket_id> with optional --json"
+        }
+        CliError::InvalidSupportContext => {
+            "use --context with 1 to 4000 characters after trimming whitespace"
         }
         CliError::InvalidSetupSource(_) => "use --source api, cli, or sdk",
         CliError::MissingArgument { next, .. }

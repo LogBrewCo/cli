@@ -1,6 +1,6 @@
 //! Human-readable API response rendering.
 
-use crate::ids::is_support_ticket_id;
+use crate::ids::{is_support_context_id, is_support_ticket_id};
 use crate::{
     Command, ExplainTarget, ReadOptions, ReadTarget, RuntimeError, SetTarget, SupportTarget,
     SupportTicketListOptions,
@@ -19,6 +19,17 @@ enum OptionalSupportField {
     Missing,
     /// Field contains bounded display text.
     Present(String),
+}
+
+/// Valid public support ticket state and next-action combinations.
+#[derive(Clone, Copy)]
+enum SupportContextState {
+    /// The owner must provide more context.
+    ProvideContext,
+    /// Support owns the next update.
+    AwaitOwnerUpdate,
+    /// The ticket is no longer active.
+    Complete,
 }
 
 /// Writes successful API output for JSON or human command modes.
@@ -93,8 +104,181 @@ fn support_summary(target: &SupportTarget, value: &serde_json::Value) -> String 
         SupportTarget::Detail(_) => {
             support_detail_summary(value).unwrap_or_else(invalid_support_response)
         }
+        SupportTarget::ContextHistory { ticket_id } => {
+            support_context_history_summary(value, ticket_id)
+                .unwrap_or_else(invalid_support_response)
+        }
+        SupportTarget::ReplyContext(options) => {
+            support_context_reply_summary(value, options.ticket_id.as_str())
+                .unwrap_or_else(invalid_support_response)
+        }
         SupportTarget::UpdateStatus { status, .. } => {
             support_lifecycle_summary(value, *status).unwrap_or_else(invalid_support_response)
+        }
+    }
+}
+
+/// Builds privacy-bounded context history without rendering context or diagnostics.
+fn support_context_history_summary(
+    value: &serde_json::Value,
+    expected_ticket_id: &str,
+) -> Option<String> {
+    if !has_exact_object_keys(
+        value,
+        &["ticket_id", "status", "contexts", "next", "next_action"],
+    ) {
+        return None;
+    }
+    let ticket_id = field(value, "ticket_id")?;
+    let status = field(value, "status")?;
+    let contexts = value.get("contexts")?.as_array()?;
+    let _next = value.get("next")?.as_str()?;
+    let state = support_context_state(status, value.get("next_action")?)?;
+    if !is_support_ticket_id(ticket_id) || ticket_id != expected_ticket_id {
+        return None;
+    }
+
+    let mut lines = Vec::with_capacity(contexts.len().min(SUPPORT_HUMAN_ROW_LIMIT));
+    for (index, item) in contexts.iter().enumerate() {
+        let line = support_context_line(item)?;
+        if index < SUPPORT_HUMAN_ROW_LIMIT {
+            lines.push(line);
+        }
+    }
+    let mut output = format!("Support context for {ticket_id}\n");
+    if contexts.is_empty() {
+        output.push_str("No support context has been added.\n");
+    } else {
+        for line in lines {
+            output.push_str("- ");
+            output.push_str(line.as_str());
+            output.push('\n');
+        }
+        if contexts.len() > SUPPORT_HUMAN_ROW_LIMIT {
+            output.push_str(
+                format!(
+                    "Showing first {SUPPORT_HUMAN_ROW_LIMIT} of {} context entries.\n",
+                    contexts.len()
+                )
+                .as_str(),
+            );
+        }
+    }
+    append_support_context_next(&mut output, state, ticket_id);
+    Some(output)
+}
+
+/// Validates one complete context item and returns only its safe display metadata.
+fn support_context_line(item: &serde_json::Value) -> Option<String> {
+    if !has_exact_object_keys(
+        item,
+        &["context_id", "context", "diagnostics", "created_at"],
+    ) {
+        return None;
+    }
+    let object = item.as_object()?;
+    let context_id = field(item, "context_id")?;
+    let context = field(item, "context")?;
+    let created_at = bounded_support_timestamp(field(item, "created_at")?)?;
+    if !is_support_context_id(context_id) {
+        return None;
+    }
+    let context_chars = context.chars().count();
+    if context.trim() != context || !(1..=4000).contains(&context_chars) {
+        return None;
+    }
+    let diagnostics = match object.get("diagnostics")? {
+        serde_json::Value::Object(_) => "yes",
+        serde_json::Value::Null => "no",
+        serde_json::Value::Bool(_)
+        | serde_json::Value::Number(_)
+        | serde_json::Value::String(_)
+        | serde_json::Value::Array(_) => return None,
+    };
+    Some(format!(
+        "{context_id} created={created_at} context_chars={context_chars} diagnostics={diagnostics}"
+    ))
+}
+
+/// Builds a privacy-bounded context reply result using only public identifiers.
+fn support_context_reply_summary(
+    value: &serde_json::Value,
+    expected_ticket_id: &str,
+) -> Option<String> {
+    if !has_exact_object_keys(
+        value,
+        &[
+            "ticket_id",
+            "context_id",
+            "status",
+            "created_at",
+            "next",
+            "next_action",
+        ],
+    ) {
+        return None;
+    }
+    let ticket_id = field(value, "ticket_id")?;
+    let context_id = field(value, "context_id")?;
+    let status = field(value, "status")?;
+    let created_at = bounded_support_timestamp(field(value, "created_at")?)?;
+    let _next = value.get("next")?.as_str()?;
+    let state = support_context_state(status, value.get("next_action")?)?;
+    if !is_support_ticket_id(ticket_id)
+        || ticket_id != expected_ticket_id
+        || !is_support_context_id(context_id)
+    {
+        return None;
+    }
+    let mut output =
+        format!("Support context {context_id} added to {ticket_id}\nCreated: {created_at}\n");
+    append_support_context_next(&mut output, state, ticket_id);
+    Some(output)
+}
+
+/// Returns whether an object contains exactly the required keys.
+fn has_exact_object_keys(value: &serde_json::Value, keys: &[&str]) -> bool {
+    value.as_object().is_some_and(|object| {
+        object.len() == keys.len() && keys.iter().all(|key| object.contains_key(*key))
+    })
+}
+
+/// Validates the exact public support state and next-action pair.
+fn support_context_state(status: &str, value: &serde_json::Value) -> Option<SupportContextState> {
+    has_exact_object_keys(value, &["code", "target"]).then_some(())?;
+    let code = field(value, "code")?;
+    let target = field(value, "target")?;
+    match (status, code, target) {
+        ("waiting_on_user", "provide_context", "support_ticket") => {
+            Some(SupportContextState::ProvideContext)
+        }
+        ("open" | "routed" | "in_progress", "await_owner_update", "support_ticket") => {
+            Some(SupportContextState::AwaitOwnerUpdate)
+        }
+        ("resolved" | "closed", "open_new_ticket_if_needed", "support") => {
+            Some(SupportContextState::Complete)
+        }
+        _ => None,
+    }
+}
+
+/// Adds fixed local recovery for one validated support state.
+fn append_support_context_next(output: &mut String, state: SupportContextState, ticket_id: &str) {
+    match state {
+        SupportContextState::ProvideContext => {
+            output.push_str("Next: reply with logbrew support reply ");
+            output.push_str(ticket_id);
+            output.push_str(" --context <text> --retry-key <key>\n");
+        }
+        SupportContextState::AwaitOwnerUpdate => {
+            output.push_str("Next: wait for a support update; inspect context history with logbrew support context ");
+            output.push_str(ticket_id);
+            output.push('\n');
+        }
+        SupportContextState::Complete => {
+            output.push_str(
+                "Next: open a new support ticket with logbrew support create if more help is needed.\n",
+            );
         }
     }
 }
