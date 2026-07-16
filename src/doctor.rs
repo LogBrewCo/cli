@@ -1,4 +1,4 @@
-//! Bounded, read-only project setup diagnostics.
+//! Bounded, read-only project diagnostics.
 
 use crate::auth::send_authenticated_without_refresh;
 use crate::{CliEnvironment, RuntimeError, path_with_query};
@@ -28,23 +28,29 @@ struct DoctorReport {
     auth: DoctorCheck,
     /// Selected project ownership/usability check.
     project: DoctorCheck,
+    /// Active project ingest-key check.
+    ingest_key: DoctorCheck,
     /// Backend-owned setup progress check.
     setup: DoctorCheck,
-    /// Cheap recent-log check.
+    /// Cross-stream telemetry progress check.
     telemetry: DoctorCheck,
+    /// Optional newest-log visibility check.
+    logs: DoctorCheck,
     /// One prioritized recovery or follow-up.
     next: &'static str,
 }
 
 impl DoctorReport {
-    /// Returns the checks in their stable execution order.
-    const fn checks(&self) -> [DoctorCheck; 5] {
+    /// Returns the checks in their stable display order.
+    const fn checks(&self) -> [DoctorCheck; 7] {
         [
             self.api,
             self.auth,
             self.project,
+            self.ingest_key,
             self.setup,
             self.telemetry,
+            self.logs,
         ]
     }
 
@@ -55,71 +61,124 @@ impl DoctorReport {
     }
 }
 
-/// Valid backend setup progress after exact response validation.
+/// Canonical backend-owned project readiness state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProjectState {
+    /// The project needs an active ingest key.
+    NeedsIngestKey,
+    /// The project needs a setup path or acknowledgement.
+    NeedsSetup,
+    /// Setup is acknowledged but no telemetry has arrived.
+    NeedsTelemetry,
+    /// The project is ready for telemetry investigation.
+    Ready,
+}
+
+impl ProjectState {
+    /// Stable machine value exposed by the CLI report.
+    const fn key(self) -> &'static str {
+        match self {
+            Self::NeedsIngestKey => "needs_ingest_key",
+            Self::NeedsSetup => "needs_setup",
+            Self::NeedsTelemetry => "needs_telemetry",
+            Self::Ready => "ready",
+        }
+    }
+
+    /// Fixed CLI-owned prioritized recovery or follow-up.
+    const fn next(self) -> &'static str {
+        match self {
+            Self::NeedsIngestKey => {
+                "create an ingest key for this project, then rerun logbrew doctor --project <project_id>"
+            }
+            Self::NeedsSetup => "choose an SDK or CLI setup path for this project",
+            Self::NeedsTelemetry => "send the first telemetry event for this project",
+            Self::Ready => "inspect recent project logs, issues, actions, releases, or traces",
+        }
+    }
+
+    /// Exact deployed next-action pair for this state.
+    const fn action(self) -> (&'static str, &'static str) {
+        match self {
+            Self::NeedsIngestKey => ("create_ingest_key", "project_ingest_keys"),
+            Self::NeedsSetup => ("choose_setup_path", "project_setup"),
+            Self::NeedsTelemetry => ("send_first_telemetry", "telemetry_ingest"),
+            Self::Ready => ("inspect_recent_telemetry", "telemetry_reads"),
+        }
+    }
+}
+
+/// Valid setup progress after exact doctor-response validation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SetupProgress {
     /// Project exists but setup has not started.
     NotStarted,
-    /// A setup path was selected but explicit acknowledgement is not proven.
+    /// A setup path was selected without explicit acknowledgement.
     PathSelected,
-    /// The setup-seen acknowledgement is recorded without telemetry.
+    /// Setup acknowledgement is recorded without telemetry.
     Acknowledged,
     /// Real telemetry proves setup is operational.
     Operational,
 }
 
-/// Safe outcome from one authenticated diagnostic GET.
+/// Safe fields retained from the exact doctor response.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct DoctorSnapshot {
+    /// Canonical readiness state.
+    state: ProjectState,
+    /// Whether an active ingest key exists.
+    has_active_ingest_key: bool,
+    /// Validated setup progress.
+    setup: SetupProgress,
+    /// Whether first telemetry has been observed.
+    telemetry_seen: bool,
+}
+
+/// Result of the authoritative doctor read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DoctorOutcome {
+    /// Exact 200 response was accepted.
+    Success(DoctorSnapshot),
+    /// No local or environment account credential is available.
+    MissingAuth,
+    /// The account credential was rejected.
+    AuthInvalid,
+    /// The project is absent or owner-hidden.
+    ProjectMissing,
+    /// The server returned a valid typed failure.
+    Failed,
+    /// A success or error response violated its public contract.
+    InvalidResponse,
+    /// No safe HTTP response was received.
+    TransportFailed,
+}
+
+/// Result of the optional newest-log visibility probe.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LogsOutcome {
+    /// At least one retained log is visible.
+    Visible,
+    /// No retained log is visible.
+    Empty,
+    /// The credential was rejected after the doctor read.
+    AuthInvalid,
+    /// The server returned a valid typed failure.
+    Failed,
+    /// The response violated the public logs contract.
+    InvalidResponse,
+    /// No safe HTTP response was received.
+    TransportFailed,
+}
+
+/// Safe result of sending one authenticated GET without refresh.
 #[derive(Debug)]
 enum AuthenticatedGet {
-    /// Server returned a response.
+    /// Server returned an HTTP response.
     Response(reqwest::Response),
     /// No usable account credential is available.
-    Unauthorized,
-    /// The read failed without a safe server response.
+    MissingAuth,
+    /// The request failed without a safe response.
     Failed,
-}
-
-/// Result of validating the account-auth read.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum AccountOutcome {
-    /// Current effective account auth is valid.
-    Valid,
-    /// Current credentials are missing or rejected.
-    Invalid,
-    /// The account read or response contract failed.
-    Failed,
-    /// The server returned a malformed or unrecognized response.
-    InvalidResponse,
-}
-
-/// Result of validating the selected project setup read.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SetupOutcome {
-    /// Project is usable with validated setup progress.
-    Usable(SetupProgress),
-    /// Credentials were rejected during the setup read.
-    AuthInvalid,
-    /// Project is missing or unavailable to this account.
-    Missing,
-    /// The setup read or response contract failed.
-    Failed,
-    /// The server returned a malformed or unrecognized response.
-    InvalidResponse,
-}
-
-/// Result of validating the recent-log probe.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum TelemetryOutcome {
-    /// At least one retained log exists for the project.
-    Visible,
-    /// No retained log exists for the project.
-    Empty,
-    /// Credentials were rejected during the log read.
-    AuthInvalid,
-    /// The log read or response contract failed.
-    Failed,
-    /// The server returned a malformed or unrecognized response.
-    InvalidResponse,
 }
 
 /// Executes the bounded project diagnostic and writes one deterministic report.
@@ -140,77 +199,29 @@ pub async fn execute<W: std::io::Write>(
     write_report(&report, json, output)
 }
 
-/// Runs the ordered diagnostic and stops after the first blocker.
+/// Runs the authoritative read, then the non-authoritative log visibility probe.
 async fn run_checks(
     client: &reqwest::Client,
     env: &CliEnvironment,
     project_id: &str,
 ) -> DoctorReport {
     let mut report = initial_report();
-    if !api_reachable(client, env).await {
-        return api_unreachable();
-    }
-    report.api = check("api", "reachable", "validate persisted auth");
-    match account_outcome(client, env).await {
-        AccountOutcome::Valid => {
-            report.auth = check("auth", "valid", "check the selected project");
+    let snapshot = match doctor_outcome(client, env, project_id).await {
+        DoctorOutcome::Success(snapshot) => snapshot,
+        DoctorOutcome::MissingAuth => {
+            report.auth = check("auth", "missing", "run logbrew login");
+            report.mark("auth_invalid", "run logbrew login");
+            return report;
         }
-        AccountOutcome::Invalid => {
+        DoctorOutcome::AuthInvalid => {
+            report.api = check("api", "reachable", "validate persisted auth");
             report.auth = check("auth", "invalid", "run logbrew login");
             report.mark("auth_invalid", "run logbrew login");
             return report;
         }
-        AccountOutcome::Failed => {
-            report.auth = check(
-                "auth",
-                "error",
-                "retry the project doctor without changing local credentials",
-            );
-            mark_check_failed(&mut report);
-            return report;
-        }
-        AccountOutcome::InvalidResponse => {
-            report.auth = invalid_response_check("auth");
-            mark_check_failed(&mut report);
-            return report;
-        }
-    }
-    let progress = match setup_outcome(client, env, project_id).await {
-        SetupOutcome::Usable(SetupProgress::NotStarted) => {
-            report.project = check("project", "usable", "inspect project setup state");
-            report.setup = check(
-                "setup",
-                "not_started",
-                "choose an SDK or CLI setup path for this project",
-            );
-            SetupProgress::NotStarted
-        }
-        SetupOutcome::Usable(SetupProgress::PathSelected) => {
-            report.project = check("project", "usable", "inspect project setup state");
-            report.setup = check(
-                "setup",
-                "path_selected",
-                "send the first telemetry event for this project",
-            );
-            SetupProgress::PathSelected
-        }
-        SetupOutcome::Usable(SetupProgress::Acknowledged) => {
-            report.project = check("project", "usable", "inspect project setup state");
-            report.setup = check("setup", "acknowledged", "check recent telemetry");
-            SetupProgress::Acknowledged
-        }
-        SetupOutcome::Usable(SetupProgress::Operational) => {
-            report.project = check("project", "usable", "inspect project setup state");
-            report.setup = check("setup", "operational", "check recent telemetry");
-            SetupProgress::Operational
-        }
-        SetupOutcome::AuthInvalid => {
-            report.auth = check("auth", "invalid", "run logbrew login");
-            report.project = check("project", "not_checked", "run logbrew login");
-            report.mark("auth_invalid", "run logbrew login");
-            return report;
-        }
-        SetupOutcome::Missing => {
+        DoctorOutcome::ProjectMissing => {
+            report.api = check("api", "reachable", "validate persisted auth");
+            report.auth = check("auth", "valid", "inspect the selected project");
             report.project = check(
                 "project",
                 "missing",
@@ -222,7 +233,8 @@ async fn run_checks(
             );
             return report;
         }
-        SetupOutcome::Failed => {
+        DoctorOutcome::Failed => {
+            report.api = check("api", "reachable", "validate persisted auth");
             report.project = check(
                 "project",
                 "error",
@@ -231,217 +243,153 @@ async fn run_checks(
             mark_check_failed(&mut report);
             return report;
         }
-        SetupOutcome::InvalidResponse => {
+        DoctorOutcome::InvalidResponse => {
+            report.api = check("api", "reachable", "validate persisted auth");
             report.project = invalid_response_check("project");
             mark_check_failed(&mut report);
             return report;
         }
+        DoctorOutcome::TransportFailed => return api_unreachable(),
     };
-    finish_with_telemetry(client, env, project_id, progress, &mut report).await;
+
+    apply_snapshot(&mut report, snapshot);
+    apply_logs_outcome(&mut report, logs_outcome(client, env, project_id).await);
     report
 }
 
-/// Applies the final recent-log probe to an otherwise usable project.
-async fn finish_with_telemetry(
-    client: &reqwest::Client,
-    env: &CliEnvironment,
-    project_id: &str,
-    progress: SetupProgress,
-    report: &mut DoctorReport,
-) {
-    match telemetry_outcome(client, env, project_id).await {
-        TelemetryOutcome::Visible => {
-            report.telemetry = check("telemetry", "visible", "inspect the newest visible log");
-            match progress {
-                SetupProgress::NotStarted => report.mark(
-                    "setup_incomplete",
-                    "choose an SDK or CLI setup path for this project",
-                ),
-                SetupProgress::PathSelected => report.mark(
-                    "setup_incomplete",
-                    "send the first telemetry event for this project",
-                ),
-                SetupProgress::Acknowledged | SetupProgress::Operational => {
-                    report.mark("ready", "run logbrew logs --project <project_id>");
-                }
-            }
-        }
-        TelemetryOutcome::Empty => match progress {
-            SetupProgress::NotStarted => {
-                report.telemetry = check(
-                    "telemetry",
-                    "empty",
-                    "send a log or inspect another telemetry stream",
-                );
-                report.mark(
-                    "setup_incomplete",
-                    "choose an SDK or CLI setup path for this project",
-                );
-            }
-            SetupProgress::PathSelected => {
-                report.telemetry = check(
-                    "telemetry",
-                    "empty",
-                    "send a log or inspect another telemetry stream",
-                );
-                report.mark(
-                    "setup_incomplete",
-                    "send the first telemetry event for this project",
-                );
-            }
-            SetupProgress::Acknowledged => {
-                report.telemetry = check(
-                    "telemetry",
-                    "empty",
-                    "send a log or inspect another telemetry stream",
-                );
-                report.mark(
-                        "telemetry_empty",
-                        "send a log or inspect a wider window with logbrew logs --project <project_id> --since 7d",
-                    );
-            }
-            SetupProgress::Operational => {
-                report.telemetry = check(
-                    "telemetry",
-                    "cross_signal",
-                    "inspect project issues, actions, releases, or traces",
-                );
-                report.mark(
-                    "ready",
-                    "inspect project issues, actions, releases, or traces",
-                );
-            }
-        },
-        TelemetryOutcome::AuthInvalid => {
-            report.auth = check("auth", "invalid", "run logbrew login");
-            report.telemetry = check("telemetry", "not_checked", "run logbrew login");
-            report.mark("auth_invalid", "run logbrew login");
-        }
-        TelemetryOutcome::Failed => {
-            report.telemetry = check(
-                "telemetry",
-                "error",
-                "retry the project doctor without changing project state",
-            );
-            mark_check_failed(report);
-        }
-        TelemetryOutcome::InvalidResponse => {
-            report.telemetry = invalid_response_check("telemetry");
-            mark_check_failed(report);
-        }
-    }
-}
-
-/// Checks the health route without retaining its URL or body.
-async fn api_reachable(client: &reqwest::Client, env: &CliEnvironment) -> bool {
-    let health_url = format!("{}/health", env.base_url.trim_end_matches('/'));
-    client
-        .get(health_url)
-        .send()
-        .await
-        .is_ok_and(|response| response.status().is_success())
-}
-
-/// Validates current effective account auth through the account route.
-async fn account_outcome(client: &reqwest::Client, env: &CliEnvironment) -> AccountOutcome {
-    let response = match authenticated_get(client, env, "/api/auth/account").await {
-        AuthenticatedGet::Response(response) => response,
-        AuthenticatedGet::Unauthorized => return AccountOutcome::Invalid,
-        AuthenticatedGet::Failed => return AccountOutcome::Failed,
-    };
-    let status = response.status().as_u16();
-    let Some(value) = response_json(response).await else {
-        return AccountOutcome::InvalidResponse;
-    };
-    if (200..300).contains(&status) {
-        return if valid_account(&value) {
-            AccountOutcome::Valid
-        } else {
-            AccountOutcome::InvalidResponse
-        };
-    }
-    if !valid_error_envelope(&value) {
-        return AccountOutcome::InvalidResponse;
-    }
-    if status == 401 {
-        if is_unauthorized_error(&value) {
-            AccountOutcome::Invalid
-        } else {
-            AccountOutcome::InvalidResponse
-        }
+/// Applies one validated canonical state without retaining server text or identifiers.
+const fn apply_snapshot(report: &mut DoctorReport, snapshot: DoctorSnapshot) {
+    report.api = check("api", "reachable", "validate persisted auth");
+    report.auth = check("auth", "valid", "inspect the selected project");
+    report.project = check("project", "usable", "inspect project readiness");
+    report.ingest_key = if snapshot.has_active_ingest_key {
+        check("ingest_key", "active", "inspect setup acknowledgement")
     } else {
-        AccountOutcome::Failed
+        check(
+            "ingest_key",
+            "missing",
+            "create an ingest key for this project",
+        )
+    };
+    report.setup = match snapshot.setup {
+        SetupProgress::NotStarted => check(
+            "setup",
+            "not_started",
+            "choose an SDK or CLI setup path for this project",
+        ),
+        SetupProgress::PathSelected => check(
+            "setup",
+            "path_selected",
+            "send the first telemetry event for this project",
+        ),
+        SetupProgress::Acknowledged => check("setup", "acknowledged", "inspect telemetry state"),
+        SetupProgress::Operational => check("setup", "operational", "inspect telemetry state"),
+    };
+    report.telemetry = if snapshot.telemetry_seen {
+        check("telemetry", "seen", "inspect recent telemetry")
+    } else {
+        check(
+            "telemetry",
+            "not_seen",
+            "send the first telemetry event for this project",
+        )
+    };
+    report.mark(snapshot.state.key(), snapshot.state.next());
+}
+
+/// Applies log visibility without reconstructing or overriding canonical readiness.
+const fn apply_logs_outcome(report: &mut DoctorReport, outcome: LogsOutcome) {
+    match outcome {
+        LogsOutcome::Visible => {
+            report.logs = check("logs", "visible", "inspect the newest visible log");
+        }
+        LogsOutcome::Empty => {
+            report.logs = check("logs", "empty", "inspect another telemetry stream");
+        }
+        LogsOutcome::AuthInvalid => {
+            report.logs = check(
+                "logs",
+                "unavailable",
+                "run logbrew login, then retry the log visibility check",
+            );
+        }
+        LogsOutcome::Failed | LogsOutcome::TransportFailed => {
+            report.logs = check("logs", "error", "retry the recent-log visibility check");
+        }
+        LogsOutcome::InvalidResponse => {
+            report.logs = invalid_response_check("logs");
+        }
     }
 }
 
-/// Validates project ownership/usability and exact setup state.
-async fn setup_outcome(
+/// Reads and validates the canonical owner-scoped doctor response.
+async fn doctor_outcome(
     client: &reqwest::Client,
     env: &CliEnvironment,
     project_id: &str,
-) -> SetupOutcome {
-    let setup_path = format!("/api/projects/{project_id}/setup");
-    let response = match authenticated_get(client, env, setup_path.as_str()).await {
+) -> DoctorOutcome {
+    let path = format!("/api/projects/{project_id}/doctor");
+    let response = match authenticated_get(client, env, path.as_str()).await {
         AuthenticatedGet::Response(response) => response,
-        AuthenticatedGet::Unauthorized => return SetupOutcome::AuthInvalid,
-        AuthenticatedGet::Failed => return SetupOutcome::Failed,
+        AuthenticatedGet::MissingAuth => return DoctorOutcome::MissingAuth,
+        AuthenticatedGet::Failed => return DoctorOutcome::TransportFailed,
     };
     let status = response.status().as_u16();
     let Some(value) = response_json(response).await else {
-        return SetupOutcome::InvalidResponse;
+        return DoctorOutcome::InvalidResponse;
     };
-    if (200..300).contains(&status) {
-        return validate_setup(&value, project_id)
-            .map_or(SetupOutcome::InvalidResponse, SetupOutcome::Usable);
+    if status == 200 {
+        return validate_doctor(&value, project_id)
+            .map_or(DoctorOutcome::InvalidResponse, DoctorOutcome::Success);
     }
     if !valid_error_envelope(&value) {
-        return SetupOutcome::InvalidResponse;
+        return DoctorOutcome::InvalidResponse;
     }
     match status {
-        401 if is_unauthorized_error(&value) => SetupOutcome::AuthInvalid,
-        404 if is_project_not_found_error(&value) => SetupOutcome::Missing,
-        401 | 404 => SetupOutcome::InvalidResponse,
-        _ => SetupOutcome::Failed,
+        401 if is_unauthorized_error(&value) => DoctorOutcome::AuthInvalid,
+        404 if is_project_not_found_error(&value) => DoctorOutcome::ProjectMissing,
+        401 | 404 => DoctorOutcome::InvalidResponse,
+        _ => DoctorOutcome::Failed,
     }
 }
 
-/// Probes the newest retained log without retaining any telemetry object.
-async fn telemetry_outcome(
+/// Reads only newest-log visibility after the canonical project preflight succeeds.
+async fn logs_outcome(
     client: &reqwest::Client,
     env: &CliEnvironment,
     project_id: &str,
-) -> TelemetryOutcome {
-    let logs_path = path_with_query(
+) -> LogsOutcome {
+    let path = path_with_query(
         "/api/logs",
         &[("project_id", Some(project_id)), ("limit", Some("1"))],
     );
-    let response = match authenticated_get(client, env, logs_path.as_str()).await {
+    let response = match authenticated_get(client, env, path.as_str()).await {
         AuthenticatedGet::Response(response) => response,
-        AuthenticatedGet::Unauthorized => return TelemetryOutcome::AuthInvalid,
-        AuthenticatedGet::Failed => return TelemetryOutcome::Failed,
+        AuthenticatedGet::MissingAuth => return LogsOutcome::AuthInvalid,
+        AuthenticatedGet::Failed => return LogsOutcome::TransportFailed,
     };
     let status = response.status().as_u16();
     let Some(value) = response_json(response).await else {
-        return TelemetryOutcome::InvalidResponse;
+        return LogsOutcome::InvalidResponse;
     };
-    if (200..300).contains(&status) {
+    if status == 200 {
         return match validate_logs(&value) {
-            Some(true) => TelemetryOutcome::Visible,
-            Some(false) => TelemetryOutcome::Empty,
-            None => TelemetryOutcome::InvalidResponse,
+            Some(true) => LogsOutcome::Visible,
+            Some(false) => LogsOutcome::Empty,
+            None => LogsOutcome::InvalidResponse,
         };
     }
     if !valid_error_envelope(&value) {
-        return TelemetryOutcome::InvalidResponse;
+        return LogsOutcome::InvalidResponse;
     }
     if status == 401 {
         if is_unauthorized_error(&value) {
-            TelemetryOutcome::AuthInvalid
+            LogsOutcome::AuthInvalid
         } else {
-            TelemetryOutcome::InvalidResponse
+            LogsOutcome::InvalidResponse
         }
     } else {
-        TelemetryOutcome::Failed
+        LogsOutcome::Failed
     }
 }
 
@@ -458,9 +406,7 @@ async fn authenticated_get(
     .await
     {
         Ok((response, _credential)) => AuthenticatedGet::Response(response),
-        Err(RuntimeError::MissingToken | RuntimeError::Api { status: 401, .. }) => {
-            AuthenticatedGet::Unauthorized
-        }
+        Err(RuntimeError::MissingToken) => AuthenticatedGet::MissingAuth,
         Err(_) => AuthenticatedGet::Failed,
     }
 }
@@ -484,28 +430,19 @@ async fn response_json(mut response: reqwest::Response) -> Option<serde_json::Va
     serde_json::from_slice(body.as_slice()).ok()
 }
 
-/// Validates enough account shape to prove authenticated account access.
-fn valid_account(value: &serde_json::Value) -> bool {
-    value
-        .as_object()
-        .and_then(|object| object.get("id"))
-        .and_then(serde_json::Value::as_str)
-        .is_some_and(crate::ids::is_uuid)
-}
-
-/// Validates the exact public project setup response.
-fn validate_setup(value: &serde_json::Value, requested_project_id: &str) -> Option<SetupProgress> {
-    const KEYS: [&str; 13] = [
+/// Validates the exact public project doctor response.
+fn validate_doctor(
+    value: &serde_json::Value,
+    requested_project_id: &str,
+) -> Option<DoctorSnapshot> {
+    const KEYS: [&str; 10] = [
         "project_id",
-        "status",
-        "runtime",
-        "source",
-        "created_at",
-        "setup_started_at",
+        "state",
+        "setup_status",
+        "setup_acknowledged",
+        "has_active_ingest_key",
         "first_telemetry_seen_at",
         "last_seen_at",
-        "last_release",
-        "last_environment",
         "last_signal",
         "next",
         "next_action",
@@ -513,86 +450,93 @@ fn validate_setup(value: &serde_json::Value, requested_project_id: &str) -> Opti
     let object = value
         .as_object()
         .filter(|object| exact_keys(object, &KEYS))?;
-    if safe_string(object, "project_id")? != requested_project_id {
-        return None;
-    }
-    let status = safe_string(object, "status")?;
-    if !valid_optional_safe_string(object, "runtime") || !valid_optional_source(object) {
-        return None;
-    }
-    required_timestamp(object, "created_at")?;
-    optional_timestamp(object, "setup_started_at")?;
-    optional_timestamp(object, "first_telemetry_seen_at")?;
-    optional_timestamp(object, "last_seen_at")?;
-    if !valid_optional_safe_string(object, "last_release")
-        || !valid_optional_safe_string(object, "last_environment")
+    let response_project_id = safe_string(object, "project_id")?;
+    if !crate::ids::is_uuid(response_project_id)
+        || !response_project_id.eq_ignore_ascii_case(requested_project_id)
     {
         return None;
     }
-    validate_last_signal(object.get("last_signal")?)?;
-
-    let next = safe_string(object, "next")?;
-    let action = object.get("next_action")?.as_object()?;
-    if !exact_keys(action, &["code", "target"]) {
+    let state = match safe_string(object, "state")? {
+        "needs_ingest_key" => ProjectState::NeedsIngestKey,
+        "needs_setup" => ProjectState::NeedsSetup,
+        "needs_telemetry" => ProjectState::NeedsTelemetry,
+        "ready" => ProjectState::Ready,
+        _ => return None,
+    };
+    let setup = match safe_string(object, "setup_status")? {
+        "created" => SetupProgress::NotStarted,
+        "setup_started" => SetupProgress::PathSelected,
+        "sdk_seen" => SetupProgress::Acknowledged,
+        "first_telemetry_seen" | "active" => SetupProgress::Operational,
+        _ => return None,
+    };
+    let setup_acknowledged = object.get("setup_acknowledged")?.as_bool()?;
+    if setup_acknowledged
+        != matches!(
+            setup,
+            SetupProgress::Acknowledged | SetupProgress::Operational
+        )
+    {
         return None;
     }
-    let pair = (safe_string(action, "code")?, safe_string(action, "target")?);
-    match (status, next, pair) {
-        (
-            "created",
-            "choose an SDK or CLI setup path for this project",
-            ("choose_setup_path", "project_setup"),
-        ) => Some(SetupProgress::NotStarted),
-        (
-            "setup_started",
-            "send the first telemetry event for this project",
-            ("send_first_telemetry", "telemetry_ingest"),
-        ) => Some(SetupProgress::PathSelected),
-        (
-            "sdk_seen",
-            "send the first telemetry event for this project",
-            ("send_first_telemetry", "telemetry_ingest"),
-        ) => Some(SetupProgress::Acknowledged),
-        (
-            "first_telemetry_seen" | "active",
-            "open the project dashboard or inspect recent telemetry",
-            ("review_project_dashboard", "project_dashboard"),
-        ) => Some(SetupProgress::Operational),
-        _ => None,
+    let has_active_ingest_key = object.get("has_active_ingest_key")?.as_bool()?;
+    let _first_telemetry_seen_at_present = optional_timestamp(object, "first_telemetry_seen_at")?;
+    let _last_seen_at_present = optional_timestamp(object, "last_seen_at")?;
+    validate_last_signal(object.get("last_signal")?)?;
+    let _next = safe_string(object, "next")?;
+
+    let action = object.get("next_action")?.as_object()?;
+    if !exact_keys(action, &["code", "target"])
+        || (safe_string(action, "code")?, safe_string(action, "target")?) != state.action()
+    {
+        return None;
     }
+    let telemetry_seen = matches!(setup, SetupProgress::Operational);
+    let expected_state = if has_active_ingest_key {
+        match setup {
+            SetupProgress::NotStarted => ProjectState::NeedsSetup,
+            SetupProgress::PathSelected | SetupProgress::Acknowledged => {
+                ProjectState::NeedsTelemetry
+            }
+            SetupProgress::Operational => ProjectState::Ready,
+        }
+    } else {
+        ProjectState::NeedsIngestKey
+    };
+    (state == expected_state).then_some(DoctorSnapshot {
+        state,
+        has_active_ingest_key,
+        setup,
+        telemetry_seen,
+    })
 }
 
-/// Validates the optional exact last-signal object.
+/// Validates the existing display-safe last-signal surface without retaining it.
 fn validate_last_signal(value: &serde_json::Value) -> Option<()> {
     if value.is_null() {
         return Some(());
     }
     let object = value.as_object()?;
     if !exact_keys(object, &["kind", "id", "message", "occurred_at"])
-        || !matches!(
-            safe_string(object, "kind")?,
-            "action" | "issue" | "log" | "release" | "trace"
-        )
+        || safe_string(object, "kind").is_none()
         || !valid_optional_safe_string(object, "id")
         || !valid_optional_safe_string(object, "message")
     {
         return None;
     }
-    required_timestamp(object, "occurred_at")?;
-    Some(())
+    is_rfc3339(safe_string(object, "occurred_at")?).then_some(())
 }
 
-/// Validates the legacy bare-array log response and reports whether it has rows.
+/// Validates the bare legacy logs array enough to determine visibility safely.
 fn validate_logs(value: &serde_json::Value) -> Option<bool> {
     let logs = value.as_array()?;
-    if !logs.iter().all(|log| {
-        log.as_object()
-            .and_then(|object| safe_string(object, "service_name"))
-            .is_some()
-    }) {
-        return None;
-    }
-    Some(!logs.is_empty())
+    logs.iter()
+        .all(|log| {
+            log.as_object()
+                .and_then(|object| safe_string(object, "service_name"))
+                .is_some()
+        })
+        .then_some(!logs.is_empty())
 }
 
 /// Validates the shared exact error envelope without retaining its text.
@@ -604,13 +548,7 @@ fn valid_error_envelope(value: &serde_json::Value) -> bool {
 fn is_unauthorized_error(value: &serde_json::Value) -> bool {
     matches!(
         error_fields(value),
-        Some((
-            "Invalid or expired token",
-            "unauthorized",
-            "send Authorization: Bearer <token>, include the logbrew_session cookie, or sign in again",
-            "sign_in",
-            "auth"
-        ))
+        Some((_error, "unauthorized", _next, "sign_in", "auth"))
     )
 }
 
@@ -628,7 +566,7 @@ fn is_project_not_found_error(value: &serde_json::Value) -> bool {
     )
 }
 
-/// Extracts the bounded fields from the shared exact error envelope.
+/// Extracts bounded fields from the shared exact error envelope.
 fn error_fields(value: &serde_json::Value) -> Option<(&str, &str, &str, &str, &str)> {
     let object = value.as_object()?;
     if !exact_keys(object, &["error", "code", "next", "next_action"]) {
@@ -663,7 +601,7 @@ fn safe_string<'a>(
         .filter(|value| !value.trim().is_empty() && safe_text(value))
 }
 
-/// Returns whether one required key is a null or bounded safe string.
+/// Returns whether one required key is null or a bounded control-safe string.
 fn valid_optional_safe_string(
     object: &serde_json::Map<String, serde_json::Value>,
     key: &str,
@@ -671,23 +609,6 @@ fn valid_optional_safe_string(
     match object.get(key) {
         Some(serde_json::Value::Null) => true,
         Some(serde_json::Value::String(value)) => safe_text(value),
-        Some(
-            serde_json::Value::Bool(_)
-            | serde_json::Value::Number(_)
-            | serde_json::Value::Array(_)
-            | serde_json::Value::Object(_),
-        )
-        | None => false,
-    }
-}
-
-/// Returns whether setup source is null or one canonical public value.
-fn valid_optional_source(object: &serde_json::Map<String, serde_json::Value>) -> bool {
-    match object.get("source") {
-        Some(serde_json::Value::Null) => true,
-        Some(serde_json::Value::String(value)) => {
-            matches!(value.as_str(), "api" | "cli" | "sdk")
-        }
         Some(
             serde_json::Value::Bool(_)
             | serde_json::Value::Number(_)
@@ -715,22 +636,14 @@ fn safe_text(value: &str) -> bool {
         })
 }
 
-/// Validates one required RFC3339 timestamp.
-fn required_timestamp(
-    object: &serde_json::Map<String, serde_json::Value>,
-    key: &str,
-) -> Option<()> {
-    is_rfc3339(safe_string(object, key)?).then_some(())
-}
-
-/// Validates one optional RFC3339 timestamp.
+/// Validates one optional RFC3339 timestamp and reports whether it is present.
 fn optional_timestamp(
     object: &serde_json::Map<String, serde_json::Value>,
     key: &str,
-) -> Option<()> {
+) -> Option<bool> {
     match object.get(key)? {
-        serde_json::Value::Null => Some(()),
-        serde_json::Value::String(value) if safe_text(value) && is_rfc3339(value) => Some(()),
+        serde_json::Value::Null => Some(false),
+        serde_json::Value::String(value) if safe_text(value) && is_rfc3339(value) => Some(true),
         serde_json::Value::String(_)
         | serde_json::Value::Bool(_)
         | serde_json::Value::Number(_)
@@ -854,8 +767,10 @@ const fn initial_report() -> DoctorReport {
         api: check("api", "not_checked", "run the API reachability check first"),
         auth: check("auth", "not_checked", "resolve the prior check first"),
         project: check("project", "not_checked", "resolve the prior check first"),
+        ingest_key: check("ingest_key", "not_checked", "resolve the prior check first"),
         setup: check("setup", "not_checked", "resolve the prior check first"),
         telemetry: check("telemetry", "not_checked", "resolve the prior check first"),
+        logs: check("logs", "not_checked", "resolve the prior check first"),
         next: "retry logbrew doctor --project <project_id>; if it repeats, report the public response contract",
     }
 }
@@ -911,8 +826,8 @@ fn write_report<W: std::io::Write>(
     writeln!(output, "LogBrew project doctor")?;
     for check in report.checks() {
         let marker = match check.status {
-            "reachable" | "valid" | "usable" | "acknowledged" | "operational" | "visible"
-            | "cross_signal" => "ok",
+            "reachable" | "valid" | "usable" | "active" | "acknowledged" | "operational"
+            | "seen" | "visible" => "ok",
             "not_checked" => " ",
             _ => "!",
         };
@@ -934,8 +849,10 @@ fn check_title(check: &str) -> &'static str {
         "api" => "API",
         "auth" => "Auth",
         "project" => "Project",
+        "ingest_key" => "Ingest key",
         "setup" => "Setup",
         "telemetry" => "Telemetry",
+        "logs" => "Logs",
         _ => "Check",
     }
 }
