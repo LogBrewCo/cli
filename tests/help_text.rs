@@ -65,15 +65,19 @@ fn root_help_surfaces_release_environment_pairing() {
 }
 
 #[test]
-fn project_and_usage_help_are_honest_about_backend_readiness() {
+fn project_and_usage_help_are_honest_about_supported_behavior() {
     let projects = help::help_text(HelpTopic::Projects);
     let usage = help::help_text(HelpTopic::Usage);
 
-    assert!(projects.contains("logbrew projects create <name> [--json]"));
+    assert!(
+        projects.contains(
+            "logbrew projects create <name> --ingest-key-file <path> [--runtime <runtime>]"
+        )
+    );
     assert!(projects.contains("logbrew setup --create-project [--json]"));
     assert!(projects.contains("Project creation, setup status"));
-    assert!(projects.contains("Current mode: projects setup marks backend-owned setup as seen;"));
-    assert!(projects.contains("No local project, install, quota, or usage state is created."));
+    assert!(projects.contains("stores the one-time ingest key in a new owner-only file"));
+    assert!(projects.contains("No local install, quota, or usage state is created."));
     assert!(projects.contains("POST /api/projects/{project_id}/setup/seen"));
     assert!(projects.contains("Never use an account bearer token as SDK or ingest configuration."));
 

@@ -245,14 +245,17 @@ const PROJECTS_HELP: &str = "\
 Usage:
   logbrew projects [--json]
   logbrew project [--json]
-  logbrew projects create <name> [--json]
+  logbrew projects create <name> --ingest-key-file <path> [--runtime <runtime>] \
+                           [--environment <environment>] [--abandon-retry] [--json]
   logbrew setup --create-project [--json]
   logbrew projects setup <project_id> [--runtime <runtime>] [--source api|cli|sdk] \
 [--environment <environment>] [--json]
 
 Project creation, setup status, and project-scoped ingest credentials are backend-owned.
-Current mode: projects setup marks backend-owned setup as seen; project creation remains help only.
-No local project, install, quota, or usage state is created.
+Project creation stores the one-time ingest key in a new owner-only file before reporting success;
+it never prints the one-time ingest key or its file path. An ambiguous attempt reuses the pending retry key only for the exact same request; --abandon-retry starts a new explicit attempt.
+Builds that cannot prove owner-only file permissions fail before sending the create request.
+No local install, quota, or usage state is created.
 Project setup uses POST /api/projects/{project_id}/setup/seen and preserves backend setup status JSON.
 Project-scoped SDK/ingest credentials are shown only when backend returns one-time credentials.
 Never use an account bearer token as SDK or ingest configuration.

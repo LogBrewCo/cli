@@ -109,12 +109,11 @@ fn setup_help_is_honest_about_install_readiness() {
 }
 
 #[test]
-fn project_and_usage_help_are_backend_owned_and_non_mutating() {
+fn project_discovery_and_usage_help_remain_non_mutating() {
     for args in [
         &["logbrew", "projects", "--json"][..],
         &["logbrew", "project", "--json"][..],
         &["logbrew", "--json", "projects"][..],
-        &["logbrew", "projects", "create", "checkout", "--json"][..],
         &["logbrew", "setup", "--create-project", "--json"][..],
         &["logbrew", "--json", "setup", "--create-project"][..],
         &["logbrew", "setup", "--create-project", "--help", "--json"][..],
@@ -148,8 +147,8 @@ fn project_and_usage_help_are_backend_owned_and_non_mutating() {
 
     let projects = help::help_text(HelpTopic::Projects);
     assert!(projects.contains("backend-owned"));
-    assert!(projects.contains("Current mode: projects setup marks backend-owned setup as seen;"));
-    assert!(projects.contains("No local project, install, quota, or usage state is created."));
+    assert!(projects.contains("stores the one-time ingest key in a new owner-only file"));
+    assert!(projects.contains("No local install, quota, or usage state is created."));
     assert!(projects.contains("POST /api/projects/{project_id}/setup/seen"));
     assert!(projects.contains("Never use an account bearer token as SDK or ingest configuration."));
 

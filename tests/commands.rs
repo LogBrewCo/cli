@@ -486,7 +486,6 @@ fn parses_project_and_usage_terms_as_backend_owned_help() {
         &["logbrew", "project", "--json"][..],
         &["logbrew", "projects", "--json"],
         &["logbrew", "--json", "projects"],
-        &["logbrew", "projects", "create", "checkout", "--json"],
     ] {
         let command = parse_command(args.iter().copied()).expect("project discovery help parses");
 

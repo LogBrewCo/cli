@@ -21,6 +21,7 @@ pub mod ids;
 #[doc(hidden)]
 pub mod investigate;
 mod parser;
+mod project_create;
 #[doc(hidden)]
 pub mod render;
 #[doc(hidden)]
@@ -99,6 +100,13 @@ pub enum Command {
     Doctor {
         /// Account-owned project UUID.
         project_id: String,
+        /// Emit machine-readable JSON.
+        json: bool,
+    },
+    /// Creates one project and securely persists its one-time ingest key.
+    ProjectCreate {
+        /// Normalized project creation fields and local persistence choice.
+        options: ProjectCreateOptions,
         /// Emit machine-readable JSON.
         json: bool,
     },
@@ -457,6 +465,21 @@ pub struct ProjectSetupSeenOptions {
     pub environment: Option<String>,
 }
 
+/// Fields accepted by secure project creation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectCreateOptions {
+    /// Trimmed project name.
+    pub name: String,
+    /// Optional trimmed runtime.
+    pub runtime: Option<String>,
+    /// Optional trimmed environment.
+    pub environment: Option<String>,
+    /// Owner-selected destination for the one-time ingest key.
+    pub ingest_key_file: String,
+    /// Explicitly discard a mismatched pending retry before creating.
+    pub abandon_retry: bool,
+}
+
 /// Support-ticket operation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SupportTarget {
@@ -650,6 +673,7 @@ impl Command {
             Self::ProjectSetupSeen { project_id, .. } => {
                 Some(format!("/api/projects/{project_id}/setup/seen"))
             }
+            Self::ProjectCreate { .. } => Some(String::from("/api/projects")),
             Self::Support { target, .. } => Some(support::path(target)),
             Self::Help { .. }
             | Self::Login { .. }
@@ -672,6 +696,7 @@ impl Command {
             | Self::Logout { json }
             | Self::Status { json }
             | Self::Doctor { json, .. }
+            | Self::ProjectCreate { json, .. }
             | Self::Version { json }
             | Self::Read { json, .. }
             | Self::Watch { json, .. }
@@ -688,7 +713,8 @@ impl Command {
     #[must_use]
     pub const fn http_method(&self) -> Option<HttpMethod> {
         match self {
-            Self::ProjectSetupSeen { .. }
+            Self::ProjectCreate { .. }
+            | Self::ProjectSetupSeen { .. }
             | Self::Support {
                 target: SupportTarget::Create(_),
                 ..
@@ -732,6 +758,7 @@ impl Command {
                 ..
             } => Some(serde_json::json!({ "status": status })),
             Self::ProjectSetupSeen { options, .. } => Some(project_setup_seen_body(options, token)),
+            Self::ProjectCreate { options, .. } => Some(project_create_body(options)),
             Self::Support {
                 target: SupportTarget::Create(options),
                 ..
@@ -779,6 +806,7 @@ impl Command {
             | Self::InvestigateIssue { .. }
             | Self::Set { .. }
             | Self::ProjectSetupSeen { .. }
+            | Self::ProjectCreate { .. }
             | Self::Support { .. } => None,
         }
     }
@@ -819,6 +847,32 @@ fn project_setup_seen_body(
     serde_json::Value::Object(body)
 }
 
+/// Builds the byte-stable project creation request surface.
+fn project_create_body(options: &ProjectCreateOptions) -> serde_json::Value {
+    let mut body = serde_json::Map::new();
+    drop(body.insert(
+        "name".to_owned(),
+        serde_json::Value::String(options.name.clone()),
+    ));
+    if let Some(runtime) = options.runtime.as_ref() {
+        drop(body.insert(
+            "runtime".to_owned(),
+            serde_json::Value::String(runtime.clone()),
+        ));
+    }
+    if let Some(environment) = options.environment.as_ref() {
+        drop(body.insert(
+            "environment".to_owned(),
+            serde_json::Value::String(environment.clone()),
+        ));
+    }
+    drop(body.insert(
+        "source".to_owned(),
+        serde_json::Value::String(String::from("cli")),
+    ));
+    serde_json::Value::Object(body)
+}
+
 /// Resolves setup source while preserving ingest-key identity derivation.
 fn setup_seen_source(options: &ProjectSetupSeenOptions, token: Option<&str>) -> Option<String> {
     if token_is_project_ingest_key(token) {
@@ -852,6 +906,9 @@ pub async fn execute_command<W: std::io::Write>(
         Command::Status { json } => execute_status(env, *json, output).await,
         Command::Doctor { project_id, json } => {
             doctor::execute(env, project_id.as_str(), *json, output).await
+        }
+        Command::ProjectCreate { options, json } => {
+            project_create::execute(env, options, *json, output).await
         }
         Command::Version { json } => execute_version(*json, output),
         Command::InvestigateIssue { issue_id, json } => {

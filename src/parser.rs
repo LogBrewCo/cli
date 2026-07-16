@@ -29,7 +29,8 @@ use crate::flags::{
 use crate::ids::{infer_explain_target, is_issue_id, is_pasted_detail_id, is_trace_id};
 use crate::{
     CliError, Command, ExplainTarget, HelpTopic, ISSUE_STATUS_ARGUMENT_NEXT_STEP,
-    ProjectSetupSeenOptions, ReadOptions, ReadTarget, SetTarget, auth_namespace,
+    ProjectCreateOptions, ProjectSetupSeenOptions, ReadOptions, ReadTarget, SetTarget,
+    auth_namespace,
 };
 
 /// Standard next step for malformed help invocations.
@@ -476,12 +477,122 @@ fn parse_setup_create_project(args: &[String]) -> Result<Command, CliError> {
 fn parse_project(args: &[String]) -> Result<Command, CliError> {
     let normalized = move_leading_json_to_tail(args);
     if let Some((subcommand, tail)) = normalized.split_first()
+        && subcommand == "create"
+    {
+        return parse_project_create(tail);
+    }
+    if let Some((subcommand, tail)) = normalized.split_first()
         && subcommand == "setup"
         && has_position_candidate(tail)
     {
         return parse_project_setup_seen(tail);
     }
     parse_discovery_help(HelpTopic::Projects, args)
+}
+
+/// Parses the closed secure project creation grammar.
+fn parse_project_create(args: &[String]) -> Result<Command, CliError> {
+    let Some((name, tail)) = args.split_first() else {
+        return Err(CliError::InvalidProjectCreateCommand);
+    };
+    if name.starts_with('-') {
+        return Err(CliError::InvalidProjectCreateCommand);
+    }
+    let name = bounded_project_create_value(name, 120, false)
+        .ok_or(CliError::InvalidProjectCreateCommand)?;
+    if name.starts_with('-') {
+        return Err(CliError::InvalidProjectCreateCommand);
+    }
+    let mut runtime = None;
+    let mut environment = None;
+    let mut ingest_key_file = None;
+    let mut abandon_retry = false;
+    let mut json = false;
+    let mut index = 0;
+
+    while let Some(argument) = tail.get(index) {
+        let (flag, inline_value) = argument
+            .split_once('=')
+            .map_or((argument.as_str(), None), |(flag, value)| {
+                (flag, Some(value))
+            });
+        match flag {
+            "--runtime" if runtime.is_none() => {
+                let value = project_create_flag_value(tail, &mut index, inline_value)?;
+                runtime = optional_project_create_value(value, 64)?;
+            }
+            "--environment" if environment.is_none() => {
+                let value = project_create_flag_value(tail, &mut index, inline_value)?;
+                environment = optional_project_create_value(value, 64)?;
+            }
+            "--ingest-key-file" if ingest_key_file.is_none() => {
+                let value = project_create_flag_value(tail, &mut index, inline_value)?;
+                let trimmed = value.trim();
+                if trimmed.is_empty()
+                    || trimmed.len() > 4096
+                    || trimmed.chars().any(char::is_control)
+                {
+                    return Err(CliError::InvalidProjectCreateCommand);
+                }
+                ingest_key_file = Some(trimmed.to_owned());
+            }
+            "--abandon-retry" if inline_value.is_none() && !abandon_retry => {
+                abandon_retry = true;
+            }
+            "--json" if inline_value.is_none() && !json => json = true,
+            _ => return Err(CliError::InvalidProjectCreateCommand),
+        }
+        index += 1;
+    }
+
+    let ingest_key_file = ingest_key_file.ok_or(CliError::InvalidProjectCreateCommand)?;
+    Ok(Command::ProjectCreate {
+        options: ProjectCreateOptions {
+            name,
+            runtime,
+            environment,
+            ingest_key_file,
+            abandon_retry,
+        },
+        json,
+    })
+}
+
+/// Takes an inline or following project-create flag value without reflection.
+fn project_create_flag_value<'a>(
+    args: &'a [String],
+    index: &mut usize,
+    inline: Option<&'a str>,
+) -> Result<&'a str, CliError> {
+    if let Some(value) = inline {
+        return Ok(value);
+    }
+    *index += 1;
+    args.get(*index)
+        .map(String::as_str)
+        .filter(|value| !value.starts_with('-'))
+        .ok_or(CliError::InvalidProjectCreateCommand)
+}
+
+/// Trims one bounded control-safe project-create field.
+fn bounded_project_create_value(value: &str, limit: usize, allow_blank: bool) -> Option<String> {
+    let value = value.trim();
+    let length = value.chars().count();
+    if value.chars().any(char::is_control) || length > limit || (!allow_blank && length == 0) {
+        return None;
+    }
+    (!value.is_empty()).then(|| value.to_owned())
+}
+
+/// Normalizes one optional field while distinguishing blank from invalid.
+fn optional_project_create_value(value: &str, limit: usize) -> Result<Option<String>, CliError> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    bounded_project_create_value(trimmed, limit, false)
+        .map(Some)
+        .ok_or(CliError::InvalidProjectCreateCommand)
 }
 
 /// Parses `projects setup <project_id>`.
