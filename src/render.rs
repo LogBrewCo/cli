@@ -87,6 +87,7 @@ fn cursor_response_title(command: &Command) -> Option<&'static str> {
         | Command::Version { .. }
         | Command::Watch { .. }
         | Command::Explain { .. }
+        | Command::InvestigateIssue { .. }
         | Command::Set { .. }
         | Command::ProjectSetupSeen { .. }
         | Command::Support { .. }
@@ -299,6 +300,7 @@ fn human_summary(command: &Command, value: &serde_json::Value) -> Option<String>
         | Command::Setup { .. }
         | Command::Status { .. }
         | Command::Version { .. }
+        | Command::InvestigateIssue { .. }
         | Command::Watch { .. } => None,
     }
 }
@@ -744,7 +746,7 @@ fn invalid_cursor_message(title: &str) -> String {
 }
 
 /// Checks the UTC RFC3339 shape returned by cursor endpoints.
-fn is_rfc3339_utc(value: &str) -> bool {
+pub(crate) fn is_rfc3339_utc(value: &str) -> bool {
     let Some(without_zone) = value
         .strip_suffix('Z')
         .or_else(|| value.strip_suffix("+00:00"))

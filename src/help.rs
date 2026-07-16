@@ -27,6 +27,7 @@ pub const fn help_text(topic: HelpTopic) -> &'static str {
         HelpTopic::ReadIssue => READ_ISSUE_HELP,
         HelpTopic::Watch => WATCH_HELP,
         HelpTopic::Explain => EXPLAIN_HELP,
+        HelpTopic::Investigate => INVESTIGATE_HELP,
         HelpTopic::Set => SET_HELP,
         HelpTopic::Support => SUPPORT_HELP,
     }
@@ -89,6 +90,7 @@ Usage:
   logbrew explain issue <issue_id> [--json]
   logbrew explain trace <trace_id> [--json]
   logbrew explain <issue_id_or_trace_id> [--json]
+  logbrew investigate issue <issue_id> [--json]
   logbrew <issue_id_or_trace_id> explain [--json]
   logbrew set issue <issue_id> resolved [--json]
   logbrew resolve <issue_id> [--json]
@@ -444,6 +446,15 @@ Usage:
 
 Fetches enough context for an AI agent to explain what happened.
 Pasted UUID/issue_* values are treated as issues; 32-hex/trace_* values are treated as traces.";
+
+/// Server-directed issue investigation help text.
+const INVESTIGATE_HELP: &str = "\
+Usage:
+  logbrew investigate issue <issue_id> [--json]
+
+Reads the issue first, then follows only its public trace-summary or related-log next action.
+The command is read-only and preserves issue scope in the directed request.
+JSON returns the unchanged issue and follow-up response in one stable envelope.";
 
 /// Set command help text.
 const SET_HELP: &str = "\

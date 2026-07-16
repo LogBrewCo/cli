@@ -125,6 +125,9 @@ pub enum CliError {
     /// Support context text is blank or exceeds the public limit.
     #[error("invalid support context")]
     InvalidSupportContext,
+    /// Issue investigation syntax is malformed.
+    #[error("invalid issue investigation command")]
+    InvalidInvestigationCommand,
     /// Project setup source is malformed.
     #[error("invalid setup source: {0}")]
     InvalidSetupSource(String),
@@ -183,6 +186,9 @@ pub enum RuntimeError {
         /// Suggested fallback action.
         next: &'static str,
     },
+    /// A successful investigation response violated the public contract.
+    #[error("issue investigation returned an invalid response")]
+    InvestigationResponseInvalid,
 }
 
 /// Writes a command-line parsing error for humans or agents.
@@ -273,6 +279,7 @@ fn write_human_runtime_error<W: std::io::Write>(
         | RuntimeError::Io(_)
         | RuntimeError::Http(_)
         | RuntimeError::MissingToken
+        | RuntimeError::InvestigationResponseInvalid
         | RuntimeError::Unavailable { .. } => {
             writeln!(output, "{error}")?;
             writeln!(output, "Next: {}", runtime_error_next_step(error))?;
@@ -286,6 +293,7 @@ fn runtime_error_json(error: &RuntimeError) -> serde_json::Value {
     match error {
         RuntimeError::MissingToken
         | RuntimeError::Unavailable { .. }
+        | RuntimeError::InvestigationResponseInvalid
         | RuntimeError::Io(_)
         | RuntimeError::Http(_) => serde_json::json!({
             "ok": false,
@@ -370,6 +378,7 @@ const fn cli_error_code(error: &CliError) -> &'static str {
         CliError::InvalidSupportContextReply => "invalid_support_context_reply",
         CliError::InvalidSupportContextCommand => "invalid_support_context_command",
         CliError::InvalidSupportContext => "invalid_support_context",
+        CliError::InvalidInvestigationCommand => "invalid_investigation_command",
         CliError::InvalidSetupSource(_) => "invalid_setup_source",
     }
 }
@@ -404,6 +413,9 @@ const fn cli_error_next_step(error: &CliError) -> &'static str {
         CliError::InvalidSupportContext => {
             "use --context with 1 to 4000 characters after trimming whitespace"
         }
+        CliError::InvalidInvestigationCommand => {
+            "use logbrew investigate issue <issue_id> with optional --json"
+        }
         CliError::InvalidSetupSource(_) => "use --source api, cli, or sdk",
         CliError::MissingArgument { next, .. }
         | CliError::MissingFlagValue { next, .. }
@@ -430,6 +442,7 @@ const fn runtime_error_code(error: &RuntimeError) -> &'static str {
         RuntimeError::Api { .. } => "api_error",
         RuntimeError::StatusUnavailable { .. } => "status_unreachable",
         RuntimeError::Unavailable { .. } => "unavailable",
+        RuntimeError::InvestigationResponseInvalid => "investigation_response_invalid",
     }
 }
 
@@ -483,6 +496,7 @@ fn runtime_error_next_step(error: &RuntimeError) -> Cow<'static, str> {
         | RuntimeError::Io(_)
         | RuntimeError::Http(_)
         | RuntimeError::MissingToken
+        | RuntimeError::InvestigationResponseInvalid
         | RuntimeError::StatusUnavailable { .. }
         | RuntimeError::Unavailable { .. } => {
             Cow::Borrowed(fallback_runtime_error_next_step(error))
@@ -520,6 +534,9 @@ const fn fallback_runtime_error_next_step(error: &RuntimeError) -> &'static str 
             STATUS_UNAVAILABLE_NEXT_STEP
         }
         RuntimeError::Unavailable { next, .. } => next,
+        RuntimeError::InvestigationResponseInvalid => {
+            "retry the issue investigation; if it repeats, report the public response contract"
+        }
         RuntimeError::Io(_) => "check local files and permissions",
     }
 }

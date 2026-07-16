@@ -190,6 +190,7 @@ fn parse_values(values: &[String]) -> Result<Command, CliError> {
         alias if is_project_help_alias(alias) => parse_project(tail),
         "usage" => parse_discovery_help(HelpTopic::Usage, tail),
         "support" => parse_support(tail),
+        "investigate" => parse_investigate(tail),
         alias if is_direct_filter_help_alias(alias) => parse_help_alias(HelpTopic::Read, tail),
         "read" => parse_read(tail),
         alias if is_read_verb(alias) => parse_read_verb(alias, tail),
@@ -226,6 +227,41 @@ fn parse_values(values: &[String]) -> Result<Command, CliError> {
         id if is_pasted_detail_id(id) => parse_pasted_detail_id(id, tail),
         _ => Err(unknown_command(head)),
     }
+}
+
+/// Parses the closed, read-only issue investigation grammar.
+fn parse_investigate(args: &[String]) -> Result<Command, CliError> {
+    let normalized = move_leading_json_to_tail(args);
+    match normalized.as_slice() {
+        [resource, issue_id]
+            if resource == "issue" && is_safe_investigation_issue_id(issue_id.as_str()) =>
+        {
+            Ok(Command::InvestigateIssue {
+                issue_id: issue_id.clone(),
+                json: false,
+            })
+        }
+        [resource, issue_id, json]
+            if resource == "issue"
+                && is_safe_investigation_issue_id(issue_id.as_str())
+                && json == "--json" =>
+        {
+            Ok(Command::InvestigateIssue {
+                issue_id: issue_id.clone(),
+                json: true,
+            })
+        }
+        _ => Err(CliError::InvalidInvestigationCommand),
+    }
+}
+
+/// Restricts investigation IDs to control-safe public path-segment characters.
+fn is_safe_investigation_issue_id(value: &str) -> bool {
+    is_issue_id(value)
+        && !matches!(value, "issue_" | "issue-")
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
 }
 
 /// Parses non-mutating discovery help for backend-owned future workflows.

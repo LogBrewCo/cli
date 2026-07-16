@@ -16,6 +16,8 @@ pub mod flags;
 pub mod help;
 #[doc(hidden)]
 pub mod ids;
+#[doc(hidden)]
+pub mod investigate;
 mod parser;
 #[doc(hidden)]
 pub mod render;
@@ -121,6 +123,13 @@ pub enum Command {
         /// Emit machine-readable JSON.
         json: bool,
     },
+    /// Follows the backend-directed, read-only investigation for one issue.
+    InvestigateIssue {
+        /// Grouped issue identifier.
+        issue_id: String,
+        /// Emit machine-readable JSON.
+        json: bool,
+    },
     /// Mutates server-side state.
     Set {
         /// Target state mutation.
@@ -191,6 +200,8 @@ pub enum HelpTopic {
     Watch,
     /// Explain command.
     Explain,
+    /// Server-directed issue investigation command.
+    Investigate,
     /// State mutation command.
     Set,
     /// Support-ticket workflow.
@@ -223,6 +234,7 @@ impl HelpTopic {
             Self::ReadIssue => "read_issue",
             Self::Watch => "watch",
             Self::Explain => "explain",
+            Self::Investigate => "investigate",
             Self::Set => "set",
             Self::Support => "support",
         }
@@ -636,6 +648,7 @@ impl Command {
             | Self::Setup { .. }
             | Self::Status { .. }
             | Self::Version { .. }
+            | Self::InvestigateIssue { .. }
             | Self::Watch { .. } => None,
         }
     }
@@ -652,6 +665,7 @@ impl Command {
             | Self::Read { json, .. }
             | Self::Watch { json, .. }
             | Self::Explain { json, .. }
+            | Self::InvestigateIssue { json, .. }
             | Self::Set { json, .. }
             | Self::ProjectSetupSeen { json, .. }
             | Self::Support { json, .. }
@@ -686,6 +700,7 @@ impl Command {
             | Self::Setup { .. }
             | Self::Status { .. }
             | Self::Version { .. }
+            | Self::InvestigateIssue { .. }
             | Self::Watch { .. } => None,
         }
     }
@@ -726,6 +741,7 @@ impl Command {
             | Self::Read { .. }
             | Self::Watch { .. }
             | Self::Explain { .. }
+            | Self::InvestigateIssue { .. }
             | Self::Support { .. } => None,
         }
     }
@@ -746,6 +762,7 @@ impl Command {
             | Self::Read { .. }
             | Self::Watch { .. }
             | Self::Explain { .. }
+            | Self::InvestigateIssue { .. }
             | Self::Set { .. }
             | Self::ProjectSetupSeen { .. }
             | Self::Support { .. } => None,
@@ -820,6 +837,9 @@ pub async fn execute_command<W: std::io::Write>(
         Command::Setup { auto, yes, json } => execute_setup(env, *auto, *yes, *json, output),
         Command::Status { json } => execute_status(env, *json, output).await,
         Command::Version { json } => execute_version(*json, output),
+        Command::InvestigateIssue { issue_id, json } => {
+            investigate::execute(env, issue_id.as_str(), *json, output).await
+        }
         Command::Read { .. }
         | Command::Explain { .. }
         | Command::Set { .. }

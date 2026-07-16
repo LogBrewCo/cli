@@ -37,7 +37,7 @@ pub(crate) fn is_issue_id(value: &str) -> bool {
 }
 
 /// Returns whether a value is a dashed UUID.
-fn is_uuid(value: &str) -> bool {
+pub(crate) fn is_uuid(value: &str) -> bool {
     if value.len() != 36 {
         return false;
     }

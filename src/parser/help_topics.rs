@@ -92,6 +92,7 @@ pub(super) fn help_topic(head: &str, tail: &[String]) -> Result<HelpTopic, CliEr
         alias if is_project_help_alias(alias) => Ok(HelpTopic::Projects),
         "usage" => Ok(HelpTopic::Usage),
         "support" => help_topic_without_positionals(HelpTopic::Support, positionals.as_slice()),
+        "investigate" => Ok(HelpTopic::Investigate),
         "list" if positionals.first().is_some_and(|arg| *arg == "issue") => {
             help_topic_without_positionals(HelpTopic::ReadIssues, &positionals[1..])
         }
@@ -170,6 +171,7 @@ pub(super) fn command_shaped_help_topic(head: &str, tail: &[String]) -> Option<H
         "explain" => explain_command_shaped_help_topic(positionals.as_slice()),
         "set" => set_command_shaped_help_topic(positionals.as_slice()),
         "support" => Some(HelpTopic::Support),
+        "investigate" => Some(HelpTopic::Investigate),
         "resolve" | "close" | "ignore" | "reopen" => {
             single_id_help_topic(positionals.as_slice(), HelpTopic::Set)
         }
@@ -520,6 +522,7 @@ fn explicit_help_topic(args: &[&str]) -> Result<HelpTopic, CliError> {
         ["version", tail @ ..] => help_topic_without_positionals(HelpTopic::Version, tail),
         ["account", "usage", tail @ ..] => help_topic_without_positionals(HelpTopic::Usage, tail),
         ["support", tail @ ..] => help_topic_without_positionals(HelpTopic::Support, tail),
+        ["investigate", ..] => Ok(HelpTopic::Investigate),
         [topic, tail @ ..] if auth_namespace::is_namespace(topic) => {
             auth_namespace::help_topic(tail)
         }
