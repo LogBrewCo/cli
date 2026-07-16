@@ -131,7 +131,8 @@ const LOGOUT_HELP: &str = "\
 Usage:
   logbrew logout [--json]
 
-Removes both local CLI credentials. If LOGBREW_TOKEN is set, unset it to fully log out.";
+Attempts to revoke the stored server session, then always removes both local CLI credentials.
+If LOGBREW_TOKEN is set, unset it separately to fully log out.";
 
 /// Setup command help text.
 const SETUP_HELP: &str = "\
@@ -186,7 +187,8 @@ Usage:
   logbrew logout [--json]
   logbrew auth logout [--json]
 
-Use login once, status/whoami/me to verify API/auth state, and logout to remove the local token.
+Use login once, status/whoami/me to verify API/auth state, and logout to revoke the stored
+server session when possible and always remove local credentials.
 Use --json for agent-readable auth checks.";
 
 /// JSON output help text.

@@ -27,7 +27,7 @@ mod support;
 #[doc(hidden)]
 pub mod version;
 
-use auth::{AuthCredential, execute_login, send_authenticated_with_refresh, write_logout_result};
+use auth::{AuthCredential, execute_login, execute_logout, send_authenticated_with_refresh};
 pub use error::{CliError, RuntimeError, write_cli_error, write_runtime_error};
 use futures_util::StreamExt as _;
 pub use parser::parse_command;
@@ -816,7 +816,7 @@ pub async fn execute_command<W: std::io::Write>(
         Command::Login { open_browser, json } => {
             execute_login(env, *open_browser, *json, output).await
         }
-        Command::Logout { json } => execute_logout(env, *json, output),
+        Command::Logout { json } => execute_logout(env, *json, output).await,
         Command::Setup { auto, yes, json } => execute_setup(env, *auto, *yes, *json, output),
         Command::Status { json } => execute_status(env, *json, output).await,
         Command::Version { json } => execute_version(*json, output),
@@ -850,16 +850,6 @@ fn execute_help<W: std::io::Write>(
     } else {
         writeln!(output, "{help}")?;
     }
-    Ok(())
-}
-
-/// Executes local logout.
-fn execute_logout<W: std::io::Write>(
-    env: &CliEnvironment,
-    json: bool,
-    output: &mut W,
-) -> Result<(), RuntimeError> {
-    write_logout_result(env, json, output)?;
     Ok(())
 }
 

@@ -37,6 +37,16 @@ impl CredentialStoreLock {
         })
     }
 
+    /// Acquires the lock only when local auth state already exists.
+    pub(super) fn exclusive_if_present(
+        home: &std::path::Path,
+    ) -> Result<Option<Self>, RuntimeError> {
+        if !auth_dir(home).is_dir() {
+            return Ok(None);
+        }
+        Self::exclusive(home).map(Some)
+    }
+
     /// Reads a complete pair while this exclusive lock is held.
     pub(super) fn read_credentials(
         &self,
@@ -47,6 +57,11 @@ impl CredentialStoreLock {
             ensure_matching_origin(credentials.origin.as_str(), expected_origin)?;
         }
         Ok(credentials)
+    }
+
+    /// Reports whether a canonical refresh-backed session exists while locked.
+    pub(super) fn has_refresh_backed_session(&self) -> Result<bool, RuntimeError> {
+        Ok(self.auth_dir.join(SESSION_FILE).try_exists()?)
     }
 
     /// Atomically replaces the complete bound session while this lock is held.
@@ -66,6 +81,15 @@ impl CredentialStoreLock {
             SESSION_FILE,
             session.to_string().as_str(),
         )
+    }
+
+    /// Removes every supported local credential representation while locked.
+    pub(super) fn remove_credentials(&self) -> Result<bool, RuntimeError> {
+        let session_removed = remove_if_present(self.auth_dir.join(SESSION_FILE).as_path())?;
+        let access_removed = remove_if_present(self.auth_dir.join("token").as_path())?;
+        let refresh_removed = remove_if_present(self.auth_dir.join("refresh-token").as_path())?;
+        let origin_removed = remove_if_present(self.auth_dir.join("auth-origin").as_path())?;
+        Ok(session_removed || access_removed || refresh_removed || origin_removed)
     }
 }
 
@@ -93,23 +117,6 @@ pub(super) fn read_access_token(
         return Err(unbound_refresh_credentials());
     }
     access_token.ok_or(RuntimeError::MissingToken)
-}
-
-/// Removes both local credentials under an exclusive lock.
-pub(super) fn remove_credentials(home: Option<&std::path::Path>) -> Result<bool, RuntimeError> {
-    let Some(home) = home else {
-        return Ok(false);
-    };
-    let auth_dir = auth_dir(home);
-    if !auth_dir.is_dir() {
-        return Ok(false);
-    }
-    let lock = CredentialStoreLock::exclusive(home)?;
-    let session_removed = remove_if_present(lock.auth_dir.join(SESSION_FILE).as_path())?;
-    let access_removed = remove_if_present(lock.auth_dir.join("token").as_path())?;
-    let refresh_removed = remove_if_present(lock.auth_dir.join("refresh-token").as_path())?;
-    let origin_removed = remove_if_present(lock.auth_dir.join("auth-origin").as_path())?;
-    Ok(session_removed || access_removed || refresh_removed || origin_removed)
 }
 
 /// Returns the private auth-state directory for one home directory.

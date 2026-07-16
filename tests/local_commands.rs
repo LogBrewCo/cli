@@ -77,7 +77,10 @@ fn logout_help_is_discoverable() {
         }
     );
     assert!(help::help_text(HelpTopic::Root).contains("logbrew logout [--json]"));
-    assert!(help::help_text(HelpTopic::Logout).contains("Removes both local CLI credentials."));
+    let logout_help = help::help_text(HelpTopic::Logout);
+    assert!(logout_help.contains("Attempts to revoke the stored server session"));
+    assert!(logout_help.contains("always removes both local CLI credentials"));
+    assert!(logout_help.contains("LOGBREW_TOKEN"));
 }
 
 #[test]
@@ -238,7 +241,7 @@ async fn version_json_output_is_stable() -> Result<(), Box<dyn std::error::Error
 }
 
 #[tokio::test]
-async fn logout_json_removes_local_token_without_leaking_it()
+async fn logout_json_removes_legacy_local_credentials_without_leaking_them()
 -> Result<(), Box<dyn std::error::Error>> {
     for (args, home_name) in [
         (&["logbrew", "logout", "--json"][..], "logout-json"),
@@ -256,17 +259,6 @@ async fn logout_json_removes_local_token_without_leaking_it()
         let session_path = auth_dir.join("session.json");
         std::fs::create_dir_all(token_path.parent().expect("token path has parent"))?;
         std::fs::write(token_path.as_path(), "fixture-token\n")?;
-        std::fs::write(refresh_path.as_path(), "fixture-refresh-token\n")?;
-        std::fs::write(origin_path.as_path(), "https://example.test\n")?;
-        std::fs::write(
-            session_path.as_path(),
-            serde_json::json!({
-                "access_token": "session-access",
-                "refresh_token": "session-refresh",
-                "origin": "https://example.test",
-            })
-            .to_string(),
-        )?;
         let command = parse_command(args.iter().copied())?;
         let env = CliEnvironment {
             base_url: "https://example.test".to_owned(),
@@ -285,10 +277,8 @@ async fn logout_json_removes_local_token_without_leaking_it()
         assert_eq!(body["removed"], true);
         assert_eq!(body["auth_source"], "token_file");
         assert_eq!(body["env_token_active"], false);
+        assert_eq!(body["server_session"], "not_applicable");
         assert_eq!(body["next"], "run logbrew login to authenticate again");
-        assert!(!text.contains("fixture-refresh-token"));
-        assert!(!text.contains("session-access"));
-        assert!(!text.contains("session-refresh"));
         assert!(!session_path.exists());
         assert!(!token_path.exists());
         assert!(!refresh_path.exists());

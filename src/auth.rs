@@ -3,6 +3,7 @@
 use crate::{CliEnvironment, RuntimeError};
 
 mod login;
+mod logout;
 mod session;
 mod store;
 
@@ -103,6 +104,15 @@ pub(crate) async fn execute_login<W: std::io::Write>(
     output: &mut W,
 ) -> Result<(), RuntimeError> {
     login::execute_login(env, should_open_browser, json, output).await
+}
+
+/// Revokes the stored server session when possible, then clears local credentials.
+pub(crate) async fn execute_logout<W: std::io::Write>(
+    env: &CliEnvironment,
+    json: bool,
+    output: &mut W,
+) -> Result<(), RuntimeError> {
+    logout::execute(env, json, output).await
 }
 
 /// Sends one authenticated request and retries once after a local 401 refresh.
@@ -218,54 +228,6 @@ fn write_authenticated_agent_use_prompt<W: std::io::Write>(output: &mut W) -> st
     Ok(())
 }
 
-/// Removes the local CLI token and writes a redacted logout result.
-pub(crate) fn write_logout_result<W: std::io::Write>(
-    env: &CliEnvironment,
-    json: bool,
-    output: &mut W,
-) -> Result<(), RuntimeError> {
-    let env_token_active = env
-        .token
-        .as_ref()
-        .is_some_and(|token| !token.trim().is_empty());
-    let removed = store::remove_credentials(env.home.as_deref())?;
-    let auth_source = if env_token_active {
-        "env"
-    } else if removed {
-        "token_file"
-    } else {
-        "missing"
-    };
-    let next = logout_next_step(env_token_active, removed);
-
-    if json {
-        let response = serde_json::json!({
-            "ok": true,
-            "removed": removed,
-            "auth_source": auth_source,
-            "env_token_active": env_token_active,
-            "next": next,
-        });
-        writeln!(output, "{response}")?;
-    } else if env_token_active {
-        if removed {
-            writeln!(output, "Local LogBrew token removed.")?;
-        } else {
-            writeln!(output, "No local LogBrew token found.")?;
-        }
-        writeln!(output, "Auth: env token still active")?;
-        writeln!(output, "Next: {next}")?;
-    } else if removed {
-        writeln!(output, "Logged out of LogBrew.")?;
-        writeln!(output, "Removed: local token")?;
-        writeln!(output, "Next: {next}")?;
-    } else {
-        writeln!(output, "No local LogBrew token found.")?;
-        writeln!(output, "Next: {next}")?;
-    }
-    Ok(())
-}
-
 /// Inspects local auth and returns only redacted status metadata.
 pub(crate) fn inspect_auth_snapshot(env: &CliEnvironment) -> Result<AuthSnapshot, RuntimeError> {
     let status = inspect_auth_status(env)?;
@@ -295,17 +257,6 @@ fn inspect_auth_status(env: &CliEnvironment) -> Result<AuthStatus, RuntimeError>
         Ok(_) => Ok(AuthStatus::Configured(AuthSource::TokenFile)),
         Err(RuntimeError::MissingToken) => Ok(AuthStatus::Missing),
         Err(error) => Err(error),
-    }
-}
-
-/// Returns the next logout step without exposing credential material.
-const fn logout_next_step(env_token_active: bool, removed: bool) -> &'static str {
-    if env_token_active {
-        "unset LOGBREW_TOKEN to fully log out"
-    } else if removed {
-        "run logbrew login to authenticate again"
-    } else {
-        "run logbrew login to authenticate"
     }
 }
 
