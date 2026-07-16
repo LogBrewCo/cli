@@ -36,6 +36,7 @@ fn root_help_surfaces_release_environment_pairing() {
     assert!(text.contains("logbrew whoami [--json]"));
     assert!(text.contains("logbrew health [--json]"));
     assert!(text.contains("logbrew doctor [--json]"));
+    assert!(text.contains("logbrew doctor --project <project_id> [--json]"));
     assert!(text.contains(
         "Setup aliases (non-mutating plan): logbrew init, logbrew install, logbrew configure, \
          logbrew sdk."

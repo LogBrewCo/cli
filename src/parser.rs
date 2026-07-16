@@ -178,7 +178,8 @@ fn parse_values(values: &[String]) -> Result<Command, CliError> {
         "login" => parse_login(tail),
         "logout" => parse_logout(tail),
         alias if is_setup_alias(alias) => parse_setup(tail),
-        "status" | "whoami" | "me" | "health" | "ping" | "doctor" => parse_status(tail),
+        "status" | "whoami" | "me" | "health" | "ping" => parse_status(tail),
+        "doctor" => parse_doctor(tail),
         "version" => parse_version(tail),
         "account" if tail.first().is_some_and(|arg| arg == "usage") => {
             parse_discovery_help(HelpTopic::Usage, &tail[1..])
@@ -645,6 +646,49 @@ fn parse_status(args: &[String]) -> Result<Command, CliError> {
     let flags = parse_flags(args, FlagScope::Status)?;
     Ok(Command::Status {
         json: flags.is_json(),
+    })
+}
+
+/// Parses bare status-compatible doctor or one strict project-scoped diagnostic.
+fn parse_doctor(args: &[String]) -> Result<Command, CliError> {
+    if args.iter().all(|arg| arg == "--json") {
+        return parse_status(args);
+    }
+
+    let mut project_id = None;
+    let mut json = false;
+    let mut index = 0;
+    while let Some(argument) = args.get(index) {
+        if let Some(value) = argument
+            .strip_prefix("--project=")
+            .or_else(|| argument.strip_prefix("--project-id="))
+        {
+            if project_id.is_some() || !crate::ids::is_uuid(value) {
+                return Err(CliError::InvalidDoctorCommand);
+            }
+            project_id = Some(value.to_owned());
+            index += 1;
+            continue;
+        }
+        match argument.as_str() {
+            "--json" if !json => json = true,
+            "--project" | "--project-id" if project_id.is_none() => {
+                index += 1;
+                let Some(value) = args.get(index) else {
+                    return Err(CliError::InvalidDoctorCommand);
+                };
+                if !crate::ids::is_uuid(value) {
+                    return Err(CliError::InvalidDoctorCommand);
+                }
+                project_id = Some(value.clone());
+            }
+            _ => return Err(CliError::InvalidDoctorCommand),
+        }
+        index += 1;
+    }
+
+    project_id.map_or(Err(CliError::InvalidDoctorCommand), |project_id| {
+        Ok(Command::Doctor { project_id, json })
     })
 }
 

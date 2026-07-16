@@ -3,6 +3,43 @@
 use logbrew_cli::{CliError, parse_command, write_cli_error};
 
 #[test]
+fn project_doctor_rejects_malformed_or_hostile_grammar_without_reflection() {
+    for args in [
+        &["logbrew", "doctor", "--project", "not-a-project", "--json"][..],
+        &[
+            "logbrew",
+            "doctor",
+            "--authorization=hostile-secret",
+            "--json",
+        ],
+        &[
+            "logbrew",
+            "doctor",
+            "--project",
+            "123e4567-e89b-12d3-a456-426614174000",
+            "hostile-secret\ncontrol",
+            "--json",
+        ],
+    ] {
+        let error = parse_command(args.iter().copied()).expect_err("doctor grammar fails closed");
+        let mut output = Vec::new();
+        write_cli_error(&error, true, &mut output).expect("error writes");
+        let text = String::from_utf8(output).expect("utf8 output");
+        let body: serde_json::Value = serde_json::from_str(text.as_str()).expect("valid json");
+
+        assert_eq!(body["error"], "invalid_doctor_command");
+        assert_eq!(body["message"], "invalid project doctor command");
+        assert_eq!(
+            body["next"],
+            "use logbrew doctor --project <project_id> with optional --json"
+        );
+        assert!(!text.contains("hostile-secret"));
+        assert!(!text.contains("authorization"));
+        assert!(!text.contains("not-a-project"));
+    }
+}
+
+#[test]
 fn rejects_non_numeric_limit_with_agent_next_step() {
     let error =
         parse_command(["logbrew", "logs", "--limit", "banana", "--json"]).expect_err("bad limit");

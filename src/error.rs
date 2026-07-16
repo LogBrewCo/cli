@@ -128,6 +128,9 @@ pub enum CliError {
     /// Issue investigation syntax is malformed.
     #[error("invalid issue investigation command")]
     InvalidInvestigationCommand,
+    /// Project-scoped doctor syntax is malformed.
+    #[error("invalid project doctor command")]
+    InvalidDoctorCommand,
     /// Project setup source is malformed.
     #[error("invalid setup source: {0}")]
     InvalidSetupSource(String),
@@ -379,6 +382,7 @@ const fn cli_error_code(error: &CliError) -> &'static str {
         CliError::InvalidSupportContextCommand => "invalid_support_context_command",
         CliError::InvalidSupportContext => "invalid_support_context",
         CliError::InvalidInvestigationCommand => "invalid_investigation_command",
+        CliError::InvalidDoctorCommand => "invalid_doctor_command",
         CliError::InvalidSetupSource(_) => "invalid_setup_source",
     }
 }
@@ -415,6 +419,9 @@ const fn cli_error_next_step(error: &CliError) -> &'static str {
         }
         CliError::InvalidInvestigationCommand => {
             "use logbrew investigate issue <issue_id> with optional --json"
+        }
+        CliError::InvalidDoctorCommand => {
+            "use logbrew doctor --project <project_id> with optional --json"
         }
         CliError::InvalidSetupSource(_) => "use --source api, cli, or sdk",
         CliError::MissingArgument { next, .. }

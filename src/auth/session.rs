@@ -71,6 +71,20 @@ where
     Ok((response, credential))
 }
 
+/// Sends one authenticated request without refreshing or persisting credentials.
+pub(super) async fn send_authenticated_without_refresh<F>(
+    client: &reqwest::Client,
+    env: &CliEnvironment,
+    build_request: F,
+) -> Result<(reqwest::Response, AuthCredential), RuntimeError>
+where
+    F: Fn(&reqwest::Client, &AuthCredential) -> reqwest::RequestBuilder,
+{
+    let credential = resolve_credential(env)?;
+    let response = build_request(client, &credential).send().await?;
+    Ok((response, credential))
+}
+
 /// Refreshes a rejected local credential while serializing other CLI processes.
 async fn refresh_local_credential(
     client: &reqwest::Client,

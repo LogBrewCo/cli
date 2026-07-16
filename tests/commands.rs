@@ -121,6 +121,36 @@ fn parses_health_and_doctor_as_status_aliases() {
 }
 
 #[test]
+fn parses_project_scoped_doctor_without_changing_the_bare_alias() {
+    const PROJECT_ID: &str = "123e4567-e89b-12d3-a456-426614174000";
+
+    for args in [
+        &["logbrew", "doctor", "--project", PROJECT_ID, "--json"][..],
+        &["logbrew", "doctor", "--project-id", PROJECT_ID, "--json"],
+        &["logbrew", "--json", "doctor", "--project", PROJECT_ID],
+        &[
+            "logbrew",
+            "doctor",
+            "--project=123e4567-e89b-12d3-a456-426614174000",
+            "--json",
+        ],
+    ] {
+        assert_eq!(
+            parse_command(args.iter().copied()).expect("scoped doctor parses"),
+            Command::Doctor {
+                project_id: PROJECT_ID.to_owned(),
+                json: true,
+            }
+        );
+    }
+
+    assert_eq!(
+        parse_command(["logbrew", "doctor"]).expect("bare doctor remains status"),
+        Command::Status { json: false }
+    );
+}
+
+#[test]
 fn parses_whoami_and_me_as_status_aliases() {
     for args in [
         &["logbrew", "whoami"][..],

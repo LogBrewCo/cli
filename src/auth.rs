@@ -127,6 +127,18 @@ where
     session::send_authenticated_with_refresh(client, env, build_request).await
 }
 
+/// Sends one authenticated request without refreshing or persisting credentials.
+pub(crate) async fn send_authenticated_without_refresh<F>(
+    client: &reqwest::Client,
+    env: &CliEnvironment,
+    build_request: F,
+) -> Result<(reqwest::Response, AuthCredential), RuntimeError>
+where
+    F: Fn(&reqwest::Client, &AuthCredential) -> reqwest::RequestBuilder,
+{
+    session::send_authenticated_without_refresh(client, env, build_request).await
+}
+
 /// Writes the successful `status` command response with already validated auth metadata.
 pub(crate) fn write_status_success_with_auth_snapshot<W: std::io::Write>(
     env: &CliEnvironment,

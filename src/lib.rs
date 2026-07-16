@@ -10,6 +10,8 @@
 pub mod auth;
 #[doc(hidden)]
 pub mod auth_namespace;
+#[doc(hidden)]
+pub mod doctor;
 mod error;
 #[doc(hidden)]
 pub mod flags;
@@ -90,6 +92,13 @@ pub enum Command {
     },
     /// Checks local auth and server reachability.
     Status {
+        /// Emit machine-readable JSON.
+        json: bool,
+    },
+    /// Checks one project through a bounded read-only diagnostic sequence.
+    Doctor {
+        /// Account-owned project UUID.
+        project_id: String,
         /// Emit machine-readable JSON.
         json: bool,
     },
@@ -647,6 +656,7 @@ impl Command {
             | Self::Logout { .. }
             | Self::Setup { .. }
             | Self::Status { .. }
+            | Self::Doctor { .. }
             | Self::Version { .. }
             | Self::InvestigateIssue { .. }
             | Self::Watch { .. } => None,
@@ -661,6 +671,7 @@ impl Command {
             | Self::Login { json, .. }
             | Self::Logout { json }
             | Self::Status { json }
+            | Self::Doctor { json, .. }
             | Self::Version { json }
             | Self::Read { json, .. }
             | Self::Watch { json, .. }
@@ -699,6 +710,7 @@ impl Command {
             | Self::Logout { .. }
             | Self::Setup { .. }
             | Self::Status { .. }
+            | Self::Doctor { .. }
             | Self::Version { .. }
             | Self::InvestigateIssue { .. }
             | Self::Watch { .. } => None,
@@ -737,6 +749,7 @@ impl Command {
             | Self::Logout { .. }
             | Self::Setup { .. }
             | Self::Status { .. }
+            | Self::Doctor { .. }
             | Self::Version { .. }
             | Self::Read { .. }
             | Self::Watch { .. }
@@ -758,6 +771,7 @@ impl Command {
             | Self::Logout { .. }
             | Self::Setup { .. }
             | Self::Status { .. }
+            | Self::Doctor { .. }
             | Self::Version { .. }
             | Self::Read { .. }
             | Self::Watch { .. }
@@ -836,6 +850,9 @@ pub async fn execute_command<W: std::io::Write>(
         Command::Logout { json } => execute_logout(env, *json, output).await,
         Command::Setup { auto, yes, json } => execute_setup(env, *auto, *yes, *json, output),
         Command::Status { json } => execute_status(env, *json, output).await,
+        Command::Doctor { project_id, json } => {
+            doctor::execute(env, project_id.as_str(), *json, output).await
+        }
         Command::Version { json } => execute_version(*json, output),
         Command::InvestigateIssue { issue_id, json } => {
             investigate::execute(env, issue_id.as_str(), *json, output).await
