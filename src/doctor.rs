@@ -59,9 +59,13 @@ impl DoctorReport {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SetupProgress {
     /// Project exists but setup has not started.
-    Incomplete,
-    /// Setup has progressed beyond project creation.
+    NotStarted,
+    /// A setup path was selected but explicit acknowledgement is not proven.
+    PathSelected,
+    /// The setup-seen acknowledgement is recorded without telemetry.
     Acknowledged,
+    /// Real telemetry proves setup is operational.
+    Operational,
 }
 
 /// Safe outcome from one authenticated diagnostic GET.
@@ -84,6 +88,8 @@ enum AccountOutcome {
     Invalid,
     /// The account read or response contract failed.
     Failed,
+    /// The server returned a malformed or unrecognized response.
+    InvalidResponse,
 }
 
 /// Result of validating the selected project setup read.
@@ -97,19 +103,23 @@ enum SetupOutcome {
     Missing,
     /// The setup read or response contract failed.
     Failed,
+    /// The server returned a malformed or unrecognized response.
+    InvalidResponse,
 }
 
 /// Result of validating the recent-log probe.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TelemetryOutcome {
-    /// At least one log exists in the 24-hour scope.
-    Recent,
-    /// No log exists in the 24-hour scope.
+    /// At least one retained log exists for the project.
+    Visible,
+    /// No retained log exists for the project.
     Empty,
     /// Credentials were rejected during the log read.
     AuthInvalid,
     /// The log read or response contract failed.
     Failed,
+    /// The server returned a malformed or unrecognized response.
+    InvalidResponse,
 }
 
 /// Executes the bounded project diagnostic and writes one deterministic report.
@@ -159,21 +169,40 @@ async fn run_checks(
             mark_check_failed(&mut report);
             return report;
         }
+        AccountOutcome::InvalidResponse => {
+            report.auth = invalid_response_check("auth");
+            mark_check_failed(&mut report);
+            return report;
+        }
     }
     let progress = match setup_outcome(client, env, project_id).await {
-        SetupOutcome::Usable(SetupProgress::Incomplete) => {
+        SetupOutcome::Usable(SetupProgress::NotStarted) => {
             report.project = check("project", "usable", "inspect project setup state");
             report.setup = check(
                 "setup",
-                "incomplete",
+                "not_started",
                 "choose an SDK or CLI setup path for this project",
             );
-            SetupProgress::Incomplete
+            SetupProgress::NotStarted
+        }
+        SetupOutcome::Usable(SetupProgress::PathSelected) => {
+            report.project = check("project", "usable", "inspect project setup state");
+            report.setup = check(
+                "setup",
+                "path_selected",
+                "send the first telemetry event for this project",
+            );
+            SetupProgress::PathSelected
         }
         SetupOutcome::Usable(SetupProgress::Acknowledged) => {
             report.project = check("project", "usable", "inspect project setup state");
             report.setup = check("setup", "acknowledged", "check recent telemetry");
             SetupProgress::Acknowledged
+        }
+        SetupOutcome::Usable(SetupProgress::Operational) => {
+            report.project = check("project", "usable", "inspect project setup state");
+            report.setup = check("setup", "operational", "check recent telemetry");
+            SetupProgress::Operational
         }
         SetupOutcome::AuthInvalid => {
             report.auth = check("auth", "invalid", "run logbrew login");
@@ -202,6 +231,11 @@ async fn run_checks(
             mark_check_failed(&mut report);
             return report;
         }
+        SetupOutcome::InvalidResponse => {
+            report.project = invalid_response_check("project");
+            mark_check_failed(&mut report);
+            return report;
+        }
     };
     finish_with_telemetry(client, env, project_id, progress, &mut report).await;
     report
@@ -216,32 +250,68 @@ async fn finish_with_telemetry(
     report: &mut DoctorReport,
 ) {
     match telemetry_outcome(client, env, project_id).await {
-        TelemetryOutcome::Recent => {
-            report.telemetry = check("telemetry", "recent", "investigate recent telemetry");
+        TelemetryOutcome::Visible => {
+            report.telemetry = check("telemetry", "visible", "inspect the newest visible log");
             match progress {
-                SetupProgress::Incomplete => report.mark(
+                SetupProgress::NotStarted => report.mark(
                     "setup_incomplete",
                     "choose an SDK or CLI setup path for this project",
                 ),
-                SetupProgress::Acknowledged => report.mark(
+                SetupProgress::PathSelected => report.mark(
+                    "setup_incomplete",
+                    "send the first telemetry event for this project",
+                ),
+                SetupProgress::Acknowledged | SetupProgress::Operational => {
+                    report.mark("ready", "run logbrew logs --project <project_id>");
+                }
+            }
+        }
+        TelemetryOutcome::Empty => match progress {
+            SetupProgress::NotStarted => {
+                report.telemetry = check(
+                    "telemetry",
+                    "empty",
+                    "send a log or inspect another telemetry stream",
+                );
+                report.mark(
+                    "setup_incomplete",
+                    "choose an SDK or CLI setup path for this project",
+                );
+            }
+            SetupProgress::PathSelected => {
+                report.telemetry = check(
+                    "telemetry",
+                    "empty",
+                    "send a log or inspect another telemetry stream",
+                );
+                report.mark(
+                    "setup_incomplete",
+                    "send the first telemetry event for this project",
+                );
+            }
+            SetupProgress::Acknowledged => {
+                report.telemetry = check(
+                    "telemetry",
+                    "empty",
+                    "send a log or inspect another telemetry stream",
+                );
+                report.mark(
+                        "telemetry_empty",
+                        "send a log or inspect a wider window with logbrew logs --project <project_id> --since 7d",
+                    );
+            }
+            SetupProgress::Operational => {
+                report.telemetry = check(
+                    "telemetry",
+                    "cross_signal",
+                    "inspect project issues, actions, releases, or traces",
+                );
+                report.mark(
                     "ready",
-                    "run logbrew logs --project <project_id> --since 24h",
-                ),
+                    "inspect project issues, actions, releases, or traces",
+                );
             }
-        }
-        TelemetryOutcome::Empty => {
-            report.telemetry = check("telemetry", "empty", "inspect a wider telemetry window");
-            match progress {
-                SetupProgress::Incomplete => report.mark(
-                    "setup_incomplete",
-                    "choose an SDK or CLI setup path for this project",
-                ),
-                SetupProgress::Acknowledged => report.mark(
-                    "telemetry_empty",
-                    "send a log or inspect a wider window with logbrew logs --project <project_id> --since 7d",
-                ),
-            }
-        }
+        },
         TelemetryOutcome::AuthInvalid => {
             report.auth = check("auth", "invalid", "run logbrew login");
             report.telemetry = check("telemetry", "not_checked", "run logbrew login");
@@ -253,6 +323,10 @@ async fn finish_with_telemetry(
                 "error",
                 "retry the project doctor without changing project state",
             );
+            mark_check_failed(report);
+        }
+        TelemetryOutcome::InvalidResponse => {
+            report.telemetry = invalid_response_check("telemetry");
             mark_check_failed(report);
         }
     }
@@ -275,16 +349,29 @@ async fn account_outcome(client: &reqwest::Client, env: &CliEnvironment) -> Acco
         AuthenticatedGet::Unauthorized => return AccountOutcome::Invalid,
         AuthenticatedGet::Failed => return AccountOutcome::Failed,
     };
-    if matches!(response.status().as_u16(), 401 | 403) {
-        return AccountOutcome::Invalid;
+    let status = response.status().as_u16();
+    let Some(value) = response_json(response).await else {
+        return AccountOutcome::InvalidResponse;
+    };
+    if (200..300).contains(&status) {
+        return if valid_account(&value) {
+            AccountOutcome::Valid
+        } else {
+            AccountOutcome::InvalidResponse
+        };
     }
-    if !response.status().is_success() {
-        return AccountOutcome::Failed;
+    if !valid_error_envelope(&value) {
+        return AccountOutcome::InvalidResponse;
     }
-    response_json(response)
-        .await
-        .filter(valid_account)
-        .map_or(AccountOutcome::Failed, |_| AccountOutcome::Valid)
+    if status == 401 {
+        if is_unauthorized_error(&value) {
+            AccountOutcome::Invalid
+        } else {
+            AccountOutcome::InvalidResponse
+        }
+    } else {
+        AccountOutcome::Failed
+    }
 }
 
 /// Validates project ownership/usability and exact setup state.
@@ -300,21 +387,25 @@ async fn setup_outcome(
         AuthenticatedGet::Failed => return SetupOutcome::Failed,
     };
     let status = response.status().as_u16();
-    if status == 401 {
-        SetupOutcome::AuthInvalid
-    } else if status == 404 {
-        SetupOutcome::Missing
-    } else if (200..300).contains(&status) {
-        response_json(response)
-            .await
-            .and_then(|value| validate_setup(&value, project_id))
-            .map_or(SetupOutcome::Failed, SetupOutcome::Usable)
-    } else {
-        SetupOutcome::Failed
+    let Some(value) = response_json(response).await else {
+        return SetupOutcome::InvalidResponse;
+    };
+    if (200..300).contains(&status) {
+        return validate_setup(&value, project_id)
+            .map_or(SetupOutcome::InvalidResponse, SetupOutcome::Usable);
+    }
+    if !valid_error_envelope(&value) {
+        return SetupOutcome::InvalidResponse;
+    }
+    match status {
+        401 if is_unauthorized_error(&value) => SetupOutcome::AuthInvalid,
+        404 if is_project_not_found_error(&value) => SetupOutcome::Missing,
+        401 | 404 => SetupOutcome::InvalidResponse,
+        _ => SetupOutcome::Failed,
     }
 }
 
-/// Probes one recent log without retaining any telemetry object.
+/// Probes the newest retained log without retaining any telemetry object.
 async fn telemetry_outcome(
     client: &reqwest::Client,
     env: &CliEnvironment,
@@ -322,31 +413,35 @@ async fn telemetry_outcome(
 ) -> TelemetryOutcome {
     let logs_path = path_with_query(
         "/api/logs",
-        &[
-            ("project_id", Some(project_id)),
-            ("since", Some("24h")),
-            ("limit", Some("1")),
-        ],
+        &[("project_id", Some(project_id)), ("limit", Some("1"))],
     );
     let response = match authenticated_get(client, env, logs_path.as_str()).await {
         AuthenticatedGet::Response(response) => response,
         AuthenticatedGet::Unauthorized => return TelemetryOutcome::AuthInvalid,
         AuthenticatedGet::Failed => return TelemetryOutcome::Failed,
     };
-    if response.status().as_u16() == 401 {
-        return TelemetryOutcome::AuthInvalid;
+    let status = response.status().as_u16();
+    let Some(value) = response_json(response).await else {
+        return TelemetryOutcome::InvalidResponse;
+    };
+    if (200..300).contains(&status) {
+        return match validate_logs(&value) {
+            Some(true) => TelemetryOutcome::Visible,
+            Some(false) => TelemetryOutcome::Empty,
+            None => TelemetryOutcome::InvalidResponse,
+        };
     }
-    if !response.status().is_success() {
-        return TelemetryOutcome::Failed;
+    if !valid_error_envelope(&value) {
+        return TelemetryOutcome::InvalidResponse;
     }
-    match response_json(response)
-        .await
-        .as_ref()
-        .and_then(validate_logs)
-    {
-        Some(true) => TelemetryOutcome::Recent,
-        Some(false) => TelemetryOutcome::Empty,
-        None => TelemetryOutcome::Failed,
+    if status == 401 {
+        if is_unauthorized_error(&value) {
+            TelemetryOutcome::AuthInvalid
+        } else {
+            TelemetryOutcome::InvalidResponse
+        }
+    } else {
+        TelemetryOutcome::Failed
     }
 }
 
@@ -447,17 +542,22 @@ fn validate_setup(value: &serde_json::Value, requested_project_id: &str) -> Opti
             "created",
             "choose an SDK or CLI setup path for this project",
             ("choose_setup_path", "project_setup"),
-        ) => Some(SetupProgress::Incomplete),
+        ) => Some(SetupProgress::NotStarted),
         (
-            "setup_started" | "sdk_seen",
+            "setup_started",
             "send the first telemetry event for this project",
             ("send_first_telemetry", "telemetry_ingest"),
-        )
-        | (
+        ) => Some(SetupProgress::PathSelected),
+        (
+            "sdk_seen",
+            "send the first telemetry event for this project",
+            ("send_first_telemetry", "telemetry_ingest"),
+        ) => Some(SetupProgress::Acknowledged),
+        (
             "first_telemetry_seen" | "active",
             "open the project dashboard or inspect recent telemetry",
             ("review_project_dashboard", "project_dashboard"),
-        ) => Some(SetupProgress::Acknowledged),
+        ) => Some(SetupProgress::Operational),
         _ => None,
     }
 }
@@ -473,10 +573,8 @@ fn validate_last_signal(value: &serde_json::Value) -> Option<()> {
             safe_string(object, "kind")?,
             "action" | "issue" | "log" | "release" | "trace"
         )
-        || !object.get("id").is_some_and(serde_json::Value::is_null)
-        || !object
-            .get("message")
-            .is_some_and(serde_json::Value::is_null)
+        || !valid_optional_safe_string(object, "id")
+        || !valid_optional_safe_string(object, "message")
     {
         return None;
     }
@@ -495,6 +593,58 @@ fn validate_logs(value: &serde_json::Value) -> Option<bool> {
         return None;
     }
     Some(!logs.is_empty())
+}
+
+/// Validates the shared exact error envelope without retaining its text.
+fn valid_error_envelope(value: &serde_json::Value) -> bool {
+    error_fields(value).is_some()
+}
+
+/// Returns whether a response is the canonical rejected-auth envelope.
+fn is_unauthorized_error(value: &serde_json::Value) -> bool {
+    matches!(
+        error_fields(value),
+        Some((
+            "Invalid or expired token",
+            "unauthorized",
+            "send Authorization: Bearer <token>, include the logbrew_session cookie, or sign in again",
+            "sign_in",
+            "auth"
+        ))
+    )
+}
+
+/// Returns whether a response is the canonical hidden-ownership 404 envelope.
+fn is_project_not_found_error(value: &serde_json::Value) -> bool {
+    matches!(
+        error_fields(value),
+        Some((
+            "project not found",
+            "not_found",
+            "check project_id or create a project with POST /api/projects",
+            "check_resource",
+            "resource"
+        ))
+    )
+}
+
+/// Extracts the bounded fields from the shared exact error envelope.
+fn error_fields(value: &serde_json::Value) -> Option<(&str, &str, &str, &str, &str)> {
+    let object = value.as_object()?;
+    if !exact_keys(object, &["error", "code", "next", "next_action"]) {
+        return None;
+    }
+    let action = object.get("next_action")?.as_object()?;
+    if !exact_keys(action, &["code", "target"]) {
+        return None;
+    }
+    Some((
+        safe_string(object, "error")?,
+        safe_string(object, "code")?,
+        safe_string(object, "next")?,
+        safe_string(action, "code")?,
+        safe_string(action, "target")?,
+    ))
 }
 
 /// Returns whether an object has exactly the required key set.
@@ -688,6 +838,15 @@ const fn check(check: &'static str, status: &'static str, next: &'static str) ->
     }
 }
 
+/// Builds one fixed malformed-response check.
+const fn invalid_response_check(check_name: &'static str) -> DoctorCheck {
+    check(
+        check_name,
+        "invalid_response",
+        "retry without changing local or project state",
+    )
+}
+
 /// Builds the initial all-not-checked report.
 const fn initial_report() -> DoctorReport {
     DoctorReport {
@@ -752,7 +911,8 @@ fn write_report<W: std::io::Write>(
     writeln!(output, "LogBrew project doctor")?;
     for check in report.checks() {
         let marker = match check.status {
-            "reachable" | "valid" | "usable" | "acknowledged" | "recent" => "ok",
+            "reachable" | "valid" | "usable" | "acknowledged" | "operational" | "visible"
+            | "cross_signal" => "ok",
             "not_checked" => " ",
             _ => "!",
         };

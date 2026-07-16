@@ -37,10 +37,10 @@ async fn ready_json_uses_the_exact_bounded_read_sequence() -> Result<(), Box<dyn
                 {"check":"api","status":"reachable","next":"validate persisted auth"},
                 {"check":"auth","status":"valid","next":"check the selected project"},
                 {"check":"project","status":"usable","next":"inspect project setup state"},
-                {"check":"setup","status":"acknowledged","next":"check recent telemetry"},
-                {"check":"telemetry","status":"recent","next":"investigate recent telemetry"}
+                {"check":"setup","status":"operational","next":"check recent telemetry"},
+                {"check":"telemetry","status":"visible","next":"inspect the newest visible log"}
             ],
-            "next": "run logbrew logs --project <project_id> --since 24h"
+            "next": "run logbrew logs --project <project_id>"
         })
     );
     assert_private_values_absent(text.as_str(), &server);
@@ -60,7 +60,7 @@ async fn ready_json_uses_the_exact_bounded_read_sequence() -> Result<(), Box<dyn
     assert_eq!(requests[3].url.path(), "/api/logs");
     assert_eq!(
         requests[3].url.query(),
-        Some("project_id=123e4567-e89b-12d3-a456-426614174000&since=24h&limit=1")
+        Some("project_id=123e4567-e89b-12d3-a456-426614174000&limit=1")
     );
     assert!(
         requests
@@ -94,10 +94,10 @@ async fn ready_human_output_is_bounded_and_value_safe() -> Result<(), Box<dyn st
          [ok] API: reachable\n\
          [ok] Auth: valid\n\
          [ok] Project: usable\n\
-         [ok] Setup: acknowledged\n\
-         [ok] Telemetry: recent\n\
+         [ok] Setup: operational\n\
+         [ok] Telemetry: visible\n\
          Status: ready\n\
-         Next: run logbrew logs --project <project_id> --since 24h\n"
+         Next: run logbrew logs --project <project_id>\n"
     );
     assert_private_values_absent(text.as_str(), &server);
     Ok(())
@@ -106,27 +106,20 @@ async fn ready_human_output_is_bounded_and_value_safe() -> Result<(), Box<dyn st
 #[tokio::test]
 async fn auth_rejection_is_typed_and_stops_before_project_reads()
 -> Result<(), Box<dyn std::error::Error>> {
-    for status in [401, 403] {
-        let server = MockServer::start().await;
-        mount_health(&server, 200, "ok").await;
-        mount_account(
-            &server,
-            status,
-            serde_json::json!({"error":"hostile-secret-auth","host":"private-host"}),
-        )
-        .await;
+    let server = MockServer::start().await;
+    mount_health(&server, 200, "ok").await;
+    mount_account(&server, 401, unauthorized_error()).await;
 
-        let text = run(&server, true).await?;
-        let body: serde_json::Value = serde_json::from_str(text.as_str())?;
+    let text = run(&server, true).await?;
+    let body: serde_json::Value = serde_json::from_str(text.as_str())?;
 
-        assert_eq!(body["status"], "auth_invalid");
-        assert_eq!(body["checks"][0]["status"], "reachable");
-        assert_eq!(body["checks"][1]["status"], "invalid");
-        assert_eq!(body["checks"][2]["status"], "not_checked");
-        assert_eq!(body["next"], "run logbrew login");
-        assert_private_values_absent(text.as_str(), &server);
-        assert_eq!(request_count(&server).await?, 2);
-    }
+    assert_eq!(body["status"], "auth_invalid");
+    assert_eq!(body["checks"][0]["status"], "reachable");
+    assert_eq!(body["checks"][1]["status"], "invalid");
+    assert_eq!(body["checks"][2]["status"], "not_checked");
+    assert_eq!(body["next"], "run logbrew login");
+    assert_private_values_absent(text.as_str(), &server);
+    assert_eq!(request_count(&server).await?, 2);
     Ok(())
 }
 
@@ -136,12 +129,7 @@ async fn missing_project_is_typed_and_does_not_probe_logs() -> Result<(), Box<dy
     let server = MockServer::start().await;
     mount_health(&server, 200, "ok").await;
     mount_account(&server, 200, serde_json::json!({"id": ACCOUNT_ID})).await;
-    mount_setup(
-        &server,
-        404,
-        serde_json::json!({"error":"hostile-secret-project","path":"/private/path"}),
-    )
-    .await;
+    mount_setup(&server, 404, project_not_found_error()).await;
 
     let text = run(&server, true).await?;
     let body: serde_json::Value = serde_json::from_str(text.as_str())?;
@@ -172,7 +160,7 @@ async fn created_project_prioritizes_setup_incomplete_after_the_log_probe()
 
     assert_eq!(body["status"], "setup_incomplete");
     assert_eq!(body["checks"][2]["status"], "usable");
-    assert_eq!(body["checks"][3]["status"], "incomplete");
+    assert_eq!(body["checks"][3]["status"], "not_started");
     assert_eq!(body["checks"][4]["status"], "empty");
     assert_eq!(
         body["next"],
@@ -191,13 +179,13 @@ async fn rejected_persisted_auth_does_not_refresh_or_write_server_state()
     Mock::given(method("GET"))
         .and(path("/api/auth/account"))
         .and(header("authorization", "Bearer local-access"))
-        .respond_with(ResponseTemplate::new(401).set_body_json(serde_json::json!({
-            "error":"hostile-secret-auth"
-        })))
+        .respond_with(ResponseTemplate::new(401).set_body_json(unauthorized_error()))
         .expect(1)
         .mount(&server)
         .await;
     let home = local_auth_home(&server)?;
+    let session_path = home.join(".logbrew/session.json");
+    let original_session = std::fs::read(session_path.as_path())?;
 
     let text = run_with_home(&server, true, home).await?;
     let body: serde_json::Value = serde_json::from_str(text.as_str())?;
@@ -215,11 +203,40 @@ async fn rejected_persisted_auth_does_not_refresh_or_write_server_state()
             .iter()
             .all(|request| request.method.as_str() == "GET")
     );
+    assert_eq!(std::fs::read(session_path)?, original_session);
     Ok(())
 }
 
 #[tokio::test]
-async fn empty_recent_log_scope_is_distinct_from_setup_progress()
+async fn canonical_auth_rejection_at_later_stages_is_typed_and_stops()
+-> Result<(), Box<dyn std::error::Error>> {
+    for failure in ["setup", "logs"] {
+        let server = MockServer::start().await;
+        mount_health(&server, 200, "ok").await;
+        mount_account(&server, 200, serde_json::json!({"id": ACCOUNT_ID})).await;
+        if failure == "setup" {
+            mount_setup(&server, 401, unauthorized_error()).await;
+        } else {
+            mount_setup(&server, 200, setup_body("active")).await;
+            mount_logs(&server, 401, unauthorized_error()).await;
+        }
+
+        let text = run(&server, true).await?;
+        let body: serde_json::Value = serde_json::from_str(text.as_str())?;
+
+        assert_eq!(body["status"], "auth_invalid");
+        assert_eq!(body["checks"][1]["status"], "invalid");
+        assert_eq!(
+            request_count(&server).await?,
+            if failure == "setup" { 3 } else { 4 }
+        );
+        assert_private_values_absent(text.as_str(), &server);
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn empty_log_scope_is_distinct_from_operational_cross_signal_progress()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
     mount_health(&server, 200, "ok").await;
@@ -230,21 +247,24 @@ async fn empty_recent_log_scope_is_distinct_from_setup_progress()
     let text = run(&server, true).await?;
     let body: serde_json::Value = serde_json::from_str(text.as_str())?;
 
-    assert_eq!(body["status"], "telemetry_empty");
-    assert_eq!(body["checks"][3]["status"], "acknowledged");
-    assert_eq!(body["checks"][4]["status"], "empty");
+    assert_eq!(body["status"], "ready");
+    assert_eq!(body["checks"][3]["status"], "operational");
+    assert_eq!(body["checks"][4]["status"], "cross_signal");
     assert_eq!(
         body["next"],
-        "send a log or inspect a wider window with logbrew logs --project <project_id> --since 7d"
+        "inspect project issues, actions, releases, or traces"
     );
     assert_private_values_absent(text.as_str(), &server);
     Ok(())
 }
 
 #[tokio::test]
-async fn every_acknowledged_setup_progress_state_reaches_the_log_probe()
+async fn setup_progress_states_preserve_acknowledgement_meaning()
 -> Result<(), Box<dyn std::error::Error>> {
-    for status in ["setup_started", "sdk_seen"] {
+    for (status, overall, setup_status) in [
+        ("setup_started", "setup_incomplete", "path_selected"),
+        ("sdk_seen", "telemetry_empty", "acknowledged"),
+    ] {
         let server = MockServer::start().await;
         mount_health(&server, 200, "ok").await;
         mount_account(&server, 200, serde_json::json!({"id": ACCOUNT_ID})).await;
@@ -254,8 +274,8 @@ async fn every_acknowledged_setup_progress_state_reaches_the_log_probe()
         let text = run(&server, true).await?;
         let body: serde_json::Value = serde_json::from_str(text.as_str())?;
 
-        assert_eq!(body["status"], "telemetry_empty");
-        assert_eq!(body["checks"][3]["status"], "acknowledged");
+        assert_eq!(body["status"], overall);
+        assert_eq!(body["checks"][3]["status"], setup_status);
         assert_eq!(request_count(&server).await?, 4);
     }
     Ok(())
@@ -300,6 +320,40 @@ async fn malformed_success_bodies_fail_closed_without_reflection()
             "hostile-secret-extra":true
         })),
         DoctorMalformedCase::Setup(mismatched_action),
+        DoctorMalformedCase::Setup({
+            let mut value = setup_body("active");
+            value["last_signal"] = serde_json::json!({
+                "kind":"trace",
+                "id":null,
+                "message":null,
+                "occurred_at":"not-a-time"
+            });
+            value
+        }),
+        DoctorMalformedCase::Setup({
+            let mut value = setup_body("active");
+            value["last_signal"] = serde_json::json!({
+                "kind":"trace",
+                "id":7,
+                "message":null,
+                "occurred_at":"2026-07-16T09:00:00Z"
+            });
+            value
+        }),
+        DoctorMalformedCase::Setup({
+            let mut value = setup_body("active");
+            value["last_signal"] = serde_json::json!({
+                "kind":"trace",
+                "id":null,
+                "message":null,
+                "occurred_at":"2026-07-16T09:00:00Z",
+                "extra":true
+            });
+            value
+        }),
+        DoctorMalformedCase::Setup(serde_json::json!({
+            "error":"hostile-secret-project"
+        })),
         DoctorMalformedCase::Logs(serde_json::json!({
             "logs":[],
             "hostile-secret-extra":true
@@ -339,6 +393,91 @@ async fn malformed_success_bodies_fail_closed_without_reflection()
 }
 
 #[tokio::test]
+async fn malformed_error_bodies_fail_closed_without_changing_typed_state()
+-> Result<(), Box<dyn std::error::Error>> {
+    for failure in ["account", "setup", "logs"] {
+        let server = MockServer::start().await;
+        mount_health(&server, 200, "ok").await;
+        if failure == "account" {
+            mount_account(
+                &server,
+                401,
+                standard_error("unauthorized", "sign in again", "sign_in", "auth"),
+            )
+            .await;
+        } else {
+            mount_account(&server, 200, serde_json::json!({"id": ACCOUNT_ID})).await;
+            if failure == "setup" {
+                mount_setup(
+                    &server,
+                    404,
+                    standard_error(
+                        "not_found",
+                        "retry with another project",
+                        "check_resource",
+                        "resource",
+                    ),
+                )
+                .await;
+            } else {
+                mount_setup(&server, 200, setup_body("active")).await;
+                mount_logs(
+                    &server,
+                    401,
+                    standard_error("unauthorized", "sign in again", "retry_request", "request"),
+                )
+                .await;
+            }
+        }
+
+        let text = run(&server, true).await?;
+        let body: serde_json::Value = serde_json::from_str(text.as_str())?;
+
+        assert_eq!(body["status"], "check_failed");
+        let check_index = match failure {
+            "account" => 1,
+            "setup" => 2,
+            "logs" => 4,
+            _ => unreachable!(),
+        };
+        assert_eq!(body["checks"][check_index]["status"], "invalid_response");
+        assert_private_values_absent(text.as_str(), &server);
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn non_json_success_and_error_bodies_fail_closed() -> Result<(), Box<dyn std::error::Error>> {
+    for (failure, status) in [("account", 401), ("setup", 200), ("logs", 200)] {
+        let server = MockServer::start().await;
+        mount_health(&server, 200, "ok").await;
+        if failure == "account" {
+            mount_authenticated_raw(&server, "/api/auth/account", status).await;
+        } else {
+            mount_account(&server, 200, serde_json::json!({"id": ACCOUNT_ID})).await;
+            if failure == "setup" {
+                mount_authenticated_raw(
+                    &server,
+                    format!("/api/projects/{PROJECT_ID}/setup").as_str(),
+                    status,
+                )
+                .await;
+            } else {
+                mount_setup(&server, 200, setup_body("active")).await;
+                mount_authenticated_raw(&server, "/api/logs", status).await;
+            }
+        }
+
+        let text = run(&server, true).await?;
+        let body: serde_json::Value = serde_json::from_str(text.as_str())?;
+
+        assert_eq!(body["status"], "check_failed");
+        assert_private_values_absent(text.as_str(), &server);
+    }
+    Ok(())
+}
+
+#[tokio::test]
 async fn validation_and_server_failures_use_fixed_recovery()
 -> Result<(), Box<dyn std::error::Error>> {
     for status in [422, 500] {
@@ -348,7 +487,12 @@ async fn validation_and_server_failures_use_fixed_recovery()
         mount_setup(
             &server,
             status,
-            serde_json::json!({"error":"hostile-secret-upstream","authorization":"secret"}),
+            standard_error(
+                "request_failed",
+                "retry the project doctor later",
+                "retry_request",
+                "request",
+            ),
         )
         .await;
 
@@ -364,6 +508,28 @@ async fn validation_and_server_failures_use_fixed_recovery()
 }
 
 #[tokio::test]
+async fn setup_signal_accepts_public_optional_id_and_message_strings()
+-> Result<(), Box<dyn std::error::Error>> {
+    let server = MockServer::start().await;
+    mount_health(&server, 200, "ok").await;
+    mount_account(&server, 200, serde_json::json!({"id": ACCOUNT_ID})).await;
+    let mut setup = setup_body("active");
+    setup["last_signal"]["id"] = serde_json::json!("signal-id");
+    setup["last_signal"]["message"] = serde_json::json!("signal message");
+    mount_setup(&server, 200, setup).await;
+    mount_logs(&server, 200, serde_json::json!([])).await;
+
+    let text = run(&server, true).await?;
+    let body: serde_json::Value = serde_json::from_str(text.as_str())?;
+
+    assert_eq!(body["status"], "ready");
+    assert_eq!(body["checks"][4]["status"], "cross_signal");
+    assert!(!text.contains("signal-id"));
+    assert!(!text.contains("signal message"));
+    Ok(())
+}
+
+#[tokio::test]
 async fn post_auth_forbidden_responses_fail_closed_without_relabeling_auth()
 -> Result<(), Box<dyn std::error::Error>> {
     for failure in ["setup", "logs"] {
@@ -374,7 +540,12 @@ async fn post_auth_forbidden_responses_fail_closed_without_relabeling_auth()
             mount_setup(
                 &server,
                 403,
-                serde_json::json!({"error":"hostile-secret-forbidden"}),
+                standard_error(
+                    "forbidden",
+                    "confirm account access and retry",
+                    "check_access",
+                    "auth",
+                ),
             )
             .await;
         } else {
@@ -382,7 +553,12 @@ async fn post_auth_forbidden_responses_fail_closed_without_relabeling_auth()
             mount_logs(
                 &server,
                 403,
-                serde_json::json!({"error":"hostile-secret-forbidden"}),
+                standard_error(
+                    "forbidden",
+                    "confirm account access and retry",
+                    "check_access",
+                    "auth",
+                ),
             )
             .await;
         }
@@ -443,6 +619,16 @@ async fn mount_logs(server: &MockServer, status: u16, body: serde_json::Value) {
         .await;
 }
 
+async fn mount_authenticated_raw(server: &MockServer, request_path: &str, status: u16) {
+    Mock::given(method("GET"))
+        .and(path(request_path))
+        .and(header("authorization", format!("Bearer {TOKEN}")))
+        .respond_with(ResponseTemplate::new(status).set_body_string("hostile-secret-non-json"))
+        .expect(1)
+        .mount(server)
+        .await;
+}
+
 fn setup_body(status: &str) -> serde_json::Value {
     let (next, code, target, first_telemetry_seen_at, last_seen_at, last_signal) = match status {
         "created" => (
@@ -489,6 +675,33 @@ fn setup_body(status: &str) -> serde_json::Value {
         "last_signal": last_signal,
         "next": next,
         "next_action": {"code":code,"target":target}
+    })
+}
+
+fn unauthorized_error() -> serde_json::Value {
+    serde_json::json!({
+        "error":"Invalid or expired token",
+        "code":"unauthorized",
+        "next":"send Authorization: Bearer <token>, include the logbrew_session cookie, or sign in again",
+        "next_action":{"code":"sign_in","target":"auth"}
+    })
+}
+
+fn project_not_found_error() -> serde_json::Value {
+    serde_json::json!({
+        "error":"project not found",
+        "code":"not_found",
+        "next":"check project_id or create a project with POST /api/projects",
+        "next_action":{"code":"check_resource","target":"resource"}
+    })
+}
+
+fn standard_error(code: &str, next: &str, action: &str, target: &str) -> serde_json::Value {
+    serde_json::json!({
+        "error":"request failed",
+        "code":code,
+        "next":next,
+        "next_action":{"code":action,"target":target}
     })
 }
 
