@@ -459,7 +459,7 @@ Usage:
 
 Reads the issue first, then follows only its public trace-summary or related-log next action.
 The command is read-only and preserves issue scope in the directed request.
-JSON returns the unchanged issue and follow-up response in one stable envelope.";
+JSON preserves the issue and exactly one directed result in a stable four-key envelope.";
 
 /// Set command help text.
 const SET_HELP: &str = "\

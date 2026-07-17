@@ -255,13 +255,14 @@ fn parse_investigate(args: &[String]) -> Result<Command, CliError> {
     }
 }
 
-/// Restricts investigation IDs to control-safe public path-segment characters.
+/// Restricts investigation IDs to canonical lowercase dashed UUIDs.
 fn is_safe_investigation_issue_id(value: &str) -> bool {
-    is_issue_id(value)
-        && !matches!(value, "issue_" | "issue-")
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+    value.len() == 36
+        && value.bytes().enumerate().all(|(index, byte)| {
+            matches!(index, 8 | 13 | 18 | 23) && byte == b'-'
+                || !matches!(index, 8 | 13 | 18 | 23)
+                    && (byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+        })
 }
 
 /// Parses non-mutating discovery help for backend-owned future workflows.

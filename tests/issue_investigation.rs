@@ -6,7 +6,7 @@ use logbrew_cli::{
 use wiremock::matchers::{header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-const ISSUE_ID: &str = "issue_123";
+const ISSUE_ID: &str = "11111111-1111-4111-8111-111111111111";
 const PROJECT_ID: &str = "123e4567-e89b-12d3-a456-426614174000";
 
 #[test]
@@ -43,9 +43,21 @@ fn investigation_grammar_failures_are_fixed_and_value_safe()
             "logbrew",
             "investigate",
             "issue",
-            "issue_hostile-secret\ncontrol",
+            "11111111-1111-4111-8111-11111111111\n",
         ],
-        vec!["logbrew", "investigate", "issue", "issue_"],
+        vec!["logbrew", "investigate", "issue", "issue_123"],
+        vec![
+            "logbrew",
+            "investigate",
+            "issue",
+            "11111111-1111-4111-8111-11111111111A",
+        ],
+        vec![
+            "logbrew",
+            "investigate",
+            "issue",
+            "11111111-1111-4111-8111-111111111111/path",
+        ],
     ] {
         let error = parse_command(args).expect_err("closed investigation grammar rejects input");
         let mut output = Vec::new();
@@ -76,31 +88,23 @@ fn investigation_help_describes_the_read_only_server_directed_flow() {
 
     assert!(text.contains("logbrew investigate issue <issue_id>"));
     assert!(text.contains("read-only"));
-    assert!(text.contains("JSON returns the unchanged issue and follow-up response"));
+    assert!(text.contains("JSON preserves the issue and exactly one directed result"));
 }
 
 #[tokio::test]
 async fn investigation_fails_closed_on_an_unknown_server_action_without_reflection()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
+    let mut issue = issue_detail("inspect_related_logs", "telemetry_logs", None);
+    issue["title"] = serde_json::json!("hostile-secret");
+    issue["next_action"] = serde_json::json!({
+        "code": "open_private_dashboard",
+        "target": "internal_url"
+    });
     Mock::given(method("GET"))
         .and(path(format!("/api/telemetry/issues/{ISSUE_ID}")))
         .and(header("authorization", "Bearer test-token"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "id": ISSUE_ID,
-            "project_id": PROJECT_ID,
-            "status": "unresolved",
-            "service_name": "checkout-api",
-            "release": "checkout@1.2.3",
-            "environment": "production",
-            "first_seen_at": "2026-07-15T09:00:00Z",
-            "last_seen_at": "2026-07-15T10:00:00Z",
-            "title": "hostile-secret",
-            "next_action": {
-                "code": "open_private_dashboard",
-                "target": "internal_url"
-            }
-        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(issue))
         .expect(1)
         .mount(&server)
         .await;
@@ -135,22 +139,7 @@ async fn trace_investigation_preserves_exact_json_and_canonical_scope()
         "trace_summary",
         Some("trace/checkout value"),
     );
-    let summary = serde_json::json!({
-        "trace_id": "trace/checkout value",
-        "project_ids": [PROJECT_ID],
-        "root_span_name": "POST /checkout",
-        "root_service_name": "checkout-api",
-        "root_operation": "http.server",
-        "span_count": 12,
-        "error_span_count": 2,
-        "service_count": 3,
-        "started_at": "2026-07-15T09:30:00Z",
-        "duration_ms": 845,
-        "services": ["checkout-api", "payments-api"],
-        "releases": ["checkout@1.2.3"],
-        "environments": ["production"],
-        "private_context": {"authorization": "hostile-secret"}
-    });
+    let summary = trace_summary("trace/checkout value");
     mount_issue(&server, issue.clone()).await;
     Mock::given(method("GET"))
         .and(path(
@@ -169,11 +158,9 @@ async fn trace_investigation_preserves_exact_json_and_canonical_scope()
         body,
         serde_json::json!({
             "issue": issue,
-            "investigation": {
-                "code": "inspect_trace",
-                "target": "trace_summary",
-                "result": summary
-            }
+            "next_action": {"code": "inspect_trace", "target": "trace_summary"},
+            "trace_summary": summary,
+            "related_logs": null
         })
     );
     assert_follow_request(
@@ -212,6 +199,31 @@ async fn trace_id_dot_segments_fail_closed_before_following()
 }
 
 #[tokio::test]
+async fn trace_investigation_omits_blank_optional_release_and_environment()
+-> Result<(), Box<dyn std::error::Error>> {
+    let server = MockServer::start().await;
+    let mut issue = issue_detail("inspect_trace", "trace_summary", Some("trace_123"));
+    issue["release"] = serde_json::json!("");
+    issue["environment"] = serde_json::json!("");
+    mount_issue(&server, issue).await;
+    Mock::given(method("GET"))
+        .and(path("/api/telemetry/traces/trace_123/summary"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(trace_summary("trace_123")))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    drop(run(&server, true).await?);
+    assert_follow_request(
+        &server,
+        "/api/telemetry/traces/trace_123/summary",
+        "project_id=123e4567-e89b-12d3-a456-426614174000",
+    )
+    .await?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn related_log_investigation_preserves_scope_and_bare_json()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
@@ -241,17 +253,15 @@ async fn related_log_investigation_preserves_scope_and_bare_json()
         body,
         serde_json::json!({
             "issue": issue,
-            "investigation": {
-                "code": "inspect_related_logs",
-                "target": "telemetry_logs",
-                "result": logs
-            }
+            "next_action": {"code": "inspect_related_logs", "target": "telemetry_logs"},
+            "trace_summary": null,
+            "related_logs": logs
         })
     );
     assert_follow_request(
         &server,
         "/api/logs",
-        "project_id=123e4567-e89b-12d3-a456-426614174000&service_name=checkout-api&release=checkout%401.2.3&environment=production&since=2026-07-15T09%3A00%3A00Z",
+        "project_id=123e4567-e89b-12d3-a456-426614174000&service_name=checkout-api&release=checkout%401.2.3&environment=production&since=2026-07-15T09%3A00%3A00Z&limit=25",
     )
     .await?;
     Ok(())
@@ -272,7 +282,11 @@ async fn human_investigation_is_bounded_and_hides_raw_context()
             ResponseTemplate::new(200).set_body_json(serde_json::json!([{
                 "severity": "error",
                 "message": "hostile-secret",
-                "attributes": {"cookie": "hostile-cookie"}
+                "attributes": {"cookie": "hostile-cookie"},
+                "service_name": "checkout-api",
+                "release": "checkout@1.2.3",
+                "environment": "production",
+                "timestamp": "2026-07-15T09:45:00Z"
             }])),
         )
         .mount(&server)
@@ -282,8 +296,11 @@ async fn human_investigation_is_bounded_and_hides_raw_context()
 
     assert_eq!(
         output,
-        "Issue issue_123 investigation\nAction: inspect_related_logs -> telemetry_logs\nScope: project=123e4567-e89b-12d3-a456-426614174000 service=checkout-api release=checkout@1.2.3 environment=production first_seen=2026-07-15T09:00:00Z last_seen=2026-07-15T10:00:00Z\nRelated logs: 1\nNext: inspect the JSON result for full public log fields.\n"
+        "Issue investigation\nRoute: inspect_related_logs -> telemetry_logs\nRelated logs: 1 (first page)\nNext: rerun this command with --json to inspect full public log fields.\n"
     );
+    assert!(!output.contains(ISSUE_ID));
+    assert!(!output.contains(PROJECT_ID));
+    assert!(!output.contains("checkout-api"));
     assert!(!output.contains("hostile-secret"));
     assert!(!output.contains("hostile-cookie"));
     Ok(())
@@ -300,17 +317,7 @@ async fn human_trace_investigation_hides_names_and_raw_context()
     .await;
     Mock::given(method("GET"))
         .and(path("/api/telemetry/traces/trace_123/summary"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "trace_id": "trace_123",
-            "project_ids": [PROJECT_ID],
-            "span_count": 12,
-            "error_span_count": 2,
-            "service_count": 3,
-            "duration_ms": 845,
-            "started_at": "2026-07-15T09:30:00Z",
-            "root_span_name": "hostile-secret",
-            "attributes": {"authorization": "hostile-bearer"}
-        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(trace_summary("trace_123")))
         .mount(&server)
         .await;
 
@@ -318,43 +325,39 @@ async fn human_trace_investigation_hides_names_and_raw_context()
 
     assert_eq!(
         output,
-        "Issue issue_123 investigation\nAction: inspect_trace -> trace_summary\nScope: project=123e4567-e89b-12d3-a456-426614174000 service=checkout-api release=checkout@1.2.3 environment=production first_seen=2026-07-15T09:00:00Z last_seen=2026-07-15T10:00:00Z\nTrace summary: spans=12 errors=2 services=3 duration=845ms started=2026-07-15T09:30:00Z\nNext: inspect the JSON result for full public trace fields.\n"
+        "Issue investigation\nRoute: inspect_trace -> trace_summary\nTrace summary: spans=12 errors=2 services=3 duration=845ms\nNext: rerun this command with --json to inspect full public trace fields.\n"
     );
+    assert!(!output.contains(ISSUE_ID));
+    assert!(!output.contains(PROJECT_ID));
+    assert!(!output.contains("checkout-api"));
     assert!(!output.contains("hostile-secret"));
     assert!(!output.contains("hostile-bearer"));
     Ok(())
 }
 
 #[tokio::test]
-async fn absent_optional_log_scope_is_omitted_without_losing_time_scope()
+async fn related_logs_require_complete_incident_scope_before_following()
 -> Result<(), Box<dyn std::error::Error>> {
-    let server = MockServer::start().await;
-    let mut issue = issue_detail("inspect_related_logs", "telemetry_logs", None);
     for key in ["service_name", "release", "environment"] {
-        drop(
-            issue
-                .as_object_mut()
-                .expect("issue fixture is an object")
-                .remove(key),
+        let server = MockServer::start().await;
+        let mut issue = issue_detail("inspect_related_logs", "telemetry_logs", None);
+        issue[key] = serde_json::json!("");
+        mount_issue(&server, issue).await;
+        let command = parse_command(["logbrew", "investigate", "issue", ISSUE_ID, "--json"])?;
+        let mut output = Vec::new();
+        let error = execute_command(&command, &authenticated_env(&server), &mut output)
+            .await
+            .expect_err("incomplete log scope fails closed");
+        write_runtime_error(&error, true, &mut output)?;
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&output)?["error"],
+            "investigation_response_invalid"
+        );
+        assert_eq!(
+            server.received_requests().await.unwrap_or_default().len(),
+            1
         );
     }
-    mount_issue(&server, issue).await;
-    Mock::given(method("GET"))
-        .and(path("/api/logs"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "logs": [],
-            "next_cursor": null
-        })))
-        .mount(&server)
-        .await;
-
-    drop(run(&server, true).await?);
-    assert_follow_request(
-        &server,
-        "/api/logs",
-        "project_id=123e4567-e89b-12d3-a456-426614174000&since=2026-07-15T09%3A00%3A00Z",
-    )
-    .await?;
     Ok(())
 }
 
@@ -408,21 +411,15 @@ async fn investigation_binds_issue_and_trace_response_identity()
         let server = MockServer::start().await;
         let mut issue = issue_detail("inspect_trace", "trace_summary", Some("trace_123"));
         if mismatch == "issue" {
-            issue["id"] = serde_json::json!("issue_other");
+            issue["id"] = serde_json::json!("22222222-2222-4222-8222-222222222222");
         }
         mount_issue(&server, issue).await;
         if mismatch == "trace" {
             Mock::given(method("GET"))
                 .and(path("/api/telemetry/traces/trace_123/summary"))
-                .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                    "trace_id": "trace_other",
-                    "project_ids": [PROJECT_ID],
-                    "span_count": 1,
-                    "error_span_count": 0,
-                    "service_count": 1,
-                    "duration_ms": 1,
-                    "started_at": "2026-07-15T09:30:00Z"
-                })))
+                .respond_with(
+                    ResponseTemplate::new(200).set_body_json(trace_summary("trace_other")),
+                )
                 .mount(&server)
                 .await;
         }
@@ -447,20 +444,27 @@ async fn investigation_rejects_cross_scope_or_malformed_follow_up_rows()
         (
             issue_detail("inspect_trace", "trace_summary", Some("trace_123")),
             "/api/telemetry/traces/trace_123/summary",
-            serde_json::json!({
-                "trace_id": "trace_123",
-                "project_ids": ["99999999-9999-4999-8999-999999999999"],
-                "span_count": 1,
-                "error_span_count": 0,
-                "service_count": 1,
-                "duration_ms": 1,
-                "started_at": "2026-07-15T09:30:00Z"
-            }),
+            {
+                let mut summary = trace_summary("trace_123");
+                summary["unexpected"] = serde_json::json!(true);
+                summary
+            },
         ),
         (
             issue_detail("inspect_related_logs", "telemetry_logs", None),
             "/api/logs",
             serde_json::json!(["malformed log row"]),
+        ),
+        (
+            issue_detail("inspect_related_logs", "telemetry_logs", None),
+            "/api/logs",
+            serde_json::json!([{
+                "project_id": "99999999-9999-4999-8999-999999999999",
+                "service_name": "other-service",
+                "release": "checkout@1.2.3",
+                "environment": "production",
+                "timestamp": "2026-07-15T09:45:00Z"
+            }]),
         ),
         (
             issue_detail("inspect_related_logs", "telemetry_logs", None),
@@ -533,6 +537,59 @@ async fn investigation_rejects_directional_scope_controls_before_following()
 }
 
 #[tokio::test]
+async fn investigation_rejects_a_contradictory_related_log_route_before_following()
+-> Result<(), Box<dyn std::error::Error>> {
+    let server = MockServer::start().await;
+    mount_issue(
+        &server,
+        issue_detail("inspect_related_logs", "telemetry_logs", Some("trace_123")),
+    )
+    .await;
+    let command = parse_command(["logbrew", "investigate", "issue", ISSUE_ID, "--json"])?;
+    let mut output = Vec::new();
+
+    let error = execute_command(&command, &authenticated_env(&server), &mut output)
+        .await
+        .expect_err("contradictory route fails closed");
+    write_runtime_error(&error, true, &mut output)?;
+    let text = String::from_utf8(output)?;
+
+    assert!(text.contains("investigation_response_invalid"));
+    assert!(!text.contains("trace_123"));
+    assert_eq!(
+        server.received_requests().await.unwrap_or_default().len(),
+        1
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn investigation_rejects_an_unsafe_api_origin_without_reflection()
+-> Result<(), Box<dyn std::error::Error>> {
+    let command = parse_command(["logbrew", "investigate", "issue", ISSUE_ID, "--json"])?;
+    let env = CliEnvironment {
+        base_url: "https://user:hostile-secret@example.invalid/private-path?token=value".to_owned(),
+        token: Some("test-token".to_owned()),
+        home: Some(std::env::temp_dir().join("logbrew-investigation-origin-test")),
+        cwd: None,
+    };
+    let mut output = Vec::new();
+
+    let error = execute_command(&command, &env, &mut output)
+        .await
+        .expect_err("unsafe origin fails closed");
+    write_runtime_error(&error, true, &mut output)?;
+    let text = String::from_utf8(output)?;
+
+    assert!(text.contains("unavailable"));
+    assert!(!text.contains("hostile-secret"));
+    assert!(!text.contains("example.invalid"));
+    assert!(!text.contains("private-path"));
+    assert!(!text.contains("token=value"));
+    Ok(())
+}
+
+#[tokio::test]
 async fn follow_up_failures_discard_backend_text_and_malformed_success()
 -> Result<(), Box<dyn std::error::Error>> {
     for response in [
@@ -569,10 +626,198 @@ async fn follow_up_failures_discard_backend_text_and_malformed_success()
     Ok(())
 }
 
+#[tokio::test]
+async fn investigation_rejects_extra_or_duplicate_issue_fields()
+-> Result<(), Box<dyn std::error::Error>> {
+    let serialized = serde_json::to_string(&issue_detail(
+        "inspect_related_logs",
+        "telemetry_logs",
+        None,
+    ))?;
+    let duplicate = format!(
+        "{{\"id\":\"{ISSUE_ID}\",{}",
+        serialized.strip_prefix('{').expect("fixture is an object")
+    );
+    let mut extra = issue_detail("inspect_related_logs", "telemetry_logs", None);
+    extra["private_url"] = serde_json::json!("https://hostile.example/private");
+
+    for body in [
+        ResponseTemplate::new(200).set_body_string(duplicate),
+        ResponseTemplate::new(200).set_body_json(extra),
+    ] {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path(format!("/api/telemetry/issues/{ISSUE_ID}")))
+            .respond_with(body)
+            .expect(1)
+            .mount(&server)
+            .await;
+        let command = parse_command(["logbrew", "investigate", "issue", ISSUE_ID, "--json"])?;
+        let mut output = Vec::new();
+        let error = execute_command(&command, &authenticated_env(&server), &mut output)
+            .await
+            .expect_err("non-exact issue response fails closed");
+        write_runtime_error(&error, true, &mut output)?;
+        let text = String::from_utf8(output)?;
+
+        assert!(text.contains("investigation_response_invalid"));
+        assert!(!text.contains("hostile.example"));
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn investigation_rejects_redirects_without_forwarding_auth()
+-> Result<(), Box<dyn std::error::Error>> {
+    let destination = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(issue_detail(
+            "inspect_related_logs",
+            "telemetry_logs",
+            None,
+        )))
+        .expect(0)
+        .mount(&destination)
+        .await;
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path(format!("/api/telemetry/issues/{ISSUE_ID}")))
+        .respond_with(
+            ResponseTemplate::new(302)
+                .insert_header("location", format!("{}/redirected", destination.uri())),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let command = parse_command(["logbrew", "investigate", "issue", ISSUE_ID, "--json"])?;
+    let mut output = Vec::new();
+    let error = execute_command(&command, &authenticated_env(&server), &mut output)
+        .await
+        .expect_err("redirect fails closed");
+    write_runtime_error(&error, true, &mut output)?;
+
+    assert!(String::from_utf8(output)?.contains("request_failed"));
+    destination.verify().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn investigation_rejects_oversized_success_without_rendering_it()
+-> Result<(), Box<dyn std::error::Error>> {
+    let server = MockServer::start().await;
+    mount_issue(
+        &server,
+        issue_detail("inspect_related_logs", "telemetry_logs", None),
+    )
+    .await;
+    let oversized = serde_json::Value::Array(
+        (0..20_000)
+            .map(|_| serde_json::json!({"message": "hostile-secret-padding"}))
+            .collect(),
+    );
+    Mock::given(method("GET"))
+        .and(path("/api/logs"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(oversized))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let command = parse_command(["logbrew", "investigate", "issue", ISSUE_ID, "--json"])?;
+    let mut output = Vec::new();
+    let error = execute_command(&command, &authenticated_env(&server), &mut output)
+        .await
+        .expect_err("oversized success fails closed");
+    write_runtime_error(&error, true, &mut output)?;
+    let text = String::from_utf8(output)?;
+
+    assert!(text.contains("investigation_response_invalid"));
+    assert!(!text.contains("hostile-secret-padding"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn investigation_preserves_typed_status_for_an_oversized_error_body()
+-> Result<(), Box<dyn std::error::Error>> {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path(format!("/api/telemetry/issues/{ISSUE_ID}")))
+        .respond_with(ResponseTemplate::new(500).set_body_string("hostile-secret".repeat(30_000)))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let command = parse_command(["logbrew", "investigate", "issue", ISSUE_ID, "--json"])?;
+    let mut output = Vec::new();
+    let error = execute_command(&command, &authenticated_env(&server), &mut output)
+        .await
+        .expect_err("oversized server error remains typed");
+    write_runtime_error(&error, true, &mut output)?;
+    let text = String::from_utf8(output)?;
+    let body: serde_json::Value = serde_json::from_str(text.as_str())?;
+
+    assert_eq!(body["api_code"], "service_unavailable");
+    assert!(!text.contains("hostile-secret"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn investigation_status_recovery_is_fixed_and_value_safe()
+-> Result<(), Box<dyn std::error::Error>> {
+    for (status, expected_code, action_code, action_target) in [
+        (400, "validation_failed", "fix_request", "request"),
+        (401, "unauthorized", "sign_in", "auth"),
+        (404, "not_found", "check_resource", "resource"),
+        (
+            405,
+            "method_not_allowed",
+            "use_supported_method",
+            "api_method",
+        ),
+        (422, "validation_failed", "fix_request", "request"),
+        (429, "rate_limited", "retry_later", "issue"),
+        (500, "service_unavailable", "retry_later", "issue"),
+    ] {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path(format!("/api/telemetry/issues/{ISSUE_ID}")))
+            .respond_with(
+                ResponseTemplate::new(status)
+                    .set_body_string("hostile-secret https://private.example/path bearer-value"),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+        let command = parse_command(["logbrew", "investigate", "issue", ISSUE_ID, "--json"])?;
+        let mut output = Vec::new();
+        let error = execute_command(&command, &authenticated_env(&server), &mut output)
+            .await
+            .expect_err("typed status fails safely");
+        write_runtime_error(&error, true, &mut output)?;
+        let text = String::from_utf8(output)?;
+        let body: serde_json::Value = serde_json::from_str(text.as_str())?;
+        let safe_api_body: serde_json::Value = serde_json::from_str(
+            body["body"]
+                .as_str()
+                .ok_or("safe API body is a JSON string")?,
+        )?;
+
+        assert_eq!(body["api_code"], expected_code);
+        assert_eq!(safe_api_body["next_action"]["code"], action_code);
+        assert_eq!(safe_api_body["next_action"]["target"], action_target);
+        assert!(!text.contains("hostile-secret"));
+        assert!(!text.contains("private.example"));
+        assert!(!text.contains("bearer-value"));
+    }
+    Ok(())
+}
+
 fn issue_detail(code: &str, target: &str, trace_id: Option<&str>) -> serde_json::Value {
     let mut issue = serde_json::json!({
         "id": ISSUE_ID,
         "project_id": PROJECT_ID,
+        "fingerprint": "payment-error",
+        "severity": "error",
         "status": "unresolved",
         "service_name": "checkout-api",
         "release": "checkout@1.2.3",
@@ -583,12 +828,32 @@ fn issue_detail(code: &str, target: &str, trace_id: Option<&str>) -> serde_json:
         "message": "hostile-secret",
         "stack_trace": "private stack",
         "attributes": {"authorization": "private bearer"},
-        "next_action": {"code": code, "target": target}
+        "next_action": {"code": code, "target": target},
+        "occurrence_count": 3
     });
     if let Some(trace_id) = trace_id {
         issue["trace_id"] = serde_json::Value::String(trace_id.to_owned());
     }
     issue
+}
+
+fn trace_summary(trace_id: &str) -> serde_json::Value {
+    serde_json::json!({
+        "trace_id": trace_id,
+        "span_count": 12,
+        "error_span_count": 2,
+        "service_count": 3,
+        "project_count": 1,
+        "started_at": "2026-07-15T09:30:00Z",
+        "duration_ms": 845,
+        "root_span": {"name": "hostile-secret", "attributes": {"authorization": "hostile-bearer"}},
+        "slowest_child_span": null,
+        "slowest_path": [],
+        "error_spans": [],
+        "services": ["checkout-api", "payments-api"],
+        "releases": ["checkout@1.2.3"],
+        "environments": ["production"]
+    })
 }
 
 async fn mount_issue(server: &MockServer, issue: serde_json::Value) {
