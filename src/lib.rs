@@ -29,6 +29,7 @@ pub mod setup;
 #[doc(hidden)]
 pub mod status;
 mod support;
+mod usage;
 #[doc(hidden)]
 pub mod version;
 
@@ -108,6 +109,11 @@ pub enum Command {
         /// Normalized project creation fields and local persistence choice.
         options: ProjectCreateOptions,
         /// Emit machine-readable JSON.
+        json: bool,
+    },
+    /// Reads authenticated account usage and configured limits.
+    Usage {
+        /// Emit the exact validated server object.
         json: bool,
     },
     /// Prints the installed CLI version.
@@ -681,6 +687,7 @@ impl Command {
             | Self::Setup { .. }
             | Self::Status { .. }
             | Self::Doctor { .. }
+            | Self::Usage { .. }
             | Self::Version { .. }
             | Self::InvestigateIssue { .. }
             | Self::Watch { .. } => None,
@@ -697,6 +704,7 @@ impl Command {
             | Self::Status { json }
             | Self::Doctor { json, .. }
             | Self::ProjectCreate { json, .. }
+            | Self::Usage { json }
             | Self::Version { json }
             | Self::Read { json, .. }
             | Self::Watch { json, .. }
@@ -737,6 +745,7 @@ impl Command {
             | Self::Setup { .. }
             | Self::Status { .. }
             | Self::Doctor { .. }
+            | Self::Usage { .. }
             | Self::Version { .. }
             | Self::InvestigateIssue { .. }
             | Self::Watch { .. } => None,
@@ -777,6 +786,7 @@ impl Command {
             | Self::Setup { .. }
             | Self::Status { .. }
             | Self::Doctor { .. }
+            | Self::Usage { .. }
             | Self::Version { .. }
             | Self::Read { .. }
             | Self::Watch { .. }
@@ -799,6 +809,7 @@ impl Command {
             | Self::Setup { .. }
             | Self::Status { .. }
             | Self::Doctor { .. }
+            | Self::Usage { .. }
             | Self::Version { .. }
             | Self::Read { .. }
             | Self::Watch { .. }
@@ -910,6 +921,7 @@ pub async fn execute_command<W: std::io::Write>(
         Command::ProjectCreate { options, json } => {
             project_create::execute(env, options, *json, output).await
         }
+        Command::Usage { json } => usage::execute(env, *json, output).await,
         Command::Version { json } => execute_version(*json, output),
         Command::InvestigateIssue { issue_id, json } => {
             investigate::execute(env, issue_id.as_str(), *json, output).await

@@ -83,8 +83,9 @@ fn project_and_usage_help_are_honest_about_supported_behavior() {
 
     assert!(usage.contains("logbrew usage [--json]"));
     assert!(usage.contains("logbrew account usage [--json]"));
-    assert!(usage.contains("Account usage, plan limits, quota state"));
-    assert!(usage.contains("Current mode: help only."));
+    assert!(usage.contains("Reads authenticated account usage"));
+    assert!(usage.contains("Human output is bounded"));
+    assert!(usage.contains("JSON preserves the exact validated account-usage object"));
     assert!(
         usage.contains("The CLI does not calculate or persist usage/quota state from local files.")
     );

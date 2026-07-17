@@ -267,12 +267,12 @@ Usage:
   logbrew usage [--json]
   logbrew account usage [--json]
 
-Account usage, plan limits, quota state, reset dates, and per-project or per-stream breakdowns are \
-backend-owned.
-Current mode: help only. The CLI does not calculate or persist usage/quota state from local files.
-When backend usage is available, the CLI will read the backend account usage contract and preserve \
-stable JSON for agents.
-Next: run logbrew status to verify API and auth state.";
+Reads authenticated account usage, configured limits, quota state, and reset dates without mutating \
+account or billing state.
+Human output is bounded to plan, state, totals, limits, the driving limit, and one next step. JSON \
+preserves the exact validated account-usage object for agents.
+The CLI does not calculate or persist usage/quota state from local files.
+Next: run logbrew usage to inspect current account usage.";
 
 /// Read command help text.
 const READ_HELP: &str = "\

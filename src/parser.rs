@@ -182,15 +182,13 @@ fn parse_values(values: &[String]) -> Result<Command, CliError> {
         "status" | "whoami" | "me" | "health" | "ping" => parse_status(tail),
         "doctor" => parse_doctor(tail),
         "version" => parse_version(tail),
-        "account" if tail.first().is_some_and(|arg| arg == "usage") => {
-            parse_discovery_help(HelpTopic::Usage, &tail[1..])
-        }
+        "account" if tail.first().is_some_and(|arg| arg == "usage") => parse_usage(&tail[1..]),
         alias if auth_namespace::is_namespace(alias) => auth_namespace::parse(tail),
         alias if auth_namespace::is_help_alias(alias) => parse_help_alias(HelpTopic::Auth, tail),
         "json" | "output" => parse_help_alias(HelpTopic::Json, tail),
         alias if is_examples_help_alias(alias) => parse_help_alias(HelpTopic::Examples, tail),
         alias if is_project_help_alias(alias) => parse_project(tail),
-        "usage" => parse_discovery_help(HelpTopic::Usage, tail),
+        "usage" => parse_usage(tail),
         "support" => parse_support(tail),
         "investigate" => parse_investigate(tail),
         alias if is_direct_filter_help_alias(alias) => parse_help_alias(HelpTopic::Read, tail),
@@ -758,6 +756,15 @@ fn parse_status(args: &[String]) -> Result<Command, CliError> {
     Ok(Command::Status {
         json: flags.is_json(),
     })
+}
+
+/// Parses the closed authenticated account-usage read grammar.
+fn parse_usage(args: &[String]) -> Result<Command, CliError> {
+    match args {
+        [] => Ok(Command::Usage { json: false }),
+        [flag] if flag == "--json" => Ok(Command::Usage { json: true }),
+        _ => Err(CliError::InvalidUsageCommand),
+    }
 }
 
 /// Parses bare status-compatible doctor or one strict project-scoped diagnostic.

@@ -481,7 +481,7 @@ fn parses_filter_terms_as_top_level_discovery_help() {
 }
 
 #[test]
-fn parses_project_and_usage_terms_as_backend_owned_help() {
+fn parses_project_help_and_authenticated_usage_reads() {
     for args in [
         &["logbrew", "project", "--json"][..],
         &["logbrew", "projects", "--json"],
@@ -503,15 +503,8 @@ fn parses_project_and_usage_terms_as_backend_owned_help() {
         &["logbrew", "--json", "usage"],
         &["logbrew", "account", "usage", "--json"],
     ] {
-        let command = parse_command(args.iter().copied()).expect("usage discovery help parses");
-
-        assert_eq!(
-            command,
-            Command::Help {
-                topic: HelpTopic::Usage,
-                json: true
-            }
-        );
+        let command = parse_command(args.iter().copied()).expect("usage read parses");
+        assert_eq!(command, Command::Usage { json: true });
     }
 }
 

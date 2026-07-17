@@ -134,6 +134,9 @@ pub enum CliError {
     /// Secure project creation syntax is malformed.
     #[error("invalid project create command")]
     InvalidProjectCreateCommand,
+    /// Account usage read syntax is malformed.
+    #[error("invalid usage command")]
+    InvalidUsageCommand,
     /// Project setup source is malformed.
     #[error("invalid setup source: {0}")]
     InvalidSetupSource(String),
@@ -387,6 +390,7 @@ const fn cli_error_code(error: &CliError) -> &'static str {
         CliError::InvalidInvestigationCommand => "invalid_investigation_command",
         CliError::InvalidDoctorCommand => "invalid_doctor_command",
         CliError::InvalidProjectCreateCommand => "invalid_project_create_command",
+        CliError::InvalidUsageCommand => "invalid_usage_command",
         CliError::InvalidSetupSource(_) => "invalid_setup_source",
     }
 }
@@ -430,6 +434,7 @@ const fn cli_error_next_step(error: &CliError) -> &'static str {
         CliError::InvalidProjectCreateCommand => {
             "use logbrew projects create <name> --ingest-key-file <path> with optional --runtime, --environment, --abandon-retry, and --json"
         }
+        CliError::InvalidUsageCommand => "use logbrew usage with optional --json",
         CliError::InvalidSetupSource(_) => "use --source api, cli, or sdk",
         CliError::MissingArgument { next, .. }
         | CliError::MissingFlagValue { next, .. }
