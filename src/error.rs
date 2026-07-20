@@ -137,6 +137,12 @@ pub enum CliError {
     /// Account usage read syntax is malformed.
     #[error("invalid usage command")]
     InvalidUsageCommand,
+    /// Native debug-artifact command syntax is malformed.
+    #[error("invalid native debug-artifact command")]
+    InvalidNativeDebugCommand,
+    /// Native debug-artifact identity is not canonical.
+    #[error("invalid native debug-artifact identity")]
+    InvalidNativeDebugIdentity,
     /// Project setup source is malformed.
     #[error("invalid setup source: {0}")]
     InvalidSetupSource(String),
@@ -198,6 +204,15 @@ pub enum RuntimeError {
     /// A successful investigation response violated the public contract.
     #[error("issue investigation returned an invalid response")]
     InvestigationResponseInvalid,
+    /// A local Apple native debug artifact failed validation.
+    #[error("native debug artifact is invalid")]
+    NativeDebugArtifactInvalid,
+    /// A native debug-artifact response violated the public contract.
+    #[error("native debug-artifact response is invalid")]
+    NativeDebugResponseInvalid,
+    /// Exact post-upload lookup verification did not match.
+    #[error("native debug-artifact verification failed")]
+    NativeDebugVerificationFailed,
 }
 
 /// Writes a command-line parsing error for humans or agents.
@@ -289,6 +304,9 @@ fn write_human_runtime_error<W: std::io::Write>(
         | RuntimeError::Http(_)
         | RuntimeError::MissingToken
         | RuntimeError::InvestigationResponseInvalid
+        | RuntimeError::NativeDebugArtifactInvalid
+        | RuntimeError::NativeDebugResponseInvalid
+        | RuntimeError::NativeDebugVerificationFailed
         | RuntimeError::Unavailable { .. } => {
             writeln!(output, "{error}")?;
             writeln!(output, "Next: {}", runtime_error_next_step(error))?;
@@ -303,6 +321,9 @@ fn runtime_error_json(error: &RuntimeError) -> serde_json::Value {
         RuntimeError::MissingToken
         | RuntimeError::Unavailable { .. }
         | RuntimeError::InvestigationResponseInvalid
+        | RuntimeError::NativeDebugArtifactInvalid
+        | RuntimeError::NativeDebugResponseInvalid
+        | RuntimeError::NativeDebugVerificationFailed
         | RuntimeError::Io(_)
         | RuntimeError::Http(_) => serde_json::json!({
             "ok": false,
@@ -391,6 +412,9 @@ const fn cli_error_code(error: &CliError) -> &'static str {
         CliError::InvalidDoctorCommand => "invalid_doctor_command",
         CliError::InvalidProjectCreateCommand => "invalid_project_create_command",
         CliError::InvalidUsageCommand => "invalid_usage_command",
+        CliError::InvalidNativeDebugCommand | CliError::InvalidNativeDebugIdentity => {
+            "invalid_native_debug_command"
+        }
         CliError::InvalidSetupSource(_) => "invalid_setup_source",
     }
 }
@@ -435,6 +459,12 @@ const fn cli_error_next_step(error: &CliError) -> &'static str {
             "use logbrew projects create <name> --ingest-key-file <path> with optional --runtime, --environment, --abandon-retry, and --json"
         }
         CliError::InvalidUsageCommand => "use logbrew usage with optional --json",
+        CliError::InvalidNativeDebugCommand => {
+            "use logbrew debug-artifacts upload <path> --project <project_id> --release <release> --environment <environment> --service <service>"
+        }
+        CliError::InvalidNativeDebugIdentity => {
+            "use a lowercase UUID and architecture arm64, arm64e, or x86_64"
+        }
         CliError::InvalidSetupSource(_) => "use --source api, cli, or sdk",
         CliError::MissingArgument { next, .. }
         | CliError::MissingFlagValue { next, .. }
@@ -462,6 +492,9 @@ const fn runtime_error_code(error: &RuntimeError) -> &'static str {
         RuntimeError::StatusUnavailable { .. } => "status_unreachable",
         RuntimeError::Unavailable { .. } => "unavailable",
         RuntimeError::InvestigationResponseInvalid => "investigation_response_invalid",
+        RuntimeError::NativeDebugArtifactInvalid => "native_debug_artifact_invalid",
+        RuntimeError::NativeDebugResponseInvalid => "native_debug_response_invalid",
+        RuntimeError::NativeDebugVerificationFailed => "native_debug_verification_failed",
     }
 }
 
@@ -516,6 +549,9 @@ fn runtime_error_next_step(error: &RuntimeError) -> Cow<'static, str> {
         | RuntimeError::Http(_)
         | RuntimeError::MissingToken
         | RuntimeError::InvestigationResponseInvalid
+        | RuntimeError::NativeDebugArtifactInvalid
+        | RuntimeError::NativeDebugResponseInvalid
+        | RuntimeError::NativeDebugVerificationFailed
         | RuntimeError::StatusUnavailable { .. }
         | RuntimeError::Unavailable { .. } => {
             Cow::Borrowed(fallback_runtime_error_next_step(error))
@@ -555,6 +591,15 @@ const fn fallback_runtime_error_next_step(error: &RuntimeError) -> &'static str 
         RuntimeError::Unavailable { next, .. } => next,
         RuntimeError::InvestigationResponseInvalid => {
             "retry the issue investigation; if it repeats, report the public response contract"
+        }
+        RuntimeError::NativeDebugArtifactInvalid => {
+            "provide one validated Apple dSYM bundle or Mach-O debug object"
+        }
+        RuntimeError::NativeDebugResponseInvalid => {
+            "retry the native debug-artifact request; if it repeats, report the public response contract"
+        }
+        RuntimeError::NativeDebugVerificationFailed => {
+            "retry exact native debug-artifact lookup before using native symbolication"
         }
         RuntimeError::Io(_) => "check local files and permissions",
     }

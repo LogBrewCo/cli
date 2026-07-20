@@ -20,6 +20,7 @@ pub mod help;
 pub mod ids;
 #[doc(hidden)]
 pub mod investigate;
+mod native_debug_artifacts;
 mod parser;
 mod project_create;
 #[doc(hidden)]
@@ -153,6 +154,13 @@ pub enum Command {
         /// Emit machine-readable JSON.
         json: bool,
     },
+    /// Uploads or verifies Apple native debug artifacts.
+    NativeDebugArtifacts {
+        /// Native debug-artifact operation.
+        target: NativeDebugArtifactsTarget,
+        /// Emit bounded machine-readable JSON.
+        json: bool,
+    },
     /// Mutates server-side state.
     Set {
         /// Target state mutation.
@@ -225,6 +233,8 @@ pub enum HelpTopic {
     Explain,
     /// Server-directed issue investigation command.
     Investigate,
+    /// Apple native debug-artifact upload and lookup commands.
+    NativeDebugArtifacts,
     /// State mutation command.
     Set,
     /// Support-ticket workflow.
@@ -258,6 +268,7 @@ impl HelpTopic {
             Self::Watch => "watch",
             Self::Explain => "explain",
             Self::Investigate => "investigate",
+            Self::NativeDebugArtifacts => "debug_artifacts",
             Self::Set => "set",
             Self::Support => "support",
         }
@@ -486,6 +497,47 @@ pub struct ProjectCreateOptions {
     pub abandon_retry: bool,
 }
 
+/// Apple native debug-artifact operation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NativeDebugArtifactsTarget {
+    /// Validate, upload, and verify every supported object identity.
+    Upload(NativeDebugUploadOptions),
+    /// Verify one exact uploaded object identity.
+    Lookup(NativeDebugLookupOptions),
+}
+
+/// Shared exact native debug-artifact lookup scope.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NativeDebugLookupOptions {
+    /// Account-owned project UUID.
+    pub project_id: String,
+    /// Exact release identifier.
+    pub release: String,
+    /// Exact environment identifier.
+    pub environment: String,
+    /// Exact service identifier.
+    pub service: String,
+    /// Canonical lowercase Mach-O image UUID.
+    pub image_uuid: String,
+    /// Supported canonical architecture.
+    pub architecture: String,
+}
+
+/// Apple native debug-artifact upload options.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NativeDebugUploadOptions {
+    /// User-selected dSYM bundle or Mach-O debug object.
+    pub path: String,
+    /// Account-owned project UUID.
+    pub project_id: String,
+    /// Exact release identifier.
+    pub release: String,
+    /// Exact environment identifier.
+    pub environment: String,
+    /// Exact service identifier.
+    pub service: String,
+}
+
 /// Support-ticket operation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SupportTarget {
@@ -690,6 +742,7 @@ impl Command {
             | Self::Usage { .. }
             | Self::Version { .. }
             | Self::InvestigateIssue { .. }
+            | Self::NativeDebugArtifacts { .. }
             | Self::Watch { .. } => None,
         }
     }
@@ -710,6 +763,7 @@ impl Command {
             | Self::Watch { json, .. }
             | Self::Explain { json, .. }
             | Self::InvestigateIssue { json, .. }
+            | Self::NativeDebugArtifacts { json, .. }
             | Self::Set { json, .. }
             | Self::ProjectSetupSeen { json, .. }
             | Self::Support { json, .. }
@@ -748,6 +802,7 @@ impl Command {
             | Self::Usage { .. }
             | Self::Version { .. }
             | Self::InvestigateIssue { .. }
+            | Self::NativeDebugArtifacts { .. }
             | Self::Watch { .. } => None,
         }
     }
@@ -792,6 +847,7 @@ impl Command {
             | Self::Watch { .. }
             | Self::Explain { .. }
             | Self::InvestigateIssue { .. }
+            | Self::NativeDebugArtifacts { .. }
             | Self::Support { .. } => None,
         }
     }
@@ -815,6 +871,7 @@ impl Command {
             | Self::Watch { .. }
             | Self::Explain { .. }
             | Self::InvestigateIssue { .. }
+            | Self::NativeDebugArtifacts { .. }
             | Self::Set { .. }
             | Self::ProjectSetupSeen { .. }
             | Self::ProjectCreate { .. }
@@ -925,6 +982,9 @@ pub async fn execute_command<W: std::io::Write>(
         Command::Version { json } => execute_version(*json, output),
         Command::InvestigateIssue { issue_id, json } => {
             investigate::execute(env, issue_id.as_str(), *json, output).await
+        }
+        Command::NativeDebugArtifacts { target, json } => {
+            native_debug_artifacts::execute(env, target, *json, output).await
         }
         Command::Read { .. }
         | Command::Explain { .. }

@@ -268,7 +268,10 @@ fn request_error(error: RuntimeError) -> RuntimeError {
         | RuntimeError::Io(_)
         | RuntimeError::Http(_)
         | RuntimeError::StatusUnavailable { .. }
-        | RuntimeError::InvestigationResponseInvalid => transport_error(),
+        | RuntimeError::InvestigationResponseInvalid
+        | RuntimeError::NativeDebugArtifactInvalid
+        | RuntimeError::NativeDebugResponseInvalid
+        | RuntimeError::NativeDebugVerificationFailed => transport_error(),
     }
 }
 

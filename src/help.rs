@@ -28,6 +28,7 @@ pub const fn help_text(topic: HelpTopic) -> &'static str {
         HelpTopic::Watch => WATCH_HELP,
         HelpTopic::Explain => EXPLAIN_HELP,
         HelpTopic::Investigate => INVESTIGATE_HELP,
+        HelpTopic::NativeDebugArtifacts => NATIVE_DEBUG_ARTIFACTS_HELP,
         HelpTopic::Set => SET_HELP,
         HelpTopic::Support => SUPPORT_HELP,
     }
@@ -92,6 +93,11 @@ Usage:
   logbrew explain trace <trace_id> [--json]
   logbrew explain <issue_id_or_trace_id> [--json]
   logbrew investigate issue <issue_id> [--json]
+  logbrew debug-artifacts upload <path> --project <project_id> --release <release> --environment \
+                         <environment> --service <service> [--json]
+  logbrew debug-artifacts lookup --project <project_id> --release <release> --environment \
+                         <environment> --service <service> --image-uuid <uuid> --architecture \
+                         <architecture> [--json]
   logbrew <issue_id_or_trace_id> explain [--json]
   logbrew set issue <issue_id> resolved [--json]
   logbrew resolve <issue_id> [--json]
@@ -460,6 +466,19 @@ Usage:
 Reads the issue first, then follows only its public trace-summary or related-log next action.
 The command is read-only and preserves issue scope in the directed request.
 JSON preserves the issue and exactly one directed result in a stable four-key envelope.";
+
+/// Apple native debug-artifact command help text.
+const NATIVE_DEBUG_ARTIFACTS_HELP: &str = "\
+Usage:
+  logbrew debug-artifacts upload <path> --project <project_id> --release <release> \
+                         --environment <environment> --service <service> [--json]
+  logbrew debug-artifacts lookup --project <project_id> --release <release> \
+                         --environment <environment> --service <service> --image-uuid <uuid> \
+                         --architecture <arm64|arm64e|x86_64> [--json]
+
+Validates Apple dSYM or Mach-O debug objects locally, uploads only supported exact identities, and \
+verifies each identity with an exact authenticated lookup. Local paths and filenames are never \
+included in output or API metadata.";
 
 /// Set command help text.
 const SET_HELP: &str = "\

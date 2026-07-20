@@ -116,7 +116,10 @@ fn project_request_error(error: RuntimeError) -> RuntimeError {
         | RuntimeError::Http(_)
         | RuntimeError::Api { .. }
         | RuntimeError::StatusUnavailable { .. }
-        | RuntimeError::InvestigationResponseInvalid => transport_unavailable(),
+        | RuntimeError::InvestigationResponseInvalid
+        | RuntimeError::NativeDebugArtifactInvalid
+        | RuntimeError::NativeDebugResponseInvalid
+        | RuntimeError::NativeDebugVerificationFailed => transport_unavailable(),
     }
 }
 
