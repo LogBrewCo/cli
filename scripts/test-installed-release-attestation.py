@@ -551,6 +551,92 @@ class InstalledReleaseAttestationTests(unittest.TestCase):
             with self.assertRaises(module.AttestationError):
                 module.validate_released_source(repository, head)
 
+    def test_released_source_accepts_one_windows_crlf_git_line(self) -> None:
+        module = load_subject()
+        source_commit = "1" * 40
+        verifier_blob = "2" * 40
+        with tempfile.TemporaryDirectory() as raw_directory:
+            repository = pathlib.Path(raw_directory) / "released-source"
+            verifier = repository / "scripts" / "real_user_public_install_smoke.py"
+            verifier.parent.mkdir(parents=True)
+            verifier.write_text("# exact fixture\n", encoding="utf-8")
+            results = [
+                subprocess.CompletedProcess(
+                    [], 0, f"{source_commit}\r\n".encode(), b""
+                ),
+                subprocess.CompletedProcess(
+                    [],
+                    0,
+                    (
+                        f"100644 blob {verifier_blob}\t"
+                        "scripts/real_user_public_install_smoke.py\r\n"
+                    ).encode(),
+                    b"",
+                ),
+                subprocess.CompletedProcess(
+                    [], 0, f"{verifier_blob}\r\n".encode(), b""
+                ),
+            ]
+            with mock.patch.object(module.subprocess, "run", side_effect=results):
+                self.assertEqual(
+                    module.validate_released_source(repository, source_commit),
+                    verifier,
+                )
+
+    def test_released_source_rejects_extra_and_lookalike_git_lines(self) -> None:
+        module = load_subject()
+        source_commit = "1" * 40
+        verifier_blob = "2" * 40
+        exact_tree = (
+            f"100644 blob {verifier_blob}\t"
+            "scripts/real_user_public_install_smoke.py\n"
+        ).encode()
+        variants = [
+            [
+                f"{source_commit}\nextra\n".encode(),
+                exact_tree,
+                f"{verifier_blob}\n".encode(),
+            ],
+            [
+                f"{source_commit}\n".encode(),
+                exact_tree + b"100644 blob " + b"3" * 40 + b"\tlookalike\n",
+                f"{verifier_blob}\n".encode(),
+            ],
+            [
+                f"{source_commit}\n".encode(),
+                exact_tree.replace(
+                    b"real_user_public_install_smoke.py\n",
+                    b"real_user_public_install_smoke.py.bak\n",
+                ),
+                f"{verifier_blob}\n".encode(),
+            ],
+            [
+                f"{source_commit}\n".encode(),
+                exact_tree,
+                f"{verifier_blob}\nextra\n".encode(),
+            ],
+        ]
+        with tempfile.TemporaryDirectory() as raw_directory:
+            repository = pathlib.Path(raw_directory) / "released-source"
+            verifier = repository / "scripts" / "real_user_public_install_smoke.py"
+            verifier.parent.mkdir(parents=True)
+            verifier.write_text("# exact fixture\n", encoding="utf-8")
+            for outputs in variants:
+                results = [
+                    subprocess.CompletedProcess([], 0, output, b"")
+                    for output in outputs
+                ]
+                with self.subTest(outputs=outputs):
+                    with (
+                        mock.patch.object(
+                            module.subprocess,
+                            "run",
+                            side_effect=results,
+                        ),
+                        self.assertRaises(module.AttestationError),
+                    ):
+                        module.validate_released_source(repository, source_commit)
+
     def test_offline_orchestration_uses_only_exact_metadata_and_assets(self) -> None:
         module = load_subject()
         payload = b"bounded native artifact"
