@@ -23,6 +23,7 @@ from dataclasses import dataclass
 MAX_API_BYTES = 1024 * 1024
 MAX_CHECKSUM_BYTES = 64 * 1024
 MAX_VERIFIER_OUTPUT_BYTES = 16 * 1024
+MAX_RELEASED_VERIFIER_BYTES = 256 * 1024
 NETWORK_TIMEOUT_SECONDS = 60
 VERIFIER_TIMEOUT_SECONDS = 1200
 COMMIT_PATTERN = re.compile(r"^[0-9a-f]{40}$")
@@ -457,12 +458,20 @@ def validate_verifier_output(
         stderr
         or not stdout
         or len(stdout) > MAX_VERIFIER_OUTPUT_BYTES
-        or stdout.count(b"\n") > 1
-        or (b"\n" in stdout and not stdout.endswith(b"\n"))
     ):
         raise AttestationError
-    payload = stdout[:-1] if stdout.endswith(b"\n") else stdout
-    if not payload or b"\r" in payload:
+    if stdout.endswith(b"\r\n"):
+        payload = stdout[:-2]
+    elif stdout.endswith(b"\n"):
+        payload = stdout[:-1]
+    else:
+        raise AttestationError
+    if (
+        not payload
+        or b"\r" in payload
+        or b"\n" in payload
+        or b"\x00" in payload
+    ):
         raise AttestationError
     try:
         receipt = json.loads(payload)
@@ -706,8 +715,8 @@ def exact_git_output_line(output: bytes) -> bytes:
     return line
 
 
-def validate_released_source(path: pathlib.Path, source_commit: str) -> pathlib.Path:
-    """Require a non-symlink checkout at the exact released commit and verifier blob."""
+def validate_released_source(path: pathlib.Path, source_commit: str) -> bytes:
+    """Read the exact released verifier blob from a checkout at the fixed commit."""
     try:
         if not path.is_absolute() or path.is_symlink():
             raise AttestationError
@@ -727,10 +736,6 @@ def validate_released_source(path: pathlib.Path, source_commit: str) -> pathlib.
             or result.stderr
             or exact_git_output_line(result.stdout) != source_commit.encode()
         ):
-            raise AttestationError
-        verifier = path.joinpath(*VERIFIER_PATH.parts)
-        verifier_metadata = verifier.lstat()
-        if not stat.S_ISREG(verifier_metadata.st_mode) or verifier.is_symlink():
             raise AttestationError
         tracked = subprocess.run(
             [
@@ -759,23 +764,52 @@ def validate_released_source(path: pathlib.Path, source_commit: str) -> pathlib.
             or tree_match is None
         ):
             raise AttestationError
-        working_blob = subprocess.run(
-            ["git", "-C", str(path), "hash-object", "--no-filters", str(verifier)],
+        blob_id = tree_match.group(1)
+        blob_size_result = subprocess.run(
+            ["git", "-C", str(path), "cat-file", "-s", blob_id.decode()],
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             timeout=30,
             check=False,
         )
+        blob_size_line = exact_git_output_line(blob_size_result.stdout)
         if (
-            working_blob.returncode != 0
-            or working_blob.stderr
-            or exact_git_output_line(working_blob.stdout) != tree_match.group(1)
+            blob_size_result.returncode != 0
+            or blob_size_result.stderr
+            or re.fullmatch(rb"[1-9][0-9]*", blob_size_line) is None
+            or len(blob_size_line) > len(str(MAX_RELEASED_VERIFIER_BYTES))
+        ):
+            raise AttestationError
+        blob_size = int(blob_size_line)
+        if blob_size > MAX_RELEASED_VERIFIER_BYTES:
+            raise AttestationError
+        blob_result = subprocess.run(
+            ["git", "-C", str(path), "cat-file", "blob", blob_id.decode()],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=30,
+            check=False,
+        )
+        verifier_bytes = blob_result.stdout
+        object_bytes = (
+            f"blob {len(verifier_bytes)}\0".encode() + verifier_bytes
+        )
+        computed_blob_id = hashlib.sha1(
+            object_bytes,
+            usedforsecurity=False,
+        ).hexdigest().encode()
+        if (
+            blob_result.returncode != 0
+            or blob_result.stderr
+            or len(verifier_bytes) != blob_size
+            or computed_blob_id != blob_id
         ):
             raise AttestationError
     except (OSError, subprocess.SubprocessError) as error:
         raise AttestationError from error
-    return verifier
+    return verifier_bytes
 
 
 def verifier_environment(
@@ -892,7 +926,7 @@ def run_attestation(
         system=host_platform.system(),
         machine=host_platform.machine(),
     )
-    verifier = validate_released_source(released_source, source_commit)
+    verifier_bytes = validate_released_source(released_source, source_commit)
 
     urls = api_urls(policy)
     tag_reference = json_reader(urls["tag_ref"])
@@ -929,7 +963,9 @@ def run_attestation(
 
     with tempfile.TemporaryDirectory(prefix="logbrew-installed-attestation-") as raw:
         workspace = pathlib.Path(raw)
+        verifier = workspace / "released-verifier.py"
         artifact_path = workspace / receipt.asset_name
+        write_artifact(verifier, verifier_bytes)
         write_artifact(artifact_path, artifact_bytes)
         stdout, stderr = execute_verifier(
             verifier,

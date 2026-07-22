@@ -329,7 +329,7 @@ class InstalledReleaseAttestationTests(unittest.TestCase):
                 machine="aarch64",
             )
 
-    def test_verifier_and_attestation_schemas_reject_extra_output(self) -> None:
+    def test_verifier_output_requires_one_canonical_platform_newline(self) -> None:
         module = load_subject()
         receipt = module.PUBLIC_POLICY.receipts["native-linux-x64"]
         digest = f"sha256:{receipt.digest}"
@@ -341,17 +341,30 @@ class InstalledReleaseAttestationTests(unittest.TestCase):
             },
             separators=(",", ":"),
         ).encode()
-        module.validate_verifier_output(
-            verifier_output,
-            b"",
-            receipt.artifact_id,
-            digest,
-        )
-        for stdout, stderr in [
-            (verifier_output + b"\nextra", b""),
-            (verifier_output, b"hostile backend text"),
-            (verifier_output.replace(b'"passed"', b'"failed"'), b""),
-        ]:
+        for terminator in (b"\n", b"\r\n"):
+            module.validate_verifier_output(
+                verifier_output + terminator,
+                b"",
+                receipt.artifact_id,
+                digest,
+            )
+
+        rejected = [
+            (verifier_output, b""),
+            (verifier_output + b"\nextra\n", b""),
+            (verifier_output + b"\n\n", b""),
+            (verifier_output + b"\r\n\r\n", b""),
+            (verifier_output.replace(b",", b",\n", 1) + b"\n", b""),
+            (verifier_output + b"\r", b""),
+            (verifier_output + b"\x00\n", b""),
+            (verifier_output + b"\n", b"hostile backend text"),
+            (
+                verifier_output.replace(b'"passed"', b'"failed"') + b"\n",
+                b"",
+            ),
+            (verifier_output[:-1] + b',"extra":true}\n', b""),
+        ]
+        for stdout, stderr in rejected:
             with self.assertRaises(module.AttestationError):
                 module.validate_verifier_output(
                     stdout,
@@ -359,6 +372,11 @@ class InstalledReleaseAttestationTests(unittest.TestCase):
                     receipt.artifact_id,
                     digest,
                 )
+
+    def test_attestation_schema_rejects_extra_output(self) -> None:
+        module = load_subject()
+        receipt = module.PUBLIC_POLICY.receipts["native-linux-x64"]
+        digest = f"sha256:{receipt.digest}"
 
         attestation = module.build_attestation(receipt, WORKFLOW_HEAD, digest)
         module.validate_attestation(attestation)
@@ -511,7 +529,8 @@ class InstalledReleaseAttestationTests(unittest.TestCase):
             repository = pathlib.Path(raw_directory) / "released-source"
             verifier = repository / "scripts" / "real_user_public_install_smoke.py"
             verifier.parent.mkdir(parents=True)
-            verifier.write_text("print('exact fixture')\n", encoding="utf-8")
+            committed_verifier = b"print('exact fixture')\n"
+            verifier.write_bytes(committed_verifier)
             commands = [
                 ["git", "init", "--quiet"],
                 ["git", "add", str(module.VERIFIER_PATH)],
@@ -544,22 +563,34 @@ class InstalledReleaseAttestationTests(unittest.TestCase):
             ).stdout.strip()
             self.assertEqual(
                 module.validate_released_source(repository, head),
-                verifier,
+                committed_verifier,
             )
 
-            verifier.write_text("print('substituted')\n", encoding="utf-8")
-            with self.assertRaises(module.AttestationError):
-                module.validate_released_source(repository, head)
+            verifier.write_bytes(committed_verifier.replace(b"\n", b"\r\n"))
+            self.assertEqual(
+                module.validate_released_source(repository, head),
+                committed_verifier,
+            )
+
+            verifier.write_bytes(b"print('substituted')\r\n")
+            self.assertEqual(
+                module.validate_released_source(repository, head),
+                committed_verifier,
+            )
 
     def test_released_source_accepts_one_windows_crlf_git_line(self) -> None:
         module = load_subject()
         source_commit = "1" * 40
-        verifier_blob = "2" * 40
+        verifier_content = b"# exact fixture\n"
+        verifier_blob = hashlib.sha1(
+            f"blob {len(verifier_content)}\0".encode() + verifier_content,
+            usedforsecurity=False,
+        ).hexdigest()
         with tempfile.TemporaryDirectory() as raw_directory:
             repository = pathlib.Path(raw_directory) / "released-source"
             verifier = repository / "scripts" / "real_user_public_install_smoke.py"
             verifier.parent.mkdir(parents=True)
-            verifier.write_text("# exact fixture\n", encoding="utf-8")
+            verifier.write_bytes(verifier_content.replace(b"\n", b"\r\n"))
             results = [
                 subprocess.CompletedProcess(
                     [], 0, f"{source_commit}\r\n".encode(), b""
@@ -574,19 +605,24 @@ class InstalledReleaseAttestationTests(unittest.TestCase):
                     b"",
                 ),
                 subprocess.CompletedProcess(
-                    [], 0, f"{verifier_blob}\r\n".encode(), b""
+                    [], 0, f"{len(verifier_content)}\r\n".encode(), b""
                 ),
+                subprocess.CompletedProcess([], 0, verifier_content, b""),
             ]
             with mock.patch.object(module.subprocess, "run", side_effect=results):
                 self.assertEqual(
                     module.validate_released_source(repository, source_commit),
-                    verifier,
+                    verifier_content,
                 )
 
     def test_released_source_rejects_extra_and_lookalike_git_lines(self) -> None:
         module = load_subject()
         source_commit = "1" * 40
-        verifier_blob = "2" * 40
+        verifier_content = b"# exact fixture\n"
+        verifier_blob = hashlib.sha1(
+            f"blob {len(verifier_content)}\0".encode() + verifier_content,
+            usedforsecurity=False,
+        ).hexdigest()
         exact_tree = (
             f"100644 blob {verifier_blob}\t"
             "scripts/real_user_public_install_smoke.py\n"
@@ -594,13 +630,10 @@ class InstalledReleaseAttestationTests(unittest.TestCase):
         variants = [
             [
                 f"{source_commit}\nextra\n".encode(),
-                exact_tree,
-                f"{verifier_blob}\n".encode(),
             ],
             [
                 f"{source_commit}\n".encode(),
                 exact_tree + b"100644 blob " + b"3" * 40 + b"\tlookalike\n",
-                f"{verifier_blob}\n".encode(),
             ],
             [
                 f"{source_commit}\n".encode(),
@@ -608,19 +641,29 @@ class InstalledReleaseAttestationTests(unittest.TestCase):
                     b"real_user_public_install_smoke.py\n",
                     b"real_user_public_install_smoke.py.bak\n",
                 ),
-                f"{verifier_blob}\n".encode(),
             ],
             [
                 f"{source_commit}\n".encode(),
                 exact_tree,
-                f"{verifier_blob}\nextra\n".encode(),
+                f"{len(verifier_content)}\nextra\n".encode(),
+            ],
+            [
+                f"{source_commit}\n".encode(),
+                exact_tree,
+                b"9" * 64 + b"\n",
+            ],
+            [
+                f"{source_commit}\n".encode(),
+                exact_tree,
+                f"{len(verifier_content)}\n".encode(),
+                b"# substituted fixture\n",
             ],
         ]
         with tempfile.TemporaryDirectory() as raw_directory:
             repository = pathlib.Path(raw_directory) / "released-source"
             verifier = repository / "scripts" / "real_user_public_install_smoke.py"
             verifier.parent.mkdir(parents=True)
-            verifier.write_text("# exact fixture\n", encoding="utf-8")
+            verifier.write_bytes(verifier_content)
             for outputs in variants:
                 results = [
                     subprocess.CompletedProcess([], 0, output, b"")
@@ -696,14 +739,28 @@ class InstalledReleaseAttestationTests(unittest.TestCase):
             directory = pathlib.Path(raw_directory)
             released_source = directory / "released-source"
             released_source.mkdir()
-            verifier = released_source / "verifier.py"
-            verifier.write_text("# fixture\n", encoding="utf-8")
+            verifier_content = b"# exact released verifier\n"
             output = directory / "attestation.json"
+
+            def execute_exact_verifier(
+                verifier_path,
+                actual_receipt,
+                actual_version,
+                artifact_path,
+            ):
+                self.assertEqual(verifier_path.read_bytes(), verifier_content)
+                self.assertTrue(verifier_path.is_file())
+                self.assertFalse(verifier_path.is_symlink())
+                self.assertEqual(actual_receipt, receipt)
+                self.assertEqual(actual_version, policy.version)
+                self.assertEqual(artifact_path.read_bytes(), payload)
+                return verifier_receipt, b""
+
             with (
                 mock.patch.object(
                     module,
                     "validate_released_source",
-                    return_value=verifier,
+                    return_value=verifier_content,
                 ),
                 mock.patch.object(module.host_platform, "system", return_value="Linux"),
                 mock.patch.object(
@@ -714,7 +771,7 @@ class InstalledReleaseAttestationTests(unittest.TestCase):
                 mock.patch.object(
                     module,
                     "execute_verifier",
-                    return_value=(verifier_receipt, b""),
+                    side_effect=execute_exact_verifier,
                 ),
             ):
                 module.run_attestation(
