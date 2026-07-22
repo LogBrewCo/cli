@@ -60,6 +60,26 @@ class InstalledReleaseAttestationWorkflowTests(unittest.TestCase):
                     rf"(?ms)^      {name}:\n.*?^        default: [\"']?{re.escape(value)}[\"']?$",
                 )
 
+    def test_dispatch_scope_defaults_to_all_and_can_skip_only_green_shell(self) -> None:
+        workflow = self.workflow()
+        self.assertRegex(
+            workflow,
+            r"(?ms)^      receipt_scope:\n"
+            r"        description: [^\n]+\n"
+            r"        required: true\n"
+            r"        type: choice\n"
+            r"        options:\n"
+            r"          - all\n"
+            r"          - failed-five\n"
+            r"        default: all$",
+        )
+        condition = (
+            "${{ inputs.receipt_scope == 'all' || "
+            "matrix.receipt != 'shell-linux-x64' }}"
+        )
+        self.assertEqual(workflow.count(f"        if: {condition}"), 4)
+        self.assertNotIn("inputs.receipt_scope", self.receipt_run_command(workflow))
+
     def test_matrix_contains_only_the_six_missing_real_platform_receipts(self) -> None:
         workflow = self.workflow()
         expected = {
