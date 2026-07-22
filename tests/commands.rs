@@ -195,6 +195,8 @@ fn status_help_advertises_identity_aliases() {
 fn login_help_explains_json_handoff_without_browser() {
     let text = help::help_text(HelpTopic::Login);
 
+    assert!(text.contains("stores a private local access/refresh pair"));
+    assert!(text.contains("refresh local auth once after an expired-token response"));
     assert!(text.contains("--json prints the auth handoff without opening a browser."));
 }
 

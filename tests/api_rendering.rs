@@ -604,6 +604,254 @@ async fn human_project_setup_seen_prints_status_and_next() {
 }
 
 #[tokio::test]
+async fn local_auth_refreshes_once_and_persists_replacement_credentials()
+-> Result<(), Box<dyn std::error::Error>> {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/logs"))
+        .and(header("authorization", "Bearer expired-access"))
+        .respond_with(ResponseTemplate::new(401).set_body_json(serde_json::json!({
+            "error": "not_logged_in"
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/api/auth/refresh"))
+        .and(body_json(serde_json::json!({
+            "refresh_token": "old-refresh"
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "access_token": "fresh-access",
+            "refresh_token": "fresh-refresh"
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/logs"))
+        .and(header("authorization", "Bearer fresh-access"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "logs": []
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let command = parse_command(["logbrew", "logs", "--json"])?;
+    let home = api_rendering_home("refresh-local-auth")?;
+    let auth_dir = home.join(".logbrew");
+    std::fs::create_dir_all(auth_dir.as_path())?;
+    write_auth_session(
+        auth_dir.as_path(),
+        "expired-access",
+        "old-refresh",
+        server.uri().as_str(),
+    )?;
+    let env = CliEnvironment {
+        base_url: server.uri(),
+        token: None,
+        home: Some(home),
+        cwd: None,
+    };
+    let mut output = Vec::new();
+
+    execute_command(&command, &env, &mut output).await?;
+
+    let text = String::from_utf8(output)?;
+    let body: serde_json::Value = serde_json::from_str(text.as_str())?;
+    assert_eq!(body["logs"], serde_json::json!([]));
+    let saved = read_auth_session(auth_dir.as_path())?;
+    assert_eq!(saved["access_token"], "fresh-access");
+    assert_eq!(saved["refresh_token"], "fresh-refresh");
+    for secret in [
+        "expired-access",
+        "old-refresh",
+        "fresh-access",
+        "fresh-refresh",
+    ] {
+        assert!(!text.contains(secret));
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn concurrent_local_401s_share_one_refresh_rotation() -> Result<(), Box<dyn std::error::Error>>
+{
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/logs"))
+        .and(header("authorization", "Bearer shared-expired"))
+        .respond_with(ResponseTemplate::new(401))
+        .expect(2)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/api/auth/refresh"))
+        .and(body_json(serde_json::json!({
+            "refresh_token": "shared-refresh"
+        })))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_delay(std::time::Duration::from_millis(50))
+                .set_body_json(serde_json::json!({
+                    "access_token": "shared-fresh",
+                    "refresh_token": "shared-next-refresh"
+                })),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/logs"))
+        .and(header("authorization", "Bearer shared-fresh"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "logs": []
+        })))
+        .expect(2)
+        .mount(&server)
+        .await;
+    let home = api_rendering_home("refresh-concurrent")?;
+    let auth_dir = home.join(".logbrew");
+    std::fs::create_dir_all(auth_dir.as_path())?;
+    write_auth_session(
+        auth_dir.as_path(),
+        "shared-expired",
+        "shared-refresh",
+        server.uri().as_str(),
+    )?;
+    let env = CliEnvironment {
+        base_url: server.uri(),
+        token: None,
+        home: Some(home),
+        cwd: None,
+    };
+    let command = parse_command(["logbrew", "logs", "--json"])?;
+    let mut first_output = Vec::new();
+    let mut second_output = Vec::new();
+
+    let (first, second) = tokio::join!(
+        execute_command(&command, &env, &mut first_output),
+        execute_command(&command, &env, &mut second_output)
+    );
+    first?;
+    second?;
+
+    for output in [first_output, second_output] {
+        let text = String::from_utf8(output)?;
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&text)?["logs"],
+            serde_json::json!([])
+        );
+        for secret in [
+            "shared-expired",
+            "shared-refresh",
+            "shared-fresh",
+            "shared-next-refresh",
+        ] {
+            assert!(!text.contains(secret));
+        }
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn env_auth_401_never_reads_or_rotates_local_refresh_credentials()
+-> Result<(), Box<dyn std::error::Error>> {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/logs"))
+        .and(header("authorization", "Bearer env-expired"))
+        .respond_with(ResponseTemplate::new(401))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/api/auth/refresh"))
+        .respond_with(ResponseTemplate::new(500))
+        .expect(0)
+        .mount(&server)
+        .await;
+    let home = api_rendering_home("refresh-env-isolated")?;
+    let auth_dir = home.join(".logbrew");
+    std::fs::create_dir_all(auth_dir.as_path())?;
+    std::fs::write(auth_dir.join("token"), "local-access\n")?;
+    std::fs::write(auth_dir.join("refresh-token"), "local-refresh\n")?;
+    let command = parse_command(["logbrew", "logs", "--json"])?;
+    let env = CliEnvironment {
+        base_url: server.uri(),
+        token: Some("env-expired".to_owned()),
+        home: Some(home),
+        cwd: None,
+    };
+    let mut output = Vec::new();
+
+    let error = execute_command(&command, &env, &mut output)
+        .await
+        .expect_err("env 401 remains an auth error");
+
+    assert!(matches!(
+        error,
+        logbrew_cli::RuntimeError::Api { status: 401, .. }
+    ));
+    assert_eq!(
+        std::fs::read_to_string(auth_dir.join("token"))?.trim(),
+        "local-access"
+    );
+    assert_eq!(
+        std::fs::read_to_string(auth_dir.join("refresh-token"))?.trim(),
+        "local-refresh"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn persisted_refresh_session_never_authenticates_to_a_different_api_origin()
+-> Result<(), Box<dyn std::error::Error>> {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/logs"))
+        .respond_with(ResponseTemplate::new(500))
+        .expect(0)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/api/auth/refresh"))
+        .respond_with(ResponseTemplate::new(500))
+        .expect(0)
+        .mount(&server)
+        .await;
+    let home = api_rendering_home("refresh-origin-mismatch")?;
+    let auth_dir = home.join(".logbrew");
+    std::fs::create_dir_all(auth_dir.as_path())?;
+    write_auth_session(
+        auth_dir.as_path(),
+        "origin-access",
+        "origin-refresh",
+        "https://trusted.example",
+    )?;
+    let command = parse_command(["logbrew", "logs", "--json"])?;
+    let env = CliEnvironment {
+        base_url: server.uri(),
+        token: None,
+        home: Some(home),
+        cwd: None,
+    };
+    let mut output = Vec::new();
+
+    let error = execute_command(&command, &env, &mut output)
+        .await
+        .expect_err("origin mismatch fails before network access");
+
+    assert!(matches!(
+        error,
+        logbrew_cli::RuntimeError::Unavailable { .. }
+    ));
+    assert!(output.is_empty());
+    Ok(())
+}
+
+#[tokio::test]
 async fn api_auth_error_reports_token_file_source_without_leaking_token()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
@@ -654,7 +902,8 @@ async fn human_api_auth_error_reports_env_source_without_leaking_token()
         .and(header("authorization", "Bearer env-token"))
         .respond_with(ResponseTemplate::new(403).set_body_json(serde_json::json!({
             "ok": false,
-            "error": "forbidden"
+            "error": "forbidden",
+            "detail": "env-token"
         })))
         .mount(&server)
         .await;
@@ -743,4 +992,29 @@ fn api_rendering_home(name: &str) -> Result<std::path::PathBuf, std::io::Error> 
     }
     std::fs::create_dir_all(dir.as_path())?;
     Ok(dir)
+}
+
+fn write_auth_session(
+    auth_dir: &std::path::Path,
+    access_token: &str,
+    refresh_token: &str,
+    origin: &str,
+) -> Result<(), std::io::Error> {
+    std::fs::write(
+        auth_dir.join("session.json"),
+        serde_json::json!({
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+            "origin": origin,
+        })
+        .to_string(),
+    )
+}
+
+fn read_auth_session(
+    auth_dir: &std::path::Path,
+) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+    Ok(serde_json::from_str(
+        std::fs::read_to_string(auth_dir.join("session.json"))?.as_str(),
+    )?)
 }

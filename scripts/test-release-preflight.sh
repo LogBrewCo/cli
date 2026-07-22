@@ -104,11 +104,36 @@ case "${1:-} ${2:-}" in
     printf '{"defaultBranchRef":{"name":"main"},"isPrivate":false,"nameWithOwner":"LogBrewCo/homebrew-tap","url":"https://github.com/LogBrewCo/homebrew-tap"}\n'
     ;;
   "api repos/LogBrewCo/cli/branches/main/protection")
-    if [[ "${LOGBREW_TEST_PROTECTION:-ok}" == "missing-plan" ]]; then
-      printf '{"required_pull_request_reviews":{"required_approving_review_count":1,"dismiss_stale_reviews":true},"enforce_admins":{"enabled":true},"required_status_checks":{"strict":true,"checks":[{"context":"check"}],"contexts":["check"]}}\n'
-    else
-      printf '{"required_pull_request_reviews":{"required_approving_review_count":1,"dismiss_stale_reviews":true},"enforce_admins":{"enabled":true},"required_status_checks":{"strict":true,"checks":[{"context":"check"},{"context":"plan"}],"contexts":["check","plan"]}}\n'
-    fi
+    reviews=0
+    last_push=false
+    conversations=true
+    force_pushes=false
+    deletions=false
+    linear_history=true
+    checks='[{"context":"check"},{"context":"plan"}]'
+    case "${LOGBREW_TEST_PROTECTION:-ok}" in
+      human-review)
+        reviews=1
+        last_push=true
+        ;;
+      missing-conversations)
+        conversations=false
+        ;;
+      force-pushes)
+        force_pushes=true
+        ;;
+      deletions)
+        deletions=true
+        ;;
+      nonlinear)
+        linear_history=false
+        ;;
+      missing-plan)
+        checks='[{"context":"check"}]'
+        ;;
+    esac
+    printf '{"required_pull_request_reviews":{"required_approving_review_count":%s,"dismiss_stale_reviews":true,"require_last_push_approval":%s},"enforce_admins":{"enabled":true},"required_status_checks":{"strict":true,"checks":%s,"contexts":[]},"required_conversation_resolution":{"enabled":%s},"allow_force_pushes":{"enabled":%s},"allow_deletions":{"enabled":%s},"required_linear_history":{"enabled":%s}}\n' \
+      "$reviews" "$last_push" "$checks" "$conversations" "$force_pushes" "$deletions" "$linear_history"
     ;;
   "api repos/LogBrewCo/cli/actions/workflows")
     case "${LOGBREW_TEST_WORKFLOWS:-active}" in
@@ -286,6 +311,14 @@ if ! grep -Fq "Release preflight failed: main branch protection must require sta
   cat "$output_file" >&2
   exit 1
 fi
+
+for protection_case in human-review missing-conversations force-pushes deletions nonlinear; do
+  : >"$output_file"
+  if LOGBREW_TEST_PROTECTION="$protection_case" PATH="$tmp_dir:$PATH" bash scripts/release-preflight.sh v0.1.0 >"$output_file" 2>&1; then
+    printf 'expected release preflight to reject protection case %s\n' "$protection_case" >&2
+    exit 1
+  fi
+done
 
 : >"$output_file"
 if LOGBREW_TEST_WORKFLOWS=missing-release PATH="$tmp_dir:$PATH" bash scripts/release-preflight.sh v0.1.0 >"$output_file" 2>&1; then

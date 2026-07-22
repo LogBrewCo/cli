@@ -89,8 +89,13 @@ agent JSON workflow guide.
 The default API URL is `https://api.logbrew.co`. Override it with
 `LOGBREW_API_URL` when testing against another LogBrew API.
 
-Authentication uses either `LOGBREW_TOKEN` or the local token file created by
-`logbrew login`. CLI output must never print token material.
+Authentication uses either `LOGBREW_TOKEN` or the secured local access/refresh
+pair created by `logbrew login`. Interactive login opens GitHub, receives the
+result on a loopback-only callback, and stores the pair under `~/.logbrew`.
+Authenticated commands rotate local credentials once after an expired-token
+response; environment tokens are never persisted or refreshed. `--json` and
+`--no-open` remain non-mutating handoff modes. CLI output never prints token
+material.
 
 For AI sessions, the default mode should be checking only when requested because
 it uses fewer AI tokens. `logbrew watch --json` opens a live WebSocket stream for

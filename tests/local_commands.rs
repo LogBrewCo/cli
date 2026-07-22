@@ -77,7 +77,7 @@ fn logout_help_is_discoverable() {
         }
     );
     assert!(help::help_text(HelpTopic::Root).contains("logbrew logout [--json]"));
-    assert!(help::help_text(HelpTopic::Logout).contains("Removes the local CLI token."));
+    assert!(help::help_text(HelpTopic::Logout).contains("Removes both local CLI credentials."));
 }
 
 #[test]
@@ -249,9 +249,24 @@ async fn logout_json_removes_local_token_without_leaking_it()
         ),
     ] {
         let home = local_command_home(home_name)?;
-        let token_path = home.join(".logbrew").join("token");
+        let auth_dir = home.join(".logbrew");
+        let token_path = auth_dir.join("token");
+        let refresh_path = auth_dir.join("refresh-token");
+        let origin_path = auth_dir.join("auth-origin");
+        let session_path = auth_dir.join("session.json");
         std::fs::create_dir_all(token_path.parent().expect("token path has parent"))?;
         std::fs::write(token_path.as_path(), "fixture-token\n")?;
+        std::fs::write(refresh_path.as_path(), "fixture-refresh-token\n")?;
+        std::fs::write(origin_path.as_path(), "https://example.test\n")?;
+        std::fs::write(
+            session_path.as_path(),
+            serde_json::json!({
+                "access_token": "session-access",
+                "refresh_token": "session-refresh",
+                "origin": "https://example.test",
+            })
+            .to_string(),
+        )?;
         let command = parse_command(args.iter().copied())?;
         let env = CliEnvironment {
             base_url: "https://example.test".to_owned(),
@@ -271,7 +286,13 @@ async fn logout_json_removes_local_token_without_leaking_it()
         assert_eq!(body["auth_source"], "token_file");
         assert_eq!(body["env_token_active"], false);
         assert_eq!(body["next"], "run logbrew login to authenticate again");
+        assert!(!text.contains("fixture-refresh-token"));
+        assert!(!text.contains("session-access"));
+        assert!(!text.contains("session-refresh"));
+        assert!(!session_path.exists());
         assert!(!token_path.exists());
+        assert!(!refresh_path.exists());
+        assert!(!origin_path.exists());
     }
     Ok(())
 }

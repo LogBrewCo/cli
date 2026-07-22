@@ -111,7 +111,9 @@ const LOGIN_HELP: &str = "\
 Usage:
   logbrew login [--no-open] [--json]
 
-Starts browser login for the native CLI. Use --no-open to print the URL without opening a browser.
+Starts browser login for the native CLI and stores a private local access/refresh pair.
+Authenticated commands refresh local auth once after an expired-token response.
+Use --no-open to print the URL without opening a browser.
 --json prints the auth handoff without opening a browser.";
 
 /// Logout command help text.
@@ -119,7 +121,7 @@ const LOGOUT_HELP: &str = "\
 Usage:
   logbrew logout [--json]
 
-Removes the local CLI token. If LOGBREW_TOKEN is set, unset it to fully log out.";
+Removes both local CLI credentials. If LOGBREW_TOKEN is set, unset it to fully log out.";
 
 /// Setup command help text.
 const SETUP_HELP: &str = "\
