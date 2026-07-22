@@ -43,7 +43,7 @@ installers are wrappers around those native release artifacts.
 Release publishing is handled by GitHub Actions:
 
 - GitHub Releases: native archives for Linux x64/ARM64, macOS x64/ARM64, and
-  Windows x64 on Blacksmith runners.
+  Windows x64 on GitHub-hosted runners.
 - Installers: shell, PowerShell, npm package, Homebrew formula, and Windows MSI.
 - Package managers: crates.io and npm via trusted publishing/OIDC, and Homebrew
   via the `LogBrewCo/homebrew-tap` formula repository.

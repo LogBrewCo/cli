@@ -26,6 +26,7 @@ require_command cargo-audit
 require_command python3
 
 bash scripts/confidentiality-check.sh
+python3 scripts/check-github-hosted-runners.py
 if [[ "${LOGBREW_CHECK_ALL_SELF_TEST:-1}" != "0" ]]; then
   bash scripts/test-check-all.sh
 fi
