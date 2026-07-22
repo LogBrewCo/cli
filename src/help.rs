@@ -22,11 +22,15 @@ pub const fn help_text(topic: HelpTopic) -> &'static str {
         HelpTopic::ReadIssues => READ_ISSUES_HELP,
         HelpTopic::ReadActions => READ_ACTIONS_HELP,
         HelpTopic::ReadReleases => READ_RELEASES_HELP,
+        HelpTopic::ReadTraces => READ_TRACES_HELP,
         HelpTopic::ReadTrace => READ_TRACE_HELP,
         HelpTopic::ReadIssue => READ_ISSUE_HELP,
         HelpTopic::Watch => WATCH_HELP,
         HelpTopic::Explain => EXPLAIN_HELP,
+        HelpTopic::Investigate => INVESTIGATE_HELP,
+        HelpTopic::NativeDebugArtifacts => NATIVE_DEBUG_ARTIFACTS_HELP,
         HelpTopic::Set => SET_HELP,
+        HelpTopic::Support => SUPPORT_HELP,
     }
 }
 
@@ -43,9 +47,17 @@ Usage:
   logbrew status [--json]
   logbrew health [--json]
   logbrew doctor [--json]
+  logbrew doctor --project <project_id> [--json]
   logbrew whoami [--json]
   logbrew me [--json]
   logbrew version [--json]
+  logbrew support create --category <category> --title <title> --description <description> [--json]
+  logbrew support list [--status <status>] [--category <category>] [--json]
+  logbrew support show <ticket_id> [--json]
+  logbrew support context <ticket_id> [--json]
+  logbrew support reply <ticket_id> --context <text> --retry-key <key> [--diagnostics] [--json]
+  logbrew support close <ticket_id> [--json]
+  logbrew support reopen <ticket_id> [--json]
   logbrew read logs [--severity error] [--search checkout] [--release <release>] [--environment \
                          production] [--since 24h] [--json]
   logbrew logs checkout failed [--severity error] [--release <release>] [--environment \
@@ -71,6 +83,7 @@ Usage:
                          [--json]
   logbrew events checkout_failed [--release <release>] [--environment production] [--json]
   logbrew read releases [--environment production] [--json]
+  logbrew traces [--service <service_name>] [--status error] [--since 24h] [--json]
   logbrew read trace <trace_id> [--release <release>] [--environment production] [--json]
   logbrew trace <trace_id> [--release <release>] [--environment production] [--json]
   logbrew issue <issue_id> [--json]
@@ -79,6 +92,12 @@ Usage:
   logbrew explain issue <issue_id> [--json]
   logbrew explain trace <trace_id> [--json]
   logbrew explain <issue_id_or_trace_id> [--json]
+  logbrew investigate issue <issue_id> [--json]
+  logbrew debug-artifacts upload <path> --project <project_id> --release <release> --environment \
+                         <environment> --service <service> [--json]
+  logbrew debug-artifacts lookup --project <project_id> --release <release> --environment \
+                         <environment> --service <service> --image-uuid <uuid> --architecture \
+                         <architecture> [--json]
   logbrew <issue_id_or_trace_id> explain [--json]
   logbrew set issue <issue_id> resolved [--json]
   logbrew resolve <issue_id> [--json]
@@ -87,7 +106,7 @@ Usage:
   logbrew reopen <issue_id> [--json]
 
 Popular terms: auth, status, health, setup, projects, usage, logs, issues, errors, traces, spans, \
-                         actions, events, releases, environments.
+                         actions, events, releases, environments, support.
 Health aliases: logbrew status, logbrew health, logbrew ping, logbrew doctor.
 Setup aliases (non-mutating plan): logbrew init, logbrew install, logbrew configure, logbrew sdk.
 Shortcuts: logbrew auth, logbrew whoami, logbrew me, logbrew log, logbrew logs, logbrew issues, \
@@ -121,7 +140,8 @@ const LOGOUT_HELP: &str = "\
 Usage:
   logbrew logout [--json]
 
-Removes both local CLI credentials. If LOGBREW_TOKEN is set, unset it to fully log out.";
+Attempts to revoke the stored server session, then always removes both local CLI credentials.
+If LOGBREW_TOKEN is set, unset it separately to fully log out.";
 
 /// Setup command help text.
 const SETUP_HELP: &str = "\
@@ -146,6 +166,7 @@ Usage:
   logbrew health [--json]
   logbrew ping [--json]
   logbrew doctor [--json]
+  logbrew doctor --project <project_id> [--json]
   logbrew whoami [--json]
   logbrew me [--json]
   logbrew auth status [--json]
@@ -176,7 +197,8 @@ Usage:
   logbrew logout [--json]
   logbrew auth logout [--json]
 
-Use login once, status/whoami/me to verify API/auth state, and logout to remove the local token.
+Use login once, status/whoami/me to verify API/auth state, and logout to revoke the stored
+server session when possible and always remove local credentials.
 Use --json for agent-readable auth checks.";
 
 /// JSON output help text.
@@ -229,14 +251,17 @@ const PROJECTS_HELP: &str = "\
 Usage:
   logbrew projects [--json]
   logbrew project [--json]
-  logbrew projects create <name> [--json]
+  logbrew projects create <name> --ingest-key-file <path> [--runtime <runtime>] \
+                           [--environment <environment>] [--abandon-retry] [--json]
   logbrew setup --create-project [--json]
   logbrew projects setup <project_id> [--runtime <runtime>] [--source api|cli|sdk] \
 [--environment <environment>] [--json]
 
 Project creation, setup status, and project-scoped ingest credentials are backend-owned.
-Current mode: projects setup marks backend-owned setup as seen; project creation remains help only.
-No local project, install, quota, or usage state is created.
+Project creation stores the one-time ingest key in a new owner-only file before reporting success;
+it never prints the one-time ingest key or its file path. An ambiguous attempt reuses the pending retry key only for the exact same request; --abandon-retry starts a new explicit attempt.
+Builds that cannot prove owner-only file permissions fail before sending the create request.
+No local install, quota, or usage state is created.
 Project setup uses POST /api/projects/{project_id}/setup/seen and preserves backend setup status JSON.
 Project-scoped SDK/ingest credentials are shown only when backend returns one-time credentials.
 Never use an account bearer token as SDK or ingest configuration.
@@ -248,12 +273,12 @@ Usage:
   logbrew usage [--json]
   logbrew account usage [--json]
 
-Account usage, plan limits, quota state, reset dates, and per-project or per-stream breakdowns are \
-backend-owned.
-Current mode: help only. The CLI does not calculate or persist usage/quota state from local files.
-When backend usage is available, the CLI will read the backend account usage contract and preserve \
-stable JSON for agents.
-Next: run logbrew status to verify API and auth state.";
+Reads authenticated account usage, configured limits, quota state, and reset dates without mutating \
+account or billing state.
+Human output is bounded to plan, state, totals, limits, the driving limit, and one next step. JSON \
+preserves the exact validated account-usage object for agents.
+The CLI does not calculate or persist usage/quota state from local files.
+Next: run logbrew usage to inspect current account usage.";
 
 /// Read command help text.
 const READ_HELP: &str = "\
@@ -267,6 +292,7 @@ Usage:
   logbrew read actions [filters] [--json]
   logbrew read releases [filters] [--json]
   logbrew read release [filters] [--json]
+  logbrew read traces [filters] [--json]
   logbrew read trace <trace_id> [--json]
   logbrew read issue <issue_id> [--json]
 
@@ -274,14 +300,18 @@ Reads historical observability data for agents and developers.
 Singular read aliases: logbrew read log, read release, show log, list issue, get release.
 Recency counts are limit shortcuts: logbrew last 10 logs or logbrew recent 5 issues.
 Use --environment <environment> with logs, issues, actions, releases, or traces.
-Filter aliases: --env, --project-id, --trace-id, and --distinct-id.";
+Use --service <service_name> with logs, issues, actions, or releases.
+Filter aliases: --service-name, --env, --project-id, --trace-id, and --distinct-id.";
 
 /// Read logs help text.
 const READ_LOGS_HELP: &str = "\
 Usage:
   logbrew read logs [--severity error] [--search checkout] [--release <release>] [--environment \
-                              production] [--since 24h] [--trace <trace_id>] [--project \
-                              <project_id>] [--limit 100] [--json]
+                              production] [--service <service_name>] [--since 24h] [--trace \
+                              <trace_id>] [--project <project_id>] [--pagination cursor] [--limit \
+                              100] [--json]
+  logbrew read logs [filters] --pagination cursor --cursor-time <RFC3339> --cursor-id <uuid> \
+                              [--limit 100] [--json]
   logbrew logs checkout failed [--severity error] [--release <release>] [--environment \
                               production] [--json]
   logbrew logs error checkout failed [--release <release>] [--environment production] [--json]
@@ -297,13 +327,21 @@ Explicit filters accept unquoted search text too, such as logbrew logs --severit
                               failed or logbrew logs --search checkout failed.
 Use -- before literal flag-looking search text, such as logbrew logs -- --timeout --json.
 Filter by severity, message search, release, or trace_id to correlate logs with spans.
+--service-name <service_name> is accepted as an alias for --service <service_name>.
+Cursor pagination preserves JSON as {logs,next_cursor}; next_cursor is either {time,id} or null.
+Use --pagination cursor alone for the first page. Continue with --cursor-time and --cursor-id from \
+                              next_cursor.
+Keep the same active filters and pagination limit on every continuation page.
 Limit must be a positive whole number.";
 
 /// Read issues help text.
 const READ_ISSUES_HELP: &str = "\
 Usage:
   logbrew read issues [--release <release>] [--environment production] [--status unresolved] \
-                                [--project <project_id>] [--limit 100] [--json]
+                                [--service <service_name>] [--since <24h|7d|RFC3339>] [--project \
+                                <project_id>] [--pagination cursor] [--limit 100] [--json]
+  logbrew read issues [filters] --pagination cursor --cursor-time <RFC3339> --cursor-id <uuid> \
+                                [--limit 100] [--json]
   logbrew issues open [--release <release>] [--environment production] [--json]
   logbrew issue open [--release <release>] [--environment production] [--json]
   logbrew open issues [--release <release>] [--environment production] [--json]
@@ -316,34 +354,73 @@ Status accepts unresolved/open, resolved/closed, or ignored, case-insensitively.
 Issue shortcuts accept status words, such as logbrew issues open, logbrew issue open, logbrew open \
                                 issues, logbrew open issue, or logbrew errors closed.
 Recency issue shortcuts can include status and count, such as logbrew last 5 open issues.
+--service-name <service_name> is accepted as an alias for --service <service_name>.
+Since accepts positive compact durations such as 24h or 7d, or an RFC3339 timestamp such as \
+                                2026-05-01T00:00:00Z.
+Cursor pagination preserves JSON as {issues,next_cursor}; next_cursor is either {time,id} or null.
+Use --pagination cursor alone for the first page. Continue with --cursor-time and --cursor-id from \
+                                next_cursor.
+Keep the same active filters and pagination limit on every continuation page.
 Limit must be a positive whole number.";
 
 /// Read actions help text.
 const READ_ACTIONS_HELP: &str = "\
 Usage:
   logbrew read actions [--release <release>] [--environment production] [--name checkout_failed] \
-                                 [--user <distinct_id>] [--since 24h] [--project <project_id>] \
+                                 [--user <distinct_id>] [--service <service_name>] [--since 24h] \
+                                 [--project <project_id>] [--pagination cursor] [--limit 100] \
+                                 [--json]
+  logbrew read actions [filters] --pagination cursor --cursor-time <RFC3339> --cursor-id <uuid> \
                                  [--limit 100] [--json]
   logbrew events checkout_failed [--release <release>] [--environment production] [--json]
 
 Reads product actions. Use distinct_id to follow one actor or session.
 Action/event aliases accept one positional name as the same filter as --name.
+--service-name <service_name> is accepted as an alias for --service <service_name>.
+Cursor pagination preserves JSON as {actions,next_cursor}; next_cursor is either {time,id} or null.
+Use --pagination cursor alone for the first page. Continue with --cursor-time and --cursor-id from \
+                                 next_cursor.
+Keep the same active filters and pagination limit on every continuation page.
 Limit must be a positive whole number.";
 
 /// Read releases help text.
 const READ_RELEASES_HELP: &str = "\
 Usage:
-  logbrew read releases [--release <release>] [--environment production] [--project <project_id>] \
-                                  [--limit 100] [--json]
+  logbrew read releases [--release <release>] [--environment production] [--service \
+                                  <service_name>] [--since <24h|7d|RFC3339>] [--project \
+                                  <project_id>] [--limit 100] [--json]
 
 Reads release summaries with counts for issues, logs, trace spans, and actions.
+--service-name <service_name> is accepted as an alias for --service <service_name>.
+Since accepts positive compact durations such as 24h or 7d, or an RFC3339 timestamp such as \
+                                  2026-05-01T00:00:00Z.
 Limit must be a positive whole number.";
+
+/// Recent trace discovery help text.
+const READ_TRACES_HELP: &str = "\
+Usage:
+  logbrew traces [--project <project_id>] [--service <service_name>] [--release <release>] \
+                               [--environment <environment>] [--status <error|ok>] \
+                               [--since <24h|7d|RFC3339>] \
+                               [--min-duration-ms <milliseconds>] [--limit 100] [--json]
+  logbrew spans [filters] [--json]
+  logbrew latest traces [--limit 100] [--json]
+
+Lists recent distributed traces for incident investigation. JSON preserves the backend bare array.
+Status accepts error or ok, case-insensitively. Minimum duration is a non-negative whole number.
+Since accepts positive compact durations such as 24h or 7d, or an RFC3339 timestamp such as \
+                               2026-05-01T00:00:00Z.
+The backend defaults limit to 100 and clamps it to 1..500.
+CLI aliases --project-id, --service-name, and --env still serialize only canonical API query keys.
+Next: run logbrew trace <trace_id> or logbrew explain trace <trace_id>.";
 
 /// Read trace help text.
 const READ_TRACE_HELP: &str = "\
 Usage:
   logbrew read trace <trace_id> [--release <release>] [--environment production] [--project \
                                <project_id>] [--json]
+  logbrew trace <trace_id> [--release <release>] [--environment production] [--project \
+                          <project_id>] [--json]
 
 Reads spans for one distributed trace.";
 
@@ -381,6 +458,28 @@ Usage:
 Fetches enough context for an AI agent to explain what happened.
 Pasted UUID/issue_* values are treated as issues; 32-hex/trace_* values are treated as traces.";
 
+/// Server-directed issue investigation help text.
+const INVESTIGATE_HELP: &str = "\
+Usage:
+  logbrew investigate issue <issue_id> [--json]
+
+Reads the issue first, then follows only its public trace-summary or related-log next action.
+The command is read-only and preserves issue scope in the directed request.
+JSON preserves the issue and exactly one directed result in a stable four-key envelope.";
+
+/// Apple native debug-artifact command help text.
+const NATIVE_DEBUG_ARTIFACTS_HELP: &str = "\
+Usage:
+  logbrew debug-artifacts upload <path> --project <project_id> --release <release> \
+                         --environment <environment> --service <service> [--json]
+  logbrew debug-artifacts lookup --project <project_id> --release <release> \
+                         --environment <environment> --service <service> --image-uuid <uuid> \
+                         --architecture <arm64|arm64e|x86_64> [--json]
+
+Validates Apple dSYM or Mach-O debug objects locally, uploads only supported exact identities, and \
+verifies each identity with an exact authenticated lookup. Local paths and filenames are never \
+included in output or API metadata.";
+
 /// Set command help text.
 const SET_HELP: &str = "\
 Usage:
@@ -407,3 +506,35 @@ Updates grouped issue status. Resolve/close map to resolved; ignore maps to igno
 Close is an alias for resolved.
 Issue-first, pasted-ID, and status-first aliases are useful after reading issue detail.
 Status values are case-insensitive.";
+
+/// Support-ticket workflow help text.
+const SUPPORT_HELP: &str = "\
+Usage:
+  logbrew support create --category <category> --title <title> --description <description> \
+                           [--project <project_id>] [--environment <environment>] \
+                           [--runtime <runtime>] [--framework <framework>] \
+                           [--sdk-package <package>] [--sdk-version <version>] \
+                           [--release <release>] [--trace-id <trace_id>] [--event-id <event_id>] \
+                           [--diagnostics] [--json]
+  logbrew support list [--project <project_id>] [--status <status>] [--source <source>] \
+                         [--category <category>] [--release <release>] [--limit 100] \
+                         [--pagination cursor] [--json]
+  logbrew support list [filters] --pagination cursor --cursor-time <RFC3339> \
+                         --cursor-id <ticket_id> [--json]
+  logbrew support show <ticket_id> [--json]
+  logbrew support context <ticket_id> [--json]
+  logbrew support reply <ticket_id> --context <text> --retry-key <key> [--diagnostics] [--json]
+  logbrew support close <ticket_id> [--json]
+  logbrew support reopen <ticket_id> [--json]
+
+Creates, reads, adds requested context to, closes, and reopens authenticated account support \
+                         tickets. Creation source is \
+                         always cli.
+Categories: sdk_install_failure, ingest_failure, auth_failure, project_setup, dashboard_issue, \
+                         docs_confusion, cli_issue, mobile_issue, billing_question, other.
+--diagnostics adds only binary, CLI version, operating system, and architecture. It never reads \
+                         arbitrary environment variables or files.
+Cursor continuations repeat --pagination cursor, all active filters, and the paired cursor from \
+                         next_cursor. JSON preserves the server response exactly.
+Context replies require a retry key. Reuse the key only when retrying the exact same context. \
+                         Chat, messages, and internal notes are not part of this command.";

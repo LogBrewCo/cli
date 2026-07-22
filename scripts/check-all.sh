@@ -23,6 +23,7 @@ require_command() {
 }
 
 require_command cargo-audit
+require_command python3
 
 bash scripts/confidentiality-check.sh
 if [[ "${LOGBREW_CHECK_ALL_SELF_TEST:-1}" != "0" ]]; then
@@ -30,6 +31,7 @@ if [[ "${LOGBREW_CHECK_ALL_SELF_TEST:-1}" != "0" ]]; then
 fi
 bash scripts/test-package-contents.sh
 bash scripts/test-release-preflight.sh
+python3 scripts/test-real-user-public-install-smoke.py
 cargo audit
 cargo fmt --all -- --check
 cargo clippy --lib --bin logbrew --all-features -- -D warnings

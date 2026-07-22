@@ -121,6 +121,36 @@ fn parses_health_and_doctor_as_status_aliases() {
 }
 
 #[test]
+fn parses_project_scoped_doctor_without_changing_the_bare_alias() {
+    const PROJECT_ID: &str = "123e4567-e89b-12d3-a456-426614174000";
+
+    for args in [
+        &["logbrew", "doctor", "--project", PROJECT_ID, "--json"][..],
+        &["logbrew", "doctor", "--project-id", PROJECT_ID, "--json"],
+        &["logbrew", "--json", "doctor", "--project", PROJECT_ID],
+        &[
+            "logbrew",
+            "doctor",
+            "--project=123e4567-e89b-12d3-a456-426614174000",
+            "--json",
+        ],
+    ] {
+        assert_eq!(
+            parse_command(args.iter().copied()).expect("scoped doctor parses"),
+            Command::Doctor {
+                project_id: PROJECT_ID.to_owned(),
+                json: true,
+            }
+        );
+    }
+
+    assert_eq!(
+        parse_command(["logbrew", "doctor"]).expect("bare doctor remains status"),
+        Command::Status { json: false }
+    );
+}
+
+#[test]
 fn parses_whoami_and_me_as_status_aliases() {
     for args in [
         &["logbrew", "whoami"][..],
@@ -165,6 +195,7 @@ fn parses_global_json_before_read_shortcut_for_agents() {
             target: ReadTarget::Logs,
             options: Box::new(ReadOptions {
                 name: None,
+                service: None,
                 since: None,
                 user: None,
                 trace: None,
@@ -175,6 +206,10 @@ fn parses_global_json_before_read_shortcut_for_agents() {
                 environment: None,
                 status: None,
                 limit: None,
+                min_duration_ms: None,
+                pagination: None,
+                cursor_time: None,
+                cursor_id: None,
             }),
             json: true,
         }
@@ -312,9 +347,12 @@ fn parses_common_help_terms_as_real_user_topics() {
     for (args, topic) in [
         (
             ["logbrew", "help", "traces", "--json"],
-            HelpTopic::ReadTrace,
+            HelpTopic::ReadTraces,
         ),
-        (["logbrew", "help", "spans", "--json"], HelpTopic::ReadTrace),
+        (
+            ["logbrew", "help", "spans", "--json"],
+            HelpTopic::ReadTraces,
+        ),
         (
             ["logbrew", "help", "errors", "--json"],
             HelpTopic::ReadIssues,
@@ -358,14 +396,14 @@ fn parses_common_help_terms_as_real_user_topics() {
     assert_eq!(
         parse_command(["logbrew", "traces", "--help"]).expect("trace shortcut help parses"),
         Command::Help {
-            topic: HelpTopic::ReadTrace,
+            topic: HelpTopic::ReadTraces,
             json: false
         }
     );
     assert_eq!(
         parse_command(["logbrew", "help", "read", "traces"]).expect("read trace help parses"),
         Command::Help {
-            topic: HelpTopic::ReadTrace,
+            topic: HelpTopic::ReadTraces,
             json: false
         }
     );
@@ -414,10 +452,9 @@ fn parses_common_help_terms_as_real_user_topics() {
     assert!(help::help_text(HelpTopic::Read).contains(
         "Use --environment <environment> with logs, issues, actions, releases, or traces."
     ));
-    assert!(
-        help::help_text(HelpTopic::Read)
-            .contains("Filter aliases: --env, --project-id, --trace-id, and --distinct-id.")
-    );
+    assert!(help::help_text(HelpTopic::Read).contains(
+        "Filter aliases: --service-name, --env, --project-id, --trace-id, and --distinct-id."
+    ));
 }
 
 #[test]
@@ -428,6 +465,8 @@ fn parses_filter_terms_as_top_level_discovery_help() {
         ["logbrew", "environments", "--json"],
         ["logbrew", "filters", "--json"],
         ["logbrew", "project-id", "--json"],
+        ["logbrew", "service", "--json"],
+        ["logbrew", "service-name", "--json"],
     ] {
         let command = parse_command(args).expect("filter discovery help parses");
 
@@ -442,12 +481,11 @@ fn parses_filter_terms_as_top_level_discovery_help() {
 }
 
 #[test]
-fn parses_project_and_usage_terms_as_backend_owned_help() {
+fn parses_project_help_and_authenticated_usage_reads() {
     for args in [
         &["logbrew", "project", "--json"][..],
         &["logbrew", "projects", "--json"],
         &["logbrew", "--json", "projects"],
-        &["logbrew", "projects", "create", "checkout", "--json"],
     ] {
         let command = parse_command(args.iter().copied()).expect("project discovery help parses");
 
@@ -465,15 +503,8 @@ fn parses_project_and_usage_terms_as_backend_owned_help() {
         &["logbrew", "--json", "usage"],
         &["logbrew", "account", "usage", "--json"],
     ] {
-        let command = parse_command(args.iter().copied()).expect("usage discovery help parses");
-
-        assert_eq!(
-            command,
-            Command::Help {
-                topic: HelpTopic::Usage,
-                json: true
-            }
-        );
+        let command = parse_command(args.iter().copied()).expect("usage read parses");
+        assert_eq!(command, Command::Usage { json: true });
     }
 }
 
@@ -520,22 +551,39 @@ fn parses_project_setup_seen_contract_call() {
 }
 
 #[test]
-fn parses_bare_trace_terms_as_top_level_discovery_help() {
+fn parses_bare_singular_trace_terms_as_detail_help() {
     for args in [
         &["logbrew", "trace", "--json"][..],
-        &["logbrew", "traces", "--json"],
         &["logbrew", "span", "--json"],
-        &["logbrew", "spans", "--json"],
-        &["logbrew", "traces"],
-        &["logbrew", "--json", "spans"],
     ] {
-        let command = parse_command(args.iter().copied()).expect("trace discovery help parses");
+        let command = parse_command(args.iter().copied()).expect("trace detail help parses");
 
         assert_eq!(
             command,
             Command::Help {
                 topic: HelpTopic::ReadTrace,
                 json: args.contains(&"--json")
+            }
+        );
+    }
+}
+
+#[test]
+fn parses_bare_plural_trace_terms_as_recent_discovery() {
+    for args in [
+        &["logbrew", "traces", "--json"][..],
+        &["logbrew", "spans", "--json"],
+        &["logbrew", "traces"],
+        &["logbrew", "--json", "spans"],
+    ] {
+        let command = parse_command(args.iter().copied()).expect("trace discovery parses");
+
+        assert_eq!(
+            command,
+            Command::Read {
+                target: ReadTarget::Traces,
+                options: Box::new(ReadOptions::default()),
+                json: args.contains(&"--json"),
             }
         );
     }
@@ -1013,6 +1061,7 @@ fn parses_agent_friendly_read_actions() {
             target: ReadTarget::Actions,
             options: Box::new(ReadOptions {
                 name: Some("checkout_failed".to_owned()),
+                service: None,
                 since: Some("24h".to_owned()),
                 user: None,
                 trace: None,
@@ -1023,6 +1072,10 @@ fn parses_agent_friendly_read_actions() {
                 environment: None,
                 status: None,
                 limit: None,
+                min_duration_ms: None,
+                pagination: None,
+                cursor_time: None,
+                cursor_id: None,
             }),
             json: true,
         }
@@ -1031,6 +1084,89 @@ fn parses_agent_friendly_read_actions() {
         command.http_path().expect("read actions has endpoint"),
         "/api/telemetry/actions?name=checkout_failed&since=24h"
     );
+}
+
+#[test]
+fn parses_common_incident_scope_filters_for_collection_reads() {
+    for (resource, expected_path) in [
+        ("logs", "/api/logs?service_name=checkout-api&since=24h"),
+        (
+            "issues",
+            "/api/telemetry/issues?service_name=checkout-api&since=24h",
+        ),
+        (
+            "actions",
+            "/api/telemetry/actions?service_name=checkout-api&since=24h",
+        ),
+        (
+            "releases",
+            "/api/telemetry/releases?service_name=checkout-api&since=24h",
+        ),
+    ] {
+        let command = parse_command([
+            "logbrew",
+            resource,
+            "--service",
+            "checkout-api",
+            "--since",
+            "24h",
+            "--json",
+        ])
+        .expect("incident scope filters parse");
+
+        assert_eq!(
+            command.http_path().expect("collection read has endpoint"),
+            expected_path
+        );
+    }
+
+    let alias = parse_command([
+        "logbrew",
+        "issues",
+        "--service-name",
+        "checkout-api",
+        "--since",
+        "2026-05-01T00:00:00Z",
+        "--json",
+    ])
+    .expect("backend-aligned service alias parses");
+    assert_eq!(
+        alias.http_path().expect("issue read has endpoint"),
+        "/api/telemetry/issues?service_name=checkout-api&since=2026-05-01T00%3A00%3A00Z"
+    );
+
+    let duplicate = parse_command([
+        "logbrew",
+        "logs",
+        "--service",
+        "checkout-api",
+        "--service-name",
+        "payments-api",
+    ])
+    .expect_err("service aliases are one canonical filter");
+    assert_eq!(duplicate.to_string(), "duplicate flag: --service");
+}
+
+#[test]
+fn collection_help_documents_incident_scope_forms() {
+    for topic in [
+        HelpTopic::ReadLogs,
+        HelpTopic::ReadIssues,
+        HelpTopic::ReadActions,
+        HelpTopic::ReadReleases,
+    ] {
+        let text = help::help_text(topic);
+
+        assert!(text.contains("--service <service_name>"));
+        assert!(text.contains("--service-name <service_name>"));
+    }
+
+    for topic in [HelpTopic::ReadIssues, HelpTopic::ReadReleases] {
+        let text = help::help_text(topic);
+
+        assert!(text.contains("--since <24h|7d|RFC3339>"));
+        assert!(text.contains("2026-05-01T00:00:00Z"));
+    }
 }
 
 #[test]
@@ -1111,6 +1247,7 @@ fn parses_read_filter_aliases_for_real_user_terms() {
             target: ReadTarget::Logs,
             options: Box::new(ReadOptions {
                 name: None,
+                service: None,
                 since: None,
                 user: None,
                 trace: Some("trace_123".to_owned()),
@@ -1121,6 +1258,10 @@ fn parses_read_filter_aliases_for_real_user_terms() {
                 environment: Some("production".to_owned()),
                 status: None,
                 limit: None,
+                min_duration_ms: None,
+                pagination: None,
+                cursor_time: None,
+                cursor_id: None,
             }),
             json: true,
         }
@@ -1145,6 +1286,7 @@ fn parses_read_filter_aliases_for_real_user_terms() {
             target: ReadTarget::Actions,
             options: Box::new(ReadOptions {
                 name: None,
+                service: None,
                 since: None,
                 user: Some("user_123".to_owned()),
                 trace: None,
@@ -1155,6 +1297,10 @@ fn parses_read_filter_aliases_for_real_user_terms() {
                 environment: Some("production".to_owned()),
                 status: None,
                 limit: None,
+                min_duration_ms: None,
+                pagination: None,
+                cursor_time: None,
+                cursor_id: None,
             }),
             json: true,
         }
@@ -1183,6 +1329,7 @@ fn parses_release_filter_for_logs() {
             target: ReadTarget::Logs,
             options: Box::new(ReadOptions {
                 name: None,
+                service: None,
                 since: None,
                 user: None,
                 trace: None,
@@ -1193,6 +1340,10 @@ fn parses_release_filter_for_logs() {
                 environment: None,
                 status: None,
                 limit: None,
+                min_duration_ms: None,
+                pagination: None,
+                cursor_time: None,
+                cursor_id: None,
             }),
             json: true,
         }
@@ -1214,6 +1365,7 @@ fn parses_positive_limit_for_logs() {
             target: ReadTarget::Logs,
             options: Box::new(ReadOptions {
                 name: None,
+                service: None,
                 since: None,
                 user: None,
                 trace: None,
@@ -1224,6 +1376,10 @@ fn parses_positive_limit_for_logs() {
                 environment: None,
                 status: None,
                 limit: Some("25".to_owned()),
+                min_duration_ms: None,
+                pagination: None,
+                cursor_time: None,
+                cursor_id: None,
             }),
             json: true,
         }
@@ -1330,6 +1486,7 @@ fn parses_release_summaries_with_environment_filter() {
             target: ReadTarget::Releases,
             options: Box::new(ReadOptions {
                 name: None,
+                service: None,
                 since: None,
                 user: None,
                 trace: None,
@@ -1340,6 +1497,10 @@ fn parses_release_summaries_with_environment_filter() {
                 environment: Some("production".to_owned()),
                 status: None,
                 limit: None,
+                min_duration_ms: None,
+                pagination: None,
+                cursor_time: None,
+                cursor_id: None,
             }),
             json: true,
         }
@@ -1367,6 +1528,7 @@ fn parses_top_level_releases_shortcut_with_environment_filter() {
             target: ReadTarget::Releases,
             options: Box::new(ReadOptions {
                 name: None,
+                service: None,
                 since: None,
                 user: None,
                 trace: None,
@@ -1377,6 +1539,10 @@ fn parses_top_level_releases_shortcut_with_environment_filter() {
                 environment: Some("production".to_owned()),
                 status: None,
                 limit: None,
+                min_duration_ms: None,
+                pagination: None,
+                cursor_time: None,
+                cursor_id: None,
             }),
             json: true,
         }
@@ -1400,6 +1566,7 @@ fn parses_read_trace_as_singular_target() {
             target: ReadTarget::Trace("trace-123".to_owned()),
             options: Box::new(ReadOptions {
                 name: None,
+                service: None,
                 since: None,
                 user: None,
                 trace: None,
@@ -1410,6 +1577,10 @@ fn parses_read_trace_as_singular_target() {
                 environment: None,
                 status: None,
                 limit: None,
+                min_duration_ms: None,
+                pagination: None,
+                cursor_time: None,
+                cursor_id: None,
             }),
             json: true,
         }

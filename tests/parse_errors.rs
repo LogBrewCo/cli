@@ -3,6 +3,43 @@
 use logbrew_cli::{CliError, parse_command, write_cli_error};
 
 #[test]
+fn project_doctor_rejects_malformed_or_hostile_grammar_without_reflection() {
+    for args in [
+        &["logbrew", "doctor", "--project", "not-a-project", "--json"][..],
+        &[
+            "logbrew",
+            "doctor",
+            "--authorization=hostile-secret",
+            "--json",
+        ],
+        &[
+            "logbrew",
+            "doctor",
+            "--project",
+            "123e4567-e89b-12d3-a456-426614174000",
+            "hostile-secret\ncontrol",
+            "--json",
+        ],
+    ] {
+        let error = parse_command(args.iter().copied()).expect_err("doctor grammar fails closed");
+        let mut output = Vec::new();
+        write_cli_error(&error, true, &mut output).expect("error writes");
+        let text = String::from_utf8(output).expect("utf8 output");
+        let body: serde_json::Value = serde_json::from_str(text.as_str()).expect("valid json");
+
+        assert_eq!(body["error"], "invalid_doctor_command");
+        assert_eq!(body["message"], "invalid project doctor command");
+        assert_eq!(
+            body["next"],
+            "use logbrew doctor --project <project_id> with optional --json"
+        );
+        assert!(!text.contains("hostile-secret"));
+        assert!(!text.contains("authorization"));
+        assert!(!text.contains("not-a-project"));
+    }
+}
+
+#[test]
 fn rejects_non_numeric_limit_with_agent_next_step() {
     let error =
         parse_command(["logbrew", "logs", "--limit", "banana", "--json"]).expect_err("bad limit");
@@ -70,12 +107,12 @@ fn rejects_unknown_resources_with_command_specific_next_steps() {
         (
             &["logbrew", "read", "metrics", "--json"][..],
             "unknown resource: metrics",
-            "choose one of logs, issues, actions, releases, trace, issue",
+            "choose one of logs, issues, actions, releases, traces, trace, issue",
         ),
         (
             &["logbrew", "watch", "traces", "--json"][..],
             "unknown resource: traces",
-            "watch streams logs, issues, and actions; use logbrew trace <trace_id> to read a trace",
+            "use logbrew traces for recent traces, or logbrew trace <trace_id> for one trace",
         ),
         (
             &["logbrew", "explain", "logs", "--json"][..],
@@ -152,23 +189,6 @@ fn rejects_inline_values_on_simple_command_flags_with_command_help() {
             command: "read logs",
             next: "run logbrew read logs --help",
         })
-    );
-}
-
-#[test]
-fn rejects_plural_trace_read_resource_with_singular_next_step() {
-    let error = parse_command(["logbrew", "read", "traces", "--json"]).expect_err("bad resource");
-    let mut output = Vec::new();
-
-    write_cli_error(&error, true, &mut output).expect("error writes");
-
-    let body: serde_json::Value = serde_json::from_slice(output.as_slice()).expect("valid json");
-    assert_eq!(body["ok"], false);
-    assert_eq!(body["error"], "unknown_resource");
-    assert_eq!(body["message"], "unknown resource: traces");
-    assert_eq!(
-        body["next"],
-        "use singular trace with an id: logbrew read trace <trace_id>"
     );
 }
 
@@ -631,7 +651,7 @@ fn rejects_missing_resources_with_command_specific_next_steps() {
     for (args, next) in [
         (
             &["logbrew", "read", "--json"][..],
-            "choose one of logs, issues, actions, releases, trace, issue",
+            "choose one of logs, issues, actions, releases, traces, trace, issue",
         ),
         (
             &["logbrew", "explain", "--json"][..],
@@ -868,6 +888,32 @@ fn rejects_detail_filters_before_validating_list_only_values() {
         (
             &["logbrew", "issue_123", "--status", "closed", "--json"][..],
             "unsupported flag for read issue: --status",
+            "run logbrew read issue --help",
+        ),
+        (
+            &[
+                "logbrew",
+                "read",
+                "trace",
+                "4bf92f3577b34da6a3ce929d0e0e4736",
+                "--service",
+                "checkout-api",
+                "--json",
+            ][..],
+            "unsupported flag for read trace: --service",
+            "run logbrew read trace --help",
+        ),
+        (
+            &[
+                "logbrew",
+                "read",
+                "issue",
+                "issue_123",
+                "--service-name",
+                "checkout-api",
+                "--json",
+            ][..],
+            "unsupported flag for read issue: --service",
             "run logbrew read issue --help",
         ),
     ] {

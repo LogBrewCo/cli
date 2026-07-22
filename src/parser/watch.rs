@@ -19,7 +19,7 @@ const WATCH_ACTION_FILTER_NEXT_STEP: &str = "use logbrew actions with filters fo
 const WATCH_ACTION_POSITIONAL_NEXT_STEP: &str = "use logbrew actions --name <name> for historical data, or logbrew watch actions --json for live actions";
 /// Trace/span recovery for unsupported live watch resources.
 const WATCH_TRACE_RESOURCE_NEXT_STEP: &str =
-    "watch streams logs, issues, and actions; use logbrew trace <trace_id> to read a trace";
+    "use logbrew traces for recent traces, or logbrew trace <trace_id> for one trace";
 
 /// Parses `watch`.
 pub(super) fn parse_watch(args: &[String]) -> Result<Command, CliError> {
@@ -208,25 +208,25 @@ fn historical_filter_flag(target: WatchTarget, arg: &str) -> Option<&str> {
     match target {
         WatchTarget::All => match flag {
             "--search" | "--trace" | "--trace-id" | "--project" | "--project-id" | "--release"
-            | "--environment" | "--env" | "--since" | "--limit" | "--name" | "--user"
-            | "--distinct-id" | "--status" => Some(flag),
+            | "--environment" | "--env" | "--service" | "--service-name" | "--since"
+            | "--limit" | "--name" | "--user" | "--distinct-id" | "--status" => Some(flag),
             _ => None,
         },
         WatchTarget::Logs => match flag {
             "--search" | "--trace" | "--trace-id" | "--project" | "--project-id" | "--release"
-            | "--environment" | "--env" | "--since" | "--limit" => Some(flag),
+            | "--environment" | "--env" | "--service" | "--service-name" | "--since"
+            | "--limit" => Some(flag),
             _ => None,
         },
         WatchTarget::Issues => match flag {
-            "--project" | "--project-id" | "--release" | "--environment" | "--env" | "--status"
-            | "--limit" => Some(flag),
+            "--project" | "--project-id" | "--release" | "--environment" | "--env"
+            | "--service" | "--service-name" | "--since" | "--status" | "--limit" => Some(flag),
             _ => None,
         },
         WatchTarget::Actions => match flag {
             "--name" | "--user" | "--distinct-id" | "--project" | "--project-id" | "--release"
-            | "--environment" | "--env" | "--since" | "--limit" | "--severity" | "--level" => {
-                Some(flag)
-            }
+            | "--environment" | "--env" | "--service" | "--service-name" | "--since"
+            | "--limit" | "--severity" | "--level" => Some(flag),
             _ => None,
         },
     }

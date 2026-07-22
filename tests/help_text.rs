@@ -36,6 +36,7 @@ fn root_help_surfaces_release_environment_pairing() {
     assert!(text.contains("logbrew whoami [--json]"));
     assert!(text.contains("logbrew health [--json]"));
     assert!(text.contains("logbrew doctor [--json]"));
+    assert!(text.contains("logbrew doctor --project <project_id> [--json]"));
     assert!(text.contains(
         "Setup aliases (non-mutating plan): logbrew init, logbrew install, logbrew configure, \
          logbrew sdk."
@@ -64,22 +65,27 @@ fn root_help_surfaces_release_environment_pairing() {
 }
 
 #[test]
-fn project_and_usage_help_are_honest_about_backend_readiness() {
+fn project_and_usage_help_are_honest_about_supported_behavior() {
     let projects = help::help_text(HelpTopic::Projects);
     let usage = help::help_text(HelpTopic::Usage);
 
-    assert!(projects.contains("logbrew projects create <name> [--json]"));
+    assert!(
+        projects.contains(
+            "logbrew projects create <name> --ingest-key-file <path> [--runtime <runtime>]"
+        )
+    );
     assert!(projects.contains("logbrew setup --create-project [--json]"));
     assert!(projects.contains("Project creation, setup status"));
-    assert!(projects.contains("Current mode: projects setup marks backend-owned setup as seen;"));
-    assert!(projects.contains("No local project, install, quota, or usage state is created."));
+    assert!(projects.contains("stores the one-time ingest key in a new owner-only file"));
+    assert!(projects.contains("No local install, quota, or usage state is created."));
     assert!(projects.contains("POST /api/projects/{project_id}/setup/seen"));
     assert!(projects.contains("Never use an account bearer token as SDK or ingest configuration."));
 
     assert!(usage.contains("logbrew usage [--json]"));
     assert!(usage.contains("logbrew account usage [--json]"));
-    assert!(usage.contains("Account usage, plan limits, quota state"));
-    assert!(usage.contains("Current mode: help only."));
+    assert!(usage.contains("Reads authenticated account usage"));
+    assert!(usage.contains("Human output is bounded"));
+    assert!(usage.contains("JSON preserves the exact validated account-usage object"));
     assert!(
         usage.contains("The CLI does not calculate or persist usage/quota state from local files.")
     );

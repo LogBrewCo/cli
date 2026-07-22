@@ -37,6 +37,11 @@ fn rejects_filter_words_before_action_name_shortcuts_with_specific_hints() {
             "name",
             "use --name <name>",
         ),
+        (
+            &["logbrew", "actions", "service", "checkout-api", "--json"][..],
+            "service",
+            "use --service <service_name> or --service-name <service_name>",
+        ),
     ] {
         let error =
             parse_command(args.iter().copied()).expect_err("filter word before action name fails");

@@ -87,6 +87,7 @@ fn parses_search_as_log_search_shortcut() {
                 target: ReadTarget::Logs,
                 options: Box::new(ReadOptions {
                     name: None,
+                    service: None,
                     since: None,
                     user: None,
                     trace: None,
@@ -97,6 +98,10 @@ fn parses_search_as_log_search_shortcut() {
                     environment: environment.map(str::to_owned),
                     status: None,
                     limit: None,
+                    min_duration_ms: None,
+                    pagination: None,
+                    cursor_time: None,
+                    cursor_id: None,
                 }),
                 json: true,
             }
@@ -148,6 +153,7 @@ fn parses_search_separator_as_literal_log_search_shortcut() {
                 target: ReadTarget::Logs,
                 options: Box::new(ReadOptions {
                     name: None,
+                    service: None,
                     since: None,
                     user: None,
                     trace: None,
@@ -158,6 +164,10 @@ fn parses_search_separator_as_literal_log_search_shortcut() {
                     environment: None,
                     status: None,
                     limit: None,
+                    min_duration_ms: None,
+                    pagination: None,
+                    cursor_time: None,
+                    cursor_id: None,
                 }),
                 json,
             }
@@ -326,6 +336,7 @@ fn parses_find_and_grep_as_log_search_shortcuts() {
                 target: ReadTarget::Logs,
                 options: Box::new(ReadOptions {
                     name: None,
+                    service: None,
                     since: None,
                     user: None,
                     trace: None,
@@ -336,6 +347,10 @@ fn parses_find_and_grep_as_log_search_shortcuts() {
                     environment: Some("production".to_owned()),
                     status: None,
                     limit: None,
+                    min_duration_ms: None,
+                    pagination: None,
+                    cursor_time: None,
+                    cursor_id: None,
                 }),
                 json: true,
             }

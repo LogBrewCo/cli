@@ -76,6 +76,7 @@ release/tag collisions.
 logbrew examples
 logbrew status
 logbrew login
+logbrew logout
 logbrew logs --release checkout@1 --environment production
 logbrew issues open --json
 logbrew explain issue issue_123
@@ -95,7 +96,9 @@ result on a loopback-only callback, and stores the pair under `~/.logbrew`.
 Authenticated commands rotate local credentials once after an expired-token
 response; environment tokens are never persisted or refreshed. `--json` and
 `--no-open` remain non-mutating handoff modes. CLI output never prints token
-material.
+material. `logbrew logout` attempts to revoke the stored refresh-backed server
+session and always removes local credentials; `LOGBREW_TOKEN` must be unset
+separately.
 
 For AI sessions, the default mode should be checking only when requested because
 it uses fewer AI tokens. `logbrew watch --json` opens a live WebSocket stream for
