@@ -87,24 +87,38 @@ jobs:
       - name: Checkout released source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
-          ref: ${{ inputs.source_commit }}
+          ref: 018b1a832d143c203b2822652d1bce9fb16401ab
           path: released-source
           persist-credentials: false
 
       - name: Execute installed release receipt
+        shell: bash
+        env:
+          ATTESTATION_PYTHON: ${{ matrix.python }}
+          ATTESTATION_RECEIPT: ${{ matrix.receipt }}
+          ATTESTATION_TAG: ${{ inputs.tag }}
+          ATTESTATION_VERSION: ${{ inputs.version }}
+          ATTESTATION_SOURCE_COMMIT: ${{ inputs.source_commit }}
+          ATTESTATION_RELEASE_RUN: ${{ inputs.release_run }}
+          ATTESTATION_MODE: ${{ matrix.mode }}
+          ATTESTATION_ARTIFACT_ID: ${{ matrix.artifact_id }}
+          ATTESTATION_ASSET: ${{ matrix.asset }}
+          ATTESTATION_PLATFORM: ${{ matrix.platform }}
+          ATTESTATION_RELEASED_SOURCE: ${{ github.workspace }}/released-source
+          ATTESTATION_OUTPUT: ${{ runner.temp }}/attestation.json
         run: >-
-          ${{ matrix.python }} scripts/installed_release_attestation.py
-          --receipt ${{ matrix.receipt }}
-          --tag ${{ inputs.tag }}
-          --version ${{ inputs.version }}
-          --source-commit ${{ inputs.source_commit }}
-          --release-run ${{ inputs.release_run }}
-          --mode ${{ matrix.mode }}
-          --artifact-id ${{ matrix.artifact_id }}
-          --asset ${{ matrix.asset }}
-          --execution-platform ${{ matrix.platform }}
-          --released-source "${{ github.workspace }}/released-source"
-          --output "${{ runner.temp }}/attestation.json"
+          "$ATTESTATION_PYTHON" scripts/installed_release_attestation.py
+          --receipt "$ATTESTATION_RECEIPT"
+          --tag "$ATTESTATION_TAG"
+          --version "$ATTESTATION_VERSION"
+          --source-commit "$ATTESTATION_SOURCE_COMMIT"
+          --release-run "$ATTESTATION_RELEASE_RUN"
+          --mode "$ATTESTATION_MODE"
+          --artifact-id "$ATTESTATION_ARTIFACT_ID"
+          --asset "$ATTESTATION_ASSET"
+          --execution-platform "$ATTESTATION_PLATFORM"
+          --released-source "$ATTESTATION_RELEASED_SOURCE"
+          --output "$ATTESTATION_OUTPUT"
 
       - name: Upload installed attestation
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
