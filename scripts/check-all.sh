@@ -35,6 +35,8 @@ python3 scripts/test-publish-crates-workflow.py
 bash scripts/test-release-preflight.sh
 python3 scripts/test-cross-platform-auth-store.py
 python3 scripts/test-real-user-public-install-smoke.py
+python3 scripts/test-installed-release-attestation.py
+python3 scripts/test-installed-release-attestation-workflow.py
 cargo audit
 cargo fmt --all -- --check
 cargo clippy --lib --bin logbrew --all-features -- -D warnings
