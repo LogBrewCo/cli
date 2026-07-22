@@ -64,6 +64,50 @@ fn recovers_watch_read_filters_to_historical_reads() {
          for live actions"
     );
 
+    let service_error = parse_command([
+        "logbrew",
+        "watch",
+        "actions",
+        "--service",
+        "checkout-api",
+        "--json",
+    ])
+    .expect_err("watch service filter fails");
+    let mut service_output = Vec::new();
+
+    write_cli_error(&service_error, true, &mut service_output).expect("error writes");
+
+    let service_body: serde_json::Value =
+        serde_json::from_slice(service_output.as_slice()).expect("valid json");
+    assert_eq!(service_body["ok"], false);
+    assert_eq!(service_body["error"], "unsupported_flag");
+    assert_eq!(
+        service_body["message"],
+        "unsupported flag for watch: --service"
+    );
+    assert_eq!(
+        service_body["next"],
+        "use logbrew actions with filters for historical data, or logbrew watch actions --json \
+         for live actions"
+    );
+
+    let issue_error = parse_command(["logbrew", "watch", "issues", "--since", "24h", "--json"])
+        .expect_err("watch issue recency filter fails");
+    let mut issue_output = Vec::new();
+
+    write_cli_error(&issue_error, true, &mut issue_output).expect("error writes");
+
+    let issue_body: serde_json::Value =
+        serde_json::from_slice(issue_output.as_slice()).expect("valid json");
+    assert_eq!(issue_body["ok"], false);
+    assert_eq!(issue_body["error"], "unsupported_flag");
+    assert_eq!(issue_body["message"], "unsupported flag for watch: --since");
+    assert_eq!(
+        issue_body["next"],
+        "use logbrew issues with filters for historical data, or logbrew watch issues --severity \
+         <severity> --json for live severity filtering"
+    );
+
     let log_error = parse_command(["logbrew", "watch", "logs", "--search", "checkout"])
         .expect_err("watch log search filter fails");
     let mut log_output = Vec::new();

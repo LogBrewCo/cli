@@ -3,6 +3,8 @@
 mod help_topics;
 mod issue_shortcuts;
 mod log_shortcuts;
+mod support;
+mod trace_reads;
 mod watch;
 
 use help_topics::{
@@ -16,22 +18,26 @@ use issue_shortcuts::{
     parse_status_first_issue_id_shortcut,
 };
 use log_shortcuts::{literal_log_search_separator_index, log_shortcut_args};
+use support::parse_support;
+use trace_reads::{parse_trace_detail_or_explain, parse_trace_list_read};
 use watch::parse_watch;
 
 use crate::flags::{
     FlagScope, is_read_filter_word, is_simple_flag, normalize_log_level, normalize_status,
-    parse_flags,
+    parse_flags, validate_min_duration,
 };
 use crate::ids::{infer_explain_target, is_issue_id, is_pasted_detail_id, is_trace_id};
 use crate::{
     CliError, Command, ExplainTarget, HelpTopic, ISSUE_STATUS_ARGUMENT_NEXT_STEP,
-    ProjectSetupSeenOptions, ReadOptions, ReadTarget, SetTarget, auth_namespace,
+    ProjectCreateOptions, ProjectSetupSeenOptions, ReadOptions, ReadTarget, SetTarget,
+    auth_namespace,
 };
 
 /// Standard next step for malformed help invocations.
 const HELP_NEXT_STEP: &str = "run logbrew --help";
 /// Valid resources for historical reads.
-const READ_RESOURCE_NEXT_STEP: &str = "choose one of logs, issues, actions, releases, trace, issue";
+const READ_RESOURCE_NEXT_STEP: &str =
+    "choose one of logs, issues, actions, releases, traces, trace, issue";
 /// Recovery hint for users who type plural trace resources.
 const READ_TRACE_ALIAS_NEXT_STEP: &str =
     "use singular trace with an id: logbrew read trace <trace_id>";
@@ -52,6 +58,8 @@ const READ_ISSUES_NEXT_STEP: &str = "run logbrew read issues --help";
 const READ_ACTIONS_NEXT_STEP: &str = "run logbrew read actions --help";
 /// Help for release list reads.
 const READ_RELEASES_NEXT_STEP: &str = "run logbrew read releases --help";
+/// Help for recent trace discovery.
+const READ_TRACES_NEXT_STEP: &str = "run logbrew read traces --help";
 /// Help for backend-owned project setup discovery.
 const PROJECTS_NEXT_STEP: &str = "run logbrew projects --help";
 /// Help for backend-owned project setup seen calls.
@@ -67,6 +75,8 @@ const SET_RESOURCE_NEXT_STEP: &str = "choose issue";
 /// Filters trace detail reads cannot apply.
 const TRACE_DETAIL_UNSUPPORTED_FLAGS: &[&str] = &[
     "--name",
+    "--service",
+    "--service-name",
     "--since",
     "--user",
     "--distinct-id",
@@ -77,10 +87,13 @@ const TRACE_DETAIL_UNSUPPORTED_FLAGS: &[&str] = &[
     "--search",
     "--status",
     "--limit",
+    "--min-duration-ms",
 ];
 /// Filters issue detail reads cannot apply.
 const ISSUE_DETAIL_UNSUPPORTED_FLAGS: &[&str] = &[
     "--name",
+    "--service",
+    "--service-name",
     "--since",
     "--user",
     "--distinct-id",
@@ -96,6 +109,7 @@ const ISSUE_DETAIL_UNSUPPORTED_FLAGS: &[&str] = &[
     "--env",
     "--status",
     "--limit",
+    "--min-duration-ms",
 ];
 /// Filters action list reads cannot apply.
 const ACTION_LIST_UNSUPPORTED_FLAGS: &[&str] = &[
@@ -105,6 +119,7 @@ const ACTION_LIST_UNSUPPORTED_FLAGS: &[&str] = &[
     "--severity",
     "--search",
     "--status",
+    "--min-duration-ms",
 ];
 
 /// # Errors
@@ -164,17 +179,19 @@ fn parse_values(values: &[String]) -> Result<Command, CliError> {
         "login" => parse_login(tail),
         "logout" => parse_logout(tail),
         alias if is_setup_alias(alias) => parse_setup(tail),
-        "status" | "whoami" | "me" | "health" | "ping" | "doctor" => parse_status(tail),
+        "status" | "whoami" | "me" | "health" | "ping" => parse_status(tail),
+        "doctor" => parse_doctor(tail),
         "version" => parse_version(tail),
-        "account" if tail.first().is_some_and(|arg| arg == "usage") => {
-            parse_discovery_help(HelpTopic::Usage, &tail[1..])
-        }
+        "account" if tail.first().is_some_and(|arg| arg == "usage") => parse_usage(&tail[1..]),
         alias if auth_namespace::is_namespace(alias) => auth_namespace::parse(tail),
         alias if auth_namespace::is_help_alias(alias) => parse_help_alias(HelpTopic::Auth, tail),
         "json" | "output" => parse_help_alias(HelpTopic::Json, tail),
         alias if is_examples_help_alias(alias) => parse_help_alias(HelpTopic::Examples, tail),
         alias if is_project_help_alias(alias) => parse_project(tail),
-        "usage" => parse_discovery_help(HelpTopic::Usage, tail),
+        "usage" => parse_usage(tail),
+        "support" => parse_support(tail),
+        "investigate" => parse_investigate(tail),
+        "debug-artifacts" => parse_native_debug_artifacts(tail),
         alias if is_direct_filter_help_alias(alias) => parse_help_alias(HelpTopic::Read, tail),
         "read" => parse_read(tail),
         alias if is_read_verb(alias) => parse_read_verb(alias, tail),
@@ -192,16 +209,18 @@ fn parse_values(values: &[String]) -> Result<Command, CliError> {
         }
         "log" => parse_read_resource("logs", tail),
         "release" => parse_read_resource("releases", tail),
-        alias if is_trace_term(alias) && !has_position_candidate(tail) => {
+        alias if matches!(alias, "trace" | "span") && !has_position_candidate(tail) => {
             parse_help_alias(HelpTopic::ReadTrace, tail)
         }
+        alias if matches!(alias, "traces" | "spans") && has_trace_id_candidate(tail) => {
+            parse_read_resource("trace", tail)
+        }
+        "traces" | "spans" => parse_read_resource("traces", tail),
         "logs" | "issues" | "errors" | "error" | "exceptions" | "exception" | "actions"
         | "events" | "event" | "action" | "releases" | "trace" | "issue" => {
             parse_read_resource(head, tail)
         }
-        "traces" | "span" | "spans" if has_position_candidate(tail) => {
-            parse_read_resource("trace", tail)
-        }
+        "span" if has_position_candidate(tail) => parse_read_resource("trace", tail),
         "resolve" | "close" | "ignore" | "reopen" => parse_issue_status_shortcut(head, tail),
         alias if is_watch_command_alias(alias) => parse_watch(tail),
         "explain" => parse_explain(tail),
@@ -209,6 +228,196 @@ fn parse_values(values: &[String]) -> Result<Command, CliError> {
         id if is_pasted_detail_id(id) => parse_pasted_detail_id(id, tail),
         _ => Err(unknown_command(head)),
     }
+}
+
+/// Parses the closed Apple native debug-artifact grammar.
+fn parse_native_debug_artifacts(args: &[String]) -> Result<Command, CliError> {
+    let normalized = move_leading_json_to_tail(args);
+    let Some((operation, tail)) = normalized.split_first() else {
+        return Err(CliError::InvalidNativeDebugCommand);
+    };
+    match operation.as_str() {
+        "upload" => parse_native_debug_upload(tail),
+        "lookup" => parse_native_debug_lookup(tail),
+        _ => Err(CliError::InvalidNativeDebugCommand),
+    }
+}
+
+/// Parses one artifact upload and normalizes its public request scope.
+fn parse_native_debug_upload(args: &[String]) -> Result<Command, CliError> {
+    let Some((path, flags)) = args.split_first() else {
+        return Err(CliError::InvalidNativeDebugCommand);
+    };
+    if path.is_empty() || path.chars().any(char::is_control) || path.starts_with('-') {
+        return Err(CliError::InvalidNativeDebugCommand);
+    }
+    let parsed = parse_native_debug_scope(flags, false)?;
+    Ok(Command::NativeDebugArtifacts {
+        target: crate::NativeDebugArtifactsTarget::Upload(crate::NativeDebugUploadOptions {
+            path: path.clone(),
+            project_id: parsed.project_id,
+            release: parsed.release,
+            environment: parsed.environment,
+            service: parsed.service,
+        }),
+        json: parsed.json,
+    })
+}
+
+/// Parses one exact artifact lookup.
+fn parse_native_debug_lookup(args: &[String]) -> Result<Command, CliError> {
+    let parsed = parse_native_debug_scope(args, true)?;
+    let image_uuid = parsed
+        .image_uuid
+        .filter(|value| is_canonical_lower_uuid(value))
+        .ok_or(CliError::InvalidNativeDebugIdentity)?;
+    let architecture = parsed
+        .architecture
+        .filter(|value| matches!(value.as_str(), "arm64" | "arm64e" | "x86_64"))
+        .ok_or(CliError::InvalidNativeDebugIdentity)?;
+    Ok(Command::NativeDebugArtifacts {
+        target: crate::NativeDebugArtifactsTarget::Lookup(crate::NativeDebugLookupOptions {
+            project_id: parsed.project_id,
+            release: parsed.release,
+            environment: parsed.environment,
+            service: parsed.service,
+            image_uuid,
+            architecture,
+        }),
+        json: parsed.json,
+    })
+}
+
+/// Duplicate-aware native debug-artifact flag accumulator.
+#[derive(Default)]
+struct NativeDebugScope {
+    /// Account-owned project UUID.
+    project_id: String,
+    /// Exact normalized release.
+    release: String,
+    /// Exact normalized environment.
+    environment: String,
+    /// Exact normalized service.
+    service: String,
+    /// Optional lookup image UUID.
+    image_uuid: Option<String>,
+    /// Optional lookup architecture.
+    architecture: Option<String>,
+    /// Machine-readable output selection.
+    json: bool,
+}
+
+/// Parses required scope flags without reflecting malformed values.
+fn parse_native_debug_scope(args: &[String], lookup: bool) -> Result<NativeDebugScope, CliError> {
+    let mut project_id = None;
+    let mut release = None;
+    let mut environment = None;
+    let mut service = None;
+    let mut image_uuid = None;
+    let mut architecture = None;
+    let mut json = false;
+    let mut index = 0;
+    while let Some(flag) = args.get(index) {
+        if flag == "--json" {
+            if json {
+                return Err(CliError::InvalidNativeDebugCommand);
+            }
+            json = true;
+            index += 1;
+            continue;
+        }
+        let destination = match flag.as_str() {
+            "--project" => &mut project_id,
+            "--release" => &mut release,
+            "--environment" => &mut environment,
+            "--service" => &mut service,
+            "--image-uuid" if lookup => &mut image_uuid,
+            "--architecture" if lookup => &mut architecture,
+            _ => return Err(CliError::InvalidNativeDebugCommand),
+        };
+        if destination.is_some() {
+            return Err(CliError::InvalidNativeDebugCommand);
+        }
+        let value = args
+            .get(index + 1)
+            .ok_or(CliError::InvalidNativeDebugCommand)?;
+        *destination = Some(value.clone());
+        index += 2;
+    }
+
+    let project_id = project_id
+        .filter(|value| is_canonical_lower_uuid(value))
+        .ok_or(CliError::InvalidNativeDebugCommand)?;
+    let release = normalize_native_scope(release).ok_or(CliError::InvalidNativeDebugCommand)?;
+    let environment =
+        normalize_native_scope(environment).ok_or(CliError::InvalidNativeDebugCommand)?;
+    let service = normalize_native_scope(service).ok_or(CliError::InvalidNativeDebugCommand)?;
+    if lookup != (image_uuid.is_some() && architecture.is_some()) {
+        return Err(CliError::InvalidNativeDebugCommand);
+    }
+    Ok(NativeDebugScope {
+        project_id,
+        release,
+        environment,
+        service,
+        image_uuid,
+        architecture,
+        json,
+    })
+}
+
+/// Trims and bounds one public native artifact scope string.
+fn normalize_native_scope(value: Option<String>) -> Option<String> {
+    let value = value?;
+    let trimmed = value.trim();
+    (!trimmed.is_empty() && trimmed.len() <= 256 && !trimmed.chars().any(char::is_control))
+        .then(|| trimmed.to_owned())
+}
+
+/// Restricts public UUID inputs to lowercase dashed canonical form.
+fn is_canonical_lower_uuid(value: &str) -> bool {
+    value.len() == 36
+        && value.bytes().enumerate().all(|(index, byte)| {
+            matches!(index, 8 | 13 | 18 | 23) && byte == b'-'
+                || !matches!(index, 8 | 13 | 18 | 23)
+                    && (byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+        })
+}
+
+/// Parses the closed, read-only issue investigation grammar.
+fn parse_investigate(args: &[String]) -> Result<Command, CliError> {
+    let normalized = move_leading_json_to_tail(args);
+    match normalized.as_slice() {
+        [resource, issue_id]
+            if resource == "issue" && is_safe_investigation_issue_id(issue_id.as_str()) =>
+        {
+            Ok(Command::InvestigateIssue {
+                issue_id: issue_id.clone(),
+                json: false,
+            })
+        }
+        [resource, issue_id, json]
+            if resource == "issue"
+                && is_safe_investigation_issue_id(issue_id.as_str())
+                && json == "--json" =>
+        {
+            Ok(Command::InvestigateIssue {
+                issue_id: issue_id.clone(),
+                json: true,
+            })
+        }
+        _ => Err(CliError::InvalidInvestigationCommand),
+    }
+}
+
+/// Restricts investigation IDs to canonical lowercase dashed UUIDs.
+fn is_safe_investigation_issue_id(value: &str) -> bool {
+    value.len() == 36
+        && value.bytes().enumerate().all(|(index, byte)| {
+            matches!(index, 8 | 13 | 18 | 23) && byte == b'-'
+                || !matches!(index, 8 | 13 | 18 | 23)
+                    && (byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+        })
 }
 
 /// Parses non-mutating discovery help for backend-owned future workflows.
@@ -339,11 +548,6 @@ fn is_watch_command_alias(value: &str) -> bool {
     matches!(value, "watch" | "tail" | "follow" | "stream")
 }
 
-/// Returns whether a word names trace/span vocabulary.
-fn is_trace_term(value: &str) -> bool {
-    matches!(value, "trace" | "traces" | "span" | "spans")
-}
-
 /// Returns whether a value is a version flag.
 fn is_version_flag(value: &str) -> bool {
     matches!(value, "--version" | "-V")
@@ -427,12 +631,122 @@ fn parse_setup_create_project(args: &[String]) -> Result<Command, CliError> {
 fn parse_project(args: &[String]) -> Result<Command, CliError> {
     let normalized = move_leading_json_to_tail(args);
     if let Some((subcommand, tail)) = normalized.split_first()
+        && subcommand == "create"
+    {
+        return parse_project_create(tail);
+    }
+    if let Some((subcommand, tail)) = normalized.split_first()
         && subcommand == "setup"
         && has_position_candidate(tail)
     {
         return parse_project_setup_seen(tail);
     }
     parse_discovery_help(HelpTopic::Projects, args)
+}
+
+/// Parses the closed secure project creation grammar.
+fn parse_project_create(args: &[String]) -> Result<Command, CliError> {
+    let Some((name, tail)) = args.split_first() else {
+        return Err(CliError::InvalidProjectCreateCommand);
+    };
+    if name.starts_with('-') {
+        return Err(CliError::InvalidProjectCreateCommand);
+    }
+    let name = bounded_project_create_value(name, 120, false)
+        .ok_or(CliError::InvalidProjectCreateCommand)?;
+    if name.starts_with('-') {
+        return Err(CliError::InvalidProjectCreateCommand);
+    }
+    let mut runtime = None;
+    let mut environment = None;
+    let mut ingest_key_file = None;
+    let mut abandon_retry = false;
+    let mut json = false;
+    let mut index = 0;
+
+    while let Some(argument) = tail.get(index) {
+        let (flag, inline_value) = argument
+            .split_once('=')
+            .map_or((argument.as_str(), None), |(flag, value)| {
+                (flag, Some(value))
+            });
+        match flag {
+            "--runtime" if runtime.is_none() => {
+                let value = project_create_flag_value(tail, &mut index, inline_value)?;
+                runtime = optional_project_create_value(value, 64)?;
+            }
+            "--environment" if environment.is_none() => {
+                let value = project_create_flag_value(tail, &mut index, inline_value)?;
+                environment = optional_project_create_value(value, 64)?;
+            }
+            "--ingest-key-file" if ingest_key_file.is_none() => {
+                let value = project_create_flag_value(tail, &mut index, inline_value)?;
+                let trimmed = value.trim();
+                if trimmed.is_empty()
+                    || trimmed.len() > 4096
+                    || trimmed.chars().any(char::is_control)
+                {
+                    return Err(CliError::InvalidProjectCreateCommand);
+                }
+                ingest_key_file = Some(trimmed.to_owned());
+            }
+            "--abandon-retry" if inline_value.is_none() && !abandon_retry => {
+                abandon_retry = true;
+            }
+            "--json" if inline_value.is_none() && !json => json = true,
+            _ => return Err(CliError::InvalidProjectCreateCommand),
+        }
+        index += 1;
+    }
+
+    let ingest_key_file = ingest_key_file.ok_or(CliError::InvalidProjectCreateCommand)?;
+    Ok(Command::ProjectCreate {
+        options: ProjectCreateOptions {
+            name,
+            runtime,
+            environment,
+            ingest_key_file,
+            abandon_retry,
+        },
+        json,
+    })
+}
+
+/// Takes an inline or following project-create flag value without reflection.
+fn project_create_flag_value<'a>(
+    args: &'a [String],
+    index: &mut usize,
+    inline: Option<&'a str>,
+) -> Result<&'a str, CliError> {
+    if let Some(value) = inline {
+        return Ok(value);
+    }
+    *index += 1;
+    args.get(*index)
+        .map(String::as_str)
+        .filter(|value| !value.starts_with('-'))
+        .ok_or(CliError::InvalidProjectCreateCommand)
+}
+
+/// Trims one bounded control-safe project-create field.
+fn bounded_project_create_value(value: &str, limit: usize, allow_blank: bool) -> Option<String> {
+    let value = value.trim();
+    let length = value.chars().count();
+    if value.chars().any(char::is_control) || length > limit || (!allow_blank && length == 0) {
+        return None;
+    }
+    (!value.is_empty()).then(|| value.to_owned())
+}
+
+/// Normalizes one optional field while distinguishing blank from invalid.
+fn optional_project_create_value(value: &str, limit: usize) -> Result<Option<String>, CliError> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    bounded_project_create_value(trimmed, limit, false)
+        .map(Some)
+        .ok_or(CliError::InvalidProjectCreateCommand)
 }
 
 /// Parses `projects setup <project_id>`.
@@ -600,6 +914,58 @@ fn parse_status(args: &[String]) -> Result<Command, CliError> {
     })
 }
 
+/// Parses the closed authenticated account-usage read grammar.
+fn parse_usage(args: &[String]) -> Result<Command, CliError> {
+    match args {
+        [] => Ok(Command::Usage { json: false }),
+        [flag] if flag == "--json" => Ok(Command::Usage { json: true }),
+        _ => Err(CliError::InvalidUsageCommand),
+    }
+}
+
+/// Parses bare status-compatible doctor or one strict project-scoped diagnostic.
+fn parse_doctor(args: &[String]) -> Result<Command, CliError> {
+    if args.iter().all(|arg| arg == "--json") {
+        return parse_status(args);
+    }
+
+    let mut project_id = None;
+    let mut json = false;
+    let mut index = 0;
+    while let Some(argument) = args.get(index) {
+        if let Some(value) = argument
+            .strip_prefix("--project=")
+            .or_else(|| argument.strip_prefix("--project-id="))
+        {
+            if project_id.is_some() || !crate::ids::is_uuid(value) {
+                return Err(CliError::InvalidDoctorCommand);
+            }
+            project_id = Some(value.to_owned());
+            index += 1;
+            continue;
+        }
+        match argument.as_str() {
+            "--json" if !json => json = true,
+            "--project" | "--project-id" if project_id.is_none() => {
+                index += 1;
+                let Some(value) = args.get(index) else {
+                    return Err(CliError::InvalidDoctorCommand);
+                };
+                if !crate::ids::is_uuid(value) {
+                    return Err(CliError::InvalidDoctorCommand);
+                }
+                project_id = Some(value.clone());
+            }
+            _ => return Err(CliError::InvalidDoctorCommand),
+        }
+        index += 1;
+    }
+
+    project_id.map_or(Err(CliError::InvalidDoctorCommand), |project_id| {
+        Ok(Command::Doctor { project_id, json })
+    })
+}
+
 /// Parses `version`.
 fn parse_version(args: &[String]) -> Result<Command, CliError> {
     let flags = parse_flags(args, FlagScope::Version)?;
@@ -640,6 +1006,13 @@ fn has_position_candidate(args: &[String]) -> bool {
     move_leading_json_to_tail(args)
         .first()
         .is_some_and(|arg| !arg.starts_with('-'))
+}
+
+/// Returns whether args begin with an obvious copied trace id after optional `--json`.
+fn has_trace_id_candidate(args: &[String]) -> bool {
+    move_leading_json_to_tail(args)
+        .first()
+        .is_some_and(|arg| is_trace_id(arg))
 }
 
 /// Takes a required positional argument after tolerating a leading JSON flag.
@@ -838,7 +1211,6 @@ fn parse_read_resource(resource: &str, rest: &[String]) -> Result<Command, CliEr
             READ_RELEASES_NEXT_STEP,
             &[
                 "--name",
-                "--since",
                 "--user",
                 "--distinct-id",
                 "--trace",
@@ -847,10 +1219,15 @@ fn parse_read_resource(resource: &str, rest: &[String]) -> Result<Command, CliEr
                 "--severity",
                 "--search",
                 "--status",
+                "--min-duration-ms",
             ],
         )?,
+        "traces" | "spans" if has_trace_id_candidate(rest) => {
+            return parse_trace_detail_or_explain(rest);
+        }
+        "traces" | "spans" => parse_trace_list_read(rest)?,
         "trace" => return parse_trace_detail_or_explain(rest),
-        "traces" | "span" | "spans" if has_position_candidate(rest) => {
+        "span" if has_position_candidate(rest) => {
             return parse_trace_detail_or_explain(rest);
         }
         "issue" if has_issue_status_candidate(rest) => parse_issue_list_read(rest)?,
@@ -908,7 +1285,13 @@ fn parse_log_list_read(rest: &[String]) -> Result<(ReadTarget, crate::flags::Fla
         args.as_slice(),
         "read logs",
         READ_LOGS_NEXT_STEP,
-        &["--name", "--user", "--distinct-id", "--status"],
+        &[
+            "--name",
+            "--user",
+            "--distinct-id",
+            "--status",
+            "--min-duration-ms",
+        ],
     )
 }
 
@@ -922,7 +1305,6 @@ fn parse_issue_list_read(rest: &[String]) -> Result<(ReadTarget, crate::flags::F
         READ_ISSUES_NEXT_STEP,
         &[
             "--name",
-            "--since",
             "--user",
             "--distinct-id",
             "--trace",
@@ -930,6 +1312,7 @@ fn parse_issue_list_read(rest: &[String]) -> Result<(ReadTarget, crate::flags::F
             "--level",
             "--severity",
             "--search",
+            "--min-duration-ms",
         ],
     )
 }
@@ -1120,6 +1503,7 @@ fn reject_unsupported_read_flags(
 fn read_value_canonical_flag(flag: &str) -> Option<&'static str> {
     let canonical = match flag {
         "--name" => "--name",
+        "--service" | "--service-name" => "--service",
         "--since" => "--since",
         "--user" | "--distinct-id" => "--user",
         "--trace" | "--trace-id" => "--trace",
@@ -1130,6 +1514,10 @@ fn read_value_canonical_flag(flag: &str) -> Option<&'static str> {
         "--environment" | "--env" => "--environment",
         "--status" => "--status",
         "--limit" => "--limit",
+        "--min-duration-ms" => "--min-duration-ms",
+        "--pagination" => "--pagination",
+        "--cursor-time" => "--cursor-time",
+        "--cursor-id" => "--cursor-id",
         _ => return None,
     };
     Some(canonical)
@@ -1139,6 +1527,7 @@ fn read_value_canonical_flag(flag: &str) -> Option<&'static str> {
 fn user_facing_read_flag(flag: &str) -> &str {
     match flag {
         "--level" => "--severity",
+        "--service-name" => "--service",
         other => other,
     }
 }
@@ -1149,6 +1538,8 @@ fn has_invalid_supported_read_value(flag: &str, value: &str) -> bool {
         "--level" | "--severity" => !is_known_log_level(value),
         "--status" => !is_known_issue_status(value),
         "--limit" => value.parse::<u32>().map_or(true, |limit| limit == 0),
+        "--min-duration-ms" => validate_min_duration(value).is_err(),
+        "--pagination" => value != "cursor",
         _ => false,
     }
 }
@@ -1173,6 +1564,8 @@ fn is_read_value_flag(flag: &str) -> bool {
     matches!(
         flag,
         "--name"
+            | "--service"
+            | "--service-name"
             | "--since"
             | "--user"
             | "--distinct-id"
@@ -1188,33 +1581,11 @@ fn is_read_value_flag(flag: &str) -> bool {
             | "--env"
             | "--status"
             | "--limit"
+            | "--min-duration-ms"
+            | "--pagination"
+            | "--cursor-time"
+            | "--cursor-id"
     )
-}
-
-/// Parses one trace detail read or trace explain suffix.
-fn parse_trace_detail_or_explain(rest: &[String]) -> Result<Command, CliError> {
-    let (id, tail) = take_required_position(rest, "trace_id", "provide a trace id")?;
-    if let Some(command) =
-        parse_detail_explain_suffix(ExplainTarget::Trace(id.clone()), tail.as_slice())?
-    {
-        return Ok(command);
-    }
-    let target = ReadTarget::Trace(id);
-    let flags = parse_detail_read_flags(
-        tail.as_slice(),
-        "read trace",
-        READ_TRACE_NEXT_STEP,
-        TRACE_DETAIL_UNSUPPORTED_FLAGS,
-    )?;
-    let json = flags.is_json();
-    let options = flags.into_read_options();
-    validate_read_filters(&target, &options)?;
-
-    Ok(Command::Read {
-        target,
-        options: Box::new(options),
-        json,
-    })
 }
 
 /// Parses a trailing `explain` action after an issue or trace detail id.
@@ -1305,6 +1676,9 @@ fn validate_read_filters(target: &ReadTarget, filters: &ReadOptions) -> Result<(
         ReadTarget::Releases => filters
             .first_release_unsupported_flag()
             .map(|flag| (flag, "read releases", READ_RELEASES_NEXT_STEP)),
+        ReadTarget::Traces => filters
+            .first_trace_list_unsupported_flag()
+            .map(|flag| (flag, "read traces", READ_TRACES_NEXT_STEP)),
         ReadTarget::Trace(_) => filters
             .first_trace_detail_unsupported_flag()
             .map(|flag| (flag, "read trace", READ_TRACE_NEXT_STEP)),
@@ -1320,7 +1694,35 @@ fn validate_read_filters(target: &ReadTarget, filters: &ReadOptions) -> Result<(
             next,
         });
     }
+    match target {
+        ReadTarget::Logs => validate_read_cursor(filters, CliError::InvalidLogCursor)?,
+        ReadTarget::Actions => validate_read_cursor(filters, CliError::InvalidActionCursor)?,
+        ReadTarget::Issues => validate_read_cursor(filters, CliError::InvalidIssueCursor)?,
+        ReadTarget::Releases | ReadTarget::Traces | ReadTarget::Trace(_) | ReadTarget::Issue(_) => {
+        }
+    }
     Ok(())
+}
+
+/// Validates an explicit first-page or continuation cursor shape.
+fn validate_read_cursor(
+    filters: &ReadOptions,
+    invalid_cursor: fn(String) -> CliError,
+) -> Result<(), CliError> {
+    match (
+        filters.pagination.as_deref(),
+        filters.cursor_time.as_ref(),
+        filters.cursor_id.as_ref(),
+    ) {
+        (None | Some("cursor"), None, None) | (Some("cursor"), Some(_), Some(_)) => Ok(()),
+        (None, _, _) => Err(invalid_cursor(String::from(
+            "cursor fields require --pagination cursor",
+        ))),
+        (Some("cursor"), _, _) => Err(invalid_cursor(String::from(
+            "--cursor-time and --cursor-id must be used together",
+        ))),
+        (Some(_), _, _) => Err(CliError::UnknownPagination),
+    }
 }
 
 /// Parses `explain`.

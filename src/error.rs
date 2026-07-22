@@ -80,12 +80,69 @@ pub enum CliError {
     /// Issue status is unsupported.
     #[error("unknown issue status: {0}")]
     UnknownStatus(String),
+    /// Trace status is unsupported.
+    #[error("unknown trace status: {0}")]
+    UnknownTraceStatus(String),
     /// Log level is unsupported.
     #[error("unknown log level: {0}")]
     UnknownLogLevel(String),
     /// Row limit is malformed.
     #[error("invalid limit: {0}")]
     InvalidLimit(String),
+    /// Minimum trace duration is malformed.
+    #[error("invalid minimum duration: {0}")]
+    InvalidMinDuration(String),
+    /// Pagination mode is unsupported.
+    #[error("unknown pagination mode")]
+    UnknownPagination,
+    /// Action cursor fields are inconsistent.
+    #[error("invalid action cursor: {0}")]
+    InvalidActionCursor(String),
+    /// Log cursor fields are inconsistent.
+    #[error("invalid log cursor: {0}")]
+    InvalidLogCursor(String),
+    /// Issue cursor fields are inconsistent.
+    #[error("invalid issue cursor: {0}")]
+    InvalidIssueCursor(String),
+    /// Support-ticket cursor fields are inconsistent.
+    #[error("invalid support cursor: {0}")]
+    InvalidSupportCursor(String),
+    /// Support-ticket category is unsupported.
+    #[error("unknown support category")]
+    UnknownSupportCategory,
+    /// Support-ticket identifier is not in the public `sup_` form.
+    #[error("invalid support ticket id")]
+    InvalidSupportTicketId,
+    /// Support context retry key cannot be sent as an HTTP header value.
+    #[error("invalid support retry key")]
+    InvalidSupportRetryKey,
+    /// Support context reply syntax is malformed.
+    #[error("invalid support context reply")]
+    InvalidSupportContextReply,
+    /// Support context history syntax is malformed.
+    #[error("invalid support context command")]
+    InvalidSupportContextCommand,
+    /// Support context text is blank or exceeds the public limit.
+    #[error("invalid support context")]
+    InvalidSupportContext,
+    /// Issue investigation syntax is malformed.
+    #[error("invalid issue investigation command")]
+    InvalidInvestigationCommand,
+    /// Project-scoped doctor syntax is malformed.
+    #[error("invalid project doctor command")]
+    InvalidDoctorCommand,
+    /// Secure project creation syntax is malformed.
+    #[error("invalid project create command")]
+    InvalidProjectCreateCommand,
+    /// Account usage read syntax is malformed.
+    #[error("invalid usage command")]
+    InvalidUsageCommand,
+    /// Native debug-artifact command syntax is malformed.
+    #[error("invalid native debug-artifact command")]
+    InvalidNativeDebugCommand,
+    /// Native debug-artifact identity is not canonical.
+    #[error("invalid native debug-artifact identity")]
+    InvalidNativeDebugIdentity,
     /// Project setup source is malformed.
     #[error("invalid setup source: {0}")]
     InvalidSetupSource(String),
@@ -144,6 +201,18 @@ pub enum RuntimeError {
         /// Suggested fallback action.
         next: &'static str,
     },
+    /// A successful investigation response violated the public contract.
+    #[error("issue investigation returned an invalid response")]
+    InvestigationResponseInvalid,
+    /// A local Apple native debug artifact failed validation.
+    #[error("native debug artifact is invalid")]
+    NativeDebugArtifactInvalid,
+    /// A native debug-artifact response violated the public contract.
+    #[error("native debug-artifact response is invalid")]
+    NativeDebugResponseInvalid,
+    /// Exact post-upload lookup verification did not match.
+    #[error("native debug-artifact verification failed")]
+    NativeDebugVerificationFailed,
 }
 
 /// Writes a command-line parsing error for humans or agents.
@@ -234,6 +303,10 @@ fn write_human_runtime_error<W: std::io::Write>(
         | RuntimeError::Io(_)
         | RuntimeError::Http(_)
         | RuntimeError::MissingToken
+        | RuntimeError::InvestigationResponseInvalid
+        | RuntimeError::NativeDebugArtifactInvalid
+        | RuntimeError::NativeDebugResponseInvalid
+        | RuntimeError::NativeDebugVerificationFailed
         | RuntimeError::Unavailable { .. } => {
             writeln!(output, "{error}")?;
             writeln!(output, "Next: {}", runtime_error_next_step(error))?;
@@ -247,6 +320,10 @@ fn runtime_error_json(error: &RuntimeError) -> serde_json::Value {
     match error {
         RuntimeError::MissingToken
         | RuntimeError::Unavailable { .. }
+        | RuntimeError::InvestigationResponseInvalid
+        | RuntimeError::NativeDebugArtifactInvalid
+        | RuntimeError::NativeDebugResponseInvalid
+        | RuntimeError::NativeDebugVerificationFailed
         | RuntimeError::Io(_)
         | RuntimeError::Http(_) => serde_json::json!({
             "ok": false,
@@ -316,8 +393,28 @@ const fn cli_error_code(error: &CliError) -> &'static str {
         CliError::UnsupportedFlag { .. } => "unsupported_flag",
         CliError::UnknownResource { .. } => "unknown_resource",
         CliError::UnknownStatus(_) => "unknown_status",
+        CliError::UnknownTraceStatus(_) => "unknown_trace_status",
         CliError::UnknownLogLevel(_) => "unknown_log_level",
         CliError::InvalidLimit(_) => "invalid_limit",
+        CliError::InvalidMinDuration(_) => "invalid_min_duration",
+        CliError::UnknownPagination => "unknown_pagination",
+        CliError::InvalidActionCursor(_) => "invalid_action_cursor",
+        CliError::InvalidLogCursor(_) => "invalid_log_cursor",
+        CliError::InvalidIssueCursor(_) => "invalid_issue_cursor",
+        CliError::InvalidSupportCursor(_) => "invalid_support_cursor",
+        CliError::UnknownSupportCategory => "unknown_support_category",
+        CliError::InvalidSupportTicketId => "invalid_support_ticket_id",
+        CliError::InvalidSupportRetryKey => "invalid_support_retry_key",
+        CliError::InvalidSupportContextReply => "invalid_support_context_reply",
+        CliError::InvalidSupportContextCommand => "invalid_support_context_command",
+        CliError::InvalidSupportContext => "invalid_support_context",
+        CliError::InvalidInvestigationCommand => "invalid_investigation_command",
+        CliError::InvalidDoctorCommand => "invalid_doctor_command",
+        CliError::InvalidProjectCreateCommand => "invalid_project_create_command",
+        CliError::InvalidUsageCommand => "invalid_usage_command",
+        CliError::InvalidNativeDebugCommand | CliError::InvalidNativeDebugIdentity => {
+            "invalid_native_debug_command"
+        }
         CliError::InvalidSetupSource(_) => "invalid_setup_source",
     }
 }
@@ -326,6 +423,48 @@ const fn cli_error_code(error: &CliError) -> &'static str {
 const fn cli_error_next_step(error: &CliError) -> &'static str {
     match error {
         CliError::InvalidLimit(_) => "use --limit with a positive whole number",
+        CliError::InvalidMinDuration(_) => "use --min-duration-ms with a non-negative whole number",
+        CliError::UnknownPagination
+        | CliError::InvalidActionCursor(_)
+        | CliError::InvalidLogCursor(_)
+        | CliError::InvalidIssueCursor(_)
+        | CliError::InvalidSupportCursor(_) => {
+            "use --pagination cursor alone for the first page, then use --cursor-time and --cursor-id together from next_cursor"
+        }
+        CliError::UnknownSupportCategory => {
+            "use sdk_install_failure, ingest_failure, auth_failure, project_setup, dashboard_issue, docs_confusion, cli_issue, mobile_issue, billing_question, or other"
+        }
+        CliError::InvalidSupportTicketId => {
+            "use the ticket_id returned by logbrew support create or list"
+        }
+        CliError::InvalidSupportRetryKey => {
+            "use --retry-key with 1 to 128 visible ASCII characters and reuse it only for an exact retry"
+        }
+        CliError::InvalidSupportContextReply => {
+            "use support reply <ticket_id> --context <text> --retry-key <key>"
+        }
+        CliError::InvalidSupportContextCommand => {
+            "use support context <ticket_id> with optional --json"
+        }
+        CliError::InvalidSupportContext => {
+            "use --context with 1 to 4000 characters after trimming whitespace"
+        }
+        CliError::InvalidInvestigationCommand => {
+            "use logbrew investigate issue <issue_id> with optional --json"
+        }
+        CliError::InvalidDoctorCommand => {
+            "use logbrew doctor --project <project_id> with optional --json"
+        }
+        CliError::InvalidProjectCreateCommand => {
+            "use logbrew projects create <name> --ingest-key-file <path> with optional --runtime, --environment, --abandon-retry, and --json"
+        }
+        CliError::InvalidUsageCommand => "use logbrew usage with optional --json",
+        CliError::InvalidNativeDebugCommand => {
+            "use logbrew debug-artifacts upload <path> --project <project_id> --release <release> --environment <environment> --service <service>"
+        }
+        CliError::InvalidNativeDebugIdentity => {
+            "use a lowercase UUID and architecture arm64, arm64e, or x86_64"
+        }
         CliError::InvalidSetupSource(_) => "use --source api, cli, or sdk",
         CliError::MissingArgument { next, .. }
         | CliError::MissingFlagValue { next, .. }
@@ -337,6 +476,7 @@ const fn cli_error_next_step(error: &CliError) -> &'static str {
         | CliError::UnknownCommandName { next, .. } => next,
         CliError::UnknownCommand => "run logbrew --help",
         CliError::UnknownStatus(_) => ISSUE_STATUS_VALUES_NEXT_STEP,
+        CliError::UnknownTraceStatus(_) => "use --status error or --status ok",
         CliError::UnknownLogLevel(_) => "use one of info, warning, error, critical",
     }
 }
@@ -351,6 +491,10 @@ const fn runtime_error_code(error: &RuntimeError) -> &'static str {
         RuntimeError::Api { .. } => "api_error",
         RuntimeError::StatusUnavailable { .. } => "status_unreachable",
         RuntimeError::Unavailable { .. } => "unavailable",
+        RuntimeError::InvestigationResponseInvalid => "investigation_response_invalid",
+        RuntimeError::NativeDebugArtifactInvalid => "native_debug_artifact_invalid",
+        RuntimeError::NativeDebugResponseInvalid => "native_debug_response_invalid",
+        RuntimeError::NativeDebugVerificationFailed => "native_debug_verification_failed",
     }
 }
 
@@ -404,6 +548,10 @@ fn runtime_error_next_step(error: &RuntimeError) -> Cow<'static, str> {
         | RuntimeError::Io(_)
         | RuntimeError::Http(_)
         | RuntimeError::MissingToken
+        | RuntimeError::InvestigationResponseInvalid
+        | RuntimeError::NativeDebugArtifactInvalid
+        | RuntimeError::NativeDebugResponseInvalid
+        | RuntimeError::NativeDebugVerificationFailed
         | RuntimeError::StatusUnavailable { .. }
         | RuntimeError::Unavailable { .. } => {
             Cow::Borrowed(fallback_runtime_error_next_step(error))
@@ -441,6 +589,18 @@ const fn fallback_runtime_error_next_step(error: &RuntimeError) -> &'static str 
             STATUS_UNAVAILABLE_NEXT_STEP
         }
         RuntimeError::Unavailable { next, .. } => next,
+        RuntimeError::InvestigationResponseInvalid => {
+            "retry the issue investigation; if it repeats, report the public response contract"
+        }
+        RuntimeError::NativeDebugArtifactInvalid => {
+            "provide one validated Apple dSYM bundle or Mach-O debug object"
+        }
+        RuntimeError::NativeDebugResponseInvalid => {
+            "retry the native debug-artifact request; if it repeats, report the public response contract"
+        }
+        RuntimeError::NativeDebugVerificationFailed => {
+            "retry exact native debug-artifact lookup before using native symbolication"
+        }
         RuntimeError::Io(_) => "check local files and permissions",
     }
 }

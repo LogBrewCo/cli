@@ -10,23 +10,31 @@
 pub mod auth;
 #[doc(hidden)]
 pub mod auth_namespace;
+#[doc(hidden)]
+pub mod doctor;
 mod error;
 #[doc(hidden)]
 pub mod flags;
 pub mod help;
 #[doc(hidden)]
 pub mod ids;
+#[doc(hidden)]
+pub mod investigate;
+mod native_debug_artifacts;
 mod parser;
+mod project_create;
 #[doc(hidden)]
 pub mod render;
 #[doc(hidden)]
 pub mod setup;
 #[doc(hidden)]
 pub mod status;
+mod support;
+mod usage;
 #[doc(hidden)]
 pub mod version;
 
-use auth::{AuthCredential, execute_login, send_authenticated_with_refresh, write_logout_result};
+use auth::{AuthCredential, execute_login, execute_logout, send_authenticated_with_refresh};
 pub use error::{CliError, RuntimeError, write_cli_error, write_runtime_error};
 use futures_util::StreamExt as _;
 pub use parser::parse_command;
@@ -90,6 +98,25 @@ pub enum Command {
         /// Emit machine-readable JSON.
         json: bool,
     },
+    /// Checks one project through a bounded read-only diagnostic sequence.
+    Doctor {
+        /// Account-owned project UUID.
+        project_id: String,
+        /// Emit machine-readable JSON.
+        json: bool,
+    },
+    /// Creates one project and securely persists its one-time ingest key.
+    ProjectCreate {
+        /// Normalized project creation fields and local persistence choice.
+        options: ProjectCreateOptions,
+        /// Emit machine-readable JSON.
+        json: bool,
+    },
+    /// Reads authenticated account usage and configured limits.
+    Usage {
+        /// Emit the exact validated server object.
+        json: bool,
+    },
     /// Prints the installed CLI version.
     Version {
         /// Emit machine-readable JSON.
@@ -120,6 +147,20 @@ pub enum Command {
         /// Emit machine-readable JSON.
         json: bool,
     },
+    /// Follows the backend-directed, read-only investigation for one issue.
+    InvestigateIssue {
+        /// Grouped issue identifier.
+        issue_id: String,
+        /// Emit machine-readable JSON.
+        json: bool,
+    },
+    /// Uploads or verifies Apple native debug artifacts.
+    NativeDebugArtifacts {
+        /// Native debug-artifact operation.
+        target: NativeDebugArtifactsTarget,
+        /// Emit bounded machine-readable JSON.
+        json: bool,
+    },
     /// Mutates server-side state.
     Set {
         /// Target state mutation.
@@ -133,6 +174,13 @@ pub enum Command {
         project_id: String,
         /// Optional setup metadata sent to the backend.
         options: ProjectSetupSeenOptions,
+        /// Emit machine-readable JSON.
+        json: bool,
+    },
+    /// Creates or reads account support tickets.
+    Support {
+        /// Support-ticket operation.
+        target: SupportTarget,
         /// Emit machine-readable JSON.
         json: bool,
     },
@@ -173,6 +221,8 @@ pub enum HelpTopic {
     ReadActions,
     /// Release reading command.
     ReadReleases,
+    /// Recent trace discovery command.
+    ReadTraces,
     /// Trace reading command.
     ReadTrace,
     /// Single issue reading command.
@@ -181,8 +231,14 @@ pub enum HelpTopic {
     Watch,
     /// Explain command.
     Explain,
+    /// Server-directed issue investigation command.
+    Investigate,
+    /// Apple native debug-artifact upload and lookup commands.
+    NativeDebugArtifacts,
     /// State mutation command.
     Set,
+    /// Support-ticket workflow.
+    Support,
 }
 
 impl HelpTopic {
@@ -206,11 +262,15 @@ impl HelpTopic {
             Self::ReadIssues => "read_issues",
             Self::ReadActions => "read_actions",
             Self::ReadReleases => "read_releases",
+            Self::ReadTraces => "read_traces",
             Self::ReadTrace => "read_trace",
             Self::ReadIssue => "read_issue",
             Self::Watch => "watch",
             Self::Explain => "explain",
+            Self::Investigate => "investigate",
+            Self::NativeDebugArtifacts => "debug_artifacts",
             Self::Set => "set",
+            Self::Support => "support",
         }
     }
 }
@@ -226,6 +286,8 @@ pub enum ReadTarget {
     Actions,
     /// Release summaries.
     Releases,
+    /// Recent trace summaries.
+    Traces,
     /// One trace by ID.
     Trace(String),
     /// One issue by ID.
@@ -237,6 +299,8 @@ pub enum ReadTarget {
 pub struct ReadOptions {
     /// Optional action name filter.
     pub name: Option<String>,
+    /// Optional service name filter.
+    pub service: Option<String>,
     /// Optional relative or absolute lower time bound.
     pub since: Option<String>,
     /// Optional user or actor filter.
@@ -257,6 +321,14 @@ pub struct ReadOptions {
     pub status: Option<String>,
     /// Optional row limit.
     pub limit: Option<String>,
+    /// Optional minimum end-to-end trace duration in milliseconds.
+    pub min_duration_ms: Option<String>,
+    /// Optional pagination mode for endpoints with explicit page envelopes.
+    pub pagination: Option<String>,
+    /// Optional continuation timestamp.
+    pub cursor_time: Option<String>,
+    /// Optional continuation identifier.
+    pub cursor_id: Option<String>,
 }
 
 impl ReadOptions {
@@ -265,6 +337,7 @@ impl ReadOptions {
     pub(crate) fn first_trace_detail_unsupported_flag(&self) -> Option<&'static str> {
         first_present_flag([
             (self.name.is_some(), "--name"),
+            (self.service.is_some(), "--service"),
             (self.since.is_some(), "--since"),
             (self.user.is_some(), "--user"),
             (self.trace.is_some(), "--trace"),
@@ -272,6 +345,10 @@ impl ReadOptions {
             (self.search.is_some(), "--search"),
             (self.status.is_some(), "--status"),
             (self.limit.is_some(), "--limit"),
+            (self.min_duration_ms.is_some(), "--min-duration-ms"),
+            (self.pagination.is_some(), "--pagination"),
+            (self.cursor_time.is_some(), "--cursor-time"),
+            (self.cursor_id.is_some(), "--cursor-id"),
         ])
     }
 
@@ -280,6 +357,7 @@ impl ReadOptions {
     pub(crate) fn first_issue_detail_unsupported_flag(&self) -> Option<&'static str> {
         first_present_flag([
             (self.name.is_some(), "--name"),
+            (self.service.is_some(), "--service"),
             (self.since.is_some(), "--since"),
             (self.user.is_some(), "--user"),
             (self.trace.is_some(), "--trace"),
@@ -290,6 +368,10 @@ impl ReadOptions {
             (self.environment.is_some(), "--environment"),
             (self.status.is_some(), "--status"),
             (self.limit.is_some(), "--limit"),
+            (self.min_duration_ms.is_some(), "--min-duration-ms"),
+            (self.pagination.is_some(), "--pagination"),
+            (self.cursor_time.is_some(), "--cursor-time"),
+            (self.cursor_id.is_some(), "--cursor-id"),
         ])
     }
 
@@ -300,6 +382,7 @@ impl ReadOptions {
             (self.name.is_some(), "--name"),
             (self.user.is_some(), "--user"),
             (self.status.is_some(), "--status"),
+            (self.min_duration_ms.is_some(), "--min-duration-ms"),
         ])
     }
 
@@ -308,11 +391,11 @@ impl ReadOptions {
     pub(crate) fn first_issue_list_unsupported_flag(&self) -> Option<&'static str> {
         first_present_flag([
             (self.name.is_some(), "--name"),
-            (self.since.is_some(), "--since"),
             (self.user.is_some(), "--user"),
             (self.trace.is_some(), "--trace"),
             (self.level.is_some(), "--severity"),
             (self.search.is_some(), "--search"),
+            (self.min_duration_ms.is_some(), "--min-duration-ms"),
         ])
     }
 
@@ -324,6 +407,7 @@ impl ReadOptions {
             (self.level.is_some(), "--severity"),
             (self.search.is_some(), "--search"),
             (self.status.is_some(), "--status"),
+            (self.min_duration_ms.is_some(), "--min-duration-ms"),
         ])
     }
 
@@ -332,12 +416,30 @@ impl ReadOptions {
     pub(crate) fn first_release_unsupported_flag(&self) -> Option<&'static str> {
         first_present_flag([
             (self.name.is_some(), "--name"),
-            (self.since.is_some(), "--since"),
             (self.user.is_some(), "--user"),
             (self.trace.is_some(), "--trace"),
             (self.level.is_some(), "--severity"),
             (self.search.is_some(), "--search"),
             (self.status.is_some(), "--status"),
+            (self.min_duration_ms.is_some(), "--min-duration-ms"),
+            (self.pagination.is_some(), "--pagination"),
+            (self.cursor_time.is_some(), "--cursor-time"),
+            (self.cursor_id.is_some(), "--cursor-id"),
+        ])
+    }
+
+    /// Returns the first filter that recent trace discovery cannot apply.
+    #[must_use]
+    pub(crate) fn first_trace_list_unsupported_flag(&self) -> Option<&'static str> {
+        first_present_flag([
+            (self.name.is_some(), "--name"),
+            (self.user.is_some(), "--user"),
+            (self.trace.is_some(), "--trace"),
+            (self.level.is_some(), "--severity"),
+            (self.search.is_some(), "--search"),
+            (self.pagination.is_some(), "--pagination"),
+            (self.cursor_time.is_some(), "--cursor-time"),
+            (self.cursor_id.is_some(), "--cursor-id"),
         ])
     }
 }
@@ -378,6 +480,174 @@ pub struct ProjectSetupSeenOptions {
     pub source: Option<String>,
     /// Release environment observed by setup.
     pub environment: Option<String>,
+}
+
+/// Fields accepted by secure project creation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectCreateOptions {
+    /// Trimmed project name.
+    pub name: String,
+    /// Optional trimmed runtime.
+    pub runtime: Option<String>,
+    /// Optional trimmed environment.
+    pub environment: Option<String>,
+    /// Owner-selected destination for the one-time ingest key.
+    pub ingest_key_file: String,
+    /// Explicitly discard a mismatched pending retry before creating.
+    pub abandon_retry: bool,
+}
+
+/// Apple native debug-artifact operation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NativeDebugArtifactsTarget {
+    /// Validate, upload, and verify every supported object identity.
+    Upload(NativeDebugUploadOptions),
+    /// Verify one exact uploaded object identity.
+    Lookup(NativeDebugLookupOptions),
+}
+
+/// Shared exact native debug-artifact lookup scope.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NativeDebugLookupOptions {
+    /// Account-owned project UUID.
+    pub project_id: String,
+    /// Exact release identifier.
+    pub release: String,
+    /// Exact environment identifier.
+    pub environment: String,
+    /// Exact service identifier.
+    pub service: String,
+    /// Canonical lowercase Mach-O image UUID.
+    pub image_uuid: String,
+    /// Supported canonical architecture.
+    pub architecture: String,
+}
+
+/// Apple native debug-artifact upload options.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NativeDebugUploadOptions {
+    /// User-selected dSYM bundle or Mach-O debug object.
+    pub path: String,
+    /// Account-owned project UUID.
+    pub project_id: String,
+    /// Exact release identifier.
+    pub release: String,
+    /// Exact environment identifier.
+    pub environment: String,
+    /// Exact service identifier.
+    pub service: String,
+}
+
+/// Support-ticket operation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SupportTarget {
+    /// Create one support ticket.
+    Create(Box<SupportTicketCreateOptions>),
+    /// List support-ticket history.
+    List(Box<SupportTicketListOptions>),
+    /// Read one support ticket by public identifier.
+    Detail(String),
+    /// Read public context history for one support ticket.
+    ContextHistory {
+        /// Public ticket identifier.
+        ticket_id: String,
+    },
+    /// Add requested context to one support ticket.
+    ReplyContext(Box<SupportContextReplyOptions>),
+    /// Update one support ticket's public lifecycle status.
+    UpdateStatus {
+        /// Public ticket identifier.
+        ticket_id: String,
+        /// User-owned lifecycle status.
+        status: SupportTicketLifecycleStatus,
+    },
+}
+
+/// Fields accepted when replying with requested support context.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SupportContextReplyOptions {
+    /// Public ticket identifier.
+    pub ticket_id: String,
+    /// User-provided support context.
+    pub context: String,
+    /// Required idempotency key used for exact retries.
+    pub retry_key: String,
+    /// Include bounded locally generated diagnostics.
+    pub diagnostics: bool,
+}
+
+/// User-owned support-ticket lifecycle status.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SupportTicketLifecycleStatus {
+    /// Reopen a ticket.
+    Open,
+    /// Close a ticket.
+    Closed,
+}
+
+impl SupportTicketLifecycleStatus {
+    /// Returns the canonical API status value.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Open => "open",
+            Self::Closed => "closed",
+        }
+    }
+}
+
+/// Fields accepted when creating a support ticket.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SupportTicketCreateOptions {
+    /// Public support category.
+    pub category: String,
+    /// Concise ticket title.
+    pub title: String,
+    /// Reproducible description supplied by the user.
+    pub description: String,
+    /// Optional project identifier.
+    pub project_id: Option<String>,
+    /// Optional deployment environment.
+    pub environment: Option<String>,
+    /// Optional runtime.
+    pub runtime: Option<String>,
+    /// Optional framework.
+    pub framework: Option<String>,
+    /// Optional SDK package.
+    pub sdk_package: Option<String>,
+    /// Optional SDK version.
+    pub sdk_version: Option<String>,
+    /// Optional release.
+    pub release: Option<String>,
+    /// Optional trace identifier.
+    pub trace_id: Option<String>,
+    /// Optional event identifier.
+    pub event_id: Option<String>,
+    /// Include bounded locally generated diagnostics.
+    pub diagnostics: bool,
+}
+
+/// Filters for support-ticket history.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SupportTicketListOptions {
+    /// Optional project identifier.
+    pub project_id: Option<String>,
+    /// Optional ticket status.
+    pub status: Option<String>,
+    /// Optional ticket source.
+    pub source: Option<String>,
+    /// Optional support category.
+    pub category: Option<String>,
+    /// Optional release.
+    pub release: Option<String>,
+    /// Optional result limit.
+    pub limit: Option<String>,
+    /// Optional explicit pagination mode.
+    pub pagination: Option<String>,
+    /// Optional continuation timestamp.
+    pub cursor_time: Option<String>,
+    /// Optional continuation identifier.
+    pub cursor_id: Option<String>,
 }
 
 /// Context target for `explain`.
@@ -439,6 +709,7 @@ impl Command {
                 target,
                 &ReadPathFilters {
                     name: options.name.as_deref(),
+                    service: options.service.as_deref(),
                     since: options.since.as_deref(),
                     user: options.user.as_deref(),
                     trace: options.trace.as_deref(),
@@ -449,6 +720,10 @@ impl Command {
                     environment: options.environment.as_deref(),
                     status: options.status.as_deref(),
                     limit: options.limit.as_deref(),
+                    min_duration_ms: options.min_duration_ms.as_deref(),
+                    pagination: options.pagination.as_deref(),
+                    cursor_time: options.cursor_time.as_deref(),
+                    cursor_id: options.cursor_id.as_deref(),
                 },
             )),
             Self::Explain { target, .. } => Some(explain_path(target)),
@@ -456,12 +731,18 @@ impl Command {
             Self::ProjectSetupSeen { project_id, .. } => {
                 Some(format!("/api/projects/{project_id}/setup/seen"))
             }
+            Self::ProjectCreate { .. } => Some(String::from("/api/projects")),
+            Self::Support { target, .. } => Some(support::path(target)),
             Self::Help { .. }
             | Self::Login { .. }
             | Self::Logout { .. }
             | Self::Setup { .. }
             | Self::Status { .. }
+            | Self::Doctor { .. }
+            | Self::Usage { .. }
             | Self::Version { .. }
+            | Self::InvestigateIssue { .. }
+            | Self::NativeDebugArtifacts { .. }
             | Self::Watch { .. } => None,
         }
     }
@@ -474,12 +755,18 @@ impl Command {
             | Self::Login { json, .. }
             | Self::Logout { json }
             | Self::Status { json }
+            | Self::Doctor { json, .. }
+            | Self::ProjectCreate { json, .. }
+            | Self::Usage { json }
             | Self::Version { json }
             | Self::Read { json, .. }
             | Self::Watch { json, .. }
             | Self::Explain { json, .. }
+            | Self::InvestigateIssue { json, .. }
+            | Self::NativeDebugArtifacts { json, .. }
             | Self::Set { json, .. }
             | Self::ProjectSetupSeen { json, .. }
+            | Self::Support { json, .. }
             | Self::Setup { json, .. } => *json,
         }
     }
@@ -488,15 +775,34 @@ impl Command {
     #[must_use]
     pub const fn http_method(&self) -> Option<HttpMethod> {
         match self {
-            Self::Read { .. } | Self::Explain { .. } => Some(HttpMethod::Get),
-            Self::ProjectSetupSeen { .. } => Some(HttpMethod::Post),
-            Self::Set { .. } => Some(HttpMethod::Patch),
+            Self::ProjectCreate { .. }
+            | Self::ProjectSetupSeen { .. }
+            | Self::Support {
+                target: SupportTarget::Create(_),
+                ..
+            }
+            | Self::Support {
+                target: SupportTarget::ReplyContext(_),
+                ..
+            } => Some(HttpMethod::Post),
+            Self::Support {
+                target: SupportTarget::UpdateStatus { .. },
+                ..
+            }
+            | Self::Set { .. } => Some(HttpMethod::Patch),
+            Self::Read { .. } | Self::Explain { .. } | Self::Support { .. } => {
+                Some(HttpMethod::Get)
+            }
             Self::Help { .. }
             | Self::Login { .. }
             | Self::Logout { .. }
             | Self::Setup { .. }
             | Self::Status { .. }
+            | Self::Doctor { .. }
+            | Self::Usage { .. }
             | Self::Version { .. }
+            | Self::InvestigateIssue { .. }
+            | Self::NativeDebugArtifacts { .. }
             | Self::Watch { .. } => None,
         }
     }
@@ -516,15 +822,60 @@ impl Command {
                 ..
             } => Some(serde_json::json!({ "status": status })),
             Self::ProjectSetupSeen { options, .. } => Some(project_setup_seen_body(options, token)),
+            Self::ProjectCreate { options, .. } => Some(project_create_body(options)),
+            Self::Support {
+                target: SupportTarget::Create(options),
+                ..
+            } => Some(support::create_body(options)),
+            Self::Support {
+                target: SupportTarget::ReplyContext(options),
+                ..
+            } => Some(support::context_body(options)),
+            Self::Support {
+                target: SupportTarget::UpdateStatus { status, .. },
+                ..
+            } => Some(serde_json::json!({"status": status.as_str()})),
             Self::Help { .. }
             | Self::Login { .. }
             | Self::Logout { .. }
             | Self::Setup { .. }
             | Self::Status { .. }
+            | Self::Doctor { .. }
+            | Self::Usage { .. }
             | Self::Version { .. }
             | Self::Read { .. }
             | Self::Watch { .. }
-            | Self::Explain { .. } => None,
+            | Self::Explain { .. }
+            | Self::InvestigateIssue { .. }
+            | Self::NativeDebugArtifacts { .. }
+            | Self::Support { .. } => None,
+        }
+    }
+
+    /// Returns an idempotency key for support context replies.
+    fn idempotency_key(&self) -> Option<&str> {
+        match self {
+            Self::Support {
+                target: SupportTarget::ReplyContext(options),
+                ..
+            } => Some(options.retry_key.as_str()),
+            Self::Help { .. }
+            | Self::Login { .. }
+            | Self::Logout { .. }
+            | Self::Setup { .. }
+            | Self::Status { .. }
+            | Self::Doctor { .. }
+            | Self::Usage { .. }
+            | Self::Version { .. }
+            | Self::Read { .. }
+            | Self::Watch { .. }
+            | Self::Explain { .. }
+            | Self::InvestigateIssue { .. }
+            | Self::NativeDebugArtifacts { .. }
+            | Self::Set { .. }
+            | Self::ProjectSetupSeen { .. }
+            | Self::ProjectCreate { .. }
+            | Self::Support { .. } => None,
         }
     }
 }
@@ -564,6 +915,32 @@ fn project_setup_seen_body(
     serde_json::Value::Object(body)
 }
 
+/// Builds the byte-stable project creation request surface.
+fn project_create_body(options: &ProjectCreateOptions) -> serde_json::Value {
+    let mut body = serde_json::Map::new();
+    drop(body.insert(
+        "name".to_owned(),
+        serde_json::Value::String(options.name.clone()),
+    ));
+    if let Some(runtime) = options.runtime.as_ref() {
+        drop(body.insert(
+            "runtime".to_owned(),
+            serde_json::Value::String(runtime.clone()),
+        ));
+    }
+    if let Some(environment) = options.environment.as_ref() {
+        drop(body.insert(
+            "environment".to_owned(),
+            serde_json::Value::String(environment.clone()),
+        ));
+    }
+    drop(body.insert(
+        "source".to_owned(),
+        serde_json::Value::String(String::from("cli")),
+    ));
+    serde_json::Value::Object(body)
+}
+
 /// Resolves setup source while preserving ingest-key identity derivation.
 fn setup_seen_source(options: &ProjectSetupSeenOptions, token: Option<&str>) -> Option<String> {
     if token_is_project_ingest_key(token) {
@@ -592,14 +969,28 @@ pub async fn execute_command<W: std::io::Write>(
         Command::Login { open_browser, json } => {
             execute_login(env, *open_browser, *json, output).await
         }
-        Command::Logout { json } => execute_logout(env, *json, output),
+        Command::Logout { json } => execute_logout(env, *json, output).await,
         Command::Setup { auto, yes, json } => execute_setup(env, *auto, *yes, *json, output),
         Command::Status { json } => execute_status(env, *json, output).await,
+        Command::Doctor { project_id, json } => {
+            doctor::execute(env, project_id.as_str(), *json, output).await
+        }
+        Command::ProjectCreate { options, json } => {
+            project_create::execute(env, options, *json, output).await
+        }
+        Command::Usage { json } => usage::execute(env, *json, output).await,
         Command::Version { json } => execute_version(*json, output),
+        Command::InvestigateIssue { issue_id, json } => {
+            investigate::execute(env, issue_id.as_str(), *json, output).await
+        }
+        Command::NativeDebugArtifacts { target, json } => {
+            native_debug_artifacts::execute(env, target, *json, output).await
+        }
         Command::Read { .. }
         | Command::Explain { .. }
         | Command::Set { .. }
-        | Command::ProjectSetupSeen { .. } => execute_http(command, env, output).await,
+        | Command::ProjectSetupSeen { .. }
+        | Command::Support { .. } => execute_http(command, env, output).await,
         Command::Watch {
             target,
             options,
@@ -628,16 +1019,6 @@ fn execute_help<W: std::io::Write>(
     Ok(())
 }
 
-/// Executes local logout.
-fn execute_logout<W: std::io::Write>(
-    env: &CliEnvironment,
-    json: bool,
-    output: &mut W,
-) -> Result<(), RuntimeError> {
-    write_logout_result(env, json, output)?;
-    Ok(())
-}
-
 /// Executes setup planning.
 fn execute_setup<W: std::io::Write>(
     env: &CliEnvironment,
@@ -663,18 +1044,32 @@ async fn execute_http<W: std::io::Write>(
         .connect_timeout(std::time::Duration::from_secs(10))
         .build()?;
 
-    let (response, credential) =
-        send_authenticated_with_refresh(&client, env, |client, credential| {
-            build_command_request(client, command, url.as_str(), credential)
-        })
-        .await?;
+    let support_command = matches!(command, Command::Support { .. });
+    let response_result = send_authenticated_with_refresh(&client, env, |client, credential| {
+        build_command_request(client, command, url.as_str(), credential)
+    })
+    .await;
+    let (response, credential) = match response_result {
+        Ok(response) => response,
+        Err(RuntimeError::Http(_)) if support_command => return Err(support_transport_error()),
+        Err(error) => return Err(error),
+    };
     let status = response.status();
-    let body = response.text().await?;
+    let body = match response.text().await {
+        Ok(body) => body,
+        Err(_) if support_command => return Err(support_transport_error()),
+        Err(error) => return Err(RuntimeError::Http(error)),
+    };
 
     if !status.is_success() {
+        let body = if let Command::Support { target, .. } = command {
+            support::safe_error_body(target, status.as_u16())
+        } else {
+            credential.redact_response_body(body.as_str())
+        };
         return Err(RuntimeError::Api {
             status: status.as_u16(),
-            body: credential.redact_response_body(body.as_str()),
+            body,
             auth_source: credential.source(),
             auth_label: credential.label(),
         });
@@ -682,6 +1077,14 @@ async fn execute_http<W: std::io::Write>(
 
     write_api_success(command, body.as_str(), output)?;
     Ok(())
+}
+
+/// Returns a fixed, path-free support transport failure.
+const fn support_transport_error() -> RuntimeError {
+    RuntimeError::Unavailable {
+        message: "support request could not be completed",
+        next: "check network connectivity and retry the support command",
+    }
 }
 
 /// Builds one command request with the supplied credential.
@@ -699,6 +1102,9 @@ fn build_command_request(
     .bearer_auth(credential.token());
     if let Some(body) = command.request_body_for_token(Some(credential.token())) {
         request = request.json(&body);
+    }
+    if let Some(key) = command.idempotency_key() {
+        request = request.header("Idempotency-Key", key);
     }
     request
 }
@@ -1014,6 +1420,8 @@ fn map_websocket_stream_error(error: WebSocketError) -> RuntimeError {
 struct ReadPathFilters<'a> {
     /// Optional action name filter.
     name: Option<&'a str>,
+    /// Optional service name filter.
+    service: Option<&'a str>,
     /// Optional lower time bound.
     since: Option<&'a str>,
     /// Optional user or actor filter.
@@ -1034,6 +1442,14 @@ struct ReadPathFilters<'a> {
     status: Option<&'a str>,
     /// Optional row limit.
     limit: Option<&'a str>,
+    /// Optional minimum end-to-end trace duration in milliseconds.
+    min_duration_ms: Option<&'a str>,
+    /// Optional pagination mode.
+    pagination: Option<&'a str>,
+    /// Optional continuation timestamp.
+    cursor_time: Option<&'a str>,
+    /// Optional continuation identifier.
+    cursor_id: Option<&'a str>,
 }
 
 /// Builds a read endpoint path.
@@ -1042,6 +1458,7 @@ fn read_path(target: &ReadTarget, filters: &ReadPathFilters<'_>) -> String {
         ReadTarget::Logs => path_with_query(
             "/api/logs",
             &[
+                ("service_name", filters.service),
                 ("severity", filters.level),
                 ("search", filters.search),
                 ("since", filters.since),
@@ -1049,37 +1466,64 @@ fn read_path(target: &ReadTarget, filters: &ReadPathFilters<'_>) -> String {
                 ("project_id", filters.project),
                 ("release", filters.release),
                 ("environment", filters.environment),
+                ("pagination", filters.pagination),
+                ("cursor_time", filters.cursor_time),
+                ("cursor_id", filters.cursor_id),
                 ("limit", filters.limit),
             ],
         ),
         ReadTarget::Issues => path_with_query(
             "/api/telemetry/issues",
             &[
+                ("service_name", filters.service),
+                ("since", filters.since),
                 ("status", filters.status),
                 ("project_id", filters.project),
                 ("release", filters.release),
                 ("environment", filters.environment),
+                ("pagination", filters.pagination),
+                ("cursor_time", filters.cursor_time),
+                ("cursor_id", filters.cursor_id),
                 ("limit", filters.limit),
             ],
         ),
         ReadTarget::Actions => path_with_query(
             "/api/telemetry/actions",
             &[
+                ("service_name", filters.service),
                 ("name", filters.name),
                 ("since", filters.since),
                 ("distinct_id", filters.user),
                 ("project_id", filters.project),
                 ("release", filters.release),
                 ("environment", filters.environment),
+                ("pagination", filters.pagination),
+                ("cursor_time", filters.cursor_time),
+                ("cursor_id", filters.cursor_id),
                 ("limit", filters.limit),
             ],
         ),
         ReadTarget::Releases => path_with_query(
             "/api/telemetry/releases",
             &[
+                ("service_name", filters.service),
+                ("since", filters.since),
                 ("project_id", filters.project),
                 ("release", filters.release),
                 ("environment", filters.environment),
+                ("limit", filters.limit),
+            ],
+        ),
+        ReadTarget::Traces => path_with_query(
+            "/api/telemetry/traces",
+            &[
+                ("project_id", filters.project),
+                ("service_name", filters.service),
+                ("release", filters.release),
+                ("environment", filters.environment),
+                ("status", filters.status),
+                ("since", filters.since),
+                ("min_duration_ms", filters.min_duration_ms),
                 ("limit", filters.limit),
             ],
         ),

@@ -37,12 +37,32 @@ pub(crate) fn is_issue_id(value: &str) -> bool {
 }
 
 /// Returns whether a value is a dashed UUID.
-fn is_uuid(value: &str) -> bool {
+pub(crate) fn is_uuid(value: &str) -> bool {
     if value.len() != 36 {
         return false;
     }
     value.bytes().enumerate().all(|(index, byte)| {
         matches!(index, 8 | 13 | 18 | 23) && byte == b'-'
             || !matches!(index, 8 | 13 | 18 | 23) && byte.is_ascii_hexdigit()
+    })
+}
+
+/// Returns whether a value is a canonical public support-ticket identifier.
+pub(crate) fn is_support_ticket_id(value: &str) -> bool {
+    value.strip_prefix("sup_").is_some_and(|raw| {
+        raw.len() == 32
+            && raw
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+    })
+}
+
+/// Returns whether a value is a canonical public support-context identifier.
+pub(crate) fn is_support_context_id(value: &str) -> bool {
+    value.strip_prefix("ctx_").is_some_and(|raw| {
+        raw.len() == 32
+            && raw
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
     })
 }
