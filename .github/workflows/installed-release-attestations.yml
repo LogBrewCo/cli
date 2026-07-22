@@ -1,0 +1,132 @@
+name: Installed release attestations
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Immutable release tag
+        required: true
+        type: string
+        default: v0.1.20
+      version:
+        description: Exact released version
+        required: true
+        type: string
+        default: 0.1.20
+      source_commit:
+        description: Exact released source commit
+        required: true
+        type: string
+        default: 018b1a832d143c203b2822652d1bce9fb16401ab
+      release_run:
+        description: Exact successful release workflow run
+        required: true
+        type: string
+        default: "29935721685"
+
+permissions:
+  contents: read
+
+jobs:
+  attest:
+    name: ${{ matrix.receipt }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - receipt: shell-linux-x64
+            runner: ubuntu-24.04
+            platform: linux-x64
+            mode: shell
+            artifact_id: installer:shell
+            asset: logbrew-cli-installer.sh
+            python: python3
+          - receipt: native-linux-arm64
+            runner: ubuntu-24.04-arm
+            platform: linux-arm64
+            mode: native
+            artifact_id: native:linux-arm64
+            asset: logbrew-cli-aarch64-unknown-linux-gnu.tar.xz
+            python: python3
+          - receipt: native-linux-x64
+            runner: ubuntu-24.04
+            platform: linux-x64
+            mode: native
+            artifact_id: native:linux-x64
+            asset: logbrew-cli-x86_64-unknown-linux-gnu.tar.xz
+            python: python3
+          - receipt: powershell-windows-x64
+            runner: windows-2025
+            platform: windows-x64
+            mode: powershell
+            artifact_id: installer:powershell
+            asset: logbrew-cli-installer.ps1
+            python: python
+          - receipt: native-windows-x64
+            runner: windows-2025
+            platform: windows-x64
+            mode: native
+            artifact_id: native:windows-x64
+            asset: logbrew-cli-x86_64-pc-windows-msvc.zip
+            python: python
+          - receipt: native-macos-x64
+            runner: macos-15-intel
+            platform: macos-x64
+            mode: native
+            artifact_id: native:macos-x64
+            asset: logbrew-cli-x86_64-apple-darwin.tar.xz
+            python: python3
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    steps:
+      - name: Checkout attestation workflow
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+
+      - name: Checkout released source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: 018b1a832d143c203b2822652d1bce9fb16401ab
+          path: released-source
+          persist-credentials: false
+
+      - name: Execute installed release receipt
+        shell: bash
+        env:
+          ATTESTATION_PYTHON: ${{ matrix.python }}
+          ATTESTATION_RECEIPT: ${{ matrix.receipt }}
+          ATTESTATION_TAG: ${{ inputs.tag }}
+          ATTESTATION_VERSION: ${{ inputs.version }}
+          ATTESTATION_SOURCE_COMMIT: ${{ inputs.source_commit }}
+          ATTESTATION_RELEASE_RUN: ${{ inputs.release_run }}
+          ATTESTATION_MODE: ${{ matrix.mode }}
+          ATTESTATION_ARTIFACT_ID: ${{ matrix.artifact_id }}
+          ATTESTATION_ASSET: ${{ matrix.asset }}
+          ATTESTATION_PLATFORM: ${{ matrix.platform }}
+          ATTESTATION_RELEASED_SOURCE: ${{ github.workspace }}/released-source
+          ATTESTATION_OUTPUT: ${{ runner.temp }}/attestation.json
+        run: >-
+          "$ATTESTATION_PYTHON" scripts/installed_release_attestation.py
+          --receipt "$ATTESTATION_RECEIPT"
+          --tag "$ATTESTATION_TAG"
+          --version "$ATTESTATION_VERSION"
+          --source-commit "$ATTESTATION_SOURCE_COMMIT"
+          --release-run "$ATTESTATION_RELEASE_RUN"
+          --mode "$ATTESTATION_MODE"
+          --artifact-id "$ATTESTATION_ARTIFACT_ID"
+          --asset "$ATTESTATION_ASSET"
+          --execution-platform "$ATTESTATION_PLATFORM"
+          --released-source "$ATTESTATION_RELEASED_SOURCE"
+          --output "$ATTESTATION_OUTPUT"
+
+      - name: Upload installed attestation
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: installed-attestation-${{ matrix.receipt }}
+          path: ${{ runner.temp }}/attestation.json
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+          overwrite: false
+          include-hidden-files: false
