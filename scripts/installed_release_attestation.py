@@ -693,6 +693,19 @@ def api_urls(policy: ReleasePolicy) -> Mapping[str, str]:
     }
 
 
+def exact_git_output_line(output: bytes) -> bytes:
+    """Remove exactly one platform newline from one bounded Git output line."""
+    if output.endswith(b"\r\n"):
+        line = output[:-2]
+    elif output.endswith(b"\n"):
+        line = output[:-1]
+    else:
+        raise AttestationError
+    if not line or b"\r" in line or b"\n" in line or b"\x00" in line:
+        raise AttestationError
+    return line
+
+
 def validate_released_source(path: pathlib.Path, source_commit: str) -> pathlib.Path:
     """Require a non-symlink checkout at the exact released commit and verifier blob."""
     try:
@@ -712,7 +725,7 @@ def validate_released_source(path: pathlib.Path, source_commit: str) -> pathlib.
         if (
             result.returncode != 0
             or result.stderr
-            or result.stdout != f"{source_commit}\n".encode()
+            or exact_git_output_line(result.stdout) != source_commit.encode()
         ):
             raise AttestationError
         verifier = path.joinpath(*VERIFIER_PATH.parts)
@@ -737,8 +750,8 @@ def validate_released_source(path: pathlib.Path, source_commit: str) -> pathlib.
         )
         tree_match = re.fullmatch(
             rb"100(?:644|755) blob ([0-9a-f]{40})\t"
-            rb"scripts/real_user_public_install_smoke\.py\n",
-            tracked.stdout,
+            rb"scripts/real_user_public_install_smoke\.py",
+            exact_git_output_line(tracked.stdout),
         )
         if (
             tracked.returncode != 0
@@ -757,7 +770,7 @@ def validate_released_source(path: pathlib.Path, source_commit: str) -> pathlib.
         if (
             working_blob.returncode != 0
             or working_blob.stderr
-            or working_blob.stdout != tree_match.group(1) + b"\n"
+            or exact_git_output_line(working_blob.stdout) != tree_match.group(1)
         ):
             raise AttestationError
     except (OSError, subprocess.SubprocessError) as error:
