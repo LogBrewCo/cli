@@ -60,7 +60,7 @@ class InstalledReleaseAttestationWorkflowTests(unittest.TestCase):
                     rf"(?ms)^      {name}:\n.*?^        default: [\"']?{re.escape(value)}[\"']?$",
                 )
 
-    def test_dispatch_scope_defaults_to_all_and_can_skip_only_green_shell(self) -> None:
+    def test_dispatch_scopes_select_only_the_exact_receipt_sets(self) -> None:
         workflow = self.workflow()
         self.assertRegex(
             workflow,
@@ -71,11 +71,67 @@ class InstalledReleaseAttestationWorkflowTests(unittest.TestCase):
             r"        options:\n"
             r"          - all\n"
             r"          - failed-five\n"
+            r"          - windows-two\n"
             r"        default: all$",
         )
+        rows = {
+            receipt: frozenset(json.loads(scopes))
+            for receipt, scopes in re.findall(
+                r"(?ms)^          - receipt: ([^\n]+)\n"
+                r".*?^            scopes: '([^'\n]+)'$",
+                workflow,
+            )
+        }
+        expected = {
+            "all": {
+                "shell-linux-x64",
+                "native-linux-arm64",
+                "native-linux-x64",
+                "powershell-windows-x64",
+                "native-windows-x64",
+                "native-macos-x64",
+            },
+            "failed-five": {
+                "native-linux-arm64",
+                "native-linux-x64",
+                "powershell-windows-x64",
+                "native-windows-x64",
+                "native-macos-x64",
+            },
+            "windows-two": {
+                "powershell-windows-x64",
+                "native-windows-x64",
+            },
+        }
+        self.assertEqual(len(rows), 6)
+        for scope, receipts in expected.items():
+            with self.subTest(scope=scope):
+                self.assertEqual(
+                    {
+                        receipt
+                        for receipt, allowed_scopes in rows.items()
+                        if scope in allowed_scopes
+                    },
+                    receipts,
+                )
+
+        for scope in [
+            "unknown",
+            "windows-two; echo unsafe",
+            "${{ github.token }}",
+            "windows-two\r\nall",
+        ]:
+            with self.subTest(rejected_scope=scope):
+                self.assertFalse(
+                    {
+                        receipt
+                        for receipt, allowed_scopes in rows.items()
+                        if scope in allowed_scopes
+                    }
+                )
+
         condition = (
-            "${{ inputs.receipt_scope == 'all' || "
-            "matrix.receipt != 'shell-linux-x64' }}"
+            "${{ contains(fromJSON(matrix.scopes), inputs.receipt_scope) }}"
         )
         self.assertEqual(workflow.count(f"        if: {condition}"), 4)
         self.assertNotIn("inputs.receipt_scope", self.receipt_run_command(workflow))

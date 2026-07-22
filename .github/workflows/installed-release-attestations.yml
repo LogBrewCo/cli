@@ -30,6 +30,7 @@ on:
         options:
           - all
           - failed-five
+          - windows-two
         default: all
 
 permissions:
@@ -49,6 +50,7 @@ jobs:
             artifact_id: installer:shell
             asset: logbrew-cli-installer.sh
             python: python3
+            scopes: '["all"]'
           - receipt: native-linux-arm64
             runner: ubuntu-24.04-arm
             platform: linux-arm64
@@ -56,6 +58,7 @@ jobs:
             artifact_id: native:linux-arm64
             asset: logbrew-cli-aarch64-unknown-linux-gnu.tar.xz
             python: python3
+            scopes: '["all","failed-five"]'
           - receipt: native-linux-x64
             runner: ubuntu-24.04
             platform: linux-x64
@@ -63,6 +66,7 @@ jobs:
             artifact_id: native:linux-x64
             asset: logbrew-cli-x86_64-unknown-linux-gnu.tar.xz
             python: python3
+            scopes: '["all","failed-five"]'
           - receipt: powershell-windows-x64
             runner: windows-2025
             platform: windows-x64
@@ -70,6 +74,7 @@ jobs:
             artifact_id: installer:powershell
             asset: logbrew-cli-installer.ps1
             python: python
+            scopes: '["all","failed-five","windows-two"]'
           - receipt: native-windows-x64
             runner: windows-2025
             platform: windows-x64
@@ -77,6 +82,7 @@ jobs:
             artifact_id: native:windows-x64
             asset: logbrew-cli-x86_64-pc-windows-msvc.zip
             python: python
+            scopes: '["all","failed-five","windows-two"]'
           - receipt: native-macos-x64
             runner: macos-15-intel
             platform: macos-x64
@@ -84,17 +90,18 @@ jobs:
             artifact_id: native:macos-x64
             asset: logbrew-cli-x86_64-apple-darwin.tar.xz
             python: python3
+            scopes: '["all","failed-five"]'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     steps:
       - name: Checkout attestation workflow
-        if: ${{ inputs.receipt_scope == 'all' || matrix.receipt != 'shell-linux-x64' }}
+        if: ${{ contains(fromJSON(matrix.scopes), inputs.receipt_scope) }}
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           persist-credentials: false
 
       - name: Checkout released source
-        if: ${{ inputs.receipt_scope == 'all' || matrix.receipt != 'shell-linux-x64' }}
+        if: ${{ contains(fromJSON(matrix.scopes), inputs.receipt_scope) }}
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           ref: 018b1a832d143c203b2822652d1bce9fb16401ab
@@ -102,7 +109,7 @@ jobs:
           persist-credentials: false
 
       - name: Execute installed release receipt
-        if: ${{ inputs.receipt_scope == 'all' || matrix.receipt != 'shell-linux-x64' }}
+        if: ${{ contains(fromJSON(matrix.scopes), inputs.receipt_scope) }}
         shell: bash
         env:
           ATTESTATION_PYTHON: ${{ matrix.python }}
@@ -132,7 +139,7 @@ jobs:
           --output "$ATTESTATION_OUTPUT"
 
       - name: Upload installed attestation
-        if: ${{ inputs.receipt_scope == 'all' || matrix.receipt != 'shell-linux-x64' }}
+        if: ${{ contains(fromJSON(matrix.scopes), inputs.receipt_scope) }}
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
         with:
           name: installed-attestation-${{ matrix.receipt }}
