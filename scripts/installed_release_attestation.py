@@ -362,6 +362,8 @@ def checksum_entries(content: bytes) -> Mapping[str, str]:
         lines = content.decode("ascii").splitlines()
     except UnicodeDecodeError as error:
         raise AttestationError from error
+    if lines and lines[-1] == "":
+        lines.pop()
     entries: dict[str, str] = {}
     for line in lines:
         match = re.fullmatch(r"([0-9a-f]{64}) \*([A-Za-z0-9][A-Za-z0-9._-]{0,127})", line)
@@ -793,6 +795,8 @@ def verifier_environment(
     environment["LOGBREW_RELEASE_ARTIFACT_FILES_JSON"] = json.dumps(
         {artifact_id: str(artifact_path)}, separators=(",", ":")
     )
+    if artifact_id == "installer:powershell":
+        environment["INSTALLER_NO_MODIFY_PATH"] = "1"
     return environment
 
 

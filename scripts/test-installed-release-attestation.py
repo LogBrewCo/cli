@@ -235,6 +235,30 @@ class InstalledReleaseAttestationTests(unittest.TestCase):
                 checksum_bytes,
             )
 
+    def test_checksum_manifest_accepts_only_one_terminal_blank_line(self) -> None:
+        module = load_subject()
+        digest = "a" * 64
+        first = "logbrew-cli-aarch64-unknown-linux-gnu.tar.xz"
+        second = "logbrew-cli-x86_64-unknown-linux-gnu.tar.xz"
+        immutable_shape = (
+            f"{digest} *{first}\n"
+            f"{digest} *{second}\n"
+            "\n"
+        ).encode()
+        self.assertEqual(
+            module.checksum_entries(immutable_shape),
+            {first: digest, second: digest},
+        )
+
+        rejected = [
+            f"{digest} *{first}\n\n{digest} *{second}\n".encode(),
+            f"{digest} *{first}\n\n\n".encode(),
+        ]
+        for content in rejected:
+            with self.subTest(content=content):
+                with self.assertRaises(module.AttestationError):
+                    module.checksum_entries(content)
+
     def test_workflow_context_rejects_lookalikes_and_platform_substitution(self) -> None:
         module = load_subject()
         receipt = module.PUBLIC_POLICY.receipts["native-linux-x64"]
@@ -389,6 +413,70 @@ class InstalledReleaseAttestationTests(unittest.TestCase):
             },
         )
         self.assertNotIn("not-forwarded", json.dumps(environment))
+
+    def test_powershell_verifier_alone_disables_persistent_path_mutation(self) -> None:
+        module = load_subject()
+        powershell = module.PUBLIC_POLICY.receipts["powershell-windows-x64"]
+        native = module.PUBLIC_POLICY.receipts["native-windows-x64"]
+        artifact = pathlib.Path("/tmp/fixed-release-artifact")
+
+        with mock.patch.dict(
+            os.environ,
+            {
+                "PATH": os.environ.get("PATH", ""),
+                "INSTALLER_NO_MODIFY_PATH": "0",
+            },
+            clear=True,
+        ):
+            powershell_environment = module.verifier_environment(
+                powershell.artifact_id,
+                artifact,
+            )
+            native_environment = module.verifier_environment(
+                native.artifact_id,
+                artifact,
+            )
+        self.assertEqual(
+            powershell_environment.get("INSTALLER_NO_MODIFY_PATH"),
+            "1",
+        )
+        self.assertNotIn("INSTALLER_NO_MODIFY_PATH", native_environment)
+
+        verifier_output = json.dumps(
+            {
+                "schema_version": 1,
+                "status": "passed",
+                "artifacts": [
+                    {
+                        "id": powershell.artifact_id,
+                        "digest": f"sha256:{powershell.digest}",
+                    }
+                ],
+            },
+            separators=(",", ":"),
+        ).encode() + b"\n"
+
+        def completed(command, **kwargs):
+            self.assertEqual(
+                command,
+                [sys.executable, "/fixed/verifier.py", "powershell", "0.1.20"],
+            )
+            self.assertEqual(kwargs["env"].get("INSTALLER_NO_MODIFY_PATH"), "1")
+            return subprocess.CompletedProcess(command, 0, verifier_output, b"")
+
+        with mock.patch.object(subprocess, "run", side_effect=completed):
+            stdout, stderr = module.execute_verifier(
+                pathlib.Path("/fixed/verifier.py"),
+                powershell,
+                "0.1.20",
+                artifact,
+            )
+        module.validate_verifier_output(
+            stdout,
+            stderr,
+            powershell.artifact_id,
+            f"sha256:{powershell.digest}",
+        )
 
     def test_attestation_output_rejects_symlink_and_overwrite(self) -> None:
         module = load_subject()
