@@ -180,11 +180,14 @@ check_homebrew_tap_available() {
 check_main_branch_protection() {
   local metadata
   local required_reviews
-  local dismiss_stale_reviews
   local require_last_push_approval
   local enforce_admins
   local strict_status_checks
   local status_checks
+  local conversation_resolution
+  local allow_force_pushes
+  local allow_deletions
+  local linear_history
 
   if ! metadata="$(gh api "repos/${REPO}/branches/main/protection")"; then
     fail "could not verify main branch protection"
@@ -193,29 +196,28 @@ check_main_branch_protection() {
   required_reviews="$(
     jq -r '.required_pull_request_reviews.required_approving_review_count // 0' <<<"$metadata"
   )"
-  dismiss_stale_reviews="$(
-    jq -r '.required_pull_request_reviews.dismiss_stale_reviews // false' <<<"$metadata"
-  )"
   require_last_push_approval="$(
     jq -r '.required_pull_request_reviews.require_last_push_approval // false' <<<"$metadata"
   )"
   enforce_admins="$(jq -r '.enforce_admins.enabled // false' <<<"$metadata")"
   strict_status_checks="$(jq -r '.required_status_checks.strict // false' <<<"$metadata")"
+  conversation_resolution="$(
+    jq -r '.required_conversation_resolution.enabled // false' <<<"$metadata"
+  )"
+  allow_force_pushes="$(jq -r '.allow_force_pushes.enabled // false' <<<"$metadata")"
+  allow_deletions="$(jq -r '.allow_deletions.enabled // false' <<<"$metadata")"
+  linear_history="$(jq -r '.required_linear_history.enabled // false' <<<"$metadata")"
   status_checks="$(
     jq -r '[.required_status_checks.checks[]?.context, .required_status_checks.contexts[]?] | unique[]' \
       <<<"$metadata"
   )"
 
-  if (( required_reviews < 1 )); then
-    fail "main branch protection must require at least one approving review"
+  if (( required_reviews != 0 )); then
+    fail "main branch protection must use solo-maintainer review policy"
   fi
 
-  if [[ "$dismiss_stale_reviews" != "true" ]]; then
-    fail "main branch protection must dismiss stale pull request reviews"
-  fi
-
-  if [[ "$require_last_push_approval" != "true" ]]; then
-    fail "main branch protection must require approval after the latest push"
+  if [[ "$require_last_push_approval" != "false" ]]; then
+    fail "main branch protection must not require a separate latest-push approver"
   fi
 
   if [[ "$enforce_admins" != "true" ]]; then
@@ -224,6 +226,22 @@ check_main_branch_protection() {
 
   if [[ "$strict_status_checks" != "true" ]]; then
     fail "main branch protection must require strict status checks"
+  fi
+
+  if [[ "$conversation_resolution" != "true" ]]; then
+    fail "main branch protection must require conversation resolution"
+  fi
+
+  if [[ "$allow_force_pushes" != "false" ]]; then
+    fail "main branch protection must prohibit force pushes"
+  fi
+
+  if [[ "$allow_deletions" != "false" ]]; then
+    fail "main branch protection must prohibit branch deletion"
+  fi
+
+  if [[ "$linear_history" != "true" ]]; then
+    fail "main branch protection must require linear history"
   fi
 
   for check in "${REQUIRED_STATUS_CHECKS[@]}"; do
