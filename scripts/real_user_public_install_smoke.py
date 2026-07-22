@@ -9,6 +9,7 @@ import json
 import os
 import pathlib
 import re
+import secrets
 import shutil
 import stat
 import subprocess
@@ -375,6 +376,7 @@ def install_npm(
         or package.get("version") != version
     ):
         raise VerificationError
+    npm_target = npm_binary_target(package, package_json.parent)
     install_root = workspace / "npm-install"
     environment["npm_config_cache"] = str(workspace / "npm-cache")
     run_command(
@@ -391,7 +393,75 @@ def install_npm(
         environment,
         timeout=INSTALL_TIMEOUT_SECONDS,
     )
-    return installed_binary(install_root, npm=True)
+    if os.name == "nt":
+        return installed_binary(install_root, npm=True)
+    return resolve_npm_launcher(install_root, npm_target)
+
+
+def npm_binary_target(package: Mapping[str, object], package_root: pathlib.Path) -> str:
+    """Return the one bounded package-relative npm launcher target."""
+    binary = package.get("bin")
+    if not isinstance(binary, dict) or set(binary) != {"logbrew"}:
+        raise VerificationError
+    target = binary.get("logbrew")
+    if (
+        not isinstance(target, str)
+        or not target
+        or len(target.encode("utf-8")) > 256
+        or "\\" in target
+        or any(ord(character) < 0x20 or ord(character) == 0x7F for character in target)
+    ):
+        raise VerificationError
+    relative = pathlib.PurePosixPath(target)
+    if relative.is_absolute() or any(part in {"", ".", ".."} for part in relative.parts):
+        raise VerificationError
+    source_target = package_root.joinpath(*relative.parts)
+    try:
+        metadata = source_target.lstat()
+    except OSError as error:
+        raise VerificationError from error
+    if not stat.S_ISREG(metadata.st_mode):
+        raise VerificationError
+    return target
+
+
+def resolve_npm_launcher(root: pathlib.Path, npm_target: str) -> pathlib.Path:
+    """Resolve npm's one expected POSIX launcher without following a chain."""
+    relative = pathlib.PurePosixPath(npm_target)
+    root = pathlib.Path(os.path.abspath(root))
+    package_root = root / "lib" / "node_modules" / "logbrew-cli"
+    target = package_root.joinpath(*relative.parts)
+    launcher = root / "bin" / "logbrew"
+    try:
+        root_metadata = root.lstat()
+        launcher_parent_metadata = launcher.parent.lstat()
+        launcher_metadata = launcher.lstat()
+        link_target = os.readlink(launcher)
+    except OSError as error:
+        raise VerificationError from error
+    if (
+        not stat.S_ISDIR(root_metadata.st_mode)
+        or not stat.S_ISDIR(launcher_parent_metadata.st_mode)
+        or not stat.S_ISLNK(launcher_metadata.st_mode)
+    ):
+        raise VerificationError
+    expected_link = os.path.relpath(target, launcher.parent)
+    if link_target != expected_link or pathlib.Path(link_target).is_absolute():
+        raise VerificationError
+
+    current = root
+    for component in target.relative_to(root).parts:
+        current = current / component
+        try:
+            metadata = current.lstat()
+        except OSError as error:
+            raise VerificationError from error
+        if current == target:
+            if not stat.S_ISREG(metadata.st_mode):
+                raise VerificationError
+        elif not stat.S_ISDIR(metadata.st_mode):
+            raise VerificationError
+    return target
 
 
 def install_shell(
@@ -446,11 +516,12 @@ def install_homebrew(
     artifact: pathlib.Path,
     version: str,
     environment: dict[str, str],
-) -> pathlib.Path:
-    """Install the exact supplied formula and return its isolated Cellar binary."""
+) -> tuple[pathlib.Path, tuple[str, pathlib.Path, pathlib.Path]]:
+    """Install the exact supplied formula through one verifier-owned local tap."""
     try:
-        formula = artifact.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError) as error:
+        formula_bytes = read_regular_file(artifact)
+        formula = formula_bytes.decode("utf-8")
+    except UnicodeDecodeError as error:
         raise VerificationError from error
     version_declaration = re.compile(
         rf"(?m)^\s*version\s+[\"']{re.escape(version)}[\"']\s*$"
@@ -462,32 +533,168 @@ def install_homebrew(
     ):
         raise VerificationError
     environment["HOMEBREW_NO_AUTO_UPDATE"] = "1"
-    run_command(
-        ["brew", "install", "--formula", str(artifact)],
+    environment["HOMEBREW_NO_INSTALL_CLEANUP"] = "1"
+    repository_output = run_command(
+        ["brew", "--repository"],
         environment,
-        timeout=INSTALL_TIMEOUT_SECONDS,
+        timeout=EXECUTION_TIMEOUT_SECONDS,
     )
+    repository_lines = repository_output.splitlines()
+    if len(repository_lines) != 1 or "\x00" in repository_lines[0]:
+        raise VerificationError
+    repository = pathlib.Path(repository_lines[0])
+    if not repository.is_absolute():
+        raise VerificationError
+    tap_name, user_path, tap_path = create_homebrew_tap(
+        repository,
+        formula_bytes,
+        secrets.token_hex(8),
+    )
+    qualified_formula = f"{tap_name}/logbrew"
+    installed = False
     try:
+        run_command(
+            ["brew", "install", "--formula", qualified_formula],
+            environment,
+            timeout=INSTALL_TIMEOUT_SECONDS,
+        )
+        installed = True
+        installed_versions = run_command(
+            ["brew", "list", "--versions", qualified_formula],
+            environment,
+            timeout=EXECUTION_TIMEOUT_SECONDS,
+        ).split()
+        if installed_versions != ["logbrew", version]:
+            raise VerificationError
         prefix = run_command(
-            ["brew", "--prefix", "logbrew"],
+            ["brew", "--prefix", qualified_formula],
             environment,
             timeout=EXECUTION_TIMEOUT_SECONDS,
         ).strip()
         if not prefix or "\x00" in prefix:
             raise VerificationError
-        return installed_binary(pathlib.Path(prefix))
-    except VerificationError:
-        uninstall_homebrew(environment)
+        return installed_binary(pathlib.Path(prefix)), (tap_name, user_path, tap_path)
+    except BaseException:
+        cleanup_homebrew(
+            environment,
+            tap_name,
+            user_path,
+            tap_path,
+            installed=installed,
+        )
         raise
 
 
-def uninstall_homebrew(environment: Mapping[str, str]) -> None:
-    """Remove the formula installed by this ephemeral verifier invocation."""
-    run_command(
-        ["brew", "uninstall", "--force", "logbrew"],
-        environment,
-        timeout=INSTALL_TIMEOUT_SECONDS,
-    )
+def create_homebrew_tap(
+    repository: pathlib.Path,
+    formula: bytes,
+    token: str,
+) -> tuple[str, pathlib.Path, pathlib.Path]:
+    """Create one collision-resistant local tap containing only the formula."""
+    if re.fullmatch(r"[0-9a-f]{16}", token) is None or not formula:
+        raise VerificationError
+    try:
+        repository = repository.resolve(strict=True)
+        repository_metadata = repository.lstat()
+        taps = repository / "Library" / "Taps"
+        taps_metadata = taps.lstat()
+    except OSError as error:
+        raise VerificationError from error
+    if not stat.S_ISDIR(repository_metadata.st_mode) or not stat.S_ISDIR(
+        taps_metadata.st_mode
+    ):
+        raise VerificationError
+
+    tap_name = f"logbrew-verifier-{token}/receipt"
+    user_path = taps / f"logbrew-verifier-{token}"
+    tap_path = user_path / "homebrew-receipt"
+    formula_path = tap_path / "Formula" / "logbrew.rb"
+    if os.path.lexists(user_path):
+        raise VerificationError
+
+    created = False
+    try:
+        user_path.mkdir(mode=0o700)
+        created = True
+        tap_path.mkdir(mode=0o700)
+        formula_path.parent.mkdir(mode=0o700)
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+        flags |= getattr(os, "O_CLOEXEC", 0)
+        flags |= getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(formula_path, flags, 0o600)
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(formula)
+            handle.flush()
+            os.fsync(handle.fileno())
+        if read_regular_file(formula_path) != formula:
+            raise VerificationError
+    except (OSError, ValueError, VerificationError) as error:
+        if created:
+            remove_owned_homebrew_tap(user_path, tap_path)
+        if isinstance(error, VerificationError):
+            raise
+        raise VerificationError from error
+    return tap_name, user_path, tap_path
+
+
+def remove_owned_homebrew_tap(
+    user_path: pathlib.Path,
+    tap_path: pathlib.Path,
+) -> None:
+    """Remove only the random tap namespace created by this invocation."""
+    if (
+        re.fullmatch(r"logbrew-verifier-[0-9a-f]{16}", user_path.name) is None
+        or tap_path != user_path / "homebrew-receipt"
+    ):
+        raise VerificationError
+    try:
+        if os.path.lexists(tap_path):
+            metadata = tap_path.lstat()
+            if stat.S_ISLNK(metadata.st_mode):
+                tap_path.unlink()
+            elif stat.S_ISDIR(metadata.st_mode):
+                shutil.rmtree(tap_path)
+            else:
+                raise VerificationError
+        if os.path.lexists(user_path):
+            metadata = user_path.lstat()
+            if not stat.S_ISDIR(metadata.st_mode) or any(user_path.iterdir()):
+                raise VerificationError
+            user_path.rmdir()
+    except OSError as error:
+        raise VerificationError from error
+
+
+def cleanup_homebrew(
+    environment: Mapping[str, str],
+    tap_name: str,
+    user_path: pathlib.Path,
+    tap_path: pathlib.Path,
+    *,
+    installed: bool,
+) -> None:
+    """Uninstall the formula and remove only the owned local tap."""
+    qualified_formula = f"{tap_name}/logbrew"
+    uninstall_failed = False
+    try:
+        run_command(
+            ["brew", "uninstall", "--force", qualified_formula],
+            environment,
+            timeout=INSTALL_TIMEOUT_SECONDS,
+        )
+    except VerificationError:
+        uninstall_failed = True
+    try:
+        run_command(
+            ["brew", "untap", tap_name],
+            environment,
+            timeout=EXECUTION_TIMEOUT_SECONDS,
+        )
+    except VerificationError:
+        pass
+    remove_owned_homebrew_tap(user_path, tap_path)
+    if installed and uninstall_failed:
+        raise VerificationError
 
 
 def install_native(artifact: pathlib.Path, workspace: pathlib.Path) -> pathlib.Path:
@@ -600,12 +807,11 @@ def verify_mode(
     environment["HOME"] = str(isolated_home)
     environment["USERPROFILE"] = str(isolated_home)
     environment["XDG_CONFIG_HOME"] = str(isolated_home / "config")
-    cleanup_homebrew = False
+    homebrew_cleanup: tuple[str, pathlib.Path, pathlib.Path] | None = None
     if mode == "crates":
         binary = install_crate(artifact, version, workspace, environment)
     elif mode == "homebrew":
-        binary = install_homebrew(artifact, version, environment)
-        cleanup_homebrew = True
+        binary, homebrew_cleanup = install_homebrew(artifact, version, environment)
     elif mode == "powershell":
         binary = install_powershell(artifact, workspace, environment)
     elif mode == "shell":
@@ -619,8 +825,15 @@ def verify_mode(
     try:
         verify_cli(binary, version, workspace, environment)
     finally:
-        if cleanup_homebrew:
-            uninstall_homebrew(environment)
+        if homebrew_cleanup is not None:
+            tap_name, user_path, tap_path = homebrew_cleanup
+            cleanup_homebrew(
+                environment,
+                tap_name,
+                user_path,
+                tap_path,
+                installed=True,
+            )
 
 
 def parse_invocation(argv: Sequence[str]) -> tuple[str, str]:
@@ -651,7 +864,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 separators=(",", ":"),
             )
         )
-    except Exception:  # Fail closed without exposing artifact or subprocess values.
+    except BaseException:  # Fail closed without exposing artifact or subprocess values.
         print("verification_failed", file=sys.stderr)
         return 2
     return 0
