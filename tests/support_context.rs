@@ -51,7 +51,7 @@ fn support_context_parser_builds_exact_paths_bodies_and_closed_grammar() {
             "diagnostics": {
                 "arch": std::env::consts::ARCH,
                 "binary": "logbrew",
-                "cli_version": "0.1.19",
+                "cli_version": "0.1.20",
                 "os": std::env::consts::OS
             }
         }))

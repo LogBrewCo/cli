@@ -37,9 +37,9 @@ fn support_create_builds_exact_safe_request() {
         "--sdk-package",
         "logbrew-cli",
         "--sdk-version",
-        "0.1.19",
+        "0.1.20",
         "--release",
-        "cli@0.1.19",
+        "cli@0.1.20",
         "--trace-id",
         "trace_123",
         "--event-id",
@@ -64,8 +64,8 @@ fn support_create_builds_exact_safe_request() {
     assert_eq!(body["runtime"], "rust");
     assert_eq!(body["framework"], "clap");
     assert_eq!(body["sdk_package"], "logbrew-cli");
-    assert_eq!(body["sdk_version"], "0.1.19");
-    assert_eq!(body["release"], "cli@0.1.19");
+    assert_eq!(body["sdk_version"], "0.1.20");
+    assert_eq!(body["release"], "cli@0.1.20");
     assert_eq!(body["trace_id"], "trace_123");
     assert_eq!(body["event_id"], "event_456");
     assert_eq!(
@@ -73,7 +73,7 @@ fn support_create_builds_exact_safe_request() {
         serde_json::json!({
             "arch": std::env::consts::ARCH,
             "binary": "logbrew",
-            "cli_version": "0.1.19",
+            "cli_version": "0.1.20",
             "os": std::env::consts::OS
         })
     );
@@ -213,7 +213,7 @@ fn support_list_repeats_exact_active_filters_for_cursor_pages() {
         "--category",
         "cli_issue",
         "--release",
-        "cli@0.1.19",
+        "cli@0.1.20",
         "--pagination",
         "cursor",
         "--limit",
@@ -228,7 +228,7 @@ fn support_list_repeats_exact_active_filters_for_cursor_pages() {
             ("status", "open"),
             ("source", "cli"),
             ("category", "cli_issue"),
-            ("release", "cli@0.1.19"),
+            ("release", "cli@0.1.20"),
             ("limit", "2"),
             ("pagination", "cursor"),
         ],
@@ -247,7 +247,7 @@ fn support_list_repeats_exact_active_filters_for_cursor_pages() {
         "--category",
         "cli_issue",
         "--release",
-        "cli@0.1.19",
+        "cli@0.1.20",
         "--pagination",
         "cursor",
         "--cursor-time",
@@ -266,7 +266,7 @@ fn support_list_repeats_exact_active_filters_for_cursor_pages() {
             ("status", "open"),
             ("source", "cli"),
             ("category", "cli_issue"),
-            ("release", "cli@0.1.19"),
+            ("release", "cli@0.1.20"),
             ("limit", "2"),
             ("pagination", "cursor"),
             ("cursor_time", CURSOR_TIME),
@@ -679,7 +679,7 @@ async fn support_list_human_output_is_bounded_and_cursor_recovery_keeps_rows()
     );
     assert!(human.contains("created=2026-07-14T07:00:00Z"));
     assert!(human.contains("project=123e4567-e89b-12d3-a456-426614174000"));
-    assert!(human.contains("[cli@0.1.19 / production]"));
+    assert!(human.contains("[cli@0.1.20 / production]"));
     assert!(human.contains("Next page: set --cursor-time"));
     assert!(human.contains("Retry: rerun that same command; the rows above remain visible."));
     for hidden in [
@@ -1014,8 +1014,8 @@ fn ticket_value() -> serde_json::Value {
         "runtime": "rust",
         "framework": "clap",
         "sdk_package": "logbrew-cli",
-        "sdk_version": "0.1.19",
-        "release": "cli@0.1.19",
+        "sdk_version": "0.1.20",
+        "release": "cli@0.1.20",
         "trace_id": "trace_123",
         "event_id": "event_456",
         "diagnostics": {
