@@ -21,7 +21,7 @@ from unittest import mock
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 VERIFIER = ROOT / "scripts" / "real_user_public_install_smoke.py"
-VERSION = "0.1.18"
+VERSION = "0.1.19"
 
 
 def write_executable(path: pathlib.Path, source: str) -> None:
@@ -172,19 +172,19 @@ class PublicInstallVerifierTests(unittest.TestCase):
             create_tar(
                 artifact,
                 {
-                    "logbrew-cli-0.1.18/Cargo.toml": (
-                        b'[package]\nname = "logbrew-cli"\nversion = "0.1.18"\n',
+                    "logbrew-cli-0.1.19/Cargo.toml": (
+                        b'[package]\nname = "logbrew-cli"\nversion = "0.1.19"\n',
                         0o644,
                     ),
-                    "logbrew-cli-0.1.18/Cargo.lock": (b"# fixture\n", 0o644),
-                    "logbrew-cli-0.1.18/src/main.rs": (b"fn main() {}\n", 0o644),
+                    "logbrew-cli-0.1.19/Cargo.lock": (b"# fixture\n", 0o644),
+                    "logbrew-cli-0.1.19/src/main.rs": (b"fn main() {}\n", 0o644),
                 },
             )
             return "crates:logbrew-cli", artifact
         if mode == "homebrew":
             artifact = artifact.with_suffix(".rb")
             artifact.write_text(
-                'class Logbrew < Formula\n  version "0.1.18"\nend\n',
+                'class Logbrew < Formula\n  version "0.1.19"\nend\n',
                 encoding="utf-8",
             )
             return "homebrew:LogBrewCo/tap/logbrew", artifact
@@ -220,7 +220,7 @@ class PublicInstallVerifierTests(unittest.TestCase):
             artifact = artifact.with_suffix(".tar.gz")
             create_tar(
                 artifact,
-                {"logbrew-0.1.18/logbrew": (cli_source(VERSION).encode(), 0o755)},
+                {"logbrew-0.1.19/logbrew": (cli_source(VERSION).encode(), 0o755)},
             )
             return "native:linux-x64", artifact
         if mode == "npm":
@@ -229,7 +229,7 @@ class PublicInstallVerifierTests(unittest.TestCase):
                 artifact,
                 {
                     "package/package.json": (
-                        b'{"name":"logbrew-cli","version":"0.1.18"}\n',
+                        b'{"name":"logbrew-cli","version":"0.1.19"}\n',
                         0o644,
                     )
                 },

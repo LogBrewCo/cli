@@ -197,6 +197,8 @@ fn session_field(
 
 /// Applies private permissions to an open credential-state file.
 fn secure_file_permissions(file: &std::fs::File) -> Result<(), RuntimeError> {
+    #[cfg(not(unix))]
+    let _ = file;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt as _;
@@ -207,6 +209,8 @@ fn secure_file_permissions(file: &std::fs::File) -> Result<(), RuntimeError> {
 
 /// Applies private permissions to an existing credential file.
 fn secure_path_permissions(path: &std::path::Path) -> Result<(), RuntimeError> {
+    #[cfg(not(unix))]
+    let _ = path;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt as _;

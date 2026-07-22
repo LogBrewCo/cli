@@ -31,7 +31,9 @@ if [[ "${LOGBREW_CHECK_ALL_SELF_TEST:-1}" != "0" ]]; then
   bash scripts/test-check-all.sh
 fi
 bash scripts/test-package-contents.sh
+python3 scripts/test-publish-crates-workflow.py
 bash scripts/test-release-preflight.sh
+python3 scripts/test-cross-platform-auth-store.py
 python3 scripts/test-real-user-public-install-smoke.py
 cargo audit
 cargo fmt --all -- --check
