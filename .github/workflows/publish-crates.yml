@@ -7,14 +7,33 @@ on:
 
 permissions:
   contents: read
-  id-token: write
 
 env:
   CARGO_HTTP_MULTIPLEXING: "false"
 
 jobs:
+  windows-release-build:
+    runs-on: windows-2022
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: Build Windows release binary
+        run: cargo build --release --locked --bin logbrew
+
   publish:
+    needs: windows-release-build
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - name: Checkout
         uses: actions/checkout@v6

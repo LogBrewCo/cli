@@ -1,6 +1,6 @@
 [package]
 name = "logbrew-cli"
-version = "0.1.18"
+version = "0.1.19"
 edition = "2024"
 rust-version = "1.87"
 description = "Public command-line interface for LogBrew."
