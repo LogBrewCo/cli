@@ -9,6 +9,15 @@ const MAX_PARENT_SCAN_DEPTH: usize = 3;
 /// Next step when setup finds a supported project.
 const SDK_NEXT_STEP: &str = "install the matching LogBrew SDK package when packages are ready; \
                              send release and environment with logs, issues, actions, and traces";
+/// Public Swift package URL used by a non-mutating install plan.
+const SWIFT_PACKAGE_URL: &str = "https://github.com/LogBrewCo/sdk.git";
+/// Public Swift package product consumed by application targets.
+const SWIFT_PRODUCT: &str = "LogBrew";
+/// Exact protected Swift package release known by this CLI version.
+const SWIFT_VERSION: &str = "0.1.4";
+/// Next step when a public Swift package can be planned truthfully.
+const SWIFT_NEXT_STEP: &str =
+    "add the LogBrew Swift package from the install plan; no files were changed";
 /// Next step when setup cannot find a supported project.
 const EMPTY_NEXT_STEP: &str = "run logbrew setup from a project containing package.json, \
                                pyproject.toml, Pipfile, Cargo.toml, Package.swift, project.yml, \
@@ -37,11 +46,25 @@ pub(crate) fn write_setup_plan<W: std::io::Write>(
                 })
             })
             .collect::<Vec<_>>();
+        let install_plan = plan.swift_install_ready().then(|| {
+            serde_json::json!({
+                "mode": "non_mutating",
+                "ecosystem": "swiftpm",
+                "package_url": SWIFT_PACKAGE_URL,
+                "product": SWIFT_PRODUCT,
+                "version": SWIFT_VERSION,
+                "next_action": {
+                    "code": "add_swift_package_dependency",
+                    "target": "project_manifest",
+                }
+            })
+        });
         let body = serde_json::json!({
             "ok": true,
             "auto": plan.auto,
             "yes": plan.yes,
-            "install_ready": false,
+            "install_ready": plan.swift_install_ready(),
+            "install_plan": install_plan,
             "detected": detected,
             "next": plan.next_step(),
         });
@@ -54,7 +77,14 @@ pub(crate) fn write_setup_plan<W: std::io::Write>(
         writeln!(output, "Preferences: auto={}, yes={}", plan.auto, plan.yes)?;
     }
     writeln!(output, "No files changed.")?;
-    writeln!(output, "Install: not ready")?;
+    if plan.swift_install_ready() {
+        writeln!(output, "Install: ready")?;
+        writeln!(output, "Package: {SWIFT_PACKAGE_URL}")?;
+        writeln!(output, "Product: {SWIFT_PRODUCT}")?;
+        writeln!(output, "Version: {SWIFT_VERSION}")?;
+    } else {
+        writeln!(output, "Install: not ready")?;
+    }
     if plan.detected.is_empty() {
         writeln!(output, "No supported project manifest found.")?;
     } else {
@@ -94,12 +124,24 @@ impl SetupPlan {
     }
 
     /// Returns the setup follow-up step.
-    const fn next_step(&self) -> &'static str {
+    fn next_step(&self) -> &'static str {
         if self.detected.is_empty() {
             EMPTY_NEXT_STEP
+        } else if self.swift_install_ready() {
+            SWIFT_NEXT_STEP
         } else {
             SDK_NEXT_STEP
         }
+    }
+
+    /// Returns whether detection supports the public non-mutating Swift plan.
+    fn swift_install_ready(&self) -> bool {
+        self.detected.iter().any(|detection| {
+            matches!(
+                detection.package_manager,
+                "swift package manager" | "xcodegen"
+            )
+        })
     }
 }
 

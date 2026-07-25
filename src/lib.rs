@@ -23,6 +23,7 @@ pub mod investigate;
 mod native_debug_artifacts;
 mod parser;
 mod project_create;
+mod projects;
 #[doc(hidden)]
 pub mod render;
 #[doc(hidden)]
@@ -113,6 +114,11 @@ pub enum Command {
         /// Normalized project creation fields and local persistence choice.
         options: ProjectCreateOptions,
         /// Emit machine-readable JSON.
+        json: bool,
+    },
+    /// Lists active account-owned projects.
+    Projects {
+        /// Emit the exact validated bare server array.
         json: bool,
     },
     /// Reads authenticated account usage and configured limits.
@@ -738,7 +744,9 @@ impl Command {
             Self::ProjectSetupSeen { project_id, .. } => {
                 Some(format!("/api/projects/{project_id}/setup/seen"))
             }
-            Self::ProjectCreate { .. } => Some(String::from("/api/projects")),
+            Self::ProjectCreate { .. } | Self::Projects { .. } => {
+                Some(String::from("/api/projects"))
+            }
             Self::Support { target, .. } => Some(support::path(target)),
             Self::Help { .. }
             | Self::Login { .. }
@@ -764,6 +772,7 @@ impl Command {
             | Self::Status { json }
             | Self::Doctor { json, .. }
             | Self::ProjectCreate { json, .. }
+            | Self::Projects { json }
             | Self::Usage { json }
             | Self::Version { json }
             | Self::Read { json, .. }
@@ -797,9 +806,10 @@ impl Command {
                 ..
             }
             | Self::Set { .. } => Some(HttpMethod::Patch),
-            Self::Read { .. } | Self::Explain { .. } | Self::Support { .. } => {
-                Some(HttpMethod::Get)
-            }
+            Self::Projects { .. }
+            | Self::Read { .. }
+            | Self::Explain { .. }
+            | Self::Support { .. } => Some(HttpMethod::Get),
             Self::Help { .. }
             | Self::Login { .. }
             | Self::Logout { .. }
@@ -848,6 +858,7 @@ impl Command {
             | Self::Setup { .. }
             | Self::Status { .. }
             | Self::Doctor { .. }
+            | Self::Projects { .. }
             | Self::Usage { .. }
             | Self::Version { .. }
             | Self::Read { .. }
@@ -882,6 +893,7 @@ impl Command {
             | Self::Set { .. }
             | Self::ProjectSetupSeen { .. }
             | Self::ProjectCreate { .. }
+            | Self::Projects { .. }
             | Self::Support { .. } => None,
         }
     }
@@ -980,6 +992,7 @@ pub async fn execute_command<W: std::io::Write>(
         Command::ProjectCreate { options, json } => {
             project_create::execute(env, options, *json, output).await
         }
+        Command::Projects { json } => projects::execute(env, *json, output).await,
         Command::Usage { json } => usage::execute(env, *json, output).await,
         Command::Version { json } => execute_version(*json, output),
         Command::InvestigateIssue { issue_id, json } => {

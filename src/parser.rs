@@ -457,15 +457,6 @@ fn is_safe_investigation_issue_id(value: &str) -> bool {
         })
 }
 
-/// Parses non-mutating discovery help for backend-owned future workflows.
-fn parse_discovery_help(topic: HelpTopic, args: &[String]) -> Result<Command, CliError> {
-    validate_help_flags(args)?;
-    Ok(Command::Help {
-        topic,
-        json: args.iter().any(|arg| arg == "--json"),
-    })
-}
-
 /// Parses a leading global `--json` flag.
 fn parse_global_json(values: &[String], tail: &[String]) -> Result<Command, CliError> {
     if global_json_tail_has_duplicate(tail) {
@@ -678,7 +669,11 @@ fn parse_project(args: &[String]) -> Result<Command, CliError> {
     {
         return parse_project_setup_seen(tail);
     }
-    parse_discovery_help(HelpTopic::Projects, args)
+    match normalized.as_slice() {
+        [] => Ok(Command::Projects { json: false }),
+        [flag] if flag == "--json" => Ok(Command::Projects { json: true }),
+        [_, ..] => Err(CliError::InvalidProjectsCommand),
+    }
 }
 
 /// Parses the closed secure project creation grammar.

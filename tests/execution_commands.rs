@@ -163,7 +163,14 @@ async fn setup_json_detects_xcodegen_ios_project() -> Result<(), Box<dyn std::er
 
     let body: serde_json::Value = serde_json::from_slice(output.as_slice())?;
     assert_eq!(body["ok"], true);
-    assert_eq!(body["install_ready"], false);
+    assert_eq!(body["install_ready"], true);
+    assert_eq!(body["install_plan"]["ecosystem"], "swiftpm");
+    assert_eq!(
+        body["install_plan"]["package_url"],
+        "https://github.com/LogBrewCo/sdk.git"
+    );
+    assert_eq!(body["install_plan"]["product"], "LogBrew");
+    assert_eq!(body["install_plan"]["version"], "0.1.4");
     assert_eq!(body["detected"][0]["runtime"], "swift-ios");
     assert_eq!(body["detected"][0]["package_manager"], "xcodegen");
     assert_eq!(body["detected"][0]["manifest"], "project.yml");

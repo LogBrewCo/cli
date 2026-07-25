@@ -198,6 +198,7 @@ async fn project_create_posts_exact_request_then_persists_before_safe_json()
     assert_eq!(body["setup"]["status"], "created");
     assert_eq!(body["ingest_key"]["id"], INGEST_ID);
     assert_eq!(body["ingest_key"]["kind"], "cli");
+    assert_eq!(body["ingest_key"]["expires_at"], "2026-08-15T12:00:00Z");
     assert_eq!(body["checks"][2]["status"], "stored");
     assert_eq!(body["next"], "run logbrew doctor --project <project_id>");
     assert!(!text.contains(ONE_TIME_TOKEN));
@@ -222,7 +223,9 @@ async fn project_create_posts_exact_request_then_persists_before_safe_json()
 async fn exact_retry_reuses_persisted_body_and_idempotency_key()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
-    let responder = FailThenSucceed::new(success_response());
+    let mut replayed = success_response();
+    replayed["ingest"]["expires_at"] = serde_json::Value::Null;
+    let responder = FailThenSucceed::new(replayed);
     Mock::given(method("POST"))
         .and(path("/api/projects"))
         .respond_with(responder)
@@ -246,6 +249,8 @@ async fn exact_retry_reuses_persisted_body_and_idempotency_key()
     let retry = parse_command(args)?;
     let mut output = Vec::new();
     execute_command(&retry, &env, &mut output).await?;
+    let body: serde_json::Value = serde_json::from_slice(output.as_slice())?;
+    assert_eq!(body["ingest_key"]["expires_at"], serde_json::Value::Null);
 
     let requests = received_requests(&server).await?;
     assert_eq!(requests.len(), 2);
@@ -571,11 +576,22 @@ async fn malformed_or_hostile_success_never_writes_or_echoes_token()
     let mut mismatched_project = success_response();
     mismatched_project["setup"]["project_id"] =
         serde_json::json!("323e4567-e89b-12d3-a456-426614174000");
+    let mut missing_expiry = success_response();
+    drop(
+        missing_expiry["ingest"]
+            .as_object_mut()
+            .ok_or("ingest fixture must be an object")?
+            .remove("expires_at"),
+    );
+    let mut invalid_expiry = success_response();
+    invalid_expiry["ingest"]["expires_at"] = serde_json::json!(123);
 
     for (label, response) in [
         ("extra", extra),
         ("token", malformed_token),
         ("project", mismatched_project),
+        ("missing-expiry", missing_expiry),
+        ("invalid-expiry", invalid_expiry),
     ] {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
