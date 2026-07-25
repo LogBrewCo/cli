@@ -481,21 +481,14 @@ fn parses_filter_terms_as_top_level_discovery_help() {
 }
 
 #[test]
-fn parses_project_help_and_authenticated_usage_reads() {
+fn parses_authenticated_project_and_usage_reads() {
     for args in [
         &["logbrew", "project", "--json"][..],
         &["logbrew", "projects", "--json"],
         &["logbrew", "--json", "projects"],
     ] {
-        let command = parse_command(args.iter().copied()).expect("project discovery help parses");
-
-        assert_eq!(
-            command,
-            Command::Help {
-                topic: HelpTopic::Projects,
-                json: true
-            }
-        );
+        let command = parse_command(args.iter().copied()).expect("project catalog read parses");
+        assert_eq!(command, Command::Projects { json: true });
     }
 
     for args in [

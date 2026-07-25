@@ -76,6 +76,8 @@ fn project_and_usage_help_are_honest_about_supported_behavior() {
     );
     assert!(projects.contains("logbrew setup --create-project [--json]"));
     assert!(projects.contains("Project creation, setup status"));
+    assert!(projects.contains("Reads the authenticated active project catalog"));
+    assert!(projects.contains("JSON preserves the exact validated bare array"));
     assert!(projects.contains("stores the one-time ingest key in a new owner-only file"));
     assert!(projects.contains("No local install, quota, or usage state is created."));
     assert!(projects.contains("POST /api/projects/{project_id}/setup/seen"));

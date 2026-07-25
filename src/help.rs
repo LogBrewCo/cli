@@ -150,7 +150,11 @@ Usage:
   logbrew setup [--auto] [--yes] [--json]
 
 Detects supported project manifests and prints a non-mutating SDK setup plan.
-No files are changed. Install: not ready.
+No files are changed. SwiftPM 0.1.4 install planning is ready for detected SwiftPM or XcodeGen \
+projects.
+Package: https://github.com/LogBrewCo/sdk.git
+Product: LogBrew
+Other detected runtimes remain planning-only until their public package is ready.
 Aliases (same non-mutating plan): logbrew init, logbrew install, logbrew configure, logbrew sdk.
 Options: --auto records automatic detection preference; --yes records confirmation preference; \
                           --json prints stable setup JSON.
@@ -258,6 +262,9 @@ Usage:
   logbrew projects setup <project_id> [--runtime <runtime>] [--source api|cli|sdk] \
 [--environment <environment>] [--json]
 
+Reads the authenticated active project catalog without mutating project state.
+Human output is bounded to project identity, setup status, and latest activity. JSON preserves the \
+exact validated bare array.
 Project creation, setup status, and project-scoped ingest credentials are backend-owned.
 Project creation stores the one-time ingest key in a new owner-only file before reporting success;
 it never prints the one-time ingest key or its file path. An ambiguous attempt reuses the pending retry key only for the exact same request; --abandon-retry starts a new explicit attempt.

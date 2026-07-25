@@ -134,6 +134,9 @@ pub enum CliError {
     /// Secure project creation syntax is malformed.
     #[error("invalid project create command")]
     InvalidProjectCreateCommand,
+    /// Authenticated project catalog syntax is malformed.
+    #[error("invalid projects command")]
+    InvalidProjectsCommand,
     /// Account usage read syntax is malformed.
     #[error("invalid usage command")]
     InvalidUsageCommand,
@@ -411,6 +414,7 @@ const fn cli_error_code(error: &CliError) -> &'static str {
         CliError::InvalidInvestigationCommand => "invalid_investigation_command",
         CliError::InvalidDoctorCommand => "invalid_doctor_command",
         CliError::InvalidProjectCreateCommand => "invalid_project_create_command",
+        CliError::InvalidProjectsCommand => "invalid_projects_command",
         CliError::InvalidUsageCommand => "invalid_usage_command",
         CliError::InvalidNativeDebugCommand | CliError::InvalidNativeDebugIdentity => {
             "invalid_native_debug_command"
@@ -457,6 +461,9 @@ const fn cli_error_next_step(error: &CliError) -> &'static str {
         }
         CliError::InvalidProjectCreateCommand => {
             "use logbrew projects create <name> --ingest-key-file <path> with optional --runtime, --environment, --abandon-retry, and --json"
+        }
+        CliError::InvalidProjectsCommand => {
+            "use logbrew projects with optional --json, or logbrew projects --help"
         }
         CliError::InvalidUsageCommand => "use logbrew usage with optional --json",
         CliError::InvalidNativeDebugCommand => {

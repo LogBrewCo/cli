@@ -96,7 +96,9 @@ fn setup_help_is_honest_about_install_readiness() {
         }
     );
     assert!(setup_help.contains("No files are changed."));
-    assert!(setup_help.contains("Install: not ready"));
+    assert!(setup_help.contains("SwiftPM 0.1.4"));
+    assert!(setup_help.contains("https://github.com/LogBrewCo/sdk.git"));
+    assert!(setup_help.contains("Product: LogBrew"));
     assert!(setup_help.contains("Supported manifests: package.json, pyproject.toml, Pipfile,"));
     assert!(setup_help.contains(
         "Cargo.toml, Package.swift, project.yml, project.yaml, .xcodeproj, .xcworkspace,"
@@ -109,11 +111,8 @@ fn setup_help_is_honest_about_install_readiness() {
 }
 
 #[test]
-fn project_discovery_help_remains_non_mutating() {
+fn project_catalog_executes_while_explicit_setup_help_remains_non_mutating() {
     for args in [
-        &["logbrew", "projects", "--json"][..],
-        &["logbrew", "project", "--json"][..],
-        &["logbrew", "--json", "projects"][..],
         &["logbrew", "setup", "--create-project", "--json"][..],
         &["logbrew", "--json", "setup", "--create-project"][..],
         &["logbrew", "setup", "--create-project", "--help", "--json"][..],
@@ -127,6 +126,15 @@ fn project_discovery_help_remains_non_mutating() {
                 json: true
             }
         );
+    }
+    for args in [
+        &["logbrew", "projects", "--json"][..],
+        &["logbrew", "project", "--json"][..],
+        &["logbrew", "--json", "projects"][..],
+    ] {
+        let command = parse_command(args.iter().copied()).expect("project catalog parses");
+        assert!(!matches!(command, Command::Help { .. }));
+        assert_eq!(command.http_path().as_deref(), Some("/api/projects"));
     }
 
     let projects = help::help_text(HelpTopic::Projects);

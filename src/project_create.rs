@@ -167,8 +167,8 @@ struct CreatedProject {
     ingest_label: String,
     /// Ingest-key creation timestamp.
     ingest_created_at: String,
-    /// Ingest-key expiration timestamp.
-    ingest_expires_at: String,
+    /// Optional ingest-key expiration timestamp.
+    ingest_expires_at: Option<String>,
     /// One-time secret, used only for durable local persistence.
     token: String,
 }
@@ -211,8 +211,8 @@ struct CreatedIngest {
     label: String,
     /// Creation timestamp.
     created_at: String,
-    /// Expiration timestamp.
-    expires_at: String,
+    /// Optional expiration timestamp.
+    expires_at: Option<String>,
     /// One-time secret.
     token: String,
 }
@@ -335,7 +335,7 @@ fn parse_created_ingest(value: Option<&serde_json::Value>) -> Result<CreatedInge
         id: required_safe(ingest, "id", 128)?,
         label: required_safe(ingest, "label", 128)?,
         created_at: required_timestamp(ingest, "created_at")?,
-        expires_at: required_timestamp(ingest, "expires_at")?,
+        expires_at: nullable_timestamp(ingest, "expires_at")?,
         token: required_visible_secret(ingest, "token")?,
     })
 }
@@ -928,6 +928,18 @@ fn optional_timestamp(
     match object.get(key) {
         Some(serde_json::Value::Null) => Ok(()),
         Some(serde_json::Value::String(value)) if is_rfc3339(value) => Ok(()),
+        Some(_) | None => Err(invalid_response()),
+    }
+}
+
+/// Extracts one required nullable RFC3339 timestamp.
+fn nullable_timestamp(
+    object: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+) -> Result<Option<String>, RuntimeError> {
+    match object.get(key) {
+        Some(serde_json::Value::Null) => Ok(None),
+        Some(serde_json::Value::String(value)) if is_rfc3339(value) => Ok(Some(value.clone())),
         Some(_) | None => Err(invalid_response()),
     }
 }
