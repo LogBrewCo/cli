@@ -30,6 +30,11 @@ fn normalized_api_base(base_url: &str) -> Result<String, RuntimeError> {
     Ok(url.as_str().trim_end_matches('/').to_owned())
 }
 
+/// Returns whether a token has the public project-scoped ingest key prefix.
+pub(crate) fn token_is_project_ingest_key(token: Option<&str>) -> bool {
+    token.is_some_and(|token| token.trim_start().starts_with("lbw_ingest_"))
+}
+
 /// Returns a stable error for an API base that cannot safely own credentials.
 const fn invalid_api_url() -> RuntimeError {
     RuntimeError::Unavailable {
@@ -125,6 +130,18 @@ where
     F: Fn(&reqwest::Client, &AuthCredential) -> reqwest::RequestBuilder,
 {
     session::send_authenticated_with_refresh(client, env, build_request).await
+}
+
+/// Sends an account-authenticated request and rejects project ingest keys locally.
+pub(crate) async fn send_account_authenticated_with_refresh<F>(
+    client: &reqwest::Client,
+    env: &CliEnvironment,
+    build_request: F,
+) -> Result<(reqwest::Response, AuthCredential), RuntimeError>
+where
+    F: Fn(&reqwest::Client, &AuthCredential) -> reqwest::RequestBuilder,
+{
+    session::send_account_authenticated_with_refresh(client, env, build_request).await
 }
 
 /// Sends one authenticated request without refreshing or persisting credentials.

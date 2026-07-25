@@ -460,7 +460,7 @@ const fn cli_error_next_step(error: &CliError) -> &'static str {
         }
         CliError::InvalidUsageCommand => "use logbrew usage with optional --json",
         CliError::InvalidNativeDebugCommand => {
-            "use logbrew debug-artifacts upload <path> --project <project_id> --release <release> --environment <environment> --service <service>"
+            "use logbrew debug-artifacts upload <path> --project <project_id> --release <release> --environment <environment> --service <service> with optional --expect-image-uuid, --dry-run, and --json"
         }
         CliError::InvalidNativeDebugIdentity => {
             "use a lowercase UUID and architecture arm64, arm64e, or x86_64"
@@ -593,7 +593,7 @@ const fn fallback_runtime_error_next_step(error: &RuntimeError) -> &'static str 
             "retry the issue investigation; if it repeats, report the public response contract"
         }
         RuntimeError::NativeDebugArtifactInvalid => {
-            "provide one validated Apple dSYM bundle or Mach-O debug object"
+            "provide one validated Apple dSYM, ZIP, or Mach-O object matching every --expect-image-uuid value"
         }
         RuntimeError::NativeDebugResponseInvalid => {
             "retry the native debug-artifact request; if it repeats, report the public response contract"
