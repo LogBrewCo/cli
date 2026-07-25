@@ -1,7 +1,7 @@
 //! Multipart and exact lookup wire contract.
 
 use super::artifact::{Artifact, MAX_ARTIFACT_BYTES};
-use crate::auth::{AuthCredential, send_authenticated_with_refresh};
+use crate::auth::{AuthCredential, send_account_authenticated_with_refresh};
 use crate::{CliEnvironment, NativeDebugLookupOptions, NativeDebugUploadOptions, RuntimeError};
 
 /// Maximum encoded multipart request size.
@@ -68,7 +68,7 @@ pub(super) async fn upload(
 ) -> Result<UploadReceipt, RuntimeError> {
     let manifest = serialize_manifest(options, artifacts)?;
     validate_multipart_size(manifest.len(), artifacts)?;
-    let response = send_authenticated_with_refresh(client, env, |client, credential| {
+    let response = send_account_authenticated_with_refresh(client, env, |client, credential| {
         client
             .post(url.clone())
             .bearer_auth(credential.token())
@@ -103,7 +103,7 @@ pub(super) async fn lookup(
             .append_pair("image_uuid", options.image_uuid.as_str())
             .append_pair("architecture", options.architecture.as_str());
     }
-    let response = send_authenticated_with_refresh(client, env, |client, credential| {
+    let response = send_account_authenticated_with_refresh(client, env, |client, credential| {
         client.get(url.clone()).bearer_auth(credential.token())
     })
     .await
@@ -120,7 +120,9 @@ pub(super) async fn lookup(
 /// Creates the fixed native debug-artifact API URL without retaining private path state.
 pub(super) fn native_artifact_url(base_url: &str) -> Result<reqwest::Url, RuntimeError> {
     let mut url = reqwest::Url::parse(base_url).map_err(|_| transport_error())?;
-    if !matches!(url.scheme(), "http" | "https")
+    let secure_transport = url.scheme() == "https"
+        || url.scheme() == "http" && url.host_str().is_some_and(is_loopback_host);
+    if !secure_transport
         || url.host_str().is_none()
         || !url.username().is_empty()
         || url.password().is_some()
@@ -132,6 +134,14 @@ pub(super) fn native_artifact_url(base_url: &str) -> Result<reqwest::Url, Runtim
     url.set_path("/api/native-debug-artifacts");
     url.set_query(None);
     Ok(url)
+}
+
+/// Allows plaintext transport only for installed local loopback proof.
+fn is_loopback_host(host: &str) -> bool {
+    host == "localhost"
+        || host
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|address| address.is_loopback())
 }
 
 /// Exact camelCase multipart manifest.
@@ -476,10 +486,17 @@ fn safe_api_error(status: u16, credential: &AuthCredential) -> RuntimeError {
 /// Produces a fixed, value-safe API envelope from status only.
 fn safe_api_body(status: u16) -> String {
     let (error, code, next, action_code, target) = match status {
-        400 | 422 => (
+        400 => (
             "native debug-artifact request was rejected",
             "validation_failed",
             "check the artifact identity and request scope, then retry",
+            "fix_request",
+            "request",
+        ),
+        422 => (
+            "native debug-artifact request was rejected",
+            "validation_failed",
+            "send manifest and debug_file_N multipart parts from LogBrew Apple release tooling",
             "fix_request",
             "request",
         ),

@@ -61,14 +61,82 @@ where
     F: Fn(&reqwest::Client, &AuthCredential) -> reqwest::RequestBuilder,
 {
     let credential = resolve_credential(env)?;
+    send_with_refresh(
+        client,
+        env,
+        credential,
+        CredentialPolicy::AnyBearer,
+        build_request,
+    )
+    .await
+}
+
+/// Sends one account-authenticated request and rejects project ingest keys locally.
+pub(super) async fn send_account_authenticated_with_refresh<F>(
+    client: &reqwest::Client,
+    env: &CliEnvironment,
+    build_request: F,
+) -> Result<(reqwest::Response, AuthCredential), RuntimeError>
+where
+    F: Fn(&reqwest::Client, &AuthCredential) -> reqwest::RequestBuilder,
+{
+    let credential = resolve_credential(env)?;
+    send_with_refresh(
+        client,
+        env,
+        credential,
+        CredentialPolicy::AccountOnly,
+        build_request,
+    )
+    .await
+}
+
+/// Credential policy applied immediately before each request construction.
+#[derive(Clone, Copy)]
+enum CredentialPolicy {
+    /// Preserve existing callers that intentionally accept any bearer shape.
+    AnyBearer,
+    /// Require account auth and reject project-scoped ingest keys.
+    AccountOnly,
+}
+
+/// Sends with one resolved credential and performs the canonical single refresh.
+async fn send_with_refresh<F>(
+    client: &reqwest::Client,
+    env: &CliEnvironment,
+    credential: AuthCredential,
+    policy: CredentialPolicy,
+    build_request: F,
+) -> Result<(reqwest::Response, AuthCredential), RuntimeError>
+where
+    F: Fn(&reqwest::Client, &AuthCredential) -> reqwest::RequestBuilder,
+{
+    enforce_credential_policy(&credential, policy)?;
     let response = build_request(client, &credential).send().await?;
     if response.status() == reqwest::StatusCode::UNAUTHORIZED
         && let Some(refreshed) = refresh_local_credential(client, env, &credential).await?
     {
+        enforce_credential_policy(&refreshed, policy)?;
         let response = build_request(client, &refreshed).send().await?;
         return Ok((response, refreshed));
     }
     Ok((response, credential))
+}
+
+/// Rejects a disallowed credential before it can reach request construction.
+fn enforce_credential_policy(
+    credential: &AuthCredential,
+    policy: CredentialPolicy,
+) -> Result<(), RuntimeError> {
+    if matches!(policy, CredentialPolicy::AccountOnly)
+        && super::token_is_project_ingest_key(Some(credential.token.as_str()))
+    {
+        return Err(RuntimeError::Unavailable {
+            message: "account authentication is required",
+            next: "run logbrew login and retry the native debug-artifact command",
+        });
+    }
+    Ok(())
 }
 
 /// Sends one authenticated request without refreshing or persisting credentials.
@@ -91,7 +159,7 @@ async fn refresh_local_credential(
     env: &CliEnvironment,
     rejected: &AuthCredential,
 ) -> Result<Option<AuthCredential>, RuntimeError> {
-    if !rejected.refreshable || rejected.token.starts_with("lbw_ingest_") {
+    if !rejected.refreshable || super::token_is_project_ingest_key(Some(rejected.token.as_str())) {
         return Ok(None);
     }
     let Some(home) = env.home.clone() else {
@@ -166,5 +234,37 @@ const fn invalid_refresh_response() -> RuntimeError {
     RuntimeError::Unavailable {
         message: "authentication refresh returned an invalid response",
         next: "run logbrew login",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{AuthCredential, CredentialPolicy, enforce_credential_policy};
+
+    /// Proves the account-only boundary uses the canonical whitespace-tolerant predicate.
+    #[test]
+    fn account_policy_rejects_every_ingest_key_shape() {
+        for token in ["lbw_ingest_private", " \t lbw_ingest_private"] {
+            let credential = credential(token);
+            assert!(enforce_credential_policy(&credential, CredentialPolicy::AccountOnly).is_err());
+            assert!(enforce_credential_policy(&credential, CredentialPolicy::AnyBearer).is_ok());
+        }
+        assert!(
+            enforce_credential_policy(
+                &credential("account-access-token"),
+                CredentialPolicy::AccountOnly,
+            )
+            .is_ok()
+        );
+    }
+
+    /// Builds one secret-redacting test credential.
+    fn credential(token: &str) -> AuthCredential {
+        AuthCredential {
+            token: token.to_owned(),
+            source: "test",
+            label: "test",
+            refreshable: true,
+        }
     }
 }

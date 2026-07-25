@@ -94,7 +94,8 @@ Usage:
   logbrew explain <issue_id_or_trace_id> [--json]
   logbrew investigate issue <issue_id> [--json]
   logbrew debug-artifacts upload <path> --project <project_id> --release <release> --environment \
-                         <environment> --service <service> [--json]
+                         <environment> --service <service> [--expect-image-uuid <uuid>]... \
+                         [--dry-run] [--json]
   logbrew debug-artifacts lookup --project <project_id> --release <release> --environment \
                          <environment> --service <service> --image-uuid <uuid> --architecture \
                          <architecture> [--json]
@@ -471,14 +472,17 @@ JSON preserves the issue and exactly one directed result in a stable four-key en
 const NATIVE_DEBUG_ARTIFACTS_HELP: &str = "\
 Usage:
   logbrew debug-artifacts upload <path> --project <project_id> --release <release> \
-                         --environment <environment> --service <service> [--json]
+                         --environment <environment> --service <service> \
+                         [--expect-image-uuid <uuid>]... [--dry-run] [--json]
   logbrew debug-artifacts lookup --project <project_id> --release <release> \
                          --environment <environment> --service <service> --image-uuid <uuid> \
                          --architecture <arm64|arm64e|x86_64> [--json]
 
-Validates Apple dSYM or Mach-O debug objects locally, uploads only supported exact identities, and \
-verifies each identity with an exact authenticated lookup. Local paths and filenames are never \
-included in output or API metadata.";
+Discovers and validates Apple dSYM, ZIP, or Mach-O debug objects locally, uploads every supported \
+exact identity, and verifies each identity with an authenticated lookup. Optional repeated \
+--expect-image-uuid values require an exact discovered UUID set for release automation. --dry-run \
+performs the same local validation without authentication or network access. Local paths and \
+filenames are never included in output or API metadata.";
 
 /// Set command help text.
 const SET_HELP: &str = "\

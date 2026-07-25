@@ -7,7 +7,7 @@ use object::{
 };
 use sha2::{Digest as _, Sha256};
 use std::collections::BTreeSet;
-use std::io::Read as _;
+use std::io::{Read as _, Seek as _};
 use std::path::{Path, PathBuf};
 
 /// Maximum number of exact object identities accepted by one upload.
@@ -16,6 +16,12 @@ const MAX_ARTIFACTS: usize = 50;
 pub(super) const MAX_ARTIFACT_BYTES: usize = 50 * 1024 * 1024;
 /// Maximum bytes accepted for one source file before slice extraction.
 const MAX_SOURCE_BYTES: usize = 128 * 1024 * 1024;
+/// Maximum central-directory entries inspected in one bounded ZIP.
+const MAX_ZIP_ENTRIES: usize = 2_000;
+/// Maximum expansion ratio after a small fixed allowance.
+const MAX_ZIP_EXPANSION_RATIO: u64 = 100;
+/// Small files may expand from compact deflate streams without being ZIP bombs.
+const ZIP_EXPANSION_ALLOWANCE: u64 = 1024 * 1024;
 
 /// One supported architecture accepted by the public contract.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -63,26 +69,32 @@ impl Artifact {
     }
 }
 
-/// Enumerates one file or dSYM bundle without retaining local names.
+/// Enumerates one dSYM bundle, ZIP, or Mach-O object without retaining local names.
 pub(super) fn collect(path: &Path) -> Result<Vec<Artifact>, RuntimeError> {
     let metadata = std::fs::symlink_metadata(path).map_err(|_| invalid_artifact())?;
     if metadata.file_type().is_symlink() {
         return Err(invalid_artifact());
     }
-    let files = if metadata.is_file() {
-        vec![path.to_path_buf()]
-    } else if metadata.is_dir()
+    let artifacts = if metadata.is_dir()
         && path.extension().and_then(std::ffi::OsStr::to_str) == Some("dSYM")
     {
         let dwarf = path.join("Contents/Resources/DWARF");
-        collect_regular_files(dwarf.as_path())?
+        collect_bundle(dwarf.as_path())?
+    } else if metadata.is_file() {
+        if has_zip_extension(path) {
+            collect_zip(path)?
+        } else {
+            parse_macho(read_regular_file(path)?)?
+        }
     } else {
         return Err(invalid_artifact());
     };
-    if files.is_empty() {
-        return Err(invalid_artifact());
-    }
+    finalize(artifacts)
+}
 
+/// Parses every regular debug object in a local dSYM bundle.
+fn collect_bundle(root: &Path) -> Result<Vec<Artifact>, RuntimeError> {
+    let files = collect_regular_files(root)?;
     let mut artifacts = Vec::new();
     for file in files {
         let bytes = read_regular_file(file.as_path())?;
@@ -95,6 +107,87 @@ pub(super) fn collect(path: &Path) -> Result<Vec<Artifact>, RuntimeError> {
             return Err(invalid_artifact());
         }
     }
+    Ok(artifacts)
+}
+
+/// Parses every exact dSYM debug object from one bounded ZIP.
+fn collect_zip(path: &Path) -> Result<Vec<Artifact>, RuntimeError> {
+    let (file, before) = open_regular_file(path)?;
+    let mut archive = zip::ZipArchive::new(file).map_err(|_| invalid_artifact())?;
+    if archive.is_empty() || archive.len() > MAX_ZIP_ENTRIES {
+        return Err(invalid_artifact());
+    }
+
+    let mut artifacts = Vec::new();
+    let mut names = BTreeSet::new();
+    let mut total_uncompressed = 0_u64;
+    for index in 0..archive.len() {
+        let mut entry = archive.by_index(index).map_err(|_| invalid_artifact())?;
+        let name = validated_zip_name(&entry)?;
+        if !names.insert(name.clone())
+            || entry.encrypted()
+            || entry.is_symlink()
+            || !(entry.is_file() || entry.is_dir())
+        {
+            return Err(invalid_artifact());
+        }
+        let size = entry.size();
+        total_uncompressed = total_uncompressed
+            .checked_add(size)
+            .filter(|total| *total <= u64::try_from(MAX_SOURCE_BYTES).unwrap_or(u64::MAX))
+            .ok_or_else(invalid_artifact)?;
+        if zip_expansion_is_unsafe(entry.compressed_size(), size) {
+            return Err(invalid_artifact());
+        }
+        if entry.is_dir() {
+            if size != 0 {
+                return Err(invalid_artifact());
+            }
+            continue;
+        }
+
+        if is_dsym_debug_object(name.as_str()) {
+            let declared_size = usize::try_from(size).map_err(|_| invalid_artifact())?;
+            if declared_size == 0 || declared_size > MAX_SOURCE_BYTES {
+                return Err(invalid_artifact());
+            }
+            let mut payload = Vec::with_capacity(declared_size);
+            let read_limit = size.saturating_add(1);
+            let read = (&mut entry)
+                .take(read_limit)
+                .read_to_end(&mut payload)
+                .map_err(|_| invalid_artifact())?;
+            if read != declared_size || payload.len() != declared_size {
+                return Err(invalid_artifact());
+            }
+            let mut parsed = parse_macho(payload)?;
+            if parsed.is_empty() {
+                return Err(invalid_artifact());
+            }
+            artifacts.append(&mut parsed);
+            if artifacts.len() > MAX_ARTIFACTS {
+                return Err(invalid_artifact());
+            }
+        } else {
+            let read_limit = size.saturating_add(1);
+            let copied = std::io::copy(&mut (&mut entry).take(read_limit), &mut std::io::sink())
+                .map_err(|_| invalid_artifact())?;
+            if copied != size {
+                return Err(invalid_artifact());
+            }
+        }
+    }
+    let mut file = archive.into_inner();
+    file.rewind().map_err(|_| invalid_artifact())?;
+    let after = file.metadata().map_err(|_| invalid_artifact())?;
+    if !same_file(&before, &after) {
+        return Err(invalid_artifact());
+    }
+    Ok(artifacts)
+}
+
+/// Sorts object identities and rejects duplicates or empty discovery.
+fn finalize(mut artifacts: Vec<Artifact>) -> Result<Vec<Artifact>, RuntimeError> {
     artifacts.sort_by(|left, right| {
         (left.image_uuid.as_str(), left.architecture)
             .cmp(&(right.image_uuid.as_str(), right.architecture))
@@ -109,6 +202,76 @@ pub(super) fn collect(path: &Path) -> Result<Vec<Artifact>, RuntimeError> {
         return Err(invalid_artifact());
     }
     Ok(artifacts)
+}
+
+/// Requires the discovered UUID set to match the user-supplied release identities exactly.
+pub(super) fn validate_expected_uuids(
+    artifacts: &[Artifact],
+    expected: &[String],
+) -> Result<(), RuntimeError> {
+    if expected.is_empty() {
+        return Ok(());
+    }
+    let discovered = artifacts
+        .iter()
+        .map(|artifact| artifact.image_uuid.as_str())
+        .collect::<BTreeSet<_>>();
+    let expected = expected.iter().map(String::as_str).collect::<BTreeSet<_>>();
+    if discovered != expected {
+        return Err(invalid_artifact());
+    }
+    Ok(())
+}
+
+/// Restricts archive uploads to explicit ZIP inputs.
+fn has_zip_extension(path: &Path) -> bool {
+    path.extension()
+        .and_then(std::ffi::OsStr::to_str)
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("zip"))
+}
+
+/// Validates one unambiguous portable ZIP entry name.
+fn validated_zip_name<R: std::io::Read>(
+    entry: &zip::read::ZipFile<'_, R>,
+) -> Result<String, RuntimeError> {
+    let raw = std::str::from_utf8(entry.name_raw()).map_err(|_| invalid_artifact())?;
+    if raw != entry.name()
+        || raw.is_empty()
+        || raw.starts_with('/')
+        || raw.contains('\\')
+        || raw.chars().any(char::is_control)
+        || entry.enclosed_name().is_none()
+    {
+        return Err(invalid_artifact());
+    }
+    let name = raw.strip_suffix('/').unwrap_or(raw);
+    if name.is_empty()
+        || name.split('/').any(|component| {
+            component.is_empty() || matches!(component, "." | "..") || component.contains(':')
+        })
+    {
+        return Err(invalid_artifact());
+    }
+    Ok(name.to_owned())
+}
+
+/// Detects exact regular files beneath a dSYM DWARF directory.
+fn is_dsym_debug_object(name: &str) -> bool {
+    let components = name.split('/').collect::<Vec<_>>();
+    components.windows(5).any(|window| {
+        window[0].ends_with(".dSYM")
+            && window[1] == "Contents"
+            && window[2] == "Resources"
+            && window[3] == "DWARF"
+            && !window[4].is_empty()
+    })
+}
+
+/// Rejects compressed entries with an excessive declared expansion ratio.
+const fn zip_expansion_is_unsafe(compressed_size: u64, size: u64) -> bool {
+    size > compressed_size
+        .saturating_mul(MAX_ZIP_EXPANSION_RATIO)
+        .saturating_add(ZIP_EXPANSION_ALLOWANCE)
 }
 
 /// Recursively collects only regular files beneath a dSYM DWARF directory.
@@ -149,18 +312,7 @@ fn collect_directory(directory: &Path, files: &mut Vec<PathBuf>) -> Result<(), R
 
 /// Opens and reads one stable regular file with a hard upper bound.
 fn read_regular_file(path: &Path) -> Result<Vec<u8>, RuntimeError> {
-    let before = std::fs::symlink_metadata(path).map_err(|_| invalid_artifact())?;
-    if before.file_type().is_symlink()
-        || !before.is_file()
-        || usize::try_from(before.len()).map_or(true, |length| length > MAX_SOURCE_BYTES)
-    {
-        return Err(invalid_artifact());
-    }
-    let mut file = std::fs::File::open(path).map_err(|_| invalid_artifact())?;
-    let opened = file.metadata().map_err(|_| invalid_artifact())?;
-    if !opened.is_file() || !same_file(&before, &opened) {
-        return Err(invalid_artifact());
-    }
+    let (mut file, before) = open_regular_file(path)?;
     let mut bytes = Vec::new();
     let read_limit = u64::try_from(MAX_SOURCE_BYTES)
         .unwrap_or(u64::MAX)
@@ -173,11 +325,28 @@ fn read_regular_file(path: &Path) -> Result<Vec<u8>, RuntimeError> {
     if bytes_read != bytes.len()
         || bytes.len() > MAX_SOURCE_BYTES
         || u64::try_from(bytes.len()).ok() != Some(before.len())
-        || !same_file(&opened, &after)
+        || !same_file(&before, &after)
     {
         return Err(invalid_artifact());
     }
     Ok(bytes)
+}
+
+/// Opens one stable bounded regular source without following a pre-existing link.
+fn open_regular_file(path: &Path) -> Result<(std::fs::File, std::fs::Metadata), RuntimeError> {
+    let before = std::fs::symlink_metadata(path).map_err(|_| invalid_artifact())?;
+    if before.file_type().is_symlink()
+        || !before.is_file()
+        || usize::try_from(before.len()).map_or(true, |length| length > MAX_SOURCE_BYTES)
+    {
+        return Err(invalid_artifact());
+    }
+    let file = std::fs::File::open(path).map_err(|_| invalid_artifact())?;
+    let opened = file.metadata().map_err(|_| invalid_artifact())?;
+    if !opened.is_file() || !same_file(&before, &opened) {
+        return Err(invalid_artifact());
+    }
+    Ok((file, before))
 }
 
 /// Compares stable file identity across reads on Unix.
@@ -237,7 +406,7 @@ fn parse_fat<Fat: object::read::macho::FatArch>(
 /// Validates one thin Mach-O and returns it only for a supported identity.
 fn parse_supported_slice(payload: bytes::Bytes) -> Result<Option<Artifact>, RuntimeError> {
     let bytes = payload.as_ref();
-    if bytes.is_empty() || bytes.len() > MAX_ARTIFACT_BYTES {
+    if !artifact_size_allowed(bytes.len()) {
         return Err(invalid_artifact());
     }
     if FileKind::parse(bytes).map_err(|_| invalid_artifact())? != FileKind::MachO64 {
@@ -269,6 +438,11 @@ fn parse_supported_slice(payload: bytes::Bytes) -> Result<Option<Artifact>, Runt
         sha256: sha256_hex(bytes),
         bytes: payload,
     }))
+}
+
+/// Returns whether one exact thin object fits the public per-part contract.
+const fn artifact_size_allowed(size: usize) -> bool {
+    size > 0 && size <= MAX_ARTIFACT_BYTES
 }
 
 /// Formats one Mach-O UUID in canonical lowercase dashed form.
@@ -313,7 +487,10 @@ const fn invalid_artifact() -> RuntimeError {
 
 #[cfg(test)]
 mod tests {
-    use super::{Artifact, NativeArchitecture};
+    use super::{
+        Artifact, MAX_ARTIFACT_BYTES, NativeArchitecture, artifact_size_allowed, finalize,
+        validate_expected_uuids, zip_expansion_is_unsafe,
+    };
 
     /// Proves multipart replay shares immutable payload storage instead of deep-copying it.
     #[test]
@@ -329,5 +506,63 @@ mod tests {
         let replay = artifact.multipart_payload();
         assert_eq!(artifact.bytes.as_ptr(), replay.as_ptr());
         assert_eq!(artifact.bytes.len(), replay.len());
+    }
+
+    /// Proves per-object size checks without allocating the maximum payload.
+    #[test]
+    fn artifact_size_boundary_is_exact() {
+        assert!(!artifact_size_allowed(0));
+        assert!(artifact_size_allowed(MAX_ARTIFACT_BYTES));
+        assert!(!artifact_size_allowed(MAX_ARTIFACT_BYTES + 1));
+    }
+
+    /// Proves compressed-size policy from synthetic lengths without a ZIP bomb fixture.
+    #[test]
+    fn zip_expansion_boundary_is_bounded() {
+        assert!(!zip_expansion_is_unsafe(1024, 1024 * 100));
+        assert!(zip_expansion_is_unsafe(1, 2 * 1024 * 1024));
+    }
+
+    /// Proves optional release UUID gating is exact and order-independent.
+    #[test]
+    fn expected_uuid_gate_is_optional_and_exact() {
+        let artifacts = vec![fixture_artifact(1), fixture_artifact(2)];
+        assert!(validate_expected_uuids(artifacts.as_slice(), &[]).is_ok());
+        assert!(
+            validate_expected_uuids(
+                artifacts.as_slice(),
+                &[
+                    String::from("00000000-0000-0000-0000-000000000002"),
+                    String::from("00000000-0000-0000-0000-000000000001"),
+                ],
+            )
+            .is_ok()
+        );
+        assert!(
+            validate_expected_uuids(
+                artifacts.as_slice(),
+                &[String::from("00000000-0000-0000-0000-000000000001")],
+            )
+            .is_err()
+        );
+    }
+
+    /// Proves artifact count enforcement without large files.
+    #[test]
+    fn artifact_count_overflow_is_rejected() {
+        let artifacts = (0..51).map(fixture_artifact).collect::<Vec<_>>();
+        assert!(finalize(artifacts).is_err());
+    }
+
+    /// Builds one tiny valid-internal identity for pure policy tests.
+    fn fixture_artifact(index: usize) -> Artifact {
+        Artifact {
+            image_uuid: format!("00000000-0000-0000-0000-{index:012x}"),
+            architecture: NativeArchitecture::Arm64,
+            sha256: String::from(
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            ),
+            bytes: bytes::Bytes::from_static(b"debug"),
+        }
     }
 }

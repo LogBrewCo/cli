@@ -259,6 +259,8 @@ fn parse_native_debug_upload(args: &[String]) -> Result<Command, CliError> {
             release: parsed.release,
             environment: parsed.environment,
             service: parsed.service,
+            expected_image_uuids: parsed.expected_image_uuids,
+            dry_run: parsed.dry_run,
         }),
         json: parsed.json,
     })
@@ -301,8 +303,12 @@ struct NativeDebugScope {
     service: String,
     /// Optional lookup image UUID.
     image_uuid: Option<String>,
+    /// Optional exact image UUID set for upload gating.
+    expected_image_uuids: Vec<String>,
     /// Optional lookup architecture.
     architecture: Option<String>,
+    /// Local-only artifact validation.
+    dry_run: bool,
     /// Machine-readable output selection.
     json: bool,
 }
@@ -314,7 +320,9 @@ fn parse_native_debug_scope(args: &[String], lookup: bool) -> Result<NativeDebug
     let mut environment = None;
     let mut service = None;
     let mut image_uuid = None;
+    let mut expected_image_uuids = Vec::new();
     let mut architecture = None;
+    let mut dry_run = false;
     let mut json = false;
     let mut index = 0;
     while let Some(flag) = args.get(index) {
@@ -324,6 +332,29 @@ fn parse_native_debug_scope(args: &[String], lookup: bool) -> Result<NativeDebug
             }
             json = true;
             index += 1;
+            continue;
+        }
+        if flag == "--dry-run" && !lookup {
+            if dry_run {
+                return Err(CliError::InvalidNativeDebugCommand);
+            }
+            dry_run = true;
+            index += 1;
+            continue;
+        }
+        if flag == "--expect-image-uuid" && !lookup {
+            let value = args
+                .get(index + 1)
+                .filter(|value| is_canonical_lower_uuid(value))
+                .ok_or(CliError::InvalidNativeDebugIdentity)?;
+            if expected_image_uuids
+                .iter()
+                .any(|existing| existing == value)
+            {
+                return Err(CliError::InvalidNativeDebugIdentity);
+            }
+            expected_image_uuids.push(value.clone());
+            index += 2;
             continue;
         }
         let destination = match flag.as_str() {
@@ -355,13 +386,19 @@ fn parse_native_debug_scope(args: &[String], lookup: bool) -> Result<NativeDebug
     if lookup != (image_uuid.is_some() && architecture.is_some()) {
         return Err(CliError::InvalidNativeDebugCommand);
     }
+    if lookup && (!expected_image_uuids.is_empty() || dry_run) {
+        return Err(CliError::InvalidNativeDebugCommand);
+    }
+    expected_image_uuids.sort();
     Ok(NativeDebugScope {
         project_id,
         release,
         environment,
         service,
         image_uuid,
+        expected_image_uuids,
         architecture,
+        dry_run,
         json,
     })
 }

@@ -34,7 +34,10 @@ mod usage;
 #[doc(hidden)]
 pub mod version;
 
-use auth::{AuthCredential, execute_login, execute_logout, send_authenticated_with_refresh};
+use auth::{
+    AuthCredential, execute_login, execute_logout, send_authenticated_with_refresh,
+    token_is_project_ingest_key,
+};
 pub use error::{CliError, RuntimeError, write_cli_error, write_runtime_error};
 use futures_util::StreamExt as _;
 pub use parser::parse_command;
@@ -526,7 +529,7 @@ pub struct NativeDebugLookupOptions {
 /// Apple native debug-artifact upload options.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NativeDebugUploadOptions {
-    /// User-selected dSYM bundle or Mach-O debug object.
+    /// User-selected dSYM bundle, ZIP archive, or Mach-O debug object.
     pub path: String,
     /// Account-owned project UUID.
     pub project_id: String,
@@ -536,6 +539,10 @@ pub struct NativeDebugUploadOptions {
     pub environment: String,
     /// Exact service identifier.
     pub service: String,
+    /// Optional exact canonical image UUID gate for release automation.
+    pub expected_image_uuids: Vec<String>,
+    /// Validate locally without authentication or network mutation.
+    pub dry_run: bool,
 }
 
 /// Support-ticket operation.
@@ -947,11 +954,6 @@ fn setup_seen_source(options: &ProjectSetupSeenOptions, token: Option<&str>) -> 
         return None;
     }
     Some(options.source.as_deref().unwrap_or("cli").to_owned())
-}
-
-/// Returns whether a token has the public project-scoped ingest key prefix.
-fn token_is_project_ingest_key(token: Option<&str>) -> bool {
-    token.is_some_and(|token| token.trim_start().starts_with("lbw_ingest_"))
 }
 
 /// Executes a parsed command.
