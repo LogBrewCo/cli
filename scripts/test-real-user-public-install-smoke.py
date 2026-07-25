@@ -24,8 +24,8 @@ from unittest import mock
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 VERIFIER = ROOT / "scripts" / "real_user_public_install_smoke.py"
-VERSION = "0.1.20"
-EXPECTED_RELEASE_VERSION = "0.1.20"
+VERSION = "0.1.21"
+EXPECTED_RELEASE_VERSION = "0.1.21"
 sys.dont_write_bytecode = True
 
 
@@ -173,7 +173,7 @@ def write_fake_installer_command(path: pathlib.Path, kind: str) -> None:
                 install(os.environ["FAKE_BREW_PREFIX"])
                 raise SystemExit(0)
             if args[:2] == ["list", "--versions"] and len(args) == 3:
-                print("logbrew 0.1.20")
+                print("logbrew 0.1.21")
                 raise SystemExit(0)
             if len(args) == 2 and args[0] == "--prefix":
                 print(os.environ["FAKE_BREW_PREFIX"])
@@ -265,12 +265,12 @@ class PublicInstallVerifierTests(unittest.TestCase):
             create_tar(
                 artifact,
                 {
-                    "logbrew-cli-0.1.20/Cargo.toml": (
-                        b'[package]\nname = "logbrew-cli"\nversion = "0.1.20"\n',
+                    "logbrew-cli-0.1.21/Cargo.toml": (
+                        b'[package]\nname = "logbrew-cli"\nversion = "0.1.21"\n',
                         0o644,
                     ),
-                    "logbrew-cli-0.1.20/Cargo.lock": (b"# fixture\n", 0o644),
-                    "logbrew-cli-0.1.20/src/main.rs": (b"fn main() {}\n", 0o644),
+                    "logbrew-cli-0.1.21/Cargo.lock": (b"# fixture\n", 0o644),
+                    "logbrew-cli-0.1.21/src/main.rs": (b"fn main() {}\n", 0o644),
                 },
             )
             return "crates:logbrew-cli", artifact
@@ -280,7 +280,7 @@ class PublicInstallVerifierTests(unittest.TestCase):
                 textwrap.dedent(
                     '''
                     class Logbrew < Formula
-                      version "0.1.20"
+                      version "0.1.21"
                       BINARY_ALIASES = {
                         "aarch64-apple-darwin": {}
                       }
@@ -330,7 +330,7 @@ class PublicInstallVerifierTests(unittest.TestCase):
             artifact = artifact.with_suffix(".tar.gz")
             create_tar(
                 artifact,
-                {"logbrew-0.1.20/logbrew": (cli_source(VERSION).encode(), 0o755)},
+                {"logbrew-0.1.21/logbrew": (cli_source(VERSION).encode(), 0o755)},
             )
             return "native:linux-x64", artifact
         if mode == "npm":
@@ -339,7 +339,7 @@ class PublicInstallVerifierTests(unittest.TestCase):
                 artifact,
                 {
                     "package/package.json": (
-                        b'{"name":"logbrew-cli","version":"0.1.20",'
+                        b'{"name":"logbrew-cli","version":"0.1.21",'
                         b'"bin":{"logbrew":"run-logbrew.js"}}\n',
                         0o644,
                     ),
