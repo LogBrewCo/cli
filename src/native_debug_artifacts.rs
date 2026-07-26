@@ -13,18 +13,20 @@ use wire::{LookupResult, UploadReceipt};
 
 /// Connection establishment timeout shared by upload and lookup.
 const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
-/// Bounded upload window for the maximum public multipart size on slower uplinks.
-const UPLOAD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30 * 60);
+/// Bounded compatibility upload window; resumable upload is the primary large-file path.
+const UPLOAD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 /// Bounded resumable start request window.
-const START_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+const START_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
 /// Bounded 4 MiB chunk request window.
-const CHUNK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2 * 60);
+const CHUNK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 /// Bounded completion request window.
-const COMPLETE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+const COMPLETE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
 /// Bounded exact lookup window.
-const LOOKUP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
-/// Maximum same-phase attempts for small resumable requests.
-const MAX_PHASE_ATTEMPTS: usize = 3;
+const LOOKUP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+/// Overall network deadline for one upload invocation.
+const OVERALL_UPLOAD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+/// Maximum same-phase attempts: one request plus one explicit idempotent retry.
+const MAX_PHASE_ATTEMPTS: usize = 2;
 
 /// Executes one bounded native debug-artifact operation.
 #[expect(
@@ -66,7 +68,11 @@ pub(super) async fn execute<W: std::io::Write>(
                 options,
                 artifacts: artifacts.as_slice(),
             };
-            execute_upload(&context, json, output).await
+            with_upload_deadline(
+                OVERALL_UPLOAD_TIMEOUT,
+                execute_upload(&context, json, output),
+            )
+            .await
         }
         NativeDebugArtifactsTarget::Lookup(options) => {
             let url = wire::native_artifact_url(env.base_url.as_str())?;
@@ -107,16 +113,27 @@ async fn execute_upload<W: std::io::Write>(
     json: bool,
     output: &mut W,
 ) -> Result<(), RuntimeError> {
+    if !json {
+        write_progress(output, "Checking native debug artifact availability.")?;
+    }
     if verify_present(context, None).await? {
         return write_already_present(output, context.artifacts, json);
     }
 
+    if !json {
+        write_progress(output, "Starting resumable native debug artifact upload.")?;
+    }
     let prepared = resumable::prepare(context.options, context.artifacts)?;
     match start_resumable(context, &prepared).await? {
         resumable::StartOutcome::Session(session) => {
             execute_resumable(context, &prepared, &session, json, output).await
         }
-        resumable::StartOutcome::Unsupported => execute_one_shot(context, json, output).await,
+        resumable::StartOutcome::Unsupported => {
+            if !json {
+                write_progress(output, "Using bounded compatibility upload.")?;
+            }
+            execute_one_shot(context, json, output).await
+        }
     }
 }
 
@@ -159,6 +176,17 @@ async fn execute_resumable<W: std::io::Write>(
         let chunk = prepared
             .chunk(digest.as_str())
             .ok_or(RuntimeError::NativeDebugResponseInvalid)?;
+        if !json {
+            write_progress(
+                output,
+                format!(
+                    "Uploading chunk {}/{}.",
+                    index + 1,
+                    session.missing_chunks.len()
+                )
+                .as_str(),
+            )?;
+        }
         put_chunk_with_retry(context, session, chunk).await?;
         if !json {
             writeln!(
@@ -168,6 +196,9 @@ async fn execute_resumable<W: std::io::Write>(
                 session.missing_chunks.len()
             )?;
         }
+    }
+    if !json {
+        write_progress(output, "Completing native debug artifact upload.")?;
     }
     let completed = complete_with_recovery(context, session).await?;
     if !completed.lookup_verified
@@ -386,7 +417,7 @@ fn lookup_options(
     }
 }
 
-/// Restricts automatic retries to transport ambiguity, rate limiting, and server failures.
+/// Restricts one-shot ambiguity recovery to transport and retryable server failures.
 const fn upload_error_is_retryable(error: &RuntimeError) -> bool {
     match error {
         RuntimeError::Unavailable { .. } => true,
@@ -415,10 +446,32 @@ fn retry_delay(attempt: usize, retry_after: Option<std::time::Duration>) -> std:
 fn build_client(timeout: std::time::Duration) -> Result<reqwest::Client, RuntimeError> {
     reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
+        .retry(reqwest::retry::never())
         .timeout(timeout)
         .connect_timeout(CONNECT_TIMEOUT)
         .build()
         .map_err(|_| transport_error())
+}
+
+/// Applies one fixed end-to-end deadline without changing the operation's error.
+async fn with_upload_deadline<F, T>(
+    timeout: std::time::Duration,
+    operation: F,
+) -> Result<T, RuntimeError>
+where
+    F: Future<Output = Result<T, RuntimeError>>,
+{
+    tokio::time::timeout(timeout, operation)
+        .await
+        .unwrap_or_else(|_| Err(overall_timeout_error()))
+}
+
+/// Returns fixed recovery for an upload that exceeded its invocation budget.
+const fn overall_timeout_error() -> RuntimeError {
+    RuntimeError::Unavailable {
+        message: "native debug-artifact upload exceeded its overall time limit",
+        next: "rerun the same command; resumable upload will request only missing chunks",
+    }
 }
 
 /// Returns a fixed URL-free transport error.
@@ -427,6 +480,13 @@ const fn transport_error() -> RuntimeError {
         message: "native debug-artifact request could not be completed",
         next: "check network connectivity and retry the native debug-artifact command",
     }
+}
+
+/// Writes and flushes one fixed human-only phase before a network wait.
+fn write_progress<W: std::io::Write>(output: &mut W, message: &str) -> Result<(), RuntimeError> {
+    writeln!(output, "{message}")?;
+    output.flush()?;
+    Ok(())
 }
 
 /// Writes local-only validation output without request scope or file identity.
@@ -633,21 +693,40 @@ fn write_lookup<W: std::io::Write>(
 #[cfg(test)]
 mod tests {
     use super::{
-        CHUNK_TIMEOUT, COMPLETE_TIMEOUT, CONNECT_TIMEOUT, LOOKUP_TIMEOUT, START_TIMEOUT,
-        UPLOAD_TIMEOUT, build_client,
+        CHUNK_TIMEOUT, COMPLETE_TIMEOUT, CONNECT_TIMEOUT, LOOKUP_TIMEOUT, OVERALL_UPLOAD_TIMEOUT,
+        START_TIMEOUT, UPLOAD_TIMEOUT, build_client, with_upload_deadline,
     };
 
     /// Proves fixed bounded timeout selection without a slow network request.
     #[test]
     fn clients_use_separate_bounded_operation_windows() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(CONNECT_TIMEOUT, std::time::Duration::from_secs(10));
-        assert_eq!(START_TIMEOUT, std::time::Duration::from_secs(30));
-        assert_eq!(CHUNK_TIMEOUT, std::time::Duration::from_secs(2 * 60));
-        assert_eq!(COMPLETE_TIMEOUT, std::time::Duration::from_secs(30));
-        assert_eq!(LOOKUP_TIMEOUT, std::time::Duration::from_secs(30));
-        assert_eq!(UPLOAD_TIMEOUT, std::time::Duration::from_secs(30 * 60));
+        assert_eq!(START_TIMEOUT, std::time::Duration::from_secs(15));
+        assert_eq!(CHUNK_TIMEOUT, std::time::Duration::from_secs(60));
+        assert_eq!(COMPLETE_TIMEOUT, std::time::Duration::from_secs(15));
+        assert_eq!(LOOKUP_TIMEOUT, std::time::Duration::from_secs(15));
+        assert_eq!(UPLOAD_TIMEOUT, std::time::Duration::from_secs(60));
+        assert_eq!(OVERALL_UPLOAD_TIMEOUT, std::time::Duration::from_secs(120));
         let _upload = build_client(UPLOAD_TIMEOUT)?;
         let _lookup = build_client(LOOKUP_TIMEOUT)?;
         Ok(())
+    }
+
+    /// Proves the overall deadline returns fixed recovery without a long-running request.
+    #[tokio::test]
+    async fn overall_deadline_is_value_safe() {
+        let error = with_upload_deadline(
+            std::time::Duration::from_millis(1),
+            std::future::pending::<Result<(), crate::RuntimeError>>(),
+        )
+        .await
+        .expect_err("pending upload must hit the supplied test deadline");
+        assert!(matches!(
+            error,
+            crate::RuntimeError::Unavailable {
+                message: "native debug-artifact upload exceeded its overall time limit",
+                next: "rerun the same command; resumable upload will request only missing chunks",
+            }
+        ));
     }
 }

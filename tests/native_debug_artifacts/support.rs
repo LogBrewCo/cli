@@ -1,7 +1,7 @@
 //! Shared native debug-artifact integration fixtures.
 
 use std::ffi::OsString;
-use std::process::Output;
+use std::process::{Command, Output};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use wiremock::matchers::{method, path};
@@ -53,22 +53,29 @@ where
     I: IntoIterator<Item = S>,
     S: Into<OsString>,
 {
-    let binary = OsString::from(env!("CARGO_BIN_EXE_logbrew"));
-    let home = fixture.home.clone();
-    let base_url = base_url.to_owned();
-    let token = token.to_owned();
-    let args = args.into_iter().map(Into::into).collect::<Vec<_>>();
-    let output = tokio::task::spawn_blocking(move || {
-        std::process::Command::new(binary)
-            .args(args)
-            .env_clear()
-            .env("HOME", home)
-            .env("LOGBREW_API_URL", base_url)
-            .env("LOGBREW_TOKEN", token)
-            .output()
-    })
-    .await??;
+    let mut command = command_with_token(fixture, base_url, args, token);
+    let output = tokio::task::spawn_blocking(move || command.output()).await??;
     Ok(output)
+}
+
+pub(crate) fn command_with_token<I, S>(
+    fixture: &Fixture,
+    base_url: &str,
+    args: I,
+    token: &str,
+) -> Command
+where
+    I: IntoIterator<Item = S>,
+    S: Into<OsString>,
+{
+    let mut command = Command::new(env!("CARGO_BIN_EXE_logbrew"));
+    let _command = command
+        .args(args.into_iter().map(Into::into))
+        .env_clear()
+        .env("HOME", fixture.home.as_path())
+        .env("LOGBREW_API_URL", base_url)
+        .env("LOGBREW_TOKEN", token);
+    command
 }
 
 pub(crate) fn upload_success_body(artifact_count: usize) -> serde_json::Value {
