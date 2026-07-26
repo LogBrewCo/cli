@@ -262,7 +262,9 @@ pub(crate) fn assert_exact_lookup_query(request: &Request) {
 pub(crate) fn upload_request(requests: &[Request]) -> Result<&Request, Box<dyn std::error::Error>> {
     requests
         .iter()
-        .find(|request| request.method.as_str() == "POST")
+        .find(|request| {
+            request.method.as_str() == "POST" && request.url.path() == "/api/native-debug-artifacts"
+        })
         .ok_or_else(|| "missing upload request".into())
 }
 

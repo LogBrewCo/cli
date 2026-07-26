@@ -16,6 +16,8 @@ const MAX_ARTIFACTS: usize = 50;
 pub(super) const MAX_ARTIFACT_BYTES: usize = 50 * 1024 * 1024;
 /// Maximum bytes accepted for one source file before slice extraction.
 const MAX_SOURCE_BYTES: usize = 128 * 1024 * 1024;
+/// Fixed public resumable upload chunk size.
+pub(super) const RESUMABLE_CHUNK_BYTES: usize = 4 * 1024 * 1024;
 /// Maximum central-directory entries inspected in one bounded ZIP.
 const MAX_ZIP_ENTRIES: usize = 2_000;
 /// Maximum expansion ratio after a small fixed allowance.
@@ -57,6 +59,21 @@ pub(super) struct Artifact {
     pub(super) bytes: bytes::Bytes,
 }
 
+/// One immutable resumable chunk derived from validated artifact bytes.
+pub(super) struct ArtifactChunk {
+    /// Lowercase SHA-256 of the exact chunk bytes.
+    pub(super) sha256: String,
+    /// Cheap immutable slice of the parent artifact bytes.
+    pub(super) bytes: bytes::Bytes,
+}
+
+impl ArtifactChunk {
+    /// Returns the exact chunk byte count.
+    pub(super) fn byte_size(&self) -> u64 {
+        u64::try_from(self.bytes.len()).unwrap_or(u64::MAX)
+    }
+}
+
 impl Artifact {
     /// Returns the exact uploaded byte count.
     pub(super) fn byte_size(&self) -> u64 {
@@ -66,6 +83,23 @@ impl Artifact {
     /// Returns a cheap immutable handle for multipart construction or auth replay.
     pub(super) fn multipart_payload(&self) -> bytes::Bytes {
         self.bytes.clone()
+    }
+
+    /// Splits validated bytes into fixed ordered SHA-256 chunks without copying payload data.
+    pub(super) fn resumable_chunks(&self) -> Vec<ArtifactChunk> {
+        (0..self.bytes.len())
+            .step_by(RESUMABLE_CHUNK_BYTES)
+            .map(|start| {
+                let end = start
+                    .saturating_add(RESUMABLE_CHUNK_BYTES)
+                    .min(self.bytes.len());
+                let bytes = self.bytes.slice(start..end);
+                ArtifactChunk {
+                    sha256: sha256_hex(bytes.as_ref()),
+                    bytes,
+                }
+            })
+            .collect()
     }
 }
 
@@ -488,8 +522,9 @@ const fn invalid_artifact() -> RuntimeError {
 #[cfg(test)]
 mod tests {
     use super::{
-        Artifact, MAX_ARTIFACT_BYTES, NativeArchitecture, artifact_size_allowed, finalize,
-        validate_expected_uuids, zip_expansion_is_unsafe,
+        Artifact, MAX_ARTIFACT_BYTES, NativeArchitecture, RESUMABLE_CHUNK_BYTES,
+        artifact_size_allowed, finalize, sha256_hex, validate_expected_uuids,
+        zip_expansion_is_unsafe,
     };
 
     /// Proves multipart replay shares immutable payload storage instead of deep-copying it.
@@ -506,6 +541,27 @@ mod tests {
         let replay = artifact.multipart_payload();
         assert_eq!(artifact.bytes.as_ptr(), replay.as_ptr());
         assert_eq!(artifact.bytes.len(), replay.len());
+    }
+
+    /// Proves fixed chunk boundaries and cheap immutable slices without a large fixture.
+    #[test]
+    fn resumable_chunks_are_ordered_and_share_backing_storage() {
+        let bytes = bytes::Bytes::from(vec![0x5a; RESUMABLE_CHUNK_BYTES + 7]);
+        let artifact = Artifact {
+            image_uuid: String::from("10111213-1415-1617-1819-1a1b1c1d1e1f"),
+            architecture: NativeArchitecture::Arm64,
+            sha256: sha256_hex(bytes.as_ref()),
+            bytes,
+        };
+        let chunks = artifact.resumable_chunks();
+        assert_eq!(chunks.len(), 2);
+        assert_eq!(chunks[0].bytes.len(), RESUMABLE_CHUNK_BYTES);
+        assert_eq!(chunks[1].bytes.len(), 7);
+        assert_eq!(chunks[0].bytes.as_ptr(), artifact.bytes.as_ptr());
+        assert_eq!(
+            chunks[1].bytes.as_ptr(),
+            artifact.bytes[RESUMABLE_CHUNK_BYTES..].as_ptr()
+        );
     }
 
     /// Proves per-object size checks without allocating the maximum payload.

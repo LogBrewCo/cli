@@ -2,10 +2,13 @@
 
 #[path = "native_debug_artifacts/archive_support.rs"]
 mod archive_support;
+#[path = "native_debug_artifacts/resumable_support.rs"]
+mod resumable_support;
 #[path = "native_debug_artifacts/support.rs"]
 mod support;
 
 use archive_support::*;
+use resumable_support::*;
 use std::ffi::OsString;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -15,7 +18,6 @@ use wiremock::{Mock, MockServer, Request, ResponseTemplate};
 
 const UPPERCASE_DWARFDUMP_UUID: &str = "10111213-1415-1617-1819-1A1B1C1D1E1F";
 const MIXED_CASE_DWARFDUMP_UUID: &str = "10111213-1415-1617-1819-1a1B1c1D1e1F";
-
 #[tokio::test]
 async fn dsym_dry_run_discovers_identity_without_auth_or_network()
 -> Result<(), Box<dyn std::error::Error>> {
@@ -88,9 +90,9 @@ async fn dsym_upload_normalizes_uppercase_dwarfdump_uuid_in_every_request()
     assert!(!text.contains(UPPERCASE_DWARFDUMP_UUID));
 
     let requests = received_requests(&server).await?;
-    assert_eq!(requests.len(), 3);
+    assert_eq!(requests.len(), 4);
     assert_exact_lookup_query(&requests[0]);
-    assert_exact_lookup_query(&requests[2]);
+    assert_exact_lookup_query(&requests[3]);
     let parts = multipart_parts(upload_request(requests.as_slice())?)?;
     let manifest = serde_json::from_slice::<serde_json::Value>(parts[0].body.as_slice())?;
     assert_eq!(manifest["artifacts"][0]["imageUuid"], ARM64_UUID);
@@ -120,6 +122,410 @@ async fn dsym_dry_run_normalizes_mixed_case_expected_uuid() -> Result<(), Box<dy
     assert!(!text.contains(MIXED_CASE_DWARFDUMP_UUID));
     assert_private_values_absent(text.as_str(), &fixture, server.uri().as_str());
     assert!(received_requests(&server).await?.is_empty());
+    Ok(())
+}
+
+#[tokio::test]
+async fn resumable_upload_sends_only_missing_chunks_then_completes_and_verifies()
+-> Result<(), Box<dyn std::error::Error>> {
+    let server = MockServer::start().await;
+    let fixture = Fixture::new("resumable-success")?;
+    let mut object = macho64(0x0100_000c, uuid_bytes(0x10));
+    object.resize(RESUMABLE_CHUNK_SIZE + 257, 0x5a);
+    let object_digest = sha256_hex(object.as_slice());
+    let first_digest = sha256_hex(&object[..RESUMABLE_CHUNK_SIZE]);
+    let final_digest = sha256_hex(&object[RESUMABLE_CHUNK_SIZE..]);
+    let artifact = fixture.root.join("Customer Secret Resumable Symbols");
+    std::fs::write(artifact.as_path(), object.as_slice())?;
+
+    mount_lookup_sequence(
+        &server,
+        vec![
+            missing_lookup(),
+            found_lookup(object_digest.as_str(), object.len()),
+        ],
+    )
+    .await;
+    Mock::given(method("POST"))
+        .and(path("/api/native-debug-artifact-uploads"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(start_response(&[&final_digest])))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("PUT"))
+        .and(path(format!(
+            "/api/native-debug-artifact-uploads/{RESUMABLE_SESSION_ID}/chunks/{final_digest}"
+        )))
+        .respond_with(ResponseTemplate::new(200).set_body_json(chunk_response(&final_digest)))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path(format!(
+            "/api/native-debug-artifact-uploads/{RESUMABLE_SESSION_ID}/complete"
+        )))
+        .respond_with(ResponseTemplate::new(200).set_body_json(upload_success_body(1)))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let output = invoke(
+        &fixture,
+        server.uri().as_str(),
+        upload_args(artifact.as_os_str()),
+    )
+    .await?;
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let text = String::from_utf8(output.stdout)?;
+    assert_eq!(text.lines().count(), 1);
+    let body = serde_json::from_str::<serde_json::Value>(text.as_str())?;
+    assert_eq!(body["ok"], true);
+    assert_eq!(body["status"], "verified");
+    assert_eq!(body["upload_id"], UPLOAD_ID);
+    assert_private_values_absent(text.as_str(), &fixture, server.uri().as_str());
+
+    let requests = received_requests(&server).await?;
+    assert_eq!(requests.len(), 5);
+    assert_eq!(
+        requests
+            .iter()
+            .map(|request| request.method.as_str())
+            .collect::<Vec<_>>(),
+        ["GET", "POST", "PUT", "POST", "GET"]
+    );
+    assert_eq!(requests[0].url.path(), "/api/native-debug-artifacts");
+    assert_eq!(requests[1].url.path(), "/api/native-debug-artifact-uploads");
+    assert_eq!(
+        requests[2].url.path(),
+        format!("/api/native-debug-artifact-uploads/{RESUMABLE_SESSION_ID}/chunks/{final_digest}")
+    );
+    assert_eq!(
+        requests[3].url.path(),
+        format!("/api/native-debug-artifact-uploads/{RESUMABLE_SESSION_ID}/complete")
+    );
+    assert_eq!(requests[4].url.path(), "/api/native-debug-artifacts");
+
+    let start = &requests[1];
+    assert_eq!(header_value(start, "content-type")?, "application/json");
+    let manifest = serde_json::from_slice::<serde_json::Value>(start.body.as_slice())?;
+    assert_eq!(
+        manifest,
+        serde_json::json!({
+            "projectId": PROJECT_ID,
+            "release": "checkout@1.2.3",
+            "environment": "production",
+            "service": "checkout-api",
+            "artifactType": "apple_dsym_manifest",
+            "validation": {"status": "ready"},
+            "artifacts": [{
+                "imageUuid": ARM64_UUID,
+                "architecture": "arm64",
+                "debugFile": {
+                    "artifactSha256": object_digest,
+                    "byteSize": object.len()
+                },
+                "chunks": [
+                    {"sha256": first_digest, "byteSize": RESUMABLE_CHUNK_SIZE},
+                    {"sha256": final_digest, "byteSize": 257}
+                ]
+            }]
+        })
+    );
+    assert_eq!(
+        header_value(&requests[2], "content-type")?,
+        "application/octet-stream"
+    );
+    assert_eq!(requests[2].body, object[RESUMABLE_CHUNK_SIZE..]);
+    assert!(requests[3].body.is_empty());
+    assert!(requests.iter().all(
+        |request| request.url.path() != "/api/native-debug-artifacts"
+            || request.method.as_str() == "GET"
+    ));
+    Ok(())
+}
+
+#[tokio::test]
+async fn resumable_retry_replays_only_the_ambiguous_chunk() -> Result<(), Box<dyn std::error::Error>>
+{
+    let server = MockServer::start().await;
+    let (fixture, artifact, object) = artifact("chunk-retry", 257)?;
+    let object_digest = sha256_hex(object.as_slice());
+    mount_lookup_sequence(
+        &server,
+        vec![
+            missing_lookup(),
+            found_lookup(object_digest.as_str(), object.len()),
+        ],
+    )
+    .await;
+    Mock::given(method("POST"))
+        .and(path("/api/native-debug-artifact-uploads"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(start_response(&[&object_digest])))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let attempt = Arc::new(AtomicUsize::new(0));
+    let response_attempt = Arc::clone(&attempt);
+    let response_digest = object_digest.clone();
+    Mock::given(method("PUT"))
+        .and(path(format!(
+            "/api/native-debug-artifact-uploads/{RESUMABLE_SESSION_ID}/chunks/{object_digest}"
+        )))
+        .respond_with(move |_request: &Request| {
+            if response_attempt.fetch_add(1, Ordering::SeqCst) == 0 {
+                ResponseTemplate::new(503).set_body_string("hostile transient text")
+            } else {
+                ResponseTemplate::new(200).set_body_json(chunk_response(response_digest.as_str()))
+            }
+        })
+        .expect(2)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path(format!(
+            "/api/native-debug-artifact-uploads/{RESUMABLE_SESSION_ID}/complete"
+        )))
+        .respond_with(ResponseTemplate::new(200).set_body_json(upload_success_body(1)))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let output = invoke(
+        &fixture,
+        server.uri().as_str(),
+        upload_args(artifact.as_os_str()),
+    )
+    .await?;
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let text = String::from_utf8(output.stdout)?;
+    assert!(!text.contains("hostile transient text"));
+    let requests = received_requests(&server).await?;
+    assert_eq!(
+        requests
+            .iter()
+            .map(|request| request.method.as_str())
+            .collect::<Vec<_>>(),
+        ["GET", "POST", "PUT", "PUT", "POST", "GET"]
+    );
+    assert_eq!(requests[2].body, object);
+    assert_eq!(requests[3].body, requests[2].body);
+    assert_eq!(attempt.load(Ordering::SeqCst), 2);
+    Ok(())
+}
+
+#[tokio::test]
+async fn resumable_fallback_is_initial_only_and_requires_exact_capability_absence()
+-> Result<(), Box<dyn std::error::Error>> {
+    let server = MockServer::start().await;
+    let (fixture, artifact, object) = artifact("fallback-method", 257)?;
+    let digest = sha256_hex(object.as_slice());
+    mount_lookup_sequence(
+        &server,
+        vec![
+            missing_lookup(),
+            found_lookup(digest.as_str(), object.len()),
+        ],
+    )
+    .await;
+    Mock::given(method("POST"))
+        .and(path("/api/native-debug-artifact-uploads"))
+        .respond_with(ResponseTemplate::new(405).set_body_json(error_envelope(
+            "method_not_allowed",
+            START_METHOD_NEXT,
+            "use_supported_method",
+            "api_method",
+        )))
+        .expect(1)
+        .mount(&server)
+        .await;
+    mount_upload_success(&server, 1).await;
+
+    let output = invoke(
+        &fixture,
+        server.uri().as_str(),
+        upload_args(artifact.as_os_str()),
+    )
+    .await?;
+    assert!(output.status.success());
+    let requests = received_requests(&server).await?;
+    assert_eq!(
+        requests
+            .iter()
+            .map(|request| (request.method.as_str(), request.url.path()))
+            .collect::<Vec<_>>(),
+        [
+            ("GET", "/api/native-debug-artifacts"),
+            ("POST", "/api/native-debug-artifact-uploads"),
+            ("POST", "/api/native-debug-artifacts"),
+            ("GET", "/api/native-debug-artifacts"),
+        ]
+    );
+
+    let server = MockServer::start().await;
+    mount_lookup(&server, missing_lookup()).await;
+    Mock::given(method("POST"))
+        .and(path("/api/native-debug-artifact-uploads"))
+        .respond_with(ResponseTemplate::new(405).set_body_json(error_envelope(
+            "method_not_allowed",
+            "use another upload method",
+            "use_supported_method",
+            "api_method",
+        )))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let output = invoke(
+        &fixture,
+        server.uri().as_str(),
+        upload_args(artifact.as_os_str()),
+    )
+    .await?;
+    let (text, body) = json_failure(&output)?;
+    assert_eq!(body["error"], "native_debug_response_invalid");
+    assert_private_values_absent(text.as_str(), &fixture, server.uri().as_str());
+    assert_eq!(received_requests(&server).await?.len(), 2);
+
+    let server = MockServer::start().await;
+    mount_lookup(&server, missing_lookup()).await;
+    Mock::given(method("POST"))
+        .and(path("/api/native-debug-artifact-uploads"))
+        .respond_with(ResponseTemplate::new(404).set_body_json(error_envelope(
+            "not_found",
+            "check the project scope",
+            "check_resource",
+            "resource",
+        )))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let output = invoke(
+        &fixture,
+        server.uri().as_str(),
+        upload_args(artifact.as_os_str()),
+    )
+    .await?;
+    let (text, body) = json_failure(&output)?;
+    assert_eq!(body["error"], "not_found");
+    assert_private_values_absent(text.as_str(), &fixture, server.uri().as_str());
+    assert_eq!(received_requests(&server).await?.len(), 2);
+    Ok(())
+}
+
+#[tokio::test]
+async fn ambiguous_completion_recovers_through_exact_lookup_without_file_replay()
+-> Result<(), Box<dyn std::error::Error>> {
+    let server = MockServer::start().await;
+    let (fixture, artifact, object) = artifact("complete-recovery", 257)?;
+    let digest = sha256_hex(object.as_slice());
+    mount_lookup_sequence(
+        &server,
+        vec![
+            missing_lookup(),
+            found_lookup(digest.as_str(), object.len()),
+        ],
+    )
+    .await;
+    Mock::given(method("POST"))
+        .and(path("/api/native-debug-artifact-uploads"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(start_response(&[&digest])))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("PUT"))
+        .and(path(format!(
+            "/api/native-debug-artifact-uploads/{RESUMABLE_SESSION_ID}/chunks/{digest}"
+        )))
+        .respond_with(ResponseTemplate::new(200).set_body_json(chunk_response(&digest)))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path(format!(
+            "/api/native-debug-artifact-uploads/{RESUMABLE_SESSION_ID}/complete"
+        )))
+        .respond_with(ResponseTemplate::new(503).set_body_string("hostile completion text"))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let output = invoke(
+        &fixture,
+        server.uri().as_str(),
+        upload_args(artifact.as_os_str()),
+    )
+    .await?;
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let text = String::from_utf8(output.stdout)?;
+    let body = serde_json::from_str::<serde_json::Value>(text.as_str())?;
+    assert_eq!(body["status"], "verified");
+    assert_eq!(body["upload_id"], UPLOAD_ID);
+    assert!(!text.contains("hostile completion text"));
+    let requests = received_requests(&server).await?;
+    assert_eq!(
+        requests
+            .iter()
+            .map(|request| request.method.as_str())
+            .collect::<Vec<_>>(),
+        ["GET", "POST", "PUT", "POST", "GET"]
+    );
+    assert!(requests.iter().all(
+        |request| request.url.path() != "/api/native-debug-artifacts"
+            || request.method.as_str() == "GET"
+    ));
+    Ok(())
+}
+
+#[tokio::test]
+async fn non_pending_completion_422_preserves_missing_chunk_recovery()
+-> Result<(), Box<dyn std::error::Error>> {
+    const MISSING_CHUNK_NEXT: &str =
+        "retry only the missing native debug artifact chunk with its exact digest";
+    let server = MockServer::start().await;
+    let (fixture, artifact, object) = artifact("complete-missing-chunk", 257)?;
+    let digest = sha256_hex(object.as_slice());
+    mount_lookup(&server, missing_lookup()).await;
+    Mock::given(method("POST"))
+        .and(path("/api/native-debug-artifact-uploads"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(start_response(&[&digest])))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("PUT"))
+        .and(path(format!(
+            "/api/native-debug-artifact-uploads/{RESUMABLE_SESSION_ID}/chunks/{digest}"
+        )))
+        .respond_with(ResponseTemplate::new(200).set_body_json(chunk_response(&digest)))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path(format!(
+            "/api/native-debug-artifact-uploads/{RESUMABLE_SESSION_ID}/complete"
+        )))
+        .respond_with(ResponseTemplate::new(422).set_body_json(error_envelope(
+            "validation_failed",
+            MISSING_CHUNK_NEXT,
+            "upload_native_debug_artifact_chunks",
+            "native_debug_artifact_upload",
+        )))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let output = invoke(
+        &fixture,
+        server.uri().as_str(),
+        upload_args(artifact.as_os_str()),
+    )
+    .await?;
+    let (text, body) = json_failure(&output)?;
+    assert_eq!(body["error"], "validation_failed");
+    assert_eq!(body["next"], MISSING_CHUNK_NEXT);
+    assert!(!text.contains("wait briefly"));
+    assert_private_values_absent(text.as_str(), &fixture, server.uri().as_str());
     Ok(())
 }
 
@@ -380,7 +786,7 @@ async fn validation_error_uses_fixed_release_tooling_recovery_without_body()
     );
     assert!(!text.contains("hostile backend text"));
     assert_private_values_absent(text.as_str(), &fixture, server.uri().as_str());
-    assert_eq!(received_requests(&server).await?.len(), 2);
+    assert_eq!(received_requests(&server).await?.len(), 3);
     Ok(())
 }
 
@@ -418,7 +824,7 @@ async fn payload_too_large_uses_one_safe_json_failure_on_stdout()
     );
     assert!(!text.contains("hostile edge response text"));
     assert_private_values_absent(text.as_str(), &fixture, server.uri().as_str());
-    assert_eq!(received_requests(&server).await?.len(), 2);
+    assert_eq!(received_requests(&server).await?.len(), 3);
     Ok(())
 }
 
@@ -457,7 +863,7 @@ async fn exact_already_present_artifact_is_success_without_upload()
 }
 
 #[tokio::test]
-async fn retryable_upload_rechecks_lookup_before_one_exact_retry()
+async fn retryable_one_shot_upload_recovers_without_replaying_full_payload()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
     let fixture = Fixture::new("retry")?;
@@ -469,27 +875,19 @@ async fn retryable_upload_rechecks_lookup_before_one_exact_retry()
     Mock::given(method("GET"))
         .and(path("/api/native-debug-artifacts"))
         .respond_with(move |_request: &Request| {
-            if lookup_attempt_for_response.fetch_add(1, Ordering::SeqCst) < 2 {
+            if lookup_attempt_for_response.fetch_add(1, Ordering::SeqCst) == 0 {
                 ResponseTemplate::new(200).set_body_json(missing_lookup())
             } else {
                 ResponseTemplate::new(200).set_body_json(found.clone())
             }
         })
-        .expect(3)
+        .expect(2)
         .mount(&server)
         .await;
-    let upload_attempt = Arc::new(AtomicUsize::new(0));
-    let upload_attempt_for_response = Arc::clone(&upload_attempt);
     Mock::given(method("POST"))
         .and(path("/api/native-debug-artifacts"))
-        .respond_with(move |_request: &Request| {
-            if upload_attempt_for_response.fetch_add(1, Ordering::SeqCst) == 0 {
-                ResponseTemplate::new(503).set_body_string("hostile backend text")
-            } else {
-                ResponseTemplate::new(200).set_body_json(upload_success_body(1))
-            }
-        })
-        .expect(2)
+        .respond_with(ResponseTemplate::new(503).set_body_string("hostile backend text"))
+        .expect(1)
         .mount(&server)
         .await;
     let artifact = fixture.root.join("Customer Secret Retry Symbols");
@@ -510,31 +908,29 @@ async fn retryable_upload_rechecks_lookup_before_one_exact_retry()
     assert_private_values_absent(text.as_str(), &fixture, server.uri().as_str());
 
     let requests = received_requests(&server).await?;
-    assert_eq!(requests.len(), 5);
+    assert_eq!(requests.len(), 4);
     assert_eq!(
         requests
             .iter()
             .map(|request| request.method.as_str())
             .collect::<Vec<_>>(),
-        ["GET", "POST", "GET", "POST", "GET"]
+        ["GET", "POST", "POST", "GET"]
     );
     let upload_parts = requests
         .iter()
-        .filter(|request| request.method.as_str() == "POST")
+        .filter(|request| {
+            request.method.as_str() == "POST" && request.url.path() == "/api/native-debug-artifacts"
+        })
         .map(multipart_parts)
         .collect::<Result<Vec<_>, _>>()?;
-    assert_eq!(upload_parts.len(), 2);
+    assert_eq!(upload_parts.len(), 1);
     assert_eq!(
         upload_parts[0]
             .iter()
-            .map(|part| (part.name.as_str(), part.body.as_slice()))
+            .map(|part| part.name.as_str())
             .collect::<Vec<_>>(),
-        upload_parts[1]
-            .iter()
-            .map(|part| (part.name.as_str(), part.body.as_slice()))
-            .collect::<Vec<_>>()
+        ["manifest", "debug_file_0"]
     );
-    assert_eq!(upload_attempt.load(Ordering::SeqCst), 2);
-    assert_eq!(lookup_attempt.load(Ordering::SeqCst), 3);
+    assert_eq!(lookup_attempt.load(Ordering::SeqCst), 2);
     Ok(())
 }
