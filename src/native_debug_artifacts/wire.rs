@@ -119,6 +119,11 @@ pub(super) async fn lookup(
 
 /// Creates the fixed native debug-artifact API URL without retaining private path state.
 pub(super) fn native_artifact_url(base_url: &str) -> Result<reqwest::Url, RuntimeError> {
+    api_url(base_url, "/api/native-debug-artifacts")
+}
+
+/// Creates one fixed native debug-artifact API URL from a validated public path.
+pub(super) fn api_url(base_url: &str, path: &str) -> Result<reqwest::Url, RuntimeError> {
     let mut url = reqwest::Url::parse(base_url).map_err(|_| transport_error())?;
     let secure_transport = url.scheme() == "https"
         || url.scheme() == "http" && url.host_str().is_some_and(is_loopback_host);
@@ -131,7 +136,7 @@ pub(super) fn native_artifact_url(base_url: &str) -> Result<reqwest::Url, Runtim
     {
         return Err(transport_error());
     }
-    url.set_path("/api/native-debug-artifacts");
+    url.set_path(path);
     url.set_query(None);
     Ok(url)
 }
@@ -301,7 +306,10 @@ struct NextAction {
 }
 
 /// Parses and binds the exact upload response.
-fn parse_upload_response(body: &str, expected_count: usize) -> Result<UploadReceipt, RuntimeError> {
+pub(super) fn parse_upload_response(
+    body: &str,
+    expected_count: usize,
+) -> Result<UploadReceipt, RuntimeError> {
     let response = serde_json::from_str::<UploadResponse>(body).map_err(|_| invalid_response())?;
     if !is_public_id(response.upload_id.as_str(), "nativeart_")
         || response.status != "uploaded"
@@ -431,7 +439,7 @@ fn is_lower_hex(value: &str, length: usize) -> bool {
 }
 
 /// Reads one bounded response without retaining hostile text on failure.
-async fn bounded_body(mut response: reqwest::Response) -> Result<String, RuntimeError> {
+pub(super) async fn bounded_body(mut response: reqwest::Response) -> Result<String, RuntimeError> {
     if response.content_length().is_some_and(|length| {
         usize::try_from(length).map_or(true, |length| length > MAX_RESPONSE_BYTES)
     }) {

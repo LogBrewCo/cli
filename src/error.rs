@@ -270,8 +270,19 @@ pub fn write_native_debug_runtime_error<W: std::io::Write>(
     output: &mut W,
 ) -> Result<(), std::io::Error> {
     let body = match error {
-        RuntimeError::Api { status, .. } => {
-            let (code, next) = native_debug_api_recovery(*status);
+        RuntimeError::Api { status, body, .. } => {
+            let details = ApiErrorDetails::parse(body);
+            let (fallback_code, fallback_next) = native_debug_api_recovery(*status);
+            let code = details
+                .code
+                .as_deref()
+                .and_then(|value| allowed_native_debug_code(*status, value))
+                .unwrap_or(fallback_code);
+            let next = details
+                .next
+                .as_deref()
+                .and_then(|value| allowed_native_debug_next(*status, value))
+                .unwrap_or(fallback_next);
             serde_json::json!({
                 "ok": false,
                 "error": code,
@@ -312,6 +323,14 @@ const fn native_debug_api_recovery(status: u16) -> (&'static str, &'static str) 
             "not_found",
             "check the exact project, release, environment, service, UUID, and architecture",
         ),
+        405 => (
+            "method_not_allowed",
+            "use the supported native debug-artifact request method",
+        ),
+        408 => (
+            "request_timeout",
+            "retry the same native debug-artifact request",
+        ),
         413 => (
             "payload_too_large",
             "reduce the native debug-artifact upload below the documented size limits and retry",
@@ -332,6 +351,82 @@ const fn native_debug_api_recovery(status: u16) -> (&'static str, &'static str) 
             "unexpected_response",
             "retry the native debug-artifact command",
         ),
+    }
+}
+
+/// Allows only fixed native debug-artifact error codes for one status.
+fn allowed_native_debug_code(status: u16, value: &str) -> Option<&'static str> {
+    match (status, value) {
+        (400 | 422, "validation_failed") => Some("validation_failed"),
+        (401 | 403, "unauthorized") => Some("unauthorized"),
+        (404, "not_found") => Some("not_found"),
+        (405, "method_not_allowed") => Some("method_not_allowed"),
+        (408, "request_timeout") => Some("request_timeout"),
+        (413, "payload_too_large") => Some("payload_too_large"),
+        (429, "rate_limited") => Some("rate_limited"),
+        (500..=599, "server_error") => Some("server_error"),
+        _ => None,
+    }
+}
+
+/// Allows only fixed native debug-artifact recovery strings for one status.
+fn allowed_native_debug_next(status: u16, value: &str) -> Option<&'static str> {
+    match (status, value) {
+        (400, "check the artifact identity and request scope, then retry") => {
+            Some("check the artifact identity and request scope, then retry")
+        }
+        (401 | 403, "sign in and retry the native debug-artifact command") => {
+            Some("sign in and retry the native debug-artifact command")
+        }
+        (404, "check the exact project, release, environment, service, UUID, and architecture") => {
+            Some("check the exact project, release, environment, service, UUID, and architecture")
+        }
+        (404, "check the exact project and upload scope") => {
+            Some("check the exact project and upload scope")
+        }
+        (404, "start the native debug artifact upload session again with the same manifest") => {
+            Some("start the native debug artifact upload session again with the same manifest")
+        }
+        (405, "use the supported native debug-artifact request method") => {
+            Some("use the supported native debug-artifact request method")
+        }
+        (408, "retry the same native debug-artifact request") => {
+            Some("retry the same native debug-artifact request")
+        }
+        (
+            413,
+            "reduce the native debug-artifact upload below the documented size limits and retry",
+        ) => Some(
+            "reduce the native debug-artifact upload below the documented size limits and retry",
+        ),
+        (
+            422,
+            "send manifest and debug_file_N multipart parts from LogBrew Apple release tooling",
+        ) => Some(
+            "send manifest and debug_file_N multipart parts from LogBrew Apple release tooling",
+        ),
+        (422, "check the native debug-artifact manifest and retry") => {
+            Some("check the native debug-artifact manifest and retry")
+        }
+        (422, "retry only the missing native debug artifact chunk with its exact digest") => {
+            Some("retry only the missing native debug artifact chunk with its exact digest")
+        }
+        (
+            422,
+            "wait briefly, then retry the same upload completion or verify the exact artifact lookup",
+        ) => Some(
+            "wait briefly, then retry the same upload completion or verify the exact artifact lookup",
+        ),
+        (422, "check the native debug-artifact manifest and upload session, then retry") => {
+            Some("check the native debug-artifact manifest and upload session, then retry")
+        }
+        (429 | 500..=599, "retry the same native debug-artifact request later") => {
+            Some("retry the same native debug-artifact request later")
+        }
+        (429 | 500..=599, "retry the same native debug-artifact command later") => {
+            Some("retry the same native debug-artifact command later")
+        }
+        _ => None,
     }
 }
 

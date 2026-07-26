@@ -1,6 +1,7 @@
 //! Apple native debug-artifact upload and exact lookup verification.
 
 mod artifact;
+mod resumable;
 mod wire;
 
 use crate::{
@@ -14,10 +15,16 @@ use wire::{LookupResult, UploadReceipt};
 const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 /// Bounded upload window for the maximum public multipart size on slower uplinks.
 const UPLOAD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30 * 60);
+/// Bounded resumable start request window.
+const START_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+/// Bounded 4 MiB chunk request window.
+const CHUNK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2 * 60);
+/// Bounded completion request window.
+const COMPLETE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 /// Bounded exact lookup window.
 const LOOKUP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
-/// Maximum exact multipart attempts after lookup-based ambiguity recovery.
-const MAX_UPLOAD_ATTEMPTS: usize = 3;
+/// Maximum same-phase attempts for small resumable requests.
+const MAX_PHASE_ATTEMPTS: usize = 3;
 
 /// Executes one bounded native debug-artifact operation.
 #[expect(
@@ -41,13 +48,21 @@ pub(super) async fn execute<W: std::io::Write>(
                 return write_validation(output, artifacts.as_slice(), json);
             }
             let url = wire::native_artifact_url(env.base_url.as_str())?;
+            let session_url = resumable::upload_session_url(env.base_url.as_str())?;
             let upload_client = build_client(UPLOAD_TIMEOUT)?;
+            let start_client = build_client(START_TIMEOUT)?;
+            let chunk_client = build_client(CHUNK_TIMEOUT)?;
+            let complete_client = build_client(COMPLETE_TIMEOUT)?;
             let lookup_client = build_client(LOOKUP_TIMEOUT)?;
             let context = UploadContext {
                 upload_client: &upload_client,
+                start_client: &start_client,
+                chunk_client: &chunk_client,
+                complete_client: &complete_client,
                 lookup_client: &lookup_client,
                 env,
                 url,
+                session_url,
                 options,
                 artifacts: artifacts.as_slice(),
             };
@@ -64,14 +79,22 @@ pub(super) async fn execute<W: std::io::Write>(
 
 /// Immutable request and artifact state shared across bounded upload attempts.
 struct UploadContext<'a> {
-    /// Client with the longer multipart request window.
+    /// Client with the longer one-shot compatibility window.
     upload_client: &'a reqwest::Client,
+    /// Client with the short session-start window.
+    start_client: &'a reqwest::Client,
+    /// Client with the bounded 4 MiB chunk window.
+    chunk_client: &'a reqwest::Client,
+    /// Client with the short completion window.
+    complete_client: &'a reqwest::Client,
     /// Client with the short exact-lookup request window.
     lookup_client: &'a reqwest::Client,
     /// Canonical account-auth and API environment.
     env: &'a CliEnvironment,
     /// Parsed native debug-artifact endpoint.
     url: reqwest::Url,
+    /// Parsed resumable session endpoint.
+    session_url: reqwest::Url,
     /// Validated upload scope and local mode.
     options: &'a NativeDebugUploadOptions,
     /// Canonically ordered validated object identities.
@@ -88,34 +111,237 @@ async fn execute_upload<W: std::io::Write>(
         return write_already_present(output, context.artifacts, json);
     }
 
-    for attempt in 0..MAX_UPLOAD_ATTEMPTS {
-        match wire::upload(
-            context.upload_client,
+    let prepared = resumable::prepare(context.options, context.artifacts)?;
+    match start_resumable(context, &prepared).await? {
+        resumable::StartOutcome::Session(session) => {
+            execute_resumable(context, &prepared, &session, json, output).await
+        }
+        resumable::StartOutcome::Unsupported => execute_one_shot(context, json, output).await,
+    }
+}
+
+/// Starts one resumable session with bounded byte-identical manifest retries.
+async fn start_resumable(
+    context: &UploadContext<'_>,
+    prepared: &resumable::PreparedUpload,
+) -> Result<resumable::StartOutcome, RuntimeError> {
+    for attempt in 0..MAX_PHASE_ATTEMPTS {
+        match resumable::start(
+            context.start_client,
             context.env,
-            context.url.clone(),
-            context.options,
-            context.artifacts,
+            context.session_url.clone(),
+            prepared,
         )
         .await
         {
-            Ok(upload) => {
-                if !verify_present(context, Some(upload.upload_id.as_str())).await? {
-                    return Err(RuntimeError::NativeDebugVerificationFailed);
-                }
-                return write_upload(output, &upload, context.artifacts, json);
-            }
-            Err(error)
-                if upload_error_is_retryable(&error) && attempt + 1 < MAX_UPLOAD_ATTEMPTS =>
+            Ok(outcome) => return Ok(outcome),
+            Err(failure)
+                if failure.kind == resumable::FailureKind::Retryable
+                    && attempt + 1 < MAX_PHASE_ATTEMPTS =>
             {
-                if verify_present(context, None).await? {
-                    return write_recovered(output, context.artifacts, json);
-                }
-                tokio::time::sleep(upload_retry_delay(attempt)).await;
+                tokio::time::sleep(retry_delay(attempt, failure.retry_after)).await;
             }
-            Err(error) => return Err(error),
+            Err(failure) => return Err(failure.error),
         }
     }
     Err(RuntimeError::NativeDebugVerificationFailed)
+}
+
+/// Uploads only server-declared missing chunks, then completes and verifies.
+async fn execute_resumable<W: std::io::Write>(
+    context: &UploadContext<'_>,
+    prepared: &resumable::PreparedUpload,
+    session: &resumable::Session,
+    json: bool,
+    output: &mut W,
+) -> Result<(), RuntimeError> {
+    for (index, digest) in session.missing_chunks.iter().enumerate() {
+        let chunk = prepared
+            .chunk(digest.as_str())
+            .ok_or(RuntimeError::NativeDebugResponseInvalid)?;
+        put_chunk_with_retry(context, session, chunk).await?;
+        if !json {
+            writeln!(
+                output,
+                "Uploaded chunk {}/{}.",
+                index + 1,
+                session.missing_chunks.len()
+            )?;
+        }
+    }
+    let completed = complete_with_recovery(context, session).await?;
+    if !completed.lookup_verified
+        && !verify_present(context, Some(completed.receipt.upload_id.as_str())).await?
+    {
+        return Err(RuntimeError::NativeDebugVerificationFailed);
+    }
+    write_upload(output, &completed.receipt, context.artifacts, json)
+}
+
+/// Replays only one exact ambiguous chunk within the bounded phase budget.
+async fn put_chunk_with_retry(
+    context: &UploadContext<'_>,
+    session: &resumable::Session,
+    chunk: &resumable::PreparedChunk,
+) -> Result<(), RuntimeError> {
+    for attempt in 0..MAX_PHASE_ATTEMPTS {
+        match resumable::put_chunk(
+            context.chunk_client,
+            context.env,
+            &context.session_url,
+            session,
+            chunk,
+        )
+        .await
+        {
+            Ok(()) => return Ok(()),
+            Err(failure)
+                if failure.kind == resumable::FailureKind::Retryable
+                    && attempt + 1 < MAX_PHASE_ATTEMPTS =>
+            {
+                tokio::time::sleep(retry_delay(attempt, failure.retry_after)).await;
+            }
+            Err(failure) => return Err(failure.error),
+        }
+    }
+    Err(RuntimeError::NativeDebugVerificationFailed)
+}
+
+/// Completes one session with exact lookup recovery after ambiguous responses.
+async fn complete_with_recovery(
+    context: &UploadContext<'_>,
+    session: &resumable::Session,
+) -> Result<CompletedUpload, RuntimeError> {
+    let mut pending_retry_used = false;
+    for attempt in 0..MAX_PHASE_ATTEMPTS {
+        match resumable::complete(
+            context.complete_client,
+            context.env,
+            &context.session_url,
+            session,
+            context.artifacts.len(),
+        )
+        .await
+        {
+            Ok(receipt) => {
+                return Ok(CompletedUpload {
+                    receipt,
+                    lookup_verified: false,
+                });
+            }
+            Err(failure)
+                if matches!(
+                    failure.kind,
+                    resumable::FailureKind::Retryable
+                        | resumable::FailureKind::CompletionPending
+                        | resumable::FailureKind::CompletionSessionMissing
+                ) =>
+            {
+                if let Some(upload) = lookup_recovered_upload(context).await? {
+                    return Ok(CompletedUpload {
+                        receipt: upload,
+                        lookup_verified: true,
+                    });
+                }
+                if failure.kind == resumable::FailureKind::CompletionSessionMissing {
+                    return Err(failure.error);
+                }
+                if failure.kind == resumable::FailureKind::CompletionPending {
+                    if pending_retry_used {
+                        return Err(failure.error);
+                    }
+                    pending_retry_used = true;
+                }
+                if attempt + 1 >= MAX_PHASE_ATTEMPTS {
+                    return Err(failure.error);
+                }
+                tokio::time::sleep(retry_delay(attempt, failure.retry_after)).await;
+            }
+            Err(failure) => return Err(failure.error),
+        }
+    }
+    Err(RuntimeError::NativeDebugVerificationFailed)
+}
+
+/// One completed session plus whether exact lookup already verified every artifact.
+struct CompletedUpload {
+    /// Existing stable upload receipt.
+    receipt: UploadReceipt,
+    /// True only when ambiguity recovery bound every identity to this upload.
+    lookup_verified: bool,
+}
+
+/// Returns one recovered receipt only when every identity matches one upload.
+async fn lookup_recovered_upload(
+    context: &UploadContext<'_>,
+) -> Result<Option<UploadReceipt>, RuntimeError> {
+    let mut upload_id = None::<String>;
+    let mut complete = true;
+    for artifact in context.artifacts {
+        let options = lookup_options(context.options, artifact);
+        match wire::lookup(
+            context.lookup_client,
+            context.env,
+            context.url.clone(),
+            &options,
+        )
+        .await?
+        {
+            LookupResult::Missing => complete = false,
+            LookupResult::Found(found)
+                if found.debug_file_sha256 == artifact.sha256
+                    && found.debug_file_byte_size == artifact.byte_size() =>
+            {
+                if upload_id
+                    .as_ref()
+                    .is_some_and(|expected| expected != &found.upload_id)
+                {
+                    return Err(RuntimeError::NativeDebugVerificationFailed);
+                }
+                let _ = upload_id.get_or_insert(found.upload_id);
+            }
+            LookupResult::Found(_) => return Err(RuntimeError::NativeDebugVerificationFailed),
+        }
+    }
+    if !complete {
+        return Ok(None);
+    }
+    let upload_id = upload_id.ok_or(RuntimeError::NativeDebugVerificationFailed)?;
+    Ok(Some(UploadReceipt {
+        upload_id,
+        artifact_count: u64::try_from(context.artifacts.len()).unwrap_or(u64::MAX),
+    }))
+}
+
+/// Executes one compatibility upload without replaying the full payload.
+async fn execute_one_shot<W: std::io::Write>(
+    context: &UploadContext<'_>,
+    json: bool,
+    output: &mut W,
+) -> Result<(), RuntimeError> {
+    match wire::upload(
+        context.upload_client,
+        context.env,
+        context.url.clone(),
+        context.options,
+        context.artifacts,
+    )
+    .await
+    {
+        Ok(upload) => {
+            if !verify_present(context, Some(upload.upload_id.as_str())).await? {
+                return Err(RuntimeError::NativeDebugVerificationFailed);
+            }
+            write_upload(output, &upload, context.artifacts, json)
+        }
+        Err(error) if upload_error_is_retryable(&error) => {
+            lookup_recovered_upload(context).await?.map_or_else(
+                || Err(error),
+                |upload| write_upload(output, &upload, context.artifacts, json),
+            )
+        }
+        Err(error) => Err(error),
+    }
 }
 
 /// Returns whether every exact identity is present and bound to the local bytes.
@@ -164,7 +390,9 @@ fn lookup_options(
 const fn upload_error_is_retryable(error: &RuntimeError) -> bool {
     match error {
         RuntimeError::Unavailable { .. } => true,
-        RuntimeError::Api { status, .. } => *status == 429 || *status >= 500,
+        RuntimeError::Api { status, .. } => {
+            matches!(*status, 408 | 429 | 500 | 502 | 503 | 504)
+        }
         RuntimeError::Cli(_)
         | RuntimeError::Io(_)
         | RuntimeError::Http(_)
@@ -177,9 +405,10 @@ const fn upload_error_is_retryable(error: &RuntimeError) -> bool {
     }
 }
 
-/// Returns one fixed bounded delay before an exact replay.
-const fn upload_retry_delay(attempt: usize) -> std::time::Duration {
-    std::time::Duration::from_millis(if attempt == 0 { 250 } else { 1_000 })
+/// Returns one bounded delay, honoring a validated server value when present.
+fn retry_delay(attempt: usize, retry_after: Option<std::time::Duration>) -> std::time::Duration {
+    retry_after
+        .unwrap_or_else(|| std::time::Duration::from_millis(if attempt == 0 { 250 } else { 1_000 }))
 }
 
 /// Builds one redirect-refusing client with operation-specific request timeout.
@@ -242,15 +471,6 @@ fn write_already_present<W: std::io::Write>(
     json: bool,
 ) -> Result<(), RuntimeError> {
     write_without_upload_id(output, artifacts, json, "already_present")
-}
-
-/// Writes an upload result recovered by exact lookup after an ambiguous attempt.
-fn write_recovered<W: std::io::Write>(
-    output: &mut W,
-    artifacts: &[Artifact],
-    json: bool,
-) -> Result<(), RuntimeError> {
-    write_without_upload_id(output, artifacts, json, "verified")
 }
 
 /// Writes a verified result that is not owned by one new upload identifier.
@@ -412,12 +632,18 @@ fn write_lookup<W: std::io::Write>(
 
 #[cfg(test)]
 mod tests {
-    use super::{CONNECT_TIMEOUT, LOOKUP_TIMEOUT, UPLOAD_TIMEOUT, build_client};
+    use super::{
+        CHUNK_TIMEOUT, COMPLETE_TIMEOUT, CONNECT_TIMEOUT, LOOKUP_TIMEOUT, START_TIMEOUT,
+        UPLOAD_TIMEOUT, build_client,
+    };
 
     /// Proves fixed bounded timeout selection without a slow network request.
     #[test]
     fn clients_use_separate_bounded_operation_windows() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(CONNECT_TIMEOUT, std::time::Duration::from_secs(10));
+        assert_eq!(START_TIMEOUT, std::time::Duration::from_secs(30));
+        assert_eq!(CHUNK_TIMEOUT, std::time::Duration::from_secs(2 * 60));
+        assert_eq!(COMPLETE_TIMEOUT, std::time::Duration::from_secs(30));
         assert_eq!(LOOKUP_TIMEOUT, std::time::Duration::from_secs(30));
         assert_eq!(UPLOAD_TIMEOUT, std::time::Duration::from_secs(30 * 60));
         let _upload = build_client(UPLOAD_TIMEOUT)?;

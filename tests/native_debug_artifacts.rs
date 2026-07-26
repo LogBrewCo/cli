@@ -180,7 +180,7 @@ async fn thin_macho_upload_uses_exact_manifest_and_binary_part_without_path_leak
     assert_invalid_response_is_redacted(&output, &fixture, &server)?;
 
     let requests = received_requests(&server).await?;
-    assert_eq!(requests.len(), 2);
+    assert_eq!(requests.len(), 3);
     let request = upload_request(requests.as_slice())?;
     assert_eq!(request.method.as_str(), "POST");
     assert_eq!(request.url.path(), "/api/native-debug-artifacts");
@@ -391,15 +391,15 @@ async fn successful_upload_verifies_exact_lookup_and_emits_bounded_json()
     assert_private_values_absent(text.as_str(), &fixture, server.uri().as_str());
 
     let requests = received_requests(&server).await?;
-    assert_eq!(requests.len(), 3);
+    assert_eq!(requests.len(), 4);
     assert_eq!(
         requests
             .iter()
             .map(|request| request.method.as_str())
             .collect::<Vec<_>>(),
-        ["GET", "POST", "GET"]
+        ["GET", "POST", "POST", "GET"]
     );
-    assert_exact_lookup_query(&requests[2]);
+    assert_exact_lookup_query(&requests[3]);
     Ok(())
 }
 
