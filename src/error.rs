@@ -260,6 +260,81 @@ pub fn write_runtime_error<W: std::io::Write>(
     }
 }
 
+/// Writes one body-free native debug-artifact JSON error for agents.
+///
+/// # Errors
+///
+/// Returns an I/O error if writing to the output stream fails.
+pub fn write_native_debug_runtime_error<W: std::io::Write>(
+    error: &RuntimeError,
+    output: &mut W,
+) -> Result<(), std::io::Error> {
+    let body = match error {
+        RuntimeError::Api { status, .. } => {
+            let (code, next) = native_debug_api_recovery(*status);
+            serde_json::json!({
+                "ok": false,
+                "error": code,
+                "status": status,
+                "next": next,
+            })
+        }
+        RuntimeError::Cli(_)
+        | RuntimeError::Io(_)
+        | RuntimeError::Http(_)
+        | RuntimeError::MissingToken
+        | RuntimeError::StatusUnavailable { .. }
+        | RuntimeError::Unavailable { .. }
+        | RuntimeError::InvestigationResponseInvalid
+        | RuntimeError::NativeDebugArtifactInvalid
+        | RuntimeError::NativeDebugResponseInvalid
+        | RuntimeError::NativeDebugVerificationFailed => serde_json::json!({
+            "ok": false,
+            "error": runtime_error_code(error),
+            "next": fallback_runtime_error_next_step(error),
+        }),
+    };
+    writeln!(output, "{body}")
+}
+
+/// Returns fixed native debug-artifact recovery derived only from HTTP status.
+const fn native_debug_api_recovery(status: u16) -> (&'static str, &'static str) {
+    match status {
+        400 => (
+            "validation_failed",
+            "check the artifact identity and request scope, then retry",
+        ),
+        401 | 403 => (
+            "unauthorized",
+            "sign in and retry the native debug-artifact command",
+        ),
+        404 => (
+            "not_found",
+            "check the exact project, release, environment, service, UUID, and architecture",
+        ),
+        413 => (
+            "payload_too_large",
+            "reduce the native debug-artifact upload below the documented size limits and retry",
+        ),
+        422 => (
+            "validation_failed",
+            "send manifest and debug_file_N multipart parts from LogBrew Apple release tooling",
+        ),
+        429 => (
+            "rate_limited",
+            "retry the same native debug-artifact command later",
+        ),
+        500..=599 => (
+            "server_error",
+            "retry the same native debug-artifact command later",
+        ),
+        _ => (
+            "unexpected_response",
+            "retry the native debug-artifact command",
+        ),
+    }
+}
+
 /// Writes a runtime error for human readers.
 fn write_human_runtime_error<W: std::io::Write>(
     error: &RuntimeError,
@@ -470,7 +545,7 @@ const fn cli_error_next_step(error: &CliError) -> &'static str {
             "use logbrew debug-artifacts upload <path> --project <project_id> --release <release> --environment <environment> --service <service> with optional --expect-image-uuid, --dry-run, and --json"
         }
         CliError::InvalidNativeDebugIdentity => {
-            "use a lowercase UUID and architecture arm64, arm64e, or x86_64"
+            "use a UUID in 8-4-4-4-12 form and architecture arm64, arm64e, or x86_64"
         }
         CliError::InvalidSetupSource(_) => "use --source api, cli, or sdk",
         CliError::MissingArgument { next, .. }

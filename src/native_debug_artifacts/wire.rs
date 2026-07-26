@@ -514,6 +514,13 @@ fn safe_api_body(status: u16) -> String {
             "check_resource",
             "resource",
         ),
+        413 => (
+            "native debug-artifact payload is too large",
+            "payload_too_large",
+            "reduce the native debug-artifact upload below the documented size limits and retry",
+            "reduce_artifact_size",
+            "native_debug_artifact_upload",
+        ),
         429 => (
             "native debug-artifact request is temporarily limited",
             "rate_limited",

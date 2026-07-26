@@ -39,7 +39,9 @@ use auth::{
     AuthCredential, execute_login, execute_logout, send_authenticated_with_refresh,
     token_is_project_ingest_key,
 };
-pub use error::{CliError, RuntimeError, write_cli_error, write_runtime_error};
+pub use error::{
+    CliError, RuntimeError, write_cli_error, write_native_debug_runtime_error, write_runtime_error,
+};
 use futures_util::StreamExt as _;
 pub use parser::parse_command;
 use render::write_api_success;

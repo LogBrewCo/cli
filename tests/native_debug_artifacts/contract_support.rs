@@ -1,8 +1,6 @@
 //! Original native debug-artifact contract fixtures.
 
 use std::process::Output;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::support::*;
 use wiremock::matchers::{method, path};
@@ -46,36 +44,6 @@ pub(crate) async fn malformed_success_server() -> MockServer {
         .mount(&server)
         .await;
     server
-}
-
-pub(crate) async fn mount_upload_success(server: &MockServer, artifact_count: usize) {
-    Mock::given(method("POST"))
-        .and(path("/api/native-debug-artifacts"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(upload_success_body(artifact_count)))
-        .expect(1)
-        .mount(server)
-        .await;
-}
-
-pub(crate) async fn mount_lookup_sequence(server: &MockServer, bodies: Vec<serde_json::Value>) {
-    let bodies = Arc::new(bodies);
-    let attempt = Arc::new(AtomicUsize::new(0));
-    let bodies_for_response = Arc::clone(&bodies);
-    let attempt_for_response = Arc::clone(&attempt);
-    let expected = u64::try_from(bodies.len()).unwrap_or(u64::MAX);
-    Mock::given(method("GET"))
-        .and(path("/api/native-debug-artifacts"))
-        .respond_with(move |_request: &Request| {
-            let index = attempt_for_response.fetch_add(1, Ordering::SeqCst);
-            let body = bodies_for_response
-                .get(index)
-                .cloned()
-                .unwrap_or_else(|| serde_json::json!({"unexpected": "sequence exhausted"}));
-            ResponseTemplate::new(200).set_body_json(body)
-        })
-        .expect(expected)
-        .mount(server)
-        .await;
 }
 
 pub(crate) fn manifest(artifacts: serde_json::Value) -> serde_json::Value {
@@ -125,9 +93,7 @@ pub(crate) fn assert_invalid_response_is_redacted(
     fixture: &Fixture,
     server: &MockServer,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    assert!(output.stdout.is_empty());
-    let text = String::from_utf8(output.stderr.clone())?;
-    let body: serde_json::Value = serde_json::from_str(text.as_str())?;
+    let (text, body) = json_failure(output)?;
     assert_eq!(body["error"], "native_debug_response_invalid");
     assert_eq!(
         body["next"],
@@ -149,11 +115,4 @@ pub(crate) fn assert_request_has_no_local_identity(request: &Request, fixture: &
     ] {
         assert!(!body.contains(private));
     }
-}
-
-pub(crate) fn upload_request(requests: &[Request]) -> Result<&Request, Box<dyn std::error::Error>> {
-    requests
-        .iter()
-        .find(|request| request.method.as_str() == "POST")
-        .ok_or_else(|| "missing upload request".into())
 }

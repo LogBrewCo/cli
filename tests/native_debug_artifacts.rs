@@ -56,8 +56,7 @@ async fn upload_grammar_is_closed_and_value_safe() -> Result<(), Box<dyn std::er
     ] {
         let output = invoke(&fixture, "http://127.0.0.1:9", args).await?;
         assert_eq!(output.status.code(), Some(2));
-        let text = String::from_utf8(output.stderr)?;
-        let body: serde_json::Value = serde_json::from_str(text.as_str())?;
+        let (text, body) = json_failure(&output)?;
 
         assert_eq!(body["error"], "invalid_native_debug_command");
         assert_eq!(
@@ -77,7 +76,13 @@ async fn lookup_grammar_rejects_noncanonical_identity_before_network()
 
     for (image_uuid, architecture) in [
         ("101112131415161718191a1b1c1d1e1f", "arm64"),
-        ("10111213-1415-1617-1819-1A1B1C1D1E1F", "arm64"),
+        ("10111213-1415-1617-1819-1a1b1c1d1e1", "arm64"),
+        ("10111213-1415-1617-1819-1a1b1c1d1e1f00", "arm64"),
+        ("10111213-1415-1617-1819-1a1b1c1d1e1g", "arm64"),
+        ("1011121-31415-1617-1819-1a1b1c1d1e1f", "arm64"),
+        (" 10111213-1415-1617-1819-1a1b1c1d1e1f", "arm64"),
+        ("10111213-1415-1617-1819-1a1b1c1d1e1f ", "arm64"),
+        ("10111213‐1415-1617-1819-1a1b1c1d1e1f", "arm64"),
         (ARM64_UUID, "ARM64"),
         (ARM64_UUID, "arm64e/private"),
     ] {
@@ -88,13 +93,12 @@ async fn lookup_grammar_rejects_noncanonical_identity_before_network()
         )
         .await?;
         assert_eq!(output.status.code(), Some(2));
-        let text = String::from_utf8(output.stderr)?;
-        let body: serde_json::Value = serde_json::from_str(text.as_str())?;
+        let (text, body) = json_failure(&output)?;
 
         assert_eq!(body["error"], "invalid_native_debug_command");
         assert_eq!(
             body["next"],
-            "use a lowercase UUID and architecture arm64, arm64e, or x86_64"
+            "use a UUID in 8-4-4-4-12 form and architecture arm64, arm64e, or x86_64"
         );
         assert!(!text.contains(image_uuid));
         if !matches!(architecture, "arm64" | "arm64e" | "x86_64") {
@@ -122,8 +126,7 @@ async fn malformed_artifact_fails_before_network_without_path_reflection()
     )
     .await?;
     assert_eq!(output.status.code(), Some(1));
-    let text = String::from_utf8(output.stderr)?;
-    let body: serde_json::Value = serde_json::from_str(text.as_str())?;
+    let (text, body) = json_failure(&output)?;
 
     assert_eq!(body["error"], "native_debug_artifact_invalid");
     assert_eq!(
@@ -151,8 +154,7 @@ async fn unreadable_debug_info_fails_before_network() -> Result<(), Box<dyn std:
     )
     .await?;
     assert_eq!(output.status.code(), Some(1));
-    let text = String::from_utf8(output.stderr)?;
-    let body: serde_json::Value = serde_json::from_str(text.as_str())?;
+    let (text, body) = json_failure(&output)?;
     assert_eq!(body["error"], "native_debug_artifact_invalid");
     assert_private_values_absent(text.as_str(), &fixture, server.uri().as_str());
     assert!(received_requests(&server).await?.is_empty());
@@ -341,8 +343,7 @@ async fn duplicate_bundle_identity_fails_before_network() -> Result<(), Box<dyn 
     )
     .await?;
     assert_eq!(output.status.code(), Some(1));
-    let text = String::from_utf8(output.stderr)?;
-    let body: serde_json::Value = serde_json::from_str(text.as_str())?;
+    let (text, body) = json_failure(&output)?;
     assert_eq!(body["error"], "native_debug_artifact_invalid");
     assert_private_values_absent(text.as_str(), &fixture, server.uri().as_str());
     assert!(received_requests(&server).await?.is_empty());
@@ -420,8 +421,7 @@ async fn upload_fails_closed_when_exact_lookup_is_missing() -> Result<(), Box<dy
     )
     .await?;
     assert_eq!(output.status.code(), Some(1));
-    let text = String::from_utf8(output.stderr)?;
-    let body: serde_json::Value = serde_json::from_str(text.as_str())?;
+    let (text, body) = json_failure(&output)?;
     assert_eq!(body["error"], "native_debug_verification_failed");
     assert_private_values_absent(text.as_str(), &fixture, server.uri().as_str());
     Ok(())
@@ -451,8 +451,7 @@ async fn upload_fails_closed_when_lookup_hash_mismatches() -> Result<(), Box<dyn
     )
     .await?;
     assert_eq!(output.status.code(), Some(1));
-    let text = String::from_utf8(output.stderr)?;
-    let body: serde_json::Value = serde_json::from_str(text.as_str())?;
+    let (text, body) = json_failure(&output)?;
     assert_eq!(body["error"], "native_debug_verification_failed");
     assert_private_values_absent(text.as_str(), &fixture, server.uri().as_str());
     Ok(())

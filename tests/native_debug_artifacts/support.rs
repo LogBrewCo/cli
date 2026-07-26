@@ -2,6 +2,8 @@
 
 use std::ffi::OsString;
 use std::process::Output;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, Request, ResponseTemplate};
 
@@ -82,11 +84,54 @@ pub(crate) fn upload_success_body(artifact_count: usize) -> serde_json::Value {
     })
 }
 
+pub(crate) fn json_failure(
+    output: &Output,
+) -> Result<(String, serde_json::Value), Box<dyn std::error::Error>> {
+    assert!(!output.status.success());
+    assert!(output.stderr.is_empty());
+    let text = String::from_utf8(output.stdout.clone())?;
+    assert_eq!(text.lines().count(), 1);
+    let body = serde_json::from_str::<serde_json::Value>(text.as_str())?;
+    assert!(body.is_object());
+    assert_eq!(body["ok"], false);
+    Ok((text, body))
+}
+
 pub(crate) async fn mount_lookup(server: &MockServer, body: serde_json::Value) {
     Mock::given(method("GET"))
         .and(path("/api/native-debug-artifacts"))
         .respond_with(ResponseTemplate::new(200).set_body_json(body))
         .expect(1)
+        .mount(server)
+        .await;
+}
+
+pub(crate) async fn mount_upload_success(server: &MockServer, artifact_count: usize) {
+    Mock::given(method("POST"))
+        .and(path("/api/native-debug-artifacts"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(upload_success_body(artifact_count)))
+        .expect(1)
+        .mount(server)
+        .await;
+}
+
+pub(crate) async fn mount_lookup_sequence(server: &MockServer, bodies: Vec<serde_json::Value>) {
+    let bodies = Arc::new(bodies);
+    let attempt = Arc::new(AtomicUsize::new(0));
+    let bodies_for_response = Arc::clone(&bodies);
+    let attempt_for_response = Arc::clone(&attempt);
+    let expected = u64::try_from(bodies.len()).unwrap_or(u64::MAX);
+    Mock::given(method("GET"))
+        .and(path("/api/native-debug-artifacts"))
+        .respond_with(move |_request: &Request| {
+            let index = attempt_for_response.fetch_add(1, Ordering::SeqCst);
+            let body = bodies_for_response
+                .get(index)
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!({"unexpected": "sequence exhausted"}));
+            ResponseTemplate::new(200).set_body_json(body)
+        })
+        .expect(expected)
         .mount(server)
         .await;
 }
@@ -212,6 +257,13 @@ pub(crate) fn assert_exact_lookup_query(request: &Request) {
             "project_id=123e4567-e89b-12d3-a456-426614174000&release=checkout%401.2.3&environment=production&service=checkout-api&image_uuid=10111213-1415-1617-1819-1a1b1c1d1e1f&architecture=arm64"
         )
     );
+}
+
+pub(crate) fn upload_request(requests: &[Request]) -> Result<&Request, Box<dyn std::error::Error>> {
+    requests
+        .iter()
+        .find(|request| request.method.as_str() == "POST")
+        .ok_or_else(|| "missing upload request".into())
 }
 
 pub(crate) fn header_value<'a>(

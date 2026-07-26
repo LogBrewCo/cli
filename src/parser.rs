@@ -271,7 +271,7 @@ fn parse_native_debug_lookup(args: &[String]) -> Result<Command, CliError> {
     let parsed = parse_native_debug_scope(args, true)?;
     let image_uuid = parsed
         .image_uuid
-        .filter(|value| is_canonical_lower_uuid(value))
+        .and_then(|value| normalize_native_debug_uuid(value.as_str()))
         .ok_or(CliError::InvalidNativeDebugIdentity)?;
     let architecture = parsed
         .architecture
@@ -345,15 +345,15 @@ fn parse_native_debug_scope(args: &[String], lookup: bool) -> Result<NativeDebug
         if flag == "--expect-image-uuid" && !lookup {
             let value = args
                 .get(index + 1)
-                .filter(|value| is_canonical_lower_uuid(value))
+                .and_then(|value| normalize_native_debug_uuid(value.as_str()))
                 .ok_or(CliError::InvalidNativeDebugIdentity)?;
             if expected_image_uuids
                 .iter()
-                .any(|existing| existing == value)
+                .any(|existing| existing == &value)
             {
                 return Err(CliError::InvalidNativeDebugIdentity);
             }
-            expected_image_uuids.push(value.clone());
+            expected_image_uuids.push(value);
             index += 2;
             continue;
         }
@@ -409,6 +409,27 @@ fn normalize_native_scope(value: Option<String>) -> Option<String> {
     let trimmed = value.trim();
     (!trimmed.is_empty() && trimmed.len() <= 256 && !trimmed.chars().any(char::is_control))
         .then(|| trimmed.to_owned())
+}
+
+/// Validates and canonicalizes one public native debug UUID.
+fn normalize_native_debug_uuid(value: &str) -> Option<String> {
+    if value.len() != 36 {
+        return None;
+    }
+    let mut normalized = String::with_capacity(36);
+    for (index, byte) in value.bytes().enumerate() {
+        if matches!(index, 8 | 13 | 18 | 23) {
+            if byte != b'-' {
+                return None;
+            }
+            normalized.push('-');
+        } else if byte.is_ascii_hexdigit() {
+            normalized.push(char::from(byte.to_ascii_lowercase()));
+        } else {
+            return None;
+        }
+    }
+    Some(normalized)
 }
 
 /// Restricts public UUID inputs to lowercase dashed canonical form.
