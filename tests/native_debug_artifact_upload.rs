@@ -13,6 +13,9 @@ use support::*;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, Request, ResponseTemplate};
 
+const UPPERCASE_DWARFDUMP_UUID: &str = "10111213-1415-1617-1819-1A1B1C1D1E1F";
+const MIXED_CASE_DWARFDUMP_UUID: &str = "10111213-1415-1617-1819-1a1B1c1D1e1F";
+
 #[tokio::test]
 async fn dsym_dry_run_discovers_identity_without_auth_or_network()
 -> Result<(), Box<dyn std::error::Error>> {
@@ -53,6 +56,74 @@ async fn dsym_dry_run_discovers_identity_without_auth_or_network()
 }
 
 #[tokio::test]
+async fn dsym_upload_normalizes_uppercase_dwarfdump_uuid_in_every_request()
+-> Result<(), Box<dyn std::error::Error>> {
+    let server = MockServer::start().await;
+    let fixture = Fixture::new("uppercase-dwarfdump-uuid")?;
+    let object = macho64(0x0100_000c, uuid_bytes(0x10));
+    let digest = sha256_hex(object.as_slice());
+    mount_upload_success(&server, 1).await;
+    mount_lookup_sequence(
+        &server,
+        vec![
+            missing_lookup(),
+            found_lookup(digest.as_str(), object.len()),
+        ],
+    )
+    .await;
+    let artifact = fixture.root.join("Customer Secret Uppercase Symbols");
+    std::fs::write(artifact.as_path(), object.as_slice())?;
+
+    let output = invoke(
+        &fixture,
+        server.uri().as_str(),
+        dsym_upload_args(artifact.as_os_str(), &[UPPERCASE_DWARFDUMP_UUID], false),
+    )
+    .await?;
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let text = String::from_utf8(output.stdout)?;
+    let body: serde_json::Value = serde_json::from_str(text.as_str())?;
+    assert_eq!(body["artifacts"][0]["image_uuid"], ARM64_UUID);
+    assert!(!text.contains(UPPERCASE_DWARFDUMP_UUID));
+
+    let requests = received_requests(&server).await?;
+    assert_eq!(requests.len(), 3);
+    assert_exact_lookup_query(&requests[0]);
+    assert_exact_lookup_query(&requests[2]);
+    let parts = multipart_parts(upload_request(requests.as_slice())?)?;
+    let manifest = serde_json::from_slice::<serde_json::Value>(parts[0].body.as_slice())?;
+    assert_eq!(manifest["artifacts"][0]["imageUuid"], ARM64_UUID);
+    assert_private_values_absent(text.as_str(), &fixture, server.uri().as_str());
+    Ok(())
+}
+
+#[tokio::test]
+async fn dsym_dry_run_normalizes_mixed_case_expected_uuid() -> Result<(), Box<dyn std::error::Error>>
+{
+    let server = MockServer::start().await;
+    let fixture = Fixture::new("mixed-case-dwarfdump-uuid")?;
+    let artifact = fixture.root.join("Customer Secret Mixed Case Symbols");
+    std::fs::write(artifact.as_path(), macho64(0x0100_000c, uuid_bytes(0x10)))?;
+
+    let output = invoke(
+        &fixture,
+        server.uri().as_str(),
+        dsym_upload_args(artifact.as_os_str(), &[MIXED_CASE_DWARFDUMP_UUID], true),
+    )
+    .await?;
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let text = String::from_utf8(output.stdout)?;
+    let body: serde_json::Value = serde_json::from_str(text.as_str())?;
+    assert_eq!(body["artifacts"][0]["image_uuid"], ARM64_UUID);
+    assert!(!text.contains(MIXED_CASE_DWARFDUMP_UUID));
+    assert_private_values_absent(text.as_str(), &fixture, server.uri().as_str());
+    assert!(received_requests(&server).await?.is_empty());
+    Ok(())
+}
+
+#[tokio::test]
 async fn dsym_dry_run_rejects_an_exact_uuid_mismatch_without_reflection()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
@@ -77,8 +148,7 @@ async fn dsym_dry_run_rejects_an_exact_uuid_mismatch_without_reflection()
     )
     .await?;
     assert_eq!(output.status.code(), Some(1));
-    let text = String::from_utf8(output.stderr)?;
-    let body: serde_json::Value = serde_json::from_str(text.as_str())?;
+    let (text, body) = json_failure(&output)?;
     assert_eq!(body["error"], "native_debug_artifact_invalid");
     assert!(!text.contains(X86_64_UUID));
     assert_private_values_absent(text.as_str(), &fixture, server.uri().as_str());
@@ -184,8 +254,7 @@ async fn zip_rejects_unsafe_paths_and_symlinks_before_network()
         )
         .await?;
         assert_eq!(output.status.code(), Some(1));
-        let text = String::from_utf8(output.stderr)?;
-        let body: serde_json::Value = serde_json::from_str(text.as_str())?;
+        let (text, body) = json_failure(&output)?;
         assert_eq!(body["error"], "native_debug_artifact_invalid");
         assert_private_values_absent(text.as_str(), &fixture, server.uri().as_str());
     }
@@ -216,8 +285,7 @@ async fn zip_crc_tampering_fails_before_network() -> Result<(), Box<dyn std::err
     )
     .await?;
     assert_eq!(output.status.code(), Some(1));
-    let text = String::from_utf8(output.stderr)?;
-    let body: serde_json::Value = serde_json::from_str(text.as_str())?;
+    let (text, body) = json_failure(&output)?;
     assert_eq!(body["error"], "native_debug_artifact_invalid");
     assert_private_values_absent(text.as_str(), &fixture, server.uri().as_str());
     assert!(received_requests(&server).await?.is_empty());
@@ -244,8 +312,7 @@ async fn native_upload_rejects_ingest_key_auth_before_network()
         )
         .await?;
         assert_eq!(output.status.code(), Some(1));
-        let text = String::from_utf8(output.stderr)?;
-        let body: serde_json::Value = serde_json::from_str(text.as_str())?;
+        let (text, body) = json_failure(&output)?;
         assert_eq!(body["error"], "unavailable");
         assert_eq!(
             body["next"],
@@ -272,8 +339,7 @@ async fn hosted_http_and_embedded_url_state_fail_closed_without_reflection()
     ] {
         let output = invoke(&fixture, base_url, upload_args(artifact.as_os_str())).await?;
         assert_eq!(output.status.code(), Some(1));
-        let text = String::from_utf8(output.stderr)?;
-        let body: serde_json::Value = serde_json::from_str(text.as_str())?;
+        let (text, body) = json_failure(&output)?;
         assert_eq!(body["error"], "unavailable");
         assert!(!text.contains(base_url));
         assert!(!text.contains("private-user"));
@@ -306,14 +372,51 @@ async fn validation_error_uses_fixed_release_tooling_recovery_without_body()
     )
     .await?;
     assert_eq!(output.status.code(), Some(1));
-    let text = String::from_utf8(output.stderr)?;
-    let body: serde_json::Value = serde_json::from_str(text.as_str())?;
-    assert_eq!(body["api_code"], "validation_failed");
+    let (text, body) = json_failure(&output)?;
+    assert_eq!(body["error"], "validation_failed");
     assert_eq!(
-        body["api_next"],
+        body["next"],
         "send manifest and debug_file_N multipart parts from LogBrew Apple release tooling"
     );
     assert!(!text.contains("hostile backend text"));
+    assert_private_values_absent(text.as_str(), &fixture, server.uri().as_str());
+    assert_eq!(received_requests(&server).await?.len(), 2);
+    Ok(())
+}
+
+#[tokio::test]
+async fn payload_too_large_uses_one_safe_json_failure_on_stdout()
+-> Result<(), Box<dyn std::error::Error>> {
+    let server = MockServer::start().await;
+    let fixture = Fixture::new("payload-too-large")?;
+    mount_lookup(&server, missing_lookup()).await;
+    Mock::given(method("POST"))
+        .and(path("/api/native-debug-artifacts"))
+        .respond_with(ResponseTemplate::new(413).set_body_string("hostile edge response text"))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let artifact = fixture.root.join("Customer Secret Oversized Symbols");
+    std::fs::write(artifact.as_path(), macho64(0x0100_000c, uuid_bytes(0x10)))?;
+
+    let output = invoke(
+        &fixture,
+        server.uri().as_str(),
+        upload_args(artifact.as_os_str()),
+    )
+    .await?;
+    assert_eq!(output.status.code(), Some(1));
+    let (text, body) = json_failure(&output)?;
+    assert_eq!(
+        body,
+        serde_json::json!({
+            "ok": false,
+            "error": "payload_too_large",
+            "status": 413,
+            "next": "reduce the native debug-artifact upload below the documented size limits and retry"
+        })
+    );
+    assert!(!text.contains("hostile edge response text"));
     assert_private_values_absent(text.as_str(), &fixture, server.uri().as_str());
     assert_eq!(received_requests(&server).await?.len(), 2);
     Ok(())
