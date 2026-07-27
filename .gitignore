@@ -11,10 +11,9 @@
 /work/
 
 # Local-only agent guidance and planning artifacts.
-AGENTS.md
 CLAUDE.md
 .agents/
 skills-lock.json
-docs/superpowers/
+docs/private-plans/
 plans/
 *plan*.md
