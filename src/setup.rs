@@ -15,7 +15,7 @@ const SWIFT_PACKAGE_URL: &str = "https://github.com/LogBrewCo/sdk.git";
 const SWIFT_PRODUCT: &str = "LogBrew";
 /// Minimum public Swift package release required by this setup plan.
 const SWIFT_MINIMUM_VERSION: &str = "0.1.6";
-/// SwiftPM requirement that accepts compatible releases before version 1.0.0.
+/// `SwiftPM` requirement that accepts compatible releases before version 1.0.0.
 const SWIFT_VERSION_REQUIREMENT: &str = "up_to_next_major";
 /// Next step when a public Swift package can be planned truthfully.
 const SWIFT_NEXT_STEP: &str =
@@ -111,7 +111,7 @@ pub(crate) fn write_setup_plan<W: std::io::Write>(
     writeln!(output, "Next: {}", plan.next_step())
 }
 
-/// Builds the copyable SwiftPM dependency declaration from canonical fields.
+/// Builds the copyable `SwiftPM` dependency declaration from canonical fields.
 fn swift_dependency_declaration() -> String {
     format!(r#".package(url: "{SWIFT_PACKAGE_URL}", from: "{SWIFT_MINIMUM_VERSION}")"#)
 }
