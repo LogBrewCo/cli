@@ -28,7 +28,12 @@ async fn swiftpm_and_xcodegen_emit_exact_non_mutating_install_plan()
             "ecosystem": "swiftpm",
             "package_url": SWIFT_PACKAGE_URL,
             "product": "LogBrew",
-            "version": "0.1.4",
+            "version": "0.1.6",
+            "version_requirement": {
+                "kind": "up_to_next_major",
+                "minimum_version": "0.1.6"
+            },
+            "dependency_declaration": ".package(url: \"https://github.com/LogBrewCo/sdk.git\", from: \"0.1.6\")",
             "next_action": {
                 "code": "add_swift_package_dependency",
                 "target": "project_manifest"
@@ -87,7 +92,19 @@ async fn setup_aliases_and_json_order_share_the_swift_install_plan()
         let body: serde_json::Value = serde_json::from_slice(output.as_slice())?;
 
         assert_eq!(body["install_ready"], true);
-        assert_eq!(body["install_plan"]["version"], "0.1.4");
+        assert_eq!(body["install_plan"]["version"], "0.1.6");
+        assert_eq!(
+            body["install_plan"]["version_requirement"]["kind"],
+            "up_to_next_major"
+        );
+        assert_eq!(
+            body["install_plan"]["version_requirement"]["minimum_version"],
+            "0.1.6"
+        );
+        assert_eq!(
+            body["install_plan"]["dependency_declaration"],
+            r#".package(url: "https://github.com/LogBrewCo/sdk.git", from: "0.1.6")"#
+        );
         assert_eq!(body["install_plan"]["package_url"], SWIFT_PACKAGE_URL);
         if let Some(expected) = expected.as_ref() {
             assert_eq!(&body, expected);
@@ -131,7 +148,10 @@ async fn swift_human_plan_is_truthful_and_path_free() -> Result<(), Box<dyn std:
     assert!(text.contains("Install: ready"));
     assert!(text.contains("Package: https://github.com/LogBrewCo/sdk.git"));
     assert!(text.contains("Product: LogBrew"));
-    assert!(text.contains("Version: 0.1.4"));
+    assert!(text.contains("Minimum version: 0.1.6"));
+    assert!(text.contains(
+        r#"Dependency: .package(url: "https://github.com/LogBrewCo/sdk.git", from: "0.1.6")"#
+    ));
     assert!(text.contains("No files changed."));
     assert!(!text.contains(root.to_string_lossy().as_ref()));
     assert!(!text.contains("installed"));

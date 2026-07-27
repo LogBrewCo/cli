@@ -150,10 +150,11 @@ Usage:
   logbrew setup [--auto] [--yes] [--json]
 
 Detects supported project manifests and prints a non-mutating SDK setup plan.
-No files are changed. SwiftPM 0.1.4 install planning is ready for detected SwiftPM or XcodeGen \
-projects.
+No files are changed. SwiftPM planning uses compatible releases from 0.1.6 for detected SwiftPM \
+or XcodeGen projects.
 Package: https://github.com/LogBrewCo/sdk.git
 Product: LogBrew
+Dependency: .package(url: \"https://github.com/LogBrewCo/sdk.git\", from: \"0.1.6\")
 Other detected runtimes remain planning-only until their public package is ready.
 Aliases (same non-mutating plan): logbrew init, logbrew install, logbrew configure, logbrew sdk.
 Options: --auto records automatic detection preference; --yes records confirmation preference; \
