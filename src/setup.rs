@@ -13,8 +13,10 @@ const SDK_NEXT_STEP: &str = "install the matching LogBrew SDK package when packa
 const SWIFT_PACKAGE_URL: &str = "https://github.com/LogBrewCo/sdk.git";
 /// Public Swift package product consumed by application targets.
 const SWIFT_PRODUCT: &str = "LogBrew";
-/// Exact protected Swift package release known by this CLI version.
-const SWIFT_VERSION: &str = "0.1.4";
+/// Minimum public Swift package release required by this setup plan.
+const SWIFT_MINIMUM_VERSION: &str = "0.1.6";
+/// `SwiftPM` requirement that accepts compatible releases before version 1.0.0.
+const SWIFT_VERSION_REQUIREMENT: &str = "up_to_next_major";
 /// Next step when a public Swift package can be planned truthfully.
 const SWIFT_NEXT_STEP: &str =
     "add the LogBrew Swift package from the install plan; no files were changed";
@@ -35,6 +37,7 @@ pub(crate) fn write_setup_plan<W: std::io::Write>(
     let plan = SetupPlan::detect(root, auto, yes);
 
     if json {
+        let dependency_declaration = swift_dependency_declaration();
         let detected = plan
             .detected
             .iter()
@@ -52,7 +55,12 @@ pub(crate) fn write_setup_plan<W: std::io::Write>(
                 "ecosystem": "swiftpm",
                 "package_url": SWIFT_PACKAGE_URL,
                 "product": SWIFT_PRODUCT,
-                "version": SWIFT_VERSION,
+                "version": SWIFT_MINIMUM_VERSION,
+                "version_requirement": {
+                    "kind": SWIFT_VERSION_REQUIREMENT,
+                    "minimum_version": SWIFT_MINIMUM_VERSION,
+                },
+                "dependency_declaration": dependency_declaration,
                 "next_action": {
                     "code": "add_swift_package_dependency",
                     "target": "project_manifest",
@@ -81,7 +89,8 @@ pub(crate) fn write_setup_plan<W: std::io::Write>(
         writeln!(output, "Install: ready")?;
         writeln!(output, "Package: {SWIFT_PACKAGE_URL}")?;
         writeln!(output, "Product: {SWIFT_PRODUCT}")?;
-        writeln!(output, "Version: {SWIFT_VERSION}")?;
+        writeln!(output, "Minimum version: {SWIFT_MINIMUM_VERSION}")?;
+        writeln!(output, "Dependency: {}", swift_dependency_declaration())?;
     } else {
         writeln!(output, "Install: not ready")?;
     }
@@ -100,6 +109,11 @@ pub(crate) fn write_setup_plan<W: std::io::Write>(
         }
     }
     writeln!(output, "Next: {}", plan.next_step())
+}
+
+/// Builds the copyable `SwiftPM` dependency declaration from canonical fields.
+fn swift_dependency_declaration() -> String {
+    format!(r#".package(url: "{SWIFT_PACKAGE_URL}", from: "{SWIFT_MINIMUM_VERSION}")"#)
 }
 
 /// Non-mutating SDK setup plan.
