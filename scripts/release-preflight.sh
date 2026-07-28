@@ -301,7 +301,7 @@ if [[ "$tag_version" != "$crate_version" ]]; then
   fail "tag ${TAG} does not match Cargo.toml version ${crate_version}"
 fi
 
-if ! gh auth status >/dev/null 2>&1; then
+if ! gh auth status --active >/dev/null 2>&1; then
   fail "GitHub CLI is not authenticated"
 fi
 
