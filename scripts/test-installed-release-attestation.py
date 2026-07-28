@@ -21,7 +21,6 @@ from unittest import mock
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 SUBJECT = ROOT / "scripts" / "installed_release_attestation.py"
-SOURCE_COMMIT = "018b1a832d143c203b2822652d1bce9fb16401ab"
 WORKFLOW_HEAD = "1" * 40
 sys.dont_write_bytecode = True
 
@@ -129,6 +128,81 @@ def release_fixture(policy, receipt) -> dict[str, object]:
 
 
 class InstalledReleaseAttestationTests(unittest.TestCase):
+    def test_public_policy_is_exact_current_release(self) -> None:
+        module = load_subject()
+        policy = module.PUBLIC_POLICY
+        self.assertEqual(
+            (
+                policy.repository,
+                policy.tag,
+                policy.version,
+                policy.source_commit,
+                policy.tag_object_sha,
+                policy.release_run_id,
+                policy.release_workflow_id,
+                policy.release_id,
+                policy.published_at,
+                policy.checksum_asset_name,
+                policy.checksum_asset_id,
+                policy.checksum_asset_size,
+                policy.checksum_asset_digest,
+            ),
+            (
+                "LogBrewCo/cli",
+                "v0.1.26",
+                "0.1.26",
+                "1388b0c3e33f71dc91e9a929c7b1cfa410230934",
+                "699f3aa3fbb0538ceb15ab4c49311885e70a9e15",
+                30348559774,
+                289984708,
+                360988832,
+                "2026-07-28T09:59:29Z",
+                "sha256.sum",
+                492559321,
+                820,
+                "89f6b0b9ca21051e97ab0cb118b49cc6672c3cecd9891c6160afa119c7909423",
+            ),
+        )
+        expected_receipts = {
+            "shell-linux-x64": (
+                492559283,
+                54183,
+                "68792a69a210bc5b66019757ada38b699db39ced761f422002e94d490ea83fdb",
+            ),
+            "native-linux-arm64": (
+                492559271,
+                1945320,
+                "c7032a26f00c1ebed7d3266e05a7a2c88af89fe2c6256d87096ef9d61d27bab9",
+            ),
+            "native-linux-x64": (
+                492559306,
+                2185100,
+                "fc5aa3d934049f6e3e72939bc4328633f03b6873e10a10f03cc8a43618173670",
+            ),
+            "powershell-windows-x64": (
+                492559280,
+                22325,
+                "ccd4384caa8e27b650ea1a18503b687c19afc7db353c850104676297e0238c4f",
+            ),
+            "native-windows-x64": (
+                492559294,
+                2738368,
+                "f6a7ddc221d5b51f017f21afef0fc3553507847d6f3504b8f9d804e40b6d4026",
+            ),
+            "native-macos-x64": (
+                492559281,
+                2151712,
+                "9fb899feb53a7c3a83ab7689f5956305d53481a36b910038e10eda2bc17e726d",
+            ),
+        }
+        self.assertEqual(
+            {
+                name: (receipt.asset_id, receipt.asset_size, receipt.digest)
+                for name, receipt in policy.receipts.items()
+            },
+            expected_receipts,
+        )
+
     def test_release_inputs_reject_replay_and_substitution(self) -> None:
         module = load_subject()
         policy = module.PUBLIC_POLICY
@@ -144,7 +218,12 @@ class InstalledReleaseAttestationTests(unittest.TestCase):
             ("v0.1.19", policy.version, policy.source_commit, str(policy.release_run_id)),
             (policy.tag, "0.1.19", policy.source_commit, str(policy.release_run_id)),
             (policy.tag, policy.version, "2" * 40, str(policy.release_run_id)),
-            (policy.tag, policy.version, policy.source_commit, "29935721686"),
+            (
+                policy.tag,
+                policy.version,
+                policy.source_commit,
+                str(policy.release_run_id + 1),
+            ),
         ]
         for changed in changes:
             with self.subTest(changed=changed):
@@ -214,7 +293,7 @@ class InstalledReleaseAttestationTests(unittest.TestCase):
             "digest": f"sha256:{digest}",
             "browser_download_url": (
                 "https://github.com/LogBrewCo/cli/releases/download/"
-                f"v0.1.20/{local_receipt.asset_name}"
+                f"{policy.tag}/{local_receipt.asset_name}"
             ),
         }
         checksum_bytes = f"{digest} *{local_receipt.asset_name}\n".encode()
@@ -477,7 +556,12 @@ class InstalledReleaseAttestationTests(unittest.TestCase):
         def completed(command, **kwargs):
             self.assertEqual(
                 command,
-                [sys.executable, "/fixed/verifier.py", "powershell", "0.1.20"],
+                [
+                    sys.executable,
+                    "/fixed/verifier.py",
+                    "powershell",
+                    module.PUBLIC_POLICY.version,
+                ],
             )
             self.assertEqual(kwargs["env"].get("INSTALLER_NO_MODIFY_PATH"), "1")
             return subprocess.CompletedProcess(command, 0, verifier_output, b"")
@@ -486,7 +570,7 @@ class InstalledReleaseAttestationTests(unittest.TestCase):
             stdout, stderr = module.execute_verifier(
                 pathlib.Path("/fixed/verifier.py"),
                 powershell,
-                "0.1.20",
+                module.PUBLIC_POLICY.version,
                 artifact,
             )
         module.validate_verifier_output(
