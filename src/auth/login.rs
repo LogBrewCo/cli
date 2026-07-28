@@ -1,9 +1,6 @@
 //! Interactive browser login and loopback callback handling.
 
-use crate::{CliEnvironment, RuntimeError};
-
-/// Provider used by the first-party CLI browser login.
-const LOGIN_PROVIDER: &str = "github";
+use crate::{CliEnvironment, LoginProvider, RuntimeError};
 /// Loopback callback path accepted by the CLI listener.
 const CALLBACK_PATH: &str = "/callback";
 /// Maximum time the CLI waits for the provider round trip.
@@ -16,33 +13,42 @@ const HEX: &[u8; 16] = b"0123456789abcdef";
 /// Executes interactive login or a non-mutating handoff mode.
 pub(super) async fn execute_login<W: std::io::Write>(
     env: &CliEnvironment,
+    provider: LoginProvider,
     should_open_browser: bool,
     json: bool,
     output: &mut W,
 ) -> Result<(), RuntimeError> {
     if json || !should_open_browser {
-        return write_auth_handoff(env, json, output);
+        return write_auth_handoff(env, provider, json, output);
     }
-    execute_with_opener(env, output, open_browser).await
+    execute_with_opener(env, provider, output, open_browser).await
 }
 
 /// Writes the legacy agent/manual handoff without binding or persisting state.
 fn write_auth_handoff<W: std::io::Write>(
     env: &CliEnvironment,
+    provider: LoginProvider,
     json: bool,
     output: &mut W,
 ) -> Result<(), RuntimeError> {
-    let auth_url = format!("{}/api/auth/cli/login", env.base_url.trim_end_matches('/'));
+    let origin = super::normalized_api_base(env.base_url.as_str())?;
+    let mut auth_url = reqwest::Url::parse(format!("{origin}/api/auth/cli/login").as_str())
+        .map_err(|_| login_unavailable("the configured API URL is invalid"))?;
+    let _query = auth_url
+        .query_pairs_mut()
+        .append_pair("provider", provider.as_str());
     if json {
         let body = serde_json::json!({
             "ok": true,
-            "auth_url": auth_url,
+            "auth_url": auth_url.as_str(),
+            "provider": provider.as_str(),
             "browser_opened": false,
             "next": "open auth_url in a browser",
         });
         writeln!(output, "{body}")?;
     } else {
         writeln!(output, "Open this URL to log in: {auth_url}")?;
+        writeln!(output, "Provider: {}", provider.as_str())?;
         writeln!(output, "Browser: not opened")?;
         writeln!(output, "Next: open the URL in a browser")?;
     }
@@ -68,6 +74,7 @@ fn open_browser(url: &str) -> bool {
 /// Executes interactive login with an injectable browser opener.
 pub(super) async fn execute_with_opener<W, F>(
     env: &CliEnvironment,
+    provider: LoginProvider,
     output: &mut W,
     open_browser: F,
 ) -> Result<(), RuntimeError>
@@ -83,19 +90,28 @@ where
     let callback_address = listener.local_addr()?;
     let redirect_uri = format!("http://{callback_address}{CALLBACK_PATH}");
     let state = random_state()?;
-    let auth_url = build_auth_url(origin.as_str(), redirect_uri.as_str(), state.as_str())?;
+    let auth_url = build_auth_url(
+        origin.as_str(),
+        provider,
+        redirect_uri.as_str(),
+        state.as_str(),
+    )?;
 
     if !open_browser(auth_url.as_str()) {
         return Err(login_unavailable("could not open the browser for login"));
     }
     writeln!(output, "Waiting for browser login...")?;
 
-    let code = wait_for_callback(&listener, state.as_str()).await?;
+    let code = wait_for_callback(&listener, provider, state.as_str()).await?;
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
         .connect_timeout(std::time::Duration::from_secs(10))
         .build()?;
-    let exchange_url = format!("{}/api/auth/{LOGIN_PROVIDER}", origin.trim_end_matches('/'));
+    let exchange_url = format!(
+        "{}/api/auth/{}",
+        origin.trim_end_matches('/'),
+        provider.as_str()
+    );
     let response = client
         .post(exchange_url)
         .json(&serde_json::json!({ "code": code }))
@@ -129,6 +145,7 @@ where
 /// Builds the provider-login URL without rendering state to CLI output.
 fn build_auth_url(
     base_url: &str,
+    provider: LoginProvider,
     redirect_uri: &str,
     state: &str,
 ) -> Result<reqwest::Url, RuntimeError> {
@@ -138,7 +155,7 @@ fn build_auth_url(
     .map_err(|_| login_unavailable("the configured API URL is invalid"))?;
     let _query = url
         .query_pairs_mut()
-        .append_pair("provider", LOGIN_PROVIDER)
+        .append_pair("provider", provider.as_str())
         .append_pair("redirect_uri", redirect_uri)
         .append_pair("state", state);
     Ok(url)
@@ -160,6 +177,7 @@ fn random_state() -> Result<String, RuntimeError> {
 /// Waits for one matching provider callback while rejecting unrelated local requests.
 async fn wait_for_callback(
     listener: &tokio::net::TcpListener,
+    provider: LoginProvider,
     expected_state: &str,
 ) -> Result<String, RuntimeError> {
     let deadline = tokio::time::Instant::now() + LOGIN_TIMEOUT;
@@ -171,7 +189,7 @@ async fn wait_for_callback(
         let (mut stream, _) = tokio::time::timeout(remaining, listener.accept())
             .await
             .map_err(|_| login_unavailable("browser login timed out"))??;
-        match read_callback(&mut stream, expected_state).await {
+        match read_callback(&mut stream, provider, expected_state).await {
             Callback::Authorized(code) => {
                 write_browser_response(
                     &mut stream,
@@ -198,7 +216,11 @@ async fn wait_for_callback(
 }
 
 /// Reads and validates one bounded loopback HTTP request.
-async fn read_callback(stream: &mut tokio::net::TcpStream, expected_state: &str) -> Callback {
+async fn read_callback(
+    stream: &mut tokio::net::TcpStream,
+    provider: LoginProvider,
+    expected_state: &str,
+) -> Callback {
     use tokio::io::AsyncReadExt as _;
 
     let mut request = Vec::with_capacity(1024);
@@ -217,11 +239,15 @@ async fn read_callback(stream: &mut tokio::net::TcpStream, expected_state: &str)
             break;
         }
     }
-    parse_callback(request.as_slice(), expected_state)
+    parse_callback(request.as_slice(), provider, expected_state)
 }
 
 /// Parses the callback request line and exact public query fields.
-fn parse_callback(request: &[u8], expected_state: &str) -> Callback {
+fn parse_callback(
+    request: &[u8],
+    expected_provider: LoginProvider,
+    expected_state: &str,
+) -> Callback {
     let Ok(request) = std::str::from_utf8(request) else {
         return Callback::Invalid;
     };
@@ -260,7 +286,7 @@ fn parse_callback(request: &[u8], expected_state: &str) -> Callback {
             return Callback::Invalid;
         }
     }
-    if provider.as_deref() != Some(LOGIN_PROVIDER)
+    if provider.as_deref() != Some(expected_provider.as_str())
         || !state
             .as_deref()
             .is_some_and(|state| constant_time_equal(state, expected_state))
@@ -341,7 +367,7 @@ const fn login_unavailable(message: &'static str) -> RuntimeError {
 #[cfg(test)]
 mod tests {
     use super::execute_with_opener;
-    use crate::CliEnvironment;
+    use crate::{CliEnvironment, LoginProvider};
     use wiremock::matchers::{body_json, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -350,7 +376,7 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
-            .and(path("/api/auth/github"))
+            .and(path("/api/auth/gitlab"))
             .and(body_json(serde_json::json!({ "code": "provider-code" })))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
                 "access_token": "saved-access",
@@ -368,7 +394,7 @@ mod tests {
         };
         let mut output = Vec::new();
 
-        execute_with_opener(&env, &mut output, |auth_url| {
+        execute_with_opener(&env, LoginProvider::GitLab, &mut output, |auth_url| {
             let auth_url = reqwest::Url::parse(auth_url).expect("valid auth URL");
             assert_eq!(auth_url.path(), "/api/auth/cli/login");
             let query = auth_url
@@ -376,7 +402,7 @@ mod tests {
                 .collect::<std::collections::HashMap<_, _>>();
             assert_eq!(
                 query.get("provider").map(|value| value.as_ref()),
-                Some("github")
+                Some("gitlab")
             );
             let redirect_uri = query.get("redirect_uri").expect("redirect URI").to_string();
             let state = query.get("state").expect("state").to_string();
@@ -385,7 +411,7 @@ mod tests {
                 let mut wrong_state = callback.clone();
                 let _query = wrong_state
                     .query_pairs_mut()
-                    .append_pair("provider", "github")
+                    .append_pair("provider", "gitlab")
                     .append_pair("code", "ignored-code")
                     .append_pair("state", "wrong-state");
                 let response = reqwest::get(wrong_state)
@@ -396,7 +422,7 @@ mod tests {
                 let mut valid = callback;
                 let _query = valid
                     .query_pairs_mut()
-                    .append_pair("provider", "github")
+                    .append_pair("provider", "gitlab")
                     .append_pair("code", "provider-code")
                     .append_pair("state", state.as_str());
                 let _response = reqwest::get(valid).await;
@@ -444,13 +470,13 @@ mod tests {
         let duplicate =
             b"GET /callback?provider=github&state=expected&state=expected&code=a HTTP/1.1\r\n\r\n";
         assert!(matches!(
-            super::parse_callback(duplicate, "expected"),
+            super::parse_callback(duplicate, LoginProvider::GitHub, "expected"),
             super::Callback::Invalid
         ));
         let wrong_provider =
             b"GET /callback?provider=gitlab&state=expected&code=a HTTP/1.1\r\n\r\n";
         assert!(matches!(
-            super::parse_callback(wrong_provider, "expected"),
+            super::parse_callback(wrong_provider, LoginProvider::GitHub, "expected"),
             super::Callback::Invalid
         ));
     }

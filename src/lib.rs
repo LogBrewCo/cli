@@ -36,7 +36,7 @@ mod usage;
 pub mod version;
 
 use auth::{
-    AuthCredential, execute_login, execute_logout, send_authenticated_with_refresh,
+    AuthCredential, execute_login, execute_logout, execute_whoami, send_authenticated_with_refresh,
     token_is_project_ingest_key,
 };
 pub use error::{
@@ -68,6 +68,43 @@ pub(crate) const ISSUE_STATUS_FILTER_NEXT_STEP: &str =
 pub(crate) const ISSUE_STATUS_ARGUMENT_NEXT_STEP: &str =
     "provide one of unresolved/open, resolved/closed, ignored";
 
+/// OAuth provider used for native CLI browser login.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum LoginProvider {
+    /// GitHub OAuth.
+    #[default]
+    GitHub,
+    /// GitLab OAuth.
+    GitLab,
+    /// Bitbucket OAuth.
+    Bitbucket,
+}
+
+impl LoginProvider {
+    /// Returns the canonical provider slug used by the public auth API.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::GitHub => "github",
+            Self::GitLab => "gitlab",
+            Self::Bitbucket => "bitbucket",
+        }
+    }
+}
+
+impl std::str::FromStr for LoginProvider {
+    type Err = CliError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "github" => Ok(Self::GitHub),
+            "gitlab" => Ok(Self::GitLab),
+            "bitbucket" => Ok(Self::Bitbucket),
+            _ => Err(CliError::InvalidLoginProvider),
+        }
+    }
+}
+
 /// Parsed `LogBrew` command.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
@@ -80,6 +117,8 @@ pub enum Command {
     },
     /// Opens browser-based authentication.
     Login {
+        /// OAuth provider to use for browser authentication.
+        provider: LoginProvider,
         /// Try to open the login URL in the default browser.
         open_browser: bool,
         /// Emit machine-readable JSON.
@@ -102,6 +141,11 @@ pub enum Command {
     /// Checks local auth and server reachability.
     Status {
         /// Emit machine-readable JSON.
+        json: bool,
+    },
+    /// Returns the authenticated account identity.
+    WhoAmI {
+        /// Emit the exact validated server identity object.
         json: bool,
     },
     /// Checks one project through a bounded read-only diagnostic sequence.
@@ -755,6 +799,7 @@ impl Command {
             | Self::Logout { .. }
             | Self::Setup { .. }
             | Self::Status { .. }
+            | Self::WhoAmI { .. }
             | Self::Doctor { .. }
             | Self::Usage { .. }
             | Self::Version { .. }
@@ -772,6 +817,7 @@ impl Command {
             | Self::Login { json, .. }
             | Self::Logout { json }
             | Self::Status { json }
+            | Self::WhoAmI { json }
             | Self::Doctor { json, .. }
             | Self::ProjectCreate { json, .. }
             | Self::Projects { json }
@@ -817,6 +863,7 @@ impl Command {
             | Self::Logout { .. }
             | Self::Setup { .. }
             | Self::Status { .. }
+            | Self::WhoAmI { .. }
             | Self::Doctor { .. }
             | Self::Usage { .. }
             | Self::Version { .. }
@@ -859,6 +906,7 @@ impl Command {
             | Self::Logout { .. }
             | Self::Setup { .. }
             | Self::Status { .. }
+            | Self::WhoAmI { .. }
             | Self::Doctor { .. }
             | Self::Projects { .. }
             | Self::Usage { .. }
@@ -884,6 +932,7 @@ impl Command {
             | Self::Logout { .. }
             | Self::Setup { .. }
             | Self::Status { .. }
+            | Self::WhoAmI { .. }
             | Self::Doctor { .. }
             | Self::Usage { .. }
             | Self::Version { .. }
@@ -982,12 +1031,15 @@ pub async fn execute_command<W: std::io::Write>(
 ) -> Result<(), RuntimeError> {
     match command {
         Command::Help { topic, json } => execute_help(*topic, *json, output),
-        Command::Login { open_browser, json } => {
-            execute_login(env, *open_browser, *json, output).await
-        }
+        Command::Login {
+            provider,
+            open_browser,
+            json,
+        } => execute_login(env, *provider, *open_browser, *json, output).await,
         Command::Logout { json } => execute_logout(env, *json, output).await,
         Command::Setup { auto, yes, json } => execute_setup(env, *auto, *yes, *json, output),
         Command::Status { json } => execute_status(env, *json, output).await,
+        Command::WhoAmI { json } => execute_whoami(env, *json, output).await,
         Command::Doctor { project_id, json } => {
             doctor::execute(env, project_id.as_str(), *json, output).await
         }

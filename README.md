@@ -76,6 +76,8 @@ release/tag collisions.
 logbrew examples
 logbrew status
 logbrew login
+logbrew login --provider gitlab
+logbrew whoami
 logbrew logout
 logbrew logs --release checkout@1 --environment production
 logbrew issues open --json
@@ -91,8 +93,11 @@ The default API URL is `https://api.logbrew.co`. Override it with
 `LOGBREW_API_URL` when testing against another LogBrew API.
 
 Authentication uses either `LOGBREW_TOKEN` or the secured local access/refresh
-pair created by `logbrew login`. Interactive login opens GitHub, receives the
-result on a loopback-only callback, and stores the pair under `~/.logbrew`.
+pair created by `logbrew login`. Interactive login supports GitHub (the
+default), GitLab, and Bitbucket through
+`logbrew login --provider github|gitlab|bitbucket`, receives the result on a
+loopback-only callback, and stores the pair under `~/.logbrew`. `logbrew
+whoami` and `logbrew me` return the authenticated account identity.
 Authenticated commands rotate local credentials once after an expired-token
 response; environment tokens are never persisted or refreshed. `--json` and
 `--no-open` remain non-mutating handoff modes. CLI output never prints token
