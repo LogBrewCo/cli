@@ -1,8 +1,8 @@
 //! CLI command grammar tests.
 
 use logbrew_cli::{
-    Command, HelpTopic, ProjectSetupSeenOptions, ReadOptions, ReadTarget, SetTarget, help,
-    parse_command,
+    Command, HelpTopic, LoginProvider, ProjectSetupSeenOptions, ReadOptions, ReadTarget, SetTarget,
+    help, parse_command,
 };
 
 #[test]
@@ -151,18 +151,18 @@ fn parses_project_scoped_doctor_without_changing_the_bare_alias() {
 }
 
 #[test]
-fn parses_whoami_and_me_as_status_aliases() {
+fn parses_whoami_and_me_as_authenticated_identity_reads() {
     for args in [
         &["logbrew", "whoami"][..],
         &["logbrew", "me"],
         &["logbrew", "whoami", "--json"],
         &["logbrew", "--json", "me"],
     ] {
-        let command = parse_command(args.iter().copied()).expect("status alias parses");
+        let command = parse_command(args.iter().copied()).expect("identity alias parses");
 
         assert_eq!(
             command,
-            Command::Status {
+            Command::WhoAmI {
                 json: args.contains(&"--json")
             }
         );
@@ -223,7 +223,8 @@ fn status_help_advertises_identity_aliases() {
     assert!(text.contains("logbrew whoami [--json]"));
     assert!(text.contains("logbrew me [--json]"));
     assert!(text.contains("logbrew auth status [--json]"));
-    assert!(text.contains("Identity aliases: logbrew whoami, logbrew me, logbrew auth status."));
+    assert!(text.contains("Status checks API reachability and authentication."));
+    assert!(text.contains("Whoami/me return the authenticated account identity."));
 }
 
 #[test]
@@ -232,6 +233,7 @@ fn login_help_explains_json_handoff_without_browser() {
 
     assert!(text.contains("stores a private local access/refresh pair"));
     assert!(text.contains("refresh local auth once after an expired-token response"));
+    assert!(text.contains("--provider github|gitlab|bitbucket"));
     assert!(text.contains("--json prints the auth handoff without opening a browser."));
 }
 
@@ -657,11 +659,7 @@ fn parses_auth_help_as_real_user_topic() {
 
 #[test]
 fn parses_auth_namespace_as_token_safe_command_aliases() {
-    for args in [
-        &["logbrew", "auth", "status"][..],
-        &["logbrew", "auth", "whoami"],
-        &["logbrew", "auth", "me"],
-    ] {
+    for args in [&["logbrew", "auth", "status"][..]] {
         let command = parse_command(args.iter().copied()).expect("auth status alias parses");
 
         assert_eq!(command, Command::Status { json: false });
@@ -671,16 +669,32 @@ fn parses_auth_namespace_as_token_safe_command_aliases() {
         &["logbrew", "auth", "status", "--json"][..],
         &["logbrew", "--json", "auth", "status"],
         &["logbrew", "auth", "--json", "status"],
-        &["logbrew", "auth", "whoami", "--json"],
     ] {
         let command = parse_command(args.iter().copied()).expect("auth json status alias parses");
 
         assert_eq!(command, Command::Status { json: true });
     }
 
+    for args in [
+        &["logbrew", "auth", "whoami"][..],
+        &["logbrew", "auth", "me"],
+        &["logbrew", "auth", "whoami", "--json"],
+        &["logbrew", "auth", "--json", "me"],
+    ] {
+        let command = parse_command(args.iter().copied()).expect("auth identity alias parses");
+
+        assert_eq!(
+            command,
+            Command::WhoAmI {
+                json: args.contains(&"--json")
+            }
+        );
+    }
+
     assert_eq!(
         parse_command(["logbrew", "auth", "login", "--no-open"]).expect("auth login parses"),
         Command::Login {
+            provider: LoginProvider::GitHub,
             open_browser: false,
             json: false
         }
@@ -688,6 +702,7 @@ fn parses_auth_namespace_as_token_safe_command_aliases() {
     assert_eq!(
         parse_command(["logbrew", "auth", "login", "--json"]).expect("auth login json parses"),
         Command::Login {
+            provider: LoginProvider::GitHub,
             open_browser: false,
             json: true
         }
@@ -695,6 +710,7 @@ fn parses_auth_namespace_as_token_safe_command_aliases() {
     assert_eq!(
         parse_command(["logbrew", "auth", "--json", "login"]).expect("auth json login parses"),
         Command::Login {
+            provider: LoginProvider::GitHub,
             open_browser: false,
             json: true
         }
@@ -970,6 +986,7 @@ fn parses_login_no_open_for_agent_auth_handoff() {
     assert_eq!(
         command,
         Command::Login {
+            provider: LoginProvider::GitHub,
             open_browser: false,
             json: true
         }
@@ -983,6 +1000,7 @@ fn parses_login_json_as_agent_auth_handoff_without_browser() {
     assert_eq!(
         command,
         Command::Login {
+            provider: LoginProvider::GitHub,
             open_browser: false,
             json: true
         }
@@ -1000,10 +1018,75 @@ fn parses_global_json_login_as_agent_auth_handoff_without_browser() {
         assert_eq!(
             command,
             Command::Login {
+                provider: LoginProvider::GitHub,
                 open_browser: false,
                 json: true
             }
         );
+    }
+}
+
+#[test]
+fn parses_login_provider_in_separate_or_inline_form() {
+    for (args, provider) in [
+        (
+            &["logbrew", "login", "--provider", "github"][..],
+            LoginProvider::GitHub,
+        ),
+        (
+            &["logbrew", "login", "--provider=gitlab"][..],
+            LoginProvider::GitLab,
+        ),
+        (
+            &[
+                "logbrew",
+                "auth",
+                "login",
+                "--no-open",
+                "--provider",
+                "bitbucket",
+            ][..],
+            LoginProvider::Bitbucket,
+        ),
+        (
+            &["logbrew", "--json", "auth", "login", "--provider=gitlab"][..],
+            LoginProvider::GitLab,
+        ),
+    ] {
+        let command = parse_command(args.iter().copied()).expect("provider login parses");
+
+        assert_eq!(
+            command,
+            Command::Login {
+                provider,
+                open_browser: !args.contains(&"--no-open") && !args.contains(&"--json"),
+                json: args.contains(&"--json"),
+            }
+        );
+    }
+}
+
+#[test]
+fn rejects_invalid_missing_or_duplicate_login_provider_without_echoing_values() {
+    for args in [
+        &["logbrew", "login", "--provider", "hostile\nsecret"][..],
+        &["logbrew", "login", "--provider="],
+        &["logbrew", "login", "--provider"],
+        &[
+            "logbrew",
+            "login",
+            "--provider",
+            "github",
+            "--provider=gitlab",
+        ],
+    ] {
+        let error = parse_command(args.iter().copied()).expect_err("invalid provider fails closed");
+        let mut output = Vec::new();
+        logbrew_cli::write_cli_error(&error, true, &mut output).expect("parse error writes");
+        let text = String::from_utf8(output).expect("utf8 parse error");
+
+        assert!(!text.contains("hostile"));
+        assert!(!text.contains("secret"));
     }
 }
 

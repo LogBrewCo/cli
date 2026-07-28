@@ -1,6 +1,6 @@
 //! Common CLI flag parsing.
 
-use crate::{CliError, ISSUE_STATUS_FILTER_NEXT_STEP, ReadOptions};
+use crate::{CliError, ISSUE_STATUS_FILTER_NEXT_STEP, LoginProvider, ReadOptions};
 
 /// Parsed common flags.
 #[derive(Debug, Default)]
@@ -13,6 +13,8 @@ pub(crate) struct Flags {
     confirmation: ConfirmationMode,
     /// Browser launch mode.
     browser: BrowserLaunch,
+    /// OAuth provider selected for native browser login.
+    login_provider: LoginProvider,
     /// Read endpoint filters.
     read: ReadOptions,
 }
@@ -37,6 +39,8 @@ pub(crate) enum FlagScope {
     Setup,
     /// Local/API status command.
     Status,
+    /// Authenticated account identity command.
+    WhoAmI,
     /// Installed CLI version command.
     Version,
     /// Historical read commands.
@@ -73,6 +77,7 @@ impl FlagScope {
             Self::Logout => "logout",
             Self::Setup => "setup",
             Self::Status => "status",
+            Self::WhoAmI => "whoami",
             Self::Version => "version",
             Self::Read => "read",
             Self::Explain => "explain",
@@ -96,6 +101,7 @@ impl FlagScope {
             Self::Logout => "run logbrew logout --help",
             Self::Setup => "run logbrew setup --help",
             Self::Status => "run logbrew status --help",
+            Self::WhoAmI => "run logbrew whoami --help",
             Self::Version => "run logbrew version --help",
             Self::Read => "run logbrew read --help",
             Self::Explain => "run logbrew explain --help",
@@ -152,6 +158,7 @@ impl FlagScope {
             (Self::Logout, _) => "run logbrew logout --help",
             (Self::Setup, _) => "run logbrew setup --help",
             (Self::Status, _) => "run logbrew status --help",
+            (Self::WhoAmI, _) => "run logbrew whoami --help",
             (Self::Version, _) => "run logbrew version --help",
             (Self::Explain, _) => "run logbrew explain --help",
             (Self::Set, _) => "run logbrew set --help",
@@ -251,6 +258,12 @@ impl Flags {
         self.browser.should_open()
     }
 
+    /// Returns the selected native browser-login provider.
+    #[must_use]
+    pub(crate) const fn login_provider(&self) -> LoginProvider {
+        self.login_provider
+    }
+
     /// Consumes flag state into read endpoint options.
     #[must_use]
     pub(crate) fn into_read_options(self) -> ReadOptions {
@@ -337,6 +350,7 @@ fn parse_one_flag(
     seen: &mut Vec<&'static str>,
 ) -> Result<(), CliError> {
     if parse_simple_flag(flag, scope, flags, seen)?
+        || parse_login_provider(flag, args, index, scope, flags, seen)?
         || parse_read_filter(flag, args, index, scope, status_kind, flags, seen)?
     {
         return Ok(());
@@ -351,6 +365,31 @@ fn parse_one_flag(
     } else {
         Err(scope.unexpected_argument(flag))
     }
+}
+
+/// Parses the value-taking native login provider flag.
+fn parse_login_provider(
+    flag: &str,
+    args: &[String],
+    index: &mut usize,
+    scope: FlagScope,
+    flags: &mut Flags,
+    seen: &mut Vec<&'static str>,
+) -> Result<bool, CliError> {
+    let (name, inline_value) = split_inline_value(flag);
+    if name != "--provider" {
+        return Ok(false);
+    }
+    scope.ensure_allows(FlagKind::Login, "--provider")?;
+    mark_seen(seen, "--provider")?;
+    let value = if let Some(value) = inline_value {
+        take_inline_value(value, "--provider")?
+    } else {
+        *index += 1;
+        take_value(args, *index, "--provider")?
+    };
+    flags.login_provider = value.parse()?;
+    Ok(true)
 }
 
 /// Returns whether a flag is a valueless common flag.
@@ -607,6 +646,7 @@ fn duplicate_flag_next(flag: &'static str) -> &'static str {
         "--auto" => "use --auto once",
         "--yes" => "use --yes once",
         "--no-open" => "use --no-open once",
+        "--provider" => "use --provider once",
         "--name" => "use --name once",
         "--service" => "use --service once",
         "--since" => "use --since once",
@@ -738,6 +778,7 @@ fn missing_flag_value_next(flag: &'static str) -> &'static str {
         "--pagination" => "provide a value after --pagination",
         "--cursor-time" => "provide a value after --cursor-time",
         "--cursor-id" => "provide a value after --cursor-id",
+        "--provider" => "provide github, gitlab, or bitbucket after --provider",
         _ => "provide a value after the flag",
     }
 }

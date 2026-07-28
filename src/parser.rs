@@ -179,7 +179,8 @@ fn parse_values(values: &[String]) -> Result<Command, CliError> {
         "login" => parse_login(tail),
         "logout" => parse_logout(tail),
         alias if is_setup_alias(alias) => parse_setup(tail),
-        "status" | "whoami" | "me" | "health" | "ping" => parse_status(tail),
+        "status" | "health" | "ping" => parse_status(tail),
+        "whoami" | "me" => parse_whoami(tail),
         "doctor" => parse_doctor(tail),
         "version" => parse_version(tail),
         "account" if tail.first().is_some_and(|arg| arg == "usage") => parse_usage(&tail[1..]),
@@ -607,6 +608,7 @@ fn parse_login(args: &[String]) -> Result<Command, CliError> {
     let flags = parse_flags(args, FlagScope::Login)?;
     let json = flags.is_json();
     Ok(Command::Login {
+        provider: flags.login_provider(),
         open_browser: flags.should_open_browser() && !json,
         json,
     })
@@ -963,6 +965,14 @@ fn validate_project_setup_seen_source(source: &str) -> Result<String, CliError> 
 fn parse_status(args: &[String]) -> Result<Command, CliError> {
     let flags = parse_flags(args, FlagScope::Status)?;
     Ok(Command::Status {
+        json: flags.is_json(),
+    })
+}
+
+/// Parses an authenticated account identity read.
+fn parse_whoami(args: &[String]) -> Result<Command, CliError> {
+    let flags = parse_flags(args, FlagScope::WhoAmI)?;
+    Ok(Command::WhoAmI {
         json: flags.is_json(),
     })
 }

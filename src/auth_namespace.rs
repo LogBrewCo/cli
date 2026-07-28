@@ -21,7 +21,8 @@ pub fn parse(args: &[String]) -> Result<Command, CliError> {
         "help" => parse_help_command(tail),
         "login" => parse_login(tail),
         "logout" => parse_logout(tail),
-        alias if is_status_alias(alias) || matches!(alias, "whoami" | "me") => parse_status(tail),
+        alias if is_status_alias(alias) => parse_status(tail),
+        "whoami" | "me" => parse_whoami(tail),
         alias if is_help_alias(alias) => parse_auth_help_alias(tail),
         other => Err(CliError::UnexpectedArgument {
             argument: other.to_owned(),
@@ -102,6 +103,7 @@ fn parse_login(args: &[String]) -> Result<Command, CliError> {
     let flags = parse_flags(args, FlagScope::Login)?;
     let json = flags.is_json();
     Ok(Command::Login {
+        provider: flags.login_provider(),
         open_browser: flags.should_open_browser() && !json,
         json,
     })
@@ -119,6 +121,14 @@ fn parse_logout(args: &[String]) -> Result<Command, CliError> {
 fn parse_status(args: &[String]) -> Result<Command, CliError> {
     let flags = parse_flags(args, FlagScope::Status)?;
     Ok(Command::Status {
+        json: flags.is_json(),
+    })
+}
+
+/// Parses namespaced authenticated account identity.
+fn parse_whoami(args: &[String]) -> Result<Command, CliError> {
+    let flags = parse_flags(args, FlagScope::WhoAmI)?;
+    Ok(Command::WhoAmI {
         json: flags.is_json(),
     })
 }

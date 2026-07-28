@@ -41,6 +41,14 @@ async fn login_no_open_json_prints_auth_url_without_browser_side_effect() {
     for args in [
         &["logbrew", "login", "--no-open", "--json"][..],
         &["logbrew", "--json", "login"][..],
+        &[
+            "logbrew",
+            "login",
+            "--provider",
+            "gitlab",
+            "--no-open",
+            "--json",
+        ][..],
     ] {
         let command = parse_command(args.iter().copied()).expect("command");
         let mut output = Vec::new();
@@ -51,8 +59,17 @@ async fn login_no_open_json_prints_auth_url_without_browser_side_effect() {
 
         let body: serde_json::Value =
             serde_json::from_slice(output.as_slice()).expect("valid json");
+        let provider = if args.contains(&"gitlab") {
+            "gitlab"
+        } else {
+            "github"
+        };
         assert_eq!(body["ok"], true);
-        assert_eq!(body["auth_url"], "https://example.test/api/auth/cli/login");
+        assert_eq!(
+            body["auth_url"],
+            format!("https://example.test/api/auth/cli/login?provider={provider}")
+        );
+        assert_eq!(body["provider"], provider);
         assert_eq!(body["browser_opened"], false);
         assert_eq!(body["next"], "open auth_url in a browser");
     }
@@ -60,7 +77,8 @@ async fn login_no_open_json_prints_auth_url_without_browser_side_effect() {
 
 #[tokio::test]
 async fn login_no_open_human_prints_browser_state_and_next_step() {
-    let command = parse_command(["logbrew", "login", "--no-open"]).expect("command");
+    let command = parse_command(["logbrew", "login", "--provider", "bitbucket", "--no-open"])
+        .expect("command");
     let env = CliEnvironment {
         base_url: "https://example.test".to_owned(),
         token: None,
@@ -76,8 +94,9 @@ async fn login_no_open_human_prints_browser_state_and_next_step() {
     let text = String::from_utf8(output).expect("utf8 output");
     assert_eq!(
         text,
-        "Open this URL to log in: https://example.test/api/auth/cli/login\nBrowser: not \
-         opened\nNext: open the URL in a browser\n"
+        "Open this URL to log in: \
+         https://example.test/api/auth/cli/login?provider=bitbucket\nProvider: bitbucket\nBrowser: \
+         not opened\nNext: open the URL in a browser\n"
     );
 }
 

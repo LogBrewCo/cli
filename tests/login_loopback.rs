@@ -11,7 +11,7 @@ async fn built_binary_completes_loopback_login_without_exposing_credentials()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
-        .and(path("/api/auth/github"))
+        .and(path("/api/auth/gitlab"))
         .and(body_json(
             serde_json::json!({ "code": "binary-provider-code" }),
         ))
@@ -45,6 +45,7 @@ async fn built_binary_completes_loopback_login_without_exposing_credentials()
     let child_path = std::env::join_paths(path_entries)?;
     let child = std::process::Command::new(env!("CARGO_BIN_EXE_logbrew"))
         .arg("login")
+        .args(["--provider", "gitlab"])
         .env("HOME", home.as_os_str())
         .env("LOGBREW_API_URL", server.uri())
         .env("LOGBREW_TEST_BROWSER_URL_FILE", call_file.as_os_str())
@@ -62,7 +63,7 @@ async fn built_binary_completes_loopback_login_without_exposing_credentials()
         .collect::<std::collections::HashMap<_, _>>();
     assert_eq!(
         query.get("provider").map(|value| value.as_ref()),
-        Some("github")
+        Some("gitlab")
     );
     let state = query.get("state").ok_or("missing state")?.to_string();
     let mut callback = reqwest::Url::parse(
@@ -73,7 +74,7 @@ async fn built_binary_completes_loopback_login_without_exposing_credentials()
     )?;
     let _query = callback
         .query_pairs_mut()
-        .append_pair("provider", "github")
+        .append_pair("provider", "gitlab")
         .append_pair("code", "binary-provider-code")
         .append_pair("state", state.as_str());
     let callback_response = reqwest::get(callback).await?;

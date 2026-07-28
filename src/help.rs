@@ -39,7 +39,7 @@ const ROOT_HELP: &str = "\
 LogBrew CLI
 
 Usage:
-  logbrew login [--no-open] [--json]
+  logbrew login [--provider github|gitlab|bitbucket] [--no-open] [--json]
   logbrew logout [--json]
   logbrew setup [--auto] [--yes] [--json]
   logbrew projects [--json]
@@ -129,10 +129,11 @@ Use --json for stable machine-readable output.";
 /// Login command help text.
 const LOGIN_HELP: &str = "\
 Usage:
-  logbrew login [--no-open] [--json]
+  logbrew login [--provider github|gitlab|bitbucket] [--no-open] [--json]
 
 Starts browser login for the native CLI and stores a private local access/refresh pair.
 Authenticated commands refresh local auth once after an expired-token response.
+Use --provider github|gitlab|bitbucket to choose the account provider (default: github).
 Use --no-open to print the URL without opening a browser.
 --json prints the auth handoff without opening a browser.";
 
@@ -177,8 +178,8 @@ Usage:
   logbrew me [--json]
   logbrew auth status [--json]
 
-Checks local auth and API reachability.
-Identity aliases: logbrew whoami, logbrew me, logbrew auth status.";
+Status checks API reachability and authentication.
+Whoami/me return the authenticated account identity.";
 
 /// Version command help text.
 const VERSION_HELP: &str = "\
@@ -192,8 +193,8 @@ The CLI is a native Rust binary.";
 /// Auth workflow help text.
 const AUTH_HELP: &str = "\
 Usage:
-  logbrew login [--no-open] [--json]
-  logbrew auth login [--no-open] [--json]
+  logbrew login [--provider github|gitlab|bitbucket] [--no-open] [--json]
+  logbrew auth login [--provider github|gitlab|bitbucket] [--no-open] [--json]
   logbrew status [--json]
   logbrew auth status [--json]
   logbrew auth whoami [--json]
@@ -203,8 +204,8 @@ Usage:
   logbrew logout [--json]
   logbrew auth logout [--json]
 
-Use login once, status/whoami/me to verify API/auth state, and logout to revoke the stored
-server session when possible and always remove local credentials.
+Use login once, status to verify API/auth state, whoami/me to inspect the authenticated account,
+and logout to revoke the stored server session when possible and always remove local credentials.
 Use --json for agent-readable auth checks.";
 
 /// JSON output help text.

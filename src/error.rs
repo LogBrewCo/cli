@@ -137,6 +137,9 @@ pub enum CliError {
     /// Authenticated project catalog syntax is malformed.
     #[error("invalid projects command")]
     InvalidProjectsCommand,
+    /// Native browser login provider is unsupported.
+    #[error("invalid login provider")]
+    InvalidLoginProvider,
     /// Account usage read syntax is malformed.
     #[error("invalid usage command")]
     InvalidUsageCommand,
@@ -585,6 +588,7 @@ const fn cli_error_code(error: &CliError) -> &'static str {
         CliError::InvalidDoctorCommand => "invalid_doctor_command",
         CliError::InvalidProjectCreateCommand => "invalid_project_create_command",
         CliError::InvalidProjectsCommand => "invalid_projects_command",
+        CliError::InvalidLoginProvider => "invalid_login_provider",
         CliError::InvalidUsageCommand => "invalid_usage_command",
         CliError::InvalidNativeDebugCommand | CliError::InvalidNativeDebugIdentity => {
             "invalid_native_debug_command"
@@ -635,6 +639,7 @@ const fn cli_error_next_step(error: &CliError) -> &'static str {
         CliError::InvalidProjectsCommand => {
             "use logbrew projects with optional --json, or logbrew projects --help"
         }
+        CliError::InvalidLoginProvider => "use --provider github, gitlab, or bitbucket",
         CliError::InvalidUsageCommand => "use logbrew usage with optional --json",
         CliError::InvalidNativeDebugCommand => {
             "use logbrew debug-artifacts upload <path> --project <project_id> --release <release> --environment <environment> --service <service> with optional --expect-image-uuid, --dry-run, and --json"

@@ -1,7 +1,8 @@
 //! Local CLI authentication helpers and status rendering.
 
-use crate::{CliEnvironment, RuntimeError};
+use crate::{CliEnvironment, LoginProvider, RuntimeError};
 
+mod identity;
 mod login;
 mod logout;
 mod session;
@@ -104,11 +105,21 @@ impl std::fmt::Debug for AuthCredential {
 /// Executes interactive login or a non-mutating handoff mode.
 pub(crate) async fn execute_login<W: std::io::Write>(
     env: &CliEnvironment,
+    provider: LoginProvider,
     should_open_browser: bool,
     json: bool,
     output: &mut W,
 ) -> Result<(), RuntimeError> {
-    login::execute_login(env, should_open_browser, json, output).await
+    login::execute_login(env, provider, should_open_browser, json, output).await
+}
+
+/// Returns the authenticated account identity.
+pub(crate) async fn execute_whoami<W: std::io::Write>(
+    env: &CliEnvironment,
+    json: bool,
+    output: &mut W,
+) -> Result<(), RuntimeError> {
+    identity::execute(env, json, output).await
 }
 
 /// Revokes the stored server session when possible, then clears local credentials.
