@@ -87,19 +87,19 @@ class ReleasePolicy:
 
 PUBLIC_POLICY = ReleasePolicy(
     repository="LogBrewCo/cli",
-    tag="v0.1.20",
-    version="0.1.20",
-    source_commit="018b1a832d143c203b2822652d1bce9fb16401ab",
-    tag_object_sha="11e6f9870154063cbae25333ffd628303b078def",
-    release_run_id=29935721685,
+    tag="v0.1.26",
+    version="0.1.26",
+    source_commit="1388b0c3e33f71dc91e9a929c7b1cfa410230934",
+    tag_object_sha="699f3aa3fbb0538ceb15ab4c49311885e70a9e15",
+    release_run_id=30348559774,
     release_workflow_id=289984708,
-    release_id=358147169,
-    published_at="2026-07-22T16:01:18Z",
+    release_id=360988832,
+    published_at="2026-07-28T09:59:29Z",
     checksum_asset_name="sha256.sum",
-    checksum_asset_id=486136719,
+    checksum_asset_id=492559321,
     checksum_asset_size=820,
     checksum_asset_digest=(
-        "cc8c2f767c15cd733b23fa619b20c5e7d5b4aa561ab4c5d0f41acd6d279aed02"
+        "89f6b0b9ca21051e97ab0cb118b49cc6672c3cecd9891c6160afa119c7909423"
     ),
     receipts={
         "shell-linux-x64": ReceiptPolicy(
@@ -109,10 +109,10 @@ PUBLIC_POLICY = ReleasePolicy(
             mode="shell",
             artifact_id="installer:shell",
             asset_name="logbrew-cli-installer.sh",
-            asset_id=486136700,
+            asset_id=492559283,
             asset_size=54183,
             digest=(
-                "80b1c203422b38f703b25d91e6f6512d000a9f2cf49b9909ab3b5d382e67ec84"
+                "68792a69a210bc5b66019757ada38b699db39ced761f422002e94d490ea83fdb"
             ),
             checksum_required=False,
         ),
@@ -123,10 +123,10 @@ PUBLIC_POLICY = ReleasePolicy(
             mode="native",
             artifact_id="native:linux-arm64",
             asset_name="logbrew-cli-aarch64-unknown-linux-gnu.tar.xz",
-            asset_id=486136690,
-            asset_size=1831656,
+            asset_id=492559271,
+            asset_size=1945320,
             digest=(
-                "25506d03eade84ee5bd3118dbc7d15178f6081fdfd8bf1fc2465fc79848f0225"
+                "c7032a26f00c1ebed7d3266e05a7a2c88af89fe2c6256d87096ef9d61d27bab9"
             ),
             checksum_required=True,
         ),
@@ -137,10 +137,10 @@ PUBLIC_POLICY = ReleasePolicy(
             mode="native",
             artifact_id="native:linux-x64",
             asset_name="logbrew-cli-x86_64-unknown-linux-gnu.tar.xz",
-            asset_id=486136712,
-            asset_size=2052132,
+            asset_id=492559306,
+            asset_size=2185100,
             digest=(
-                "a8b3d8bc55a84053c8abee78f8bd67c6a75ebe5a3ecb847693a160607ceff91a"
+                "fc5aa3d934049f6e3e72939bc4328633f03b6873e10a10f03cc8a43618173670"
             ),
             checksum_required=True,
         ),
@@ -151,10 +151,10 @@ PUBLIC_POLICY = ReleasePolicy(
             mode="powershell",
             artifact_id="installer:powershell",
             asset_name="logbrew-cli-installer.ps1",
-            asset_id=486136699,
+            asset_id=492559280,
             asset_size=22325,
             digest=(
-                "6d673493ce394ea4f265995d41658303df76850517c670c5fe918e9aa9b789cf"
+                "ccd4384caa8e27b650ea1a18503b687c19afc7db353c850104676297e0238c4f"
             ),
             checksum_required=False,
         ),
@@ -165,10 +165,10 @@ PUBLIC_POLICY = ReleasePolicy(
             mode="native",
             artifact_id="native:windows-x64",
             asset_name="logbrew-cli-x86_64-pc-windows-msvc.zip",
-            asset_id=486136707,
-            asset_size=2563815,
+            asset_id=492559294,
+            asset_size=2738368,
             digest=(
-                "2dad2c645b55a10f487e97449c11408aa4b80d059c454c2f840ec55bef8b43a3"
+                "f6a7ddc221d5b51f017f21afef0fc3553507847d6f3504b8f9d804e40b6d4026"
             ),
             checksum_required=True,
         ),
@@ -179,10 +179,10 @@ PUBLIC_POLICY = ReleasePolicy(
             mode="native",
             artifact_id="native:macos-x64",
             asset_name="logbrew-cli-x86_64-apple-darwin.tar.xz",
-            asset_id=486136702,
-            asset_size=2025652,
+            asset_id=492559281,
+            asset_size=2151712,
             digest=(
-                "8786f2fb3201fa69cf473b5070c3e1e18bc0c26714cd8812e4dd607a9a8c86b8"
+                "9fb899feb53a7c3a83ab7689f5956305d53481a36b910038e10eda2bc17e726d"
             ),
             checksum_required=True,
         ),
