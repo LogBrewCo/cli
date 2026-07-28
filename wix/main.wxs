@@ -69,7 +69,7 @@
 
         <Package Id='*'
             Keywords='Installer'
-            Description='Public command-line interface for LogBrew.'
+            Description='Developer-first observability command-line interface'
             Manufacturer='LogBrewCo'
             InstallerVersion='450'
             Languages='1033'
