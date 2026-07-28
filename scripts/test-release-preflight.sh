@@ -95,6 +95,10 @@ set -euo pipefail
 
 case "${1:-} ${2:-}" in
   "auth status")
+    if [[ "${3:-}" != "--active" ]]; then
+      printf 'release preflight must validate only the active GitHub account\n' >&2
+      exit 1
+    fi
     exit 0
     ;;
   "release view")
