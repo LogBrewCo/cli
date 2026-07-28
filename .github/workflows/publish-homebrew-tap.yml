@@ -18,10 +18,17 @@ jobs:
       GITHUB_USER: "LogBrew release bot"
       GITHUB_EMAIL: "41898282+github-actions[bot]@users.noreply.github.com"
     steps:
+      - name: Checkout release tooling
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          path: release-tooling
+
       - name: Checkout tap
         uses: actions/checkout@v7
         with:
           persist-credentials: true
+          path: tap
           repository: "LogBrewCo/homebrew-tap"
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
 
@@ -29,27 +36,81 @@ jobs:
         uses: actions/download-artifact@v8
         with:
           pattern: artifacts-*
-          path: Formula/
+          path: tap/Formula/
           merge-multiple: true
 
-      - name: Commit formula files
+      - name: Validate and commit formula files
         shell: bash
         run: |
-          git config --global user.name "${GITHUB_USER}"
-          git config --global user.email "${GITHUB_EMAIL}"
+          set -euo pipefail
+          cd tap
 
-          for release in $(echo "$PLAN" | jq --compact-output '.releases[] | select([.artifacts[] | endswith(".rb")] | any)'); do
-            filename=$(echo "$release" | jq '.artifacts[] | select(endswith(".rb"))' --raw-output)
-            name=$(echo "$filename" | sed "s/\.rb$//")
-            version=$(echo "$release" | jq .app_version --raw-output)
+          git config --local user.name "${GITHUB_USER}"
+          git config --local user.email "${GITHUB_EMAIL}"
 
+          export PATH="/home/linuxbrew/.linuxbrew/bin:${PATH}"
+          command -v brew >/dev/null
+          brew update
+
+          audit_tap="logbrew-release-verifier/formula"
+          if brew tap | grep -Fxq "${audit_tap}"; then
+            printf 'Homebrew formula validation failed: temporary tap already exists.\n' >&2
+            exit 1
+          fi
+          brew tap-new --no-git "${audit_tap}" >/dev/null
+          audit_repo="$(brew --repository "${audit_tap}")"
+          cleanup_audit_tap() {
+            brew untap "${audit_tap}" >/dev/null 2>&1 || true
+          }
+          trap cleanup_audit_tap EXIT
+
+          release_count=0
+          while IFS= read -r release; do
+            release_count=$((release_count + 1))
+            filename="$(jq -r '.artifacts[] | select(endswith(".rb"))' <<<"${release}")"
+            version="$(jq -r '.app_version' <<<"${release}")"
+
+            if [[ ! "${filename}" =~ ^[a-z0-9][a-z0-9._+-]*\.rb$ ]]; then
+              printf 'Homebrew formula validation failed: invalid filename.\n' >&2
+              exit 1
+            fi
+            if [[ ! "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              printf 'Homebrew formula validation failed: invalid version.\n' >&2
+              exit 1
+            fi
+
+            name="${filename%.rb}"
+            ruby ../release-tooling/scripts/prepare-homebrew-formula.rb \
+              "Formula/${filename}" "${version}"
+            brew style --fix "Formula/${filename}"
             ruby -c "Formula/${filename}"
+            brew style "Formula/${filename}"
+
+            cp "Formula/${filename}" "${audit_repo}/Formula/${filename}"
+            brew audit --strict --online --formula "${audit_tap}/${name}"
+
             git add "Formula/${filename}"
             if git diff --cached --quiet -- "Formula/${filename}"; then
-              echo "Formula/${filename} already up to date"
+              printf 'Formula already up to date.\n'
             else
               git commit -m "${name} ${version}"
             fi
-          done
+          done < <(
+            jq -c \
+              '.releases[] | select([.artifacts[] | endswith(".rb")] | any)' \
+              <<<"${PLAN}"
+          )
+
+          if [[ "${release_count}" -eq 0 ]]; then
+            printf 'Homebrew formula validation failed: no formula release.\n' >&2
+            exit 1
+          fi
+
+          cleanup_audit_tap
+          if brew tap | grep -Fxq "${audit_tap}"; then
+            printf 'Homebrew formula validation failed: temporary tap remains.\n' >&2
+            exit 1
+          fi
+          trap - EXIT
 
           git push

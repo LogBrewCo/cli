@@ -24,6 +24,7 @@ require_command() {
 
 require_command cargo-audit
 require_command python3
+require_command ruby
 
 bash scripts/confidentiality-check.sh
 python3 scripts/check-github-hosted-runners.py
@@ -32,6 +33,8 @@ if [[ "${LOGBREW_CHECK_ALL_SELF_TEST:-1}" != "0" ]]; then
 fi
 bash scripts/test-package-contents.sh
 python3 scripts/test-publish-crates-workflow.py
+python3 scripts/test-publish-homebrew-workflow.py
+ruby scripts/test-prepare-homebrew-formula.rb
 bash scripts/test-release-preflight.sh
 python3 scripts/test-cross-platform-auth-store.py
 python3 scripts/test-real-user-public-install-smoke.py
