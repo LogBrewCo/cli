@@ -29,7 +29,7 @@ class InstalledReleaseAttestationWorkflowTests(unittest.TestCase):
         run_lines = step.split("        run: >-\n", 1)[1].splitlines()
         return " ".join(line.strip() for line in run_lines if line.strip())
 
-    def test_workflow_is_manual_read_only_and_secret_free(self) -> None:
+    def test_workflow_is_manual_read_only_with_one_scoped_job_token(self) -> None:
         workflow = self.workflow()
         self.assertIn("workflow_dispatch:", workflow)
         self.assertNotIn("pull_request_target", workflow)
@@ -39,12 +39,14 @@ class InstalledReleaseAttestationWorkflowTests(unittest.TestCase):
             "packages: write",
             "id-token: write",
             "secrets.",
-            "GITHUB_TOKEN",
             "qemu",
             "emulat",
         ]:
             with self.subTest(forbidden=forbidden):
                 self.assertNotIn(forbidden, workflow)
+        token_binding = "GITHUB_TOKEN: ${{ github.token }}"
+        self.assertEqual(workflow.count(token_binding), 1)
+        self.assertEqual(workflow.count("${{ github.token }}"), 1)
 
     def test_dispatch_inputs_bind_the_exact_release(self) -> None:
         workflow = self.workflow()
@@ -232,6 +234,7 @@ class InstalledReleaseAttestationWorkflowTests(unittest.TestCase):
         workflow = self.workflow()
         command = self.receipt_run_command(workflow)
         self.assertIn("        shell: bash", workflow)
+        self.assertNotIn("GITHUB_TOKEN", command)
         for option, variable, expression in [
             ("--tag", "ATTESTATION_TAG", "${{ inputs.tag }}"),
             ("--version", "ATTESTATION_VERSION", "${{ inputs.version }}"),

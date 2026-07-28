@@ -24,6 +24,7 @@ MAX_API_BYTES = 1024 * 1024
 MAX_CHECKSUM_BYTES = 64 * 1024
 MAX_VERIFIER_OUTPUT_BYTES = 16 * 1024
 MAX_RELEASED_VERIFIER_BYTES = 256 * 1024
+MAX_GITHUB_TOKEN_BYTES = 1024
 NETWORK_TIMEOUT_SECONDS = 60
 VERIFIER_TIMEOUT_SECONDS = 1200
 COMMIT_PATTERN = re.compile(r"^[0-9a-f]{40}$")
@@ -615,8 +616,26 @@ def read_response(response, maximum: int) -> bytes:
     return content
 
 
-def fetch_json(url: str) -> Mapping[str, object]:
-    """Read one bounded public GitHub API object without credentials."""
+def github_api_headers(token: str) -> Mapping[str, str]:
+    """Build fixed API headers from one bounded GitHub Actions job token."""
+    if (
+        not isinstance(token, str)
+        or not token
+        or not token.isascii()
+        or len(token.encode("ascii")) > MAX_GITHUB_TOKEN_BYTES
+        or any(ord(character) < 0x20 or ord(character) == 0x7F for character in token)
+    ):
+        raise AttestationError
+    return {
+        "Accept": "application/vnd.github+json",
+        "Authorization": f"Bearer {token}",
+        "User-Agent": "logbrew-installed-attestation",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+
+
+def fetch_json(url: str, token: str) -> Mapping[str, object]:
+    """Read one bounded public GitHub API object with the scoped job token."""
     parsed = urllib.parse.urlsplit(url)
     if (
         parsed.scheme != "https"
@@ -629,11 +648,7 @@ def fetch_json(url: str) -> Mapping[str, object]:
         raise AttestationError
     request = urllib.request.Request(
         url,
-        headers={
-            "Accept": "application/vnd.github+json",
-            "User-Agent": "logbrew-installed-attestation",
-            "X-GitHub-Api-Version": "2022-11-28",
-        },
+        headers=github_api_headers(token),
     )
     try:
         with urllib.request.build_opener(NoRedirectHandler()).open(
@@ -651,6 +666,15 @@ def fetch_json(url: str) -> Mapping[str, object]:
     if not isinstance(payload, dict):
         raise AttestationError
     return payload
+
+
+def github_metadata_reader(
+    environment: Mapping[str, str],
+) -> Callable[[str], Mapping[str, object]]:
+    """Bind public API reads to the one scoped GitHub Actions job token."""
+    token = environment.get("GITHUB_TOKEN", "")
+    github_api_headers(token)
+    return lambda url: fetch_json(url, token)
 
 
 def download_release_asset(url: str, expected_size: int) -> bytes:
@@ -909,7 +933,7 @@ def run_attestation(
     output: pathlib.Path,
     environment: Mapping[str, str],
     policy: ReleasePolicy = PUBLIC_POLICY,
-    json_reader: Callable[[str], Mapping[str, object]] = fetch_json,
+    json_reader: Callable[[str], Mapping[str, object]] | None = None,
     asset_reader: Callable[[str, int], bytes] = download_release_asset,
 ) -> None:
     """Produce one exact installed attestation from public immutable inputs."""
@@ -928,15 +952,19 @@ def run_attestation(
     )
     verifier_bytes = validate_released_source(released_source, source_commit)
 
+    metadata_reader = json_reader
+    if metadata_reader is None:
+        metadata_reader = github_metadata_reader(environment)
+
     urls = api_urls(policy)
-    tag_reference = json_reader(urls["tag_ref"])
-    tag_object = json_reader(urls["tag_object"])
+    tag_reference = metadata_reader(urls["tag_ref"])
+    tag_object = metadata_reader(urls["tag_object"])
     validate_tag(policy, tag_reference, tag_object)
-    validate_release_run(policy, json_reader(urls["release_run"]))
+    validate_release_run(policy, metadata_reader(urls["release_run"]))
     artifact_metadata, checksum_metadata = select_release_assets(
         policy,
         receipt,
-        json_reader(urls["release"]),
+        metadata_reader(urls["release"]),
     )
     artifact_bytes = asset_reader(
         str(artifact_metadata["browser_download_url"]),

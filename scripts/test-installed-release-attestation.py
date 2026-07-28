@@ -483,6 +483,44 @@ class InstalledReleaseAttestationTests(unittest.TestCase):
                 with self.assertRaises(module.AttestationError):
                     module.validate_attestation(malformed)
 
+    def test_github_api_headers_require_one_bounded_job_token(self) -> None:
+        module = load_subject()
+        token = "job-token-value"
+        self.assertEqual(
+            module.github_api_headers(token),
+            {
+                "Accept": "application/vnd.github+json",
+                "Authorization": f"Bearer {token}",
+                "User-Agent": "logbrew-installed-attestation",
+                "X-GitHub-Api-Version": "2022-11-28",
+            },
+        )
+        for rejected in (
+            "",
+            "token\nvalue",
+            "token\x00value",
+            "tökén",
+            "x" * 1025,
+        ):
+            with self.subTest(rejected_length=len(rejected)):
+                with self.assertRaises(module.AttestationError):
+                    module.github_api_headers(rejected)
+
+    def test_github_metadata_reader_uses_only_the_scoped_job_token(self) -> None:
+        module = load_subject()
+        token = "job-token-value"
+        url = "https://api.github.com/repos/LogBrewCo/cli/releases/tags/v0.1.26"
+        payload = {"tag_name": "v0.1.26"}
+        with mock.patch.object(module, "fetch_json", return_value=payload) as fetch:
+            reader = module.github_metadata_reader({"GITHUB_TOKEN": token})
+            self.assertEqual(reader(url), payload)
+        fetch.assert_called_once_with(url, token)
+
+        for environment in ({}, {"GITHUB_TOKEN": "token\nvalue"}):
+            with self.subTest(environment=environment):
+                with self.assertRaises(module.AttestationError):
+                    module.github_metadata_reader(environment)
+
     def test_verifier_environment_drops_credentials_and_workflow_controls(self) -> None:
         module = load_subject()
         with mock.patch.dict(
