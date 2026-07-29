@@ -96,6 +96,16 @@ fn setup_help_is_honest_about_install_readiness() {
         }
     );
     assert!(setup_help.contains("No files are changed."));
+    assert!(
+        setup_help.contains(
+            "logbrew projects create <name> --ingest-key-file <path> [--runtime <runtime>]"
+        )
+    );
+    assert!(setup_help.contains("Authenticated project creation (no dashboard sign-in):"));
+    assert!(setup_help.contains(
+        "logbrew setup --create-project shows secure project-creation help and does not create a \
+         project."
+    ));
     assert!(setup_help.contains("compatible releases from 0.1.6"));
     assert!(setup_help.contains("https://github.com/LogBrewCo/sdk.git"));
     assert!(setup_help.contains("Product: LogBrew"));
@@ -144,6 +154,15 @@ fn project_catalog_executes_while_explicit_setup_help_remains_non_mutating() {
     let projects = help::help_text(HelpTopic::Projects);
     assert!(projects.contains("backend-owned"));
     assert!(projects.contains("stores the one-time ingest key in a new owner-only file"));
+    assert!(projects.contains(
+        "An authenticated CLI can create a project without dashboard sign-in or additional browser \
+         auth."
+    ));
+    assert!(
+        projects.contains(
+            "logbrew setup --create-project shows this help and never creates a project."
+        )
+    );
     assert!(projects.contains("No local install, quota, or usage state is created."));
     assert!(projects.contains("POST /api/projects/{project_id}/setup/seen"));
     assert!(projects.contains("Never use an account bearer token as SDK or ingest configuration."));

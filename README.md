@@ -105,6 +105,29 @@ material. `logbrew logout` attempts to revoke the stored refresh-backed server
 session and always removes local credentials; `LOGBREW_TOKEN` must be unset
 separately.
 
+### Create a project without dashboard sign-in
+
+After `logbrew login`, the same authenticated CLI session can create an
+account-owned project and its first project-scoped ingest key. No additional
+dashboard or browser sign-in is required.
+
+Choose a new file inside an existing owner-only directory. On macOS and Linux,
+the owner-only directory created by CLI login is a suitable destination:
+
+```bash
+logbrew projects create "FastAPI Template" \
+  --runtime python \
+  --environment development \
+  --ingest-key-file "$HOME/.logbrew/fastapi-template.key" \
+  --json
+```
+
+The command writes the one-time ingest key to that file before reporting
+success. It never prints the key or its path. Its JSON response contains the
+new project ID; use that ID with `logbrew doctor --project <project_id>` to
+inspect setup readiness. Run `logbrew projects --help` for the complete
+security and retry contract.
+
 For AI sessions, the default mode should be checking only when requested because
 it uses fewer AI tokens. `logbrew watch --json` opens a live WebSocket stream for
 the current session, and `logbrew watch --severity error,critical --json`

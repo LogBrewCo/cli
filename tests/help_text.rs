@@ -42,6 +42,14 @@ fn root_help_surfaces_release_environment_pairing() {
          logbrew sdk."
     ));
     assert!(text.contains("logbrew projects [--json]"));
+    assert!(
+        text.contains(
+            "logbrew projects create <name> --ingest-key-file <path> [--runtime <runtime>]"
+        )
+    );
+    assert!(
+        text.contains("After CLI authentication, project creation requires no dashboard sign-in")
+    );
     assert!(text.contains("logbrew usage [--json]"));
     assert!(text.contains("Popular terms: auth, status, health, setup, projects, usage"));
     assert!(text.contains("Shortcuts: logbrew auth, logbrew whoami, logbrew me"));
@@ -76,6 +84,15 @@ fn project_and_usage_help_are_honest_about_supported_behavior() {
     );
     assert!(projects.contains("logbrew setup --create-project [--json]"));
     assert!(projects.contains("Project creation, setup status"));
+    assert!(projects.contains(
+        "An authenticated CLI can create a project without dashboard sign-in or additional browser \
+         auth."
+    ));
+    assert!(
+        projects.contains(
+            "logbrew setup --create-project shows this help and never creates a project."
+        )
+    );
     assert!(projects.contains("Reads the authenticated active project catalog"));
     assert!(projects.contains("JSON preserves the exact validated bare array"));
     assert!(projects.contains("stores the one-time ingest key in a new owner-only file"));
@@ -98,6 +115,16 @@ fn setup_help_advertises_first_contact_aliases() {
     let text = help::help_text(HelpTopic::Setup);
 
     assert!(text.contains("logbrew setup [--auto] [--yes] [--json]"));
+    assert!(
+        text.contains(
+            "logbrew projects create <name> --ingest-key-file <path> [--runtime <runtime>]"
+        )
+    );
+    assert!(text.contains("Authenticated project creation (no dashboard sign-in):"));
+    assert!(text.contains(
+        "logbrew setup --create-project shows secure project-creation help and does not create a \
+         project."
+    ));
     assert!(text.contains(
         "Aliases (same non-mutating plan): logbrew init, logbrew install, logbrew configure, \
          logbrew sdk."
