@@ -43,6 +43,8 @@ Usage:
   logbrew logout [--json]
   logbrew setup [--auto] [--yes] [--json]
   logbrew projects [--json]
+  logbrew projects create <name> --ingest-key-file <path> [--runtime <runtime>] \
+                         [--environment <environment>] [--json]
   logbrew usage [--json]
   logbrew status [--json]
   logbrew health [--json]
@@ -110,6 +112,9 @@ Popular terms: auth, status, health, setup, projects, usage, logs, issues, error
                          actions, events, releases, environments, support.
 Health aliases: logbrew status, logbrew health, logbrew ping, logbrew doctor.
 Setup aliases (non-mutating plan): logbrew init, logbrew install, logbrew configure, logbrew sdk.
+Authenticated project creation: logbrew projects create <name> --ingest-key-file <path>.
+After CLI authentication, project creation requires no dashboard sign-in; the one-time ingest key \
+is stored in the chosen owner-only file and never printed.
 Shortcuts: logbrew auth, logbrew whoami, logbrew me, logbrew log, logbrew logs, logbrew issues, \
                          logbrew logs checkout failed, logbrew logs error checkout, logbrew \
                          search checkout, logbrew find checkout, logbrew grep checkout, logbrew \
@@ -153,6 +158,12 @@ Usage:
 Detects supported project manifests and prints a non-mutating SDK setup plan.
 No files are changed. SwiftPM planning uses compatible releases from 0.1.6 for detected SwiftPM \
 or XcodeGen projects.
+Authenticated project creation (no dashboard sign-in):
+  logbrew projects create <name> --ingest-key-file <path> [--runtime <runtime>] \
+                           [--environment <environment>] [--json]
+Run that command after logbrew login. It stores the one-time ingest key in the chosen owner-only \
+file and never prints the key or its path.
+logbrew setup --create-project shows secure project-creation help and does not create a project.
 Package: https://github.com/LogBrewCo/sdk.git
 Product: LogBrew
 Dependency: .package(url: \"https://github.com/LogBrewCo/sdk.git\", from: \"0.1.6\")
@@ -268,6 +279,8 @@ Reads the authenticated active project catalog without mutating project state.
 Human output is bounded to project identity, setup status, and latest activity. JSON preserves the \
 exact validated bare array.
 Project creation, setup status, and project-scoped ingest credentials are backend-owned.
+An authenticated CLI can create a project without dashboard sign-in or additional browser auth.
+logbrew setup --create-project shows this help and never creates a project.
 Project creation stores the one-time ingest key in a new owner-only file before reporting success;
 it never prints the one-time ingest key or its file path. An ambiguous attempt reuses the pending retry key only for the exact same request; --abandon-retry starts a new explicit attempt.
 Builds that cannot prove owner-only file permissions fail before sending the create request.
