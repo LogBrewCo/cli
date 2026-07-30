@@ -158,6 +158,9 @@ Usage:
 Detects supported project manifests and prints a non-mutating SDK setup plan.
 No files are changed. SwiftPM planning uses compatible releases from 0.1.6 for detected SwiftPM \
 or XcodeGen projects.
+Python planning detects Django, Flask, and FastAPI from bounded local project metadata. It emits \
+the public core and framework packages, the detected pip, uv, poetry, or pipenv command, and \
+explicit Python/framework compatibility requirements.
 Authenticated project creation (no dashboard sign-in):
   logbrew projects create <name> --ingest-key-file <path> [--runtime <runtime>] \
                            [--environment <environment>] [--json]
@@ -167,7 +170,8 @@ logbrew setup --create-project shows secure project-creation help and does not c
 Package: https://github.com/LogBrewCo/sdk.git
 Product: LogBrew
 Dependency: .package(url: \"https://github.com/LogBrewCo/sdk.git\", from: \"0.1.6\")
-Other detected runtimes remain planning-only until their public package is ready.
+Python packages: logbrew-sdk, logbrew-django, logbrew-flask, logbrew-fastapi.
+Other detected runtimes use released SDK guidance until a structured CLI install plan is enabled.
 Aliases (same non-mutating plan): logbrew init, logbrew install, logbrew configure, logbrew sdk.
 Options: --auto records automatic detection preference; --yes records confirmation preference; \
                           --json prints stable setup JSON.

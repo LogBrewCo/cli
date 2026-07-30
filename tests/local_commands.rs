@@ -113,6 +113,13 @@ fn setup_help_is_honest_about_install_readiness() {
         setup_help
             .contains(r#".package(url: "https://github.com/LogBrewCo/sdk.git", from: "0.1.6")"#)
     );
+    assert!(setup_help.contains("Python planning detects Django, Flask, and FastAPI"));
+    assert!(setup_help.contains("Python packages: logbrew-sdk, logbrew-django, logbrew-flask,"));
+    assert!(setup_help.contains(
+        "Other detected runtimes use released SDK guidance until a structured CLI install plan is \
+         enabled."
+    ));
+    assert!(!setup_help.contains("until their public package is ready"));
     assert!(setup_help.contains("Supported manifests: package.json, pyproject.toml, Pipfile,"));
     assert!(setup_help.contains(
         "Cargo.toml, Package.swift, project.yml, project.yaml, .xcodeproj, .xcworkspace,"
