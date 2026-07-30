@@ -142,6 +142,20 @@ new project ID; use that ID with `logbrew doctor --project <project_id>` to
 inspect setup readiness. Run `logbrew projects --help` for the complete
 security and retry contract.
 
+### Archive an inactive project safely
+
+Archive an account-owned project only after reviewing its UUID:
+
+```bash
+logbrew projects archive <project_id> --yes --json
+```
+
+The command requires explicit `--yes`, sends one account-authenticated archive
+request, and reports success only after an empty `204` response. The project
+then leaves the active catalog and its project-scoped ingest keys no longer
+authorize new ingestion. This is a soft archive; the CLI makes no hard-delete
+or restoration promise.
+
 For AI sessions, the default mode should be checking only when requested because
 it uses fewer AI tokens. `logbrew watch --json` opens a live WebSocket stream for
 the current session, and `logbrew watch --severity error,critical --json`
