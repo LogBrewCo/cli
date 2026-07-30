@@ -22,6 +22,7 @@ pub mod ids;
 pub mod investigate;
 mod native_debug_artifacts;
 mod parser;
+mod project_archive;
 mod project_create;
 mod projects;
 #[doc(hidden)]
@@ -159,6 +160,13 @@ pub enum Command {
     ProjectCreate {
         /// Normalized project creation fields and local persistence choice.
         options: ProjectCreateOptions,
+        /// Emit machine-readable JSON.
+        json: bool,
+    },
+    /// Archives one active account-owned project after explicit confirmation.
+    ProjectArchive {
+        /// Canonical lowercase project UUID.
+        project_id: String,
         /// Emit machine-readable JSON.
         json: bool,
     },
@@ -790,6 +798,7 @@ impl Command {
             Self::ProjectSetupSeen { project_id, .. } => {
                 Some(format!("/api/projects/{project_id}/setup/seen"))
             }
+            Self::ProjectArchive { project_id, .. } => Some(format!("/api/projects/{project_id}")),
             Self::ProjectCreate { .. } | Self::Projects { .. } => {
                 Some(String::from("/api/projects"))
             }
@@ -820,6 +829,7 @@ impl Command {
             | Self::WhoAmI { json }
             | Self::Doctor { json, .. }
             | Self::ProjectCreate { json, .. }
+            | Self::ProjectArchive { json, .. }
             | Self::Projects { json }
             | Self::Usage { json }
             | Self::Version { json }
@@ -854,6 +864,7 @@ impl Command {
                 ..
             }
             | Self::Set { .. } => Some(HttpMethod::Patch),
+            Self::ProjectArchive { .. } => Some(HttpMethod::Delete),
             Self::Projects { .. }
             | Self::Read { .. }
             | Self::Explain { .. }
@@ -908,6 +919,7 @@ impl Command {
             | Self::Status { .. }
             | Self::WhoAmI { .. }
             | Self::Doctor { .. }
+            | Self::ProjectArchive { .. }
             | Self::Projects { .. }
             | Self::Usage { .. }
             | Self::Version { .. }
@@ -944,6 +956,7 @@ impl Command {
             | Self::Set { .. }
             | Self::ProjectSetupSeen { .. }
             | Self::ProjectCreate { .. }
+            | Self::ProjectArchive { .. }
             | Self::Projects { .. }
             | Self::Support { .. } => None,
         }
@@ -959,6 +972,8 @@ pub enum HttpMethod {
     Post,
     /// PATCH request.
     Patch,
+    /// DELETE request.
+    Delete,
 }
 
 /// Builds the `setup/seen` request body without local setup state.
@@ -1045,6 +1060,9 @@ pub async fn execute_command<W: std::io::Write>(
         }
         Command::ProjectCreate { options, json } => {
             project_create::execute(env, options, *json, output).await
+        }
+        Command::ProjectArchive { project_id, json } => {
+            project_archive::execute(env, project_id.as_str(), *json, output).await
         }
         Command::Projects { json } => projects::execute(env, *json, output).await,
         Command::Usage { json } => usage::execute(env, *json, output).await,
@@ -1167,6 +1185,7 @@ fn build_command_request(
         HttpMethod::Get => client.get(url),
         HttpMethod::Post => client.post(url),
         HttpMethod::Patch => client.patch(url),
+        HttpMethod::Delete => client.delete(url),
     }
     .bearer_auth(credential.token());
     if let Some(body) = command.request_body_for_token(Some(credential.token())) {

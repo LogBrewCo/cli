@@ -26,7 +26,7 @@ use crate::flags::{
     FlagScope, is_read_filter_word, is_simple_flag, normalize_log_level, normalize_status,
     parse_flags, validate_min_duration,
 };
-use crate::ids::{infer_explain_target, is_issue_id, is_pasted_detail_id, is_trace_id};
+use crate::ids::{infer_explain_target, is_issue_id, is_pasted_detail_id, is_trace_id, is_uuid};
 use crate::{
     CliError, Command, ExplainTarget, HelpTopic, ISSUE_STATUS_ARGUMENT_NEXT_STEP,
     ProjectCreateOptions, ProjectSetupSeenOptions, ReadOptions, ReadTarget, SetTarget,
@@ -687,6 +687,11 @@ fn parse_project(args: &[String]) -> Result<Command, CliError> {
         return parse_project_create(tail);
     }
     if let Some((subcommand, tail)) = normalized.split_first()
+        && subcommand == "archive"
+    {
+        return parse_project_archive(tail);
+    }
+    if let Some((subcommand, tail)) = normalized.split_first()
         && subcommand == "setup"
         && has_position_candidate(tail)
     {
@@ -697,6 +702,33 @@ fn parse_project(args: &[String]) -> Result<Command, CliError> {
         [flag] if flag == "--json" => Ok(Command::Projects { json: true }),
         [_, ..] => Err(CliError::InvalidProjectsCommand),
     }
+}
+
+/// Parses the closed, explicitly confirmed project archival grammar.
+fn parse_project_archive(args: &[String]) -> Result<Command, CliError> {
+    let normalized = move_leading_json_to_tail(args);
+    let Some((project_id, flags)) = normalized.split_first() else {
+        return Err(CliError::InvalidProjectArchiveCommand);
+    };
+    if !is_uuid(project_id) {
+        return Err(CliError::InvalidProjectArchiveCommand);
+    }
+    let mut yes = false;
+    let mut json = false;
+    for flag in flags {
+        match flag.as_str() {
+            "--yes" if !yes => yes = true,
+            "--json" if !json => json = true,
+            _ => return Err(CliError::InvalidProjectArchiveCommand),
+        }
+    }
+    if !yes {
+        return Err(CliError::InvalidProjectArchiveCommand);
+    }
+    Ok(Command::ProjectArchive {
+        project_id: project_id.to_ascii_lowercase(),
+        json,
+    })
 }
 
 /// Parses the closed secure project creation grammar.
@@ -1000,7 +1032,7 @@ fn parse_doctor(args: &[String]) -> Result<Command, CliError> {
             .strip_prefix("--project=")
             .or_else(|| argument.strip_prefix("--project-id="))
         {
-            if project_id.is_some() || !crate::ids::is_uuid(value) {
+            if project_id.is_some() || !is_uuid(value) {
                 return Err(CliError::InvalidDoctorCommand);
             }
             project_id = Some(value.to_owned());
@@ -1014,7 +1046,7 @@ fn parse_doctor(args: &[String]) -> Result<Command, CliError> {
                 let Some(value) = args.get(index) else {
                     return Err(CliError::InvalidDoctorCommand);
                 };
-                if !crate::ids::is_uuid(value) {
+                if !is_uuid(value) {
                     return Err(CliError::InvalidDoctorCommand);
                 }
                 project_id = Some(value.clone());

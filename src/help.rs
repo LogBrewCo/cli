@@ -45,6 +45,7 @@ Usage:
   logbrew projects [--json]
   logbrew projects create <name> --ingest-key-file <path> [--runtime <runtime>] \
                          [--environment <environment>] [--json]
+  logbrew projects archive <project_id> --yes [--json]
   logbrew usage [--json]
   logbrew status [--json]
   logbrew health [--json]
@@ -275,6 +276,7 @@ Usage:
   logbrew project [--json]
   logbrew projects create <name> --ingest-key-file <path> [--runtime <runtime>] \
                            [--environment <environment>] [--abandon-retry] [--json]
+  logbrew projects archive <project_id> --yes [--json]
   logbrew setup --create-project [--json]
   logbrew projects setup <project_id> [--runtime <runtime>] [--source api|cli|sdk] \
 [--environment <environment>] [--json]
@@ -290,6 +292,10 @@ it never prints the one-time ingest key or its file path. An ambiguous attempt r
 Builds that cannot prove owner-only file permissions fail before sending the create request.
 No local install, quota, or usage state is created.
 Project setup uses POST /api/projects/{project_id}/setup/seen and preserves backend setup status JSON.
+Project archival requires explicit --yes, removes it from the active project catalog, and returns \
+success only for an empty 204 response.
+Project-scoped ingest keys stop authorizing new ingestion after archival.
+This soft-archive command does not claim hard deletion or restoration.
 Project-scoped SDK/ingest credentials are shown only when backend returns one-time credentials.
 Never use an account bearer token as SDK or ingest configuration.
 Next: run logbrew setup for the current non-mutating local plan.";

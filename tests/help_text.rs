@@ -47,6 +47,7 @@ fn root_help_surfaces_release_environment_pairing() {
             "logbrew projects create <name> --ingest-key-file <path> [--runtime <runtime>]"
         )
     );
+    assert!(text.contains("logbrew projects archive <project_id> --yes [--json]"));
     assert!(
         text.contains("After CLI authentication, project creation requires no dashboard sign-in")
     );
@@ -82,6 +83,7 @@ fn project_and_usage_help_are_honest_about_supported_behavior() {
             "logbrew projects create <name> --ingest-key-file <path> [--runtime <runtime>]"
         )
     );
+    assert!(projects.contains("logbrew projects archive <project_id> --yes [--json]"));
     assert!(projects.contains("logbrew setup --create-project [--json]"));
     assert!(projects.contains("Project creation, setup status"));
     assert!(projects.contains(
@@ -98,6 +100,10 @@ fn project_and_usage_help_are_honest_about_supported_behavior() {
     assert!(projects.contains("stores the one-time ingest key in a new owner-only file"));
     assert!(projects.contains("No local install, quota, or usage state is created."));
     assert!(projects.contains("POST /api/projects/{project_id}/setup/seen"));
+    assert!(projects.contains("requires explicit --yes"));
+    assert!(projects.contains("removes it from the active project catalog"));
+    assert!(projects.contains("Project-scoped ingest keys stop authorizing new ingestion"));
+    assert!(projects.contains("does not claim hard deletion or restoration"));
     assert!(projects.contains("Never use an account bearer token as SDK or ingest configuration."));
 
     assert!(usage.contains("logbrew usage [--json]"));
