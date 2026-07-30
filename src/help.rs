@@ -45,6 +45,8 @@ Usage:
   logbrew projects [--json]
   logbrew projects create <name> --ingest-key-file <path> [--runtime <runtime>] \
                          [--environment <environment>] [--json]
+  logbrew projects keys create <project_id> --ingest-key-file <path> [--label <label>] \
+                         [--kind sdk|browser|server|cli] [--json]
   logbrew projects archive <project_id> --yes [--json]
   logbrew usage [--json]
   logbrew status [--json]
@@ -116,6 +118,7 @@ Setup aliases (non-mutating plan): logbrew init, logbrew install, logbrew config
 Authenticated project creation: logbrew projects create <name> --ingest-key-file <path>.
 After CLI authentication, project creation requires no dashboard sign-in; the one-time ingest key \
 is stored in the chosen owner-only file and never printed.
+Existing-project key creation: logbrew projects keys create <project_id> --ingest-key-file <path>.
 Shortcuts: logbrew auth, logbrew whoami, logbrew me, logbrew log, logbrew logs, logbrew issues, \
                          logbrew logs checkout failed, logbrew logs error checkout, logbrew \
                          search checkout, logbrew find checkout, logbrew grep checkout, logbrew \
@@ -165,8 +168,11 @@ explicit Python/framework compatibility requirements.
 Authenticated project creation (no dashboard sign-in):
   logbrew projects create <name> --ingest-key-file <path> [--runtime <runtime>] \
                            [--environment <environment>] [--json]
-Run that command after logbrew login. It stores the one-time ingest key in the chosen owner-only \
-file and never prints the key or its path.
+Existing-project key creation (no dashboard sign-in):
+  logbrew projects keys create <project_id> --ingest-key-file <path> [--label <label>] \
+                           [--kind sdk|browser|server|cli] [--json]
+Run either command after logbrew login. Each stores the one-time ingest key in the chosen \
+owner-only file and never prints the key or its path.
 logbrew setup --create-project shows secure project-creation help and does not create a project.
 Package: https://github.com/LogBrewCo/sdk.git
 Product: LogBrew
@@ -276,6 +282,8 @@ Usage:
   logbrew project [--json]
   logbrew projects create <name> --ingest-key-file <path> [--runtime <runtime>] \
                            [--environment <environment>] [--abandon-retry] [--json]
+  logbrew projects keys create <project_id> --ingest-key-file <path> [--label <label>] \
+                           [--kind sdk|browser|server|cli] [--abandon-retry] [--json]
   logbrew projects archive <project_id> --yes [--json]
   logbrew setup --create-project [--json]
   logbrew projects setup <project_id> [--runtime <runtime>] [--source api|cli|sdk] \
@@ -286,9 +294,13 @@ Human output is bounded to project identity, setup status, and latest activity. 
 exact validated bare array.
 Project creation, setup status, and project-scoped ingest credentials are backend-owned.
 An authenticated CLI can create a project without dashboard sign-in or additional browser auth.
+It can also issue a key for an existing project without creating a duplicate project or opening \
+the dashboard.
 logbrew setup --create-project shows this help and never creates a project.
 Project creation stores the one-time ingest key in a new owner-only file before reporting success;
 it never prints the one-time ingest key or its file path. An ambiguous attempt reuses the pending retry key only for the exact same request; --abandon-retry starts a new explicit attempt.
+Existing-project key creation uses the same storage and retry guarantees with independent private \
+retry state.
 Builds that cannot prove owner-only file permissions fail before sending the create request.
 No local install, quota, or usage state is created.
 Project setup uses POST /api/projects/{project_id}/setup/seen and preserves backend setup status JSON.

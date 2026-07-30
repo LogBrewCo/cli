@@ -87,6 +87,7 @@ fn cursor_response_title(command: &Command) -> Option<&'static str> {
         | Command::WhoAmI { .. }
         | Command::Doctor { .. }
         | Command::ProjectCreate { .. }
+        | Command::ProjectIngestKeyCreate { .. }
         | Command::ProjectArchive { .. }
         | Command::Projects { .. }
         | Command::Usage { .. }
@@ -302,6 +303,7 @@ fn human_summary(command: &Command, value: &serde_json::Value) -> Option<String>
         Command::ProjectSetupSeen { .. } => project_setup_seen_summary(value),
         Command::Support { target, .. } => Some(support_summary(target, value)),
         Command::ProjectCreate { .. }
+        | Command::ProjectIngestKeyCreate { .. }
         | Command::ProjectArchive { .. }
         | Command::Projects { .. }
         | Command::Help { .. }

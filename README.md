@@ -142,6 +142,26 @@ new project ID; use that ID with `logbrew doctor --project <project_id>` to
 inspect setup readiness. Run `logbrew projects --help` for the complete
 security and retry contract.
 
+### Create an ingest key for an existing project
+
+Use the authenticated CLI when a new app or service needs its own key but the
+LogBrew project already exists:
+
+```bash
+logbrew projects keys create <project_id> \
+  --kind sdk \
+  --label "Mobile SDK key" \
+  --ingest-key-file "$HOME/.logbrew/mobile-sdk.key" \
+  --json
+```
+
+The default kind is `sdk`; supported kinds are `sdk`, `browser`, `server`, and
+`cli`. The command sends one idempotent account-authenticated request and
+stores the one-time key in a new owner-only file before reporting success. It
+never prints the key or its path and does not create a duplicate project. An
+ambiguous retry reuses the same request and idempotency key. Use
+`--abandon-retry` only to intentionally discard that pending attempt.
+
 ### Archive an inactive project safely
 
 Archive an account-owned project only after reviewing its UUID:

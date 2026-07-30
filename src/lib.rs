@@ -163,6 +163,13 @@ pub enum Command {
         /// Emit machine-readable JSON.
         json: bool,
     },
+    /// Creates one ingest key for an existing project and persists it securely.
+    ProjectIngestKeyCreate {
+        /// Normalized project, credential, and local persistence choices.
+        options: ProjectIngestKeyCreateOptions,
+        /// Emit machine-readable JSON.
+        json: bool,
+    },
     /// Archives one active account-owned project after explicit confirmation.
     ProjectArchive {
         /// Canonical lowercase project UUID.
@@ -560,6 +567,21 @@ pub struct ProjectCreateOptions {
     pub abandon_retry: bool,
 }
 
+/// Fields accepted by secure existing-project ingest-key creation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectIngestKeyCreateOptions {
+    /// Canonical lowercase account-owned project UUID.
+    pub project_id: String,
+    /// Trimmed operator-visible key label.
+    pub label: String,
+    /// Canonical credential kind.
+    pub kind: String,
+    /// Owner-selected destination for the one-time ingest key.
+    pub ingest_key_file: String,
+    /// Explicitly discard a mismatched pending retry before creating.
+    pub abandon_retry: bool,
+}
+
 /// Apple native debug-artifact operation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NativeDebugArtifactsTarget {
@@ -799,6 +821,9 @@ impl Command {
                 Some(format!("/api/projects/{project_id}/setup/seen"))
             }
             Self::ProjectArchive { project_id, .. } => Some(format!("/api/projects/{project_id}")),
+            Self::ProjectIngestKeyCreate { options, .. } => {
+                Some(format!("/api/projects/{}/ingest-keys", options.project_id))
+            }
             Self::ProjectCreate { .. } | Self::Projects { .. } => {
                 Some(String::from("/api/projects"))
             }
@@ -829,6 +854,7 @@ impl Command {
             | Self::WhoAmI { json }
             | Self::Doctor { json, .. }
             | Self::ProjectCreate { json, .. }
+            | Self::ProjectIngestKeyCreate { json, .. }
             | Self::ProjectArchive { json, .. }
             | Self::Projects { json }
             | Self::Usage { json }
@@ -850,6 +876,7 @@ impl Command {
     pub const fn http_method(&self) -> Option<HttpMethod> {
         match self {
             Self::ProjectCreate { .. }
+            | Self::ProjectIngestKeyCreate { .. }
             | Self::ProjectSetupSeen { .. }
             | Self::Support {
                 target: SupportTarget::Create(_),
@@ -900,6 +927,9 @@ impl Command {
             } => Some(serde_json::json!({ "status": status })),
             Self::ProjectSetupSeen { options, .. } => Some(project_setup_seen_body(options, token)),
             Self::ProjectCreate { options, .. } => Some(project_create_body(options)),
+            Self::ProjectIngestKeyCreate { options, .. } => {
+                Some(project_ingest_key_create_body(options))
+            }
             Self::Support {
                 target: SupportTarget::Create(options),
                 ..
@@ -956,6 +986,7 @@ impl Command {
             | Self::Set { .. }
             | Self::ProjectSetupSeen { .. }
             | Self::ProjectCreate { .. }
+            | Self::ProjectIngestKeyCreate { .. }
             | Self::ProjectArchive { .. }
             | Self::Projects { .. }
             | Self::Support { .. } => None,
@@ -1026,6 +1057,15 @@ fn project_create_body(options: &ProjectCreateOptions) -> serde_json::Value {
     serde_json::Value::Object(body)
 }
 
+/// Builds the byte-stable existing-project ingest-key request surface.
+fn project_ingest_key_create_body(options: &ProjectIngestKeyCreateOptions) -> serde_json::Value {
+    serde_json::json!({
+        "label": options.label,
+        "kind": options.kind,
+        "expires_at": null,
+    })
+}
+
 /// Resolves setup source while preserving ingest-key identity derivation.
 fn setup_seen_source(options: &ProjectSetupSeenOptions, token: Option<&str>) -> Option<String> {
     if token_is_project_ingest_key(token) {
@@ -1060,6 +1100,9 @@ pub async fn execute_command<W: std::io::Write>(
         }
         Command::ProjectCreate { options, json } => {
             project_create::execute(env, options, *json, output).await
+        }
+        Command::ProjectIngestKeyCreate { options, json } => {
+            project_create::execute_ingest_key_create(env, options, *json, output).await
         }
         Command::ProjectArchive { project_id, json } => {
             project_archive::execute(env, project_id.as_str(), *json, output).await

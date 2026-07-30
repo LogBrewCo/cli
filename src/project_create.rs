@@ -1,19 +1,162 @@
 //! Secure account-owned project bootstrap and one-time key persistence.
 
 use crate::auth::send_authenticated_with_refresh;
-use crate::{AuthCredential, CliEnvironment, ProjectCreateOptions, RuntimeError};
+use crate::{
+    AuthCredential, CliEnvironment, ProjectCreateOptions, ProjectIngestKeyCreateOptions,
+    RuntimeError,
+};
 use std::io::Write as _;
 
 /// Shared owner-only directory for private CLI state.
 const PRIVATE_DIR: &str = ".logbrew";
 /// Advisory lock serializing project bootstrap attempts.
-const LOCK_FILE: &str = "project-create.lock";
+const PROJECT_CREATE_LOCK_FILE: &str = "project-create.lock";
 /// Pending byte-identical request and idempotency key.
-const RETRY_FILE: &str = "project-create-retry.json";
+const PROJECT_CREATE_RETRY_FILE: &str = "project-create-retry.json";
+/// Advisory lock serializing existing-project ingest-key attempts.
+const PROJECT_INGEST_KEY_CREATE_LOCK_FILE: &str = "project-ingest-key-create.lock";
+/// Pending existing-project ingest-key request and idempotency key.
+const PROJECT_INGEST_KEY_CREATE_RETRY_FILE: &str = "project-ingest-key-create-retry.json";
 /// Maximum accepted project-create response body.
 const MAX_RESPONSE_BYTES: usize = 64 * 1024;
 /// Lowercase alphabet used for random retry and temporary-file names.
 const HEX: &[u8; 16] = b"0123456789abcdef";
+
+/// Credential-issuing workflow that owns one isolated lock and retry record.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CredentialOperation {
+    /// Project creation plus its initial CLI key.
+    ProjectCreate,
+    /// New ingest key for an existing project.
+    ProjectIngestKeyCreate,
+}
+
+impl CredentialOperation {
+    /// Returns the operation-specific lock filename.
+    const fn lock_file(self) -> &'static str {
+        match self {
+            Self::ProjectCreate => PROJECT_CREATE_LOCK_FILE,
+            Self::ProjectIngestKeyCreate => PROJECT_INGEST_KEY_CREATE_LOCK_FILE,
+        }
+    }
+
+    /// Returns the operation-specific retry filename.
+    const fn retry_file(self) -> &'static str {
+        match self {
+            Self::ProjectCreate => PROJECT_CREATE_RETRY_FILE,
+            Self::ProjectIngestKeyCreate => PROJECT_INGEST_KEY_CREATE_RETRY_FILE,
+        }
+    }
+
+    /// Returns fixed recovery for unavailable private retry storage.
+    const fn retry_state_unavailable(self) -> RuntimeError {
+        let message = match self {
+            Self::ProjectCreate => "secure project retry state is unavailable",
+            Self::ProjectIngestKeyCreate => "secure ingest key retry state is unavailable",
+        };
+        RuntimeError::Unavailable {
+            message,
+            next: "check the private home directory and retry the exact same command",
+        }
+    }
+
+    /// Returns fixed recovery for malformed private retry state.
+    const fn retry_state_invalid(self) -> RuntimeError {
+        let message = match self {
+            Self::ProjectCreate => "pending project creation state is invalid",
+            Self::ProjectIngestKeyCreate => "pending ingest key creation state is invalid",
+        };
+        RuntimeError::Unavailable {
+            message,
+            next: "inspect local permissions, then use --abandon-retry to start a new attempt",
+        }
+    }
+
+    /// Returns fixed recovery for a command that differs from a pending retry.
+    const fn retry_mismatch(self) -> RuntimeError {
+        let message = match self {
+            Self::ProjectCreate => "pending project creation does not match this request",
+            Self::ProjectIngestKeyCreate => {
+                "pending ingest key creation does not match this request"
+            }
+        };
+        RuntimeError::Unavailable {
+            message,
+            next: "retry the exact original command or use --abandon-retry to start a new attempt",
+        }
+    }
+
+    /// Returns fixed recovery for invalid API origin or request serialization.
+    const fn invalid_request(self) -> RuntimeError {
+        let (message, next) = match self {
+            Self::ProjectCreate => (
+                "project creation request is invalid",
+                "check project create arguments and retry",
+            ),
+            Self::ProjectIngestKeyCreate => (
+                "ingest key creation request is invalid",
+                "check project key create arguments and retry",
+            ),
+        };
+        RuntimeError::Unavailable { message, next }
+    }
+
+    /// Returns fixed recovery for transport failures with an exact pending retry.
+    const fn transport_unavailable(self) -> RuntimeError {
+        let message = match self {
+            Self::ProjectCreate => "project creation could not confirm the server result",
+            Self::ProjectIngestKeyCreate => {
+                "ingest key creation could not confirm the server result"
+            }
+        };
+        RuntimeError::Unavailable {
+            message,
+            next: "retry the exact same command to reuse the pending request",
+        }
+    }
+
+    /// Returns fixed recovery for a malformed successful response.
+    const fn invalid_response(self) -> RuntimeError {
+        let message = match self {
+            Self::ProjectCreate => "project creation returned an invalid response",
+            Self::ProjectIngestKeyCreate => "ingest key creation returned an invalid response",
+        };
+        RuntimeError::Unavailable {
+            message,
+            next: "retry the exact same command; if it repeats, report the public response contract",
+        }
+    }
+
+    /// Returns fixed recovery for a malformed typed error response.
+    const fn invalid_error_response(self) -> RuntimeError {
+        let message = match self {
+            Self::ProjectCreate => "project creation returned an invalid error response",
+            Self::ProjectIngestKeyCreate => {
+                "ingest key creation returned an invalid error response"
+            }
+        };
+        RuntimeError::Unavailable {
+            message,
+            next: "retry the exact same command; if it repeats, report the public error contract",
+        }
+    }
+
+    /// Returns fixed recovery when this platform cannot prove key privacy.
+    const fn private_storage_unavailable(self) -> RuntimeError {
+        let next = match self {
+            Self::ProjectCreate => {
+                "run project creation on a platform with enforceable owner-only file permissions"
+            }
+            Self::ProjectIngestKeyCreate => {
+                "run ingest key creation on a platform with enforceable owner-only file permissions"
+            }
+        };
+        RuntimeError::Unavailable {
+            message: "secure ingest key storage is unavailable on this platform",
+            next,
+        }
+    }
+}
 
 /// Executes one locked, idempotent project bootstrap.
 #[expect(
@@ -26,20 +169,27 @@ pub(super) async fn execute<W: std::io::Write>(
     json: bool,
     output: &mut W,
 ) -> Result<(), RuntimeError> {
+    let operation = CredentialOperation::ProjectCreate;
     if !private_storage_supported() {
-        return Err(private_storage_unavailable());
+        return Err(operation.private_storage_unavailable());
     }
-    let home = env.home.clone().ok_or_else(retry_state_unavailable)?;
+    let home = env
+        .home
+        .clone()
+        .ok_or_else(|| operation.retry_state_unavailable())?;
     let target = resolve_target(
         env,
         options.ingest_key_file.as_str(),
-        home_owner(home.as_path())?,
+        home_owner(home.as_path()).map_err(|_| operation.retry_state_unavailable())?,
     )?;
-    let origin = normalized_origin(env.base_url.as_str())?;
-    let body = serde_json::to_string(&project_body(options)).map_err(|_| invalid_request())?;
-    let lock = tokio::task::spawn_blocking(move || BootstrapLock::exclusive(home.as_path()))
-        .await
-        .map_err(|_| retry_state_unavailable())??;
+    let origin =
+        normalized_origin(env.base_url.as_str()).map_err(|_| operation.invalid_request())?;
+    let body =
+        serde_json::to_string(&project_body(options)).map_err(|_| operation.invalid_request())?;
+    let lock =
+        tokio::task::spawn_blocking(move || BootstrapLock::exclusive(home.as_path(), operation))
+            .await
+            .map_err(|_| operation.retry_state_unavailable())??;
     let pending = lock.prepare(
         origin.as_str(),
         body.as_str(),
@@ -47,11 +197,7 @@ pub(super) async fn execute<W: std::io::Write>(
         options.abandon_retry,
     )?;
 
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .connect_timeout(std::time::Duration::from_secs(10))
-        .build()
-        .map_err(|_| transport_unavailable())?;
+    let client = credential_client(operation)?;
     let url = format!("{origin}/api/projects");
     let response = send_authenticated_with_refresh(&client, env, |client, credential| {
         client
@@ -62,10 +208,10 @@ pub(super) async fn execute<W: std::io::Write>(
             .body(pending.request_body.clone())
     })
     .await
-    .map_err(project_request_error)?;
+    .map_err(|error| request_error(error, operation))?;
     let (response, credential) = response;
     let status = response.status();
-    let response_body = bounded_response_body(response).await?;
+    let response_body = bounded_response_body(response, operation).await?;
     if !status.is_success() {
         return Err(safe_api_error(
             status.as_u16(),
@@ -79,36 +225,113 @@ pub(super) async fn execute<W: std::io::Write>(
         target.as_path(),
         created.token.as_str(),
         pending.allow_existing_target,
-        home_owner(lock.home.as_path())?,
+        home_owner(lock.home.as_path()).map_err(|_| operation.retry_state_unavailable())?,
     )?;
     lock.clear_retry()?;
     write_success(&created, json, output)?;
     Ok(())
 }
 
+/// Executes one locked, idempotent key creation for an existing project.
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "the parent command executor consumes this private-module helper"
+)]
+pub(super) async fn execute_ingest_key_create<W: std::io::Write>(
+    env: &CliEnvironment,
+    options: &ProjectIngestKeyCreateOptions,
+    json: bool,
+    output: &mut W,
+) -> Result<(), RuntimeError> {
+    let operation = CredentialOperation::ProjectIngestKeyCreate;
+    if !private_storage_supported() {
+        return Err(operation.private_storage_unavailable());
+    }
+    let home = env
+        .home
+        .clone()
+        .ok_or_else(|| operation.retry_state_unavailable())?;
+    let target = resolve_target(
+        env,
+        options.ingest_key_file.as_str(),
+        home_owner(home.as_path()).map_err(|_| operation.retry_state_unavailable())?,
+    )?;
+    let origin =
+        normalized_origin(env.base_url.as_str()).map_err(|_| operation.invalid_request())?;
+    let body = serde_json::to_string(&project_ingest_key_body(options))
+        .map_err(|_| operation.invalid_request())?;
+    let lock =
+        tokio::task::spawn_blocking(move || BootstrapLock::exclusive(home.as_path(), operation))
+            .await
+            .map_err(|_| operation.retry_state_unavailable())??;
+    let pending = lock.prepare(
+        origin.as_str(),
+        body.as_str(),
+        target.as_path(),
+        options.abandon_retry,
+    )?;
+
+    let client = credential_client(operation)?;
+    let url = format!("{origin}/api/projects/{}/ingest-keys", options.project_id);
+    let response = send_authenticated_with_refresh(&client, env, |client, credential| {
+        client
+            .post(url.as_str())
+            .bearer_auth(credential.token())
+            .header(reqwest::header::CONTENT_TYPE, "application/json")
+            .header("Idempotency-Key", pending.retry_key.as_str())
+            .body(pending.request_body.clone())
+    })
+    .await
+    .map_err(|error| request_error(error, operation))?;
+    let (response, credential) = response;
+    let status = response.status();
+    let response_body = bounded_response_body(response, operation).await?;
+    if !status.is_success() {
+        return Err(safe_ingest_key_api_error(
+            status.as_u16(),
+            response_body.as_str(),
+            &credential,
+        )?);
+    }
+
+    let created = CreatedProjectIngestKey::parse(response_body.as_str(), options)?;
+    persist_ingest_key(
+        target.as_path(),
+        created.token.as_str(),
+        pending.allow_existing_target,
+        home_owner(lock.home.as_path()).map_err(|_| operation.retry_state_unavailable())?,
+    )?;
+    lock.clear_retry()?;
+    write_ingest_key_success(&created, options.project_id.as_str(), json, output)?;
+    Ok(())
+}
+
 /// Reads a response incrementally without buffering beyond the public limit.
-async fn bounded_response_body(mut response: reqwest::Response) -> Result<String, RuntimeError> {
+async fn bounded_response_body(
+    mut response: reqwest::Response,
+    operation: CredentialOperation,
+) -> Result<String, RuntimeError> {
     if response.content_length().is_some_and(|length| {
         usize::try_from(length).map_or(true, |length| length > MAX_RESPONSE_BYTES)
     }) {
-        return Err(invalid_response());
+        return Err(operation.invalid_response());
     }
     let mut body = Vec::new();
     while let Some(chunk) = response
         .chunk()
         .await
-        .map_err(|_| transport_unavailable())?
+        .map_err(|_| operation.transport_unavailable())?
     {
         if body.len().saturating_add(chunk.len()) > MAX_RESPONSE_BYTES {
-            return Err(invalid_response());
+            return Err(operation.invalid_response());
         }
         body.extend_from_slice(&chunk);
     }
-    String::from_utf8(body).map_err(|_| invalid_response())
+    String::from_utf8(body).map_err(|_| operation.invalid_response())
 }
 
 /// Preserves fixed auth recovery while redacting transport and storage errors.
-fn project_request_error(error: RuntimeError) -> RuntimeError {
+fn request_error(error: RuntimeError, operation: CredentialOperation) -> RuntimeError {
     match error {
         RuntimeError::MissingToken | RuntimeError::Unavailable { .. } => error,
         RuntimeError::Io(_) => local_auth_unavailable(),
@@ -119,8 +342,18 @@ fn project_request_error(error: RuntimeError) -> RuntimeError {
         | RuntimeError::InvestigationResponseInvalid
         | RuntimeError::NativeDebugArtifactInvalid
         | RuntimeError::NativeDebugResponseInvalid
-        | RuntimeError::NativeDebugVerificationFailed => transport_unavailable(),
+        | RuntimeError::NativeDebugVerificationFailed => operation.transport_unavailable(),
     }
+}
+
+/// Builds one bounded client that never follows credential-issuing redirects.
+fn credential_client(operation: CredentialOperation) -> Result<reqwest::Client, RuntimeError> {
+    reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|_| operation.transport_unavailable())
 }
 
 /// Builds the canonical request object with a fixed source.
@@ -147,6 +380,15 @@ fn project_body(options: &ProjectCreateOptions) -> serde_json::Value {
         serde_json::Value::String(String::from("cli")),
     ));
     serde_json::Value::Object(body)
+}
+
+/// Builds the byte-stable existing-project ingest-key request.
+fn project_ingest_key_body(options: &ProjectIngestKeyCreateOptions) -> serde_json::Value {
+    serde_json::json!({
+        "label": options.label,
+        "kind": options.kind,
+        "expires_at": null,
+    })
 }
 
 /// One validated create response without rendering the one-time token.
@@ -215,6 +457,66 @@ struct CreatedIngest {
     expires_at: Option<String>,
     /// One-time secret.
     token: String,
+}
+
+/// Validated one-time key created for an existing project.
+struct CreatedProjectIngestKey {
+    /// Public key identifier.
+    id: String,
+    /// Display-safe key label bound to the request.
+    label: String,
+    /// Canonical key kind bound to the request.
+    kind: String,
+    /// Creation timestamp.
+    created_at: String,
+    /// Optional expiration timestamp.
+    expires_at: Option<String>,
+    /// One-time secret used only for durable persistence.
+    token: String,
+}
+
+impl CreatedProjectIngestKey {
+    /// Parses and binds the exact public success shape.
+    fn parse(body: &str, request: &ProjectIngestKeyCreateOptions) -> Result<Self, RuntimeError> {
+        let parsed: Result<Self, RuntimeError> = (|| {
+            let value =
+                serde_json::from_str::<serde_json::Value>(body).map_err(|_| invalid_response())?;
+            exact_keys(
+                &value,
+                &[
+                    "id",
+                    "label",
+                    "kind",
+                    "token",
+                    "created_at",
+                    "expires_at",
+                    "next",
+                    "next_action",
+                ],
+            )?;
+            let ingest = object(Some(&value))?;
+            let id = required_safe(ingest, "id", 64)?;
+            let label = required_safe(ingest, "label", 120)?;
+            let kind = required_safe(ingest, "kind", 32)?;
+            if !crate::ids::is_uuid(id.as_str()) || label != request.label || kind != request.kind {
+                return Err(invalid_response());
+            }
+            drop(required_safe(ingest, "next", 512)?);
+            let (action_code, action_target) = safe_action(ingest.get("next_action"))?;
+            if action_code != "send_first_telemetry" || action_target != "telemetry_ingest" {
+                return Err(invalid_response());
+            }
+            Ok(Self {
+                id,
+                label,
+                kind,
+                created_at: required_timestamp(ingest, "created_at")?,
+                expires_at: nullable_timestamp(ingest, "expires_at")?,
+                token: required_visible_secret(ingest, "token")?,
+            })
+        })();
+        parsed.map_err(|_| CredentialOperation::ProjectIngestKeyCreate.invalid_response())
+    }
 }
 
 /// Parses and binds the exact project object to the normalized request.
@@ -386,6 +688,41 @@ fn write_success<W: std::io::Write>(
     Ok(())
 }
 
+/// Writes existing-project key success only after credential persistence.
+fn write_ingest_key_success<W: std::io::Write>(
+    created: &CreatedProjectIngestKey,
+    project_id: &str,
+    json: bool,
+    output: &mut W,
+) -> Result<(), RuntimeError> {
+    const NEXT: &str = "configure the SDK with the stored ingest key, then run logbrew doctor --project <project_id>";
+    if json {
+        let body = serde_json::json!({
+            "status": "created",
+            "project_id": project_id,
+            "ingest_key": {
+                "id": created.id,
+                "label": created.label,
+                "kind": created.kind,
+                "created_at": created.created_at,
+                "expires_at": created.expires_at,
+            },
+            "checks": [
+                {"check": "ingest_key", "status": "stored"},
+            ],
+            "next": NEXT,
+        });
+        writeln!(output, "{body}")?;
+    } else {
+        writeln!(output, "LogBrew ingest key created.")?;
+        writeln!(output, "Project: {project_id}")?;
+        writeln!(output, "Kind: {}", created.kind)?;
+        writeln!(output, "Ingest key: stored")?;
+        writeln!(output, "Next: {NEXT}")?;
+    }
+    Ok(())
+}
+
 /// Private retry state held while the request and key file are unresolved.
 struct PendingRetry {
     /// Normalized API origin owning the attempt.
@@ -400,34 +737,40 @@ struct PendingRetry {
 
 impl PendingRetry {
     /// Parses the exact private retry-state shape.
-    fn parse(value: &serde_json::Value) -> Result<Self, RuntimeError> {
-        exact_keys(
-            value,
-            &[
-                "version",
-                "origin",
-                "request_body",
-                "retry_key",
-                "ingest_key_file",
-            ],
-        )?;
-        let object = object(Some(value))?;
-        if object.get("version").and_then(serde_json::Value::as_u64) != Some(1) {
-            return Err(retry_state_invalid());
-        }
-        let origin = state_string(object, "origin", 2048)?;
-        let request_body = state_string(object, "request_body", 4096)?;
-        let retry_key = state_string(object, "retry_key", 128)?;
-        let ingest_key_file = state_string(object, "ingest_key_file", 4096)?;
-        if !valid_retry_key(retry_key.as_str()) {
-            return Err(retry_state_invalid());
-        }
-        Ok(Self {
-            origin,
-            request_body,
-            retry_key,
-            ingest_key_file,
-        })
+    fn parse(
+        value: &serde_json::Value,
+        operation: CredentialOperation,
+    ) -> Result<Self, RuntimeError> {
+        let parsed: Result<Self, RuntimeError> = (|| {
+            exact_keys(
+                value,
+                &[
+                    "version",
+                    "origin",
+                    "request_body",
+                    "retry_key",
+                    "ingest_key_file",
+                ],
+            )?;
+            let object = object(Some(value))?;
+            if object.get("version").and_then(serde_json::Value::as_u64) != Some(1) {
+                return Err(operation.retry_state_invalid());
+            }
+            let origin = state_string(object, "origin", 2048)?;
+            let request_body = state_string(object, "request_body", 4096)?;
+            let retry_key = state_string(object, "retry_key", 128)?;
+            let ingest_key_file = state_string(object, "ingest_key_file", 4096)?;
+            if !valid_retry_key(retry_key.as_str()) {
+                return Err(operation.retry_state_invalid());
+            }
+            Ok(Self {
+                origin,
+                request_body,
+                retry_key,
+                ingest_key_file,
+            })
+        })();
+        parsed.map_err(|_| operation.retry_state_invalid())
     }
 
     /// Serializes the exact private retry-state shape.
@@ -460,12 +803,18 @@ struct BootstrapLock {
     home: std::path::PathBuf,
     /// Owner-only directory containing retry state.
     private_dir: std::path::PathBuf,
+    /// Workflow owning this lock and retry record.
+    operation: CredentialOperation,
 }
 
 impl BootstrapLock {
     /// Acquires the project-bootstrap lock in an owner-only directory.
-    fn exclusive(home: &std::path::Path) -> Result<Self, RuntimeError> {
-        let home_metadata = safe_directory_metadata(home, None)?;
+    fn exclusive(
+        home: &std::path::Path,
+        operation: CredentialOperation,
+    ) -> Result<Self, RuntimeError> {
+        let home_metadata =
+            safe_directory_metadata(home, None).map_err(|_| operation.retry_state_unavailable())?;
         let private_dir = home.join(PRIVATE_DIR);
         match std::fs::symlink_metadata(private_dir.as_path()) {
             Ok(metadata) => {
@@ -473,25 +822,27 @@ impl BootstrapLock {
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 std::fs::create_dir(private_dir.as_path())
-                    .map_err(|_| retry_state_unavailable())?;
-                set_private_directory_permissions(private_dir.as_path())?;
+                    .map_err(|_| operation.retry_state_unavailable())?;
+                set_private_directory_permissions(private_dir.as_path())
+                    .map_err(|_| operation.retry_state_unavailable())?;
             }
-            Err(_) => return Err(retry_state_unavailable()),
+            Err(_) => return Err(operation.retry_state_unavailable()),
         }
         let mut options = std::fs::OpenOptions::new();
         let _options = options.read(true).write(true).create(true);
         set_private_open_mode(&mut options);
         let file = options
-            .open(private_dir.join(LOCK_FILE))
-            .map_err(|_| retry_state_unavailable())?;
-        set_private_file_permissions(&file)?;
-        fs2::FileExt::lock_exclusive(&file).map_err(|_| retry_state_unavailable())?;
-        let private_dir =
-            std::fs::canonicalize(private_dir.as_path()).map_err(|_| retry_state_unavailable())?;
+            .open(private_dir.join(operation.lock_file()))
+            .map_err(|_| operation.retry_state_unavailable())?;
+        set_private_file_permissions(&file).map_err(|_| operation.retry_state_unavailable())?;
+        fs2::FileExt::lock_exclusive(&file).map_err(|_| operation.retry_state_unavailable())?;
+        let private_dir = std::fs::canonicalize(private_dir.as_path())
+            .map_err(|_| operation.retry_state_unavailable())?;
         Ok(Self {
             _file: file,
             home: home.to_path_buf(),
             private_dir,
+            operation,
         })
     }
 
@@ -503,11 +854,19 @@ impl BootstrapLock {
         target: &std::path::Path,
         abandon: bool,
     ) -> Result<PreparedRetry, RuntimeError> {
-        if target == self.private_dir.join(RETRY_FILE) || target == self.private_dir.join(LOCK_FILE)
+        if [
+            PROJECT_CREATE_RETRY_FILE,
+            PROJECT_CREATE_LOCK_FILE,
+            PROJECT_INGEST_KEY_CREATE_RETRY_FILE,
+            PROJECT_INGEST_KEY_CREATE_LOCK_FILE,
+        ]
+        .iter()
+        .any(|reserved| target == self.private_dir.join(reserved))
         {
             return Err(invalid_key_destination());
         }
-        let expected_owner = home_owner(self.home.as_path())?;
+        let expected_owner = home_owner(self.home.as_path())
+            .map_err(|_| self.operation.retry_state_unavailable())?;
         if abandon {
             let _target_absent = validate_target_before_request(target, false, expected_owner)?;
             self.clear_retry()?;
@@ -521,7 +880,7 @@ impl BootstrapLock {
                 || pending.request_body != body
                 || pending.ingest_key_file != target_string
             {
-                return Err(retry_mismatch());
+                return Err(self.operation.retry_mismatch());
             }
             let exists = validate_target_before_request(target, true, expected_owner)?;
             return Ok(PreparedRetry {
@@ -534,7 +893,7 @@ impl BootstrapLock {
         let pending = PendingRetry {
             origin: origin.to_owned(),
             request_body: body.to_owned(),
-            retry_key: random_retry_key()?,
+            retry_key: random_retry_key().map_err(|_| self.operation.retry_state_unavailable())?,
             ingest_key_file: target_string,
         };
         self.write_retry(&pending)?;
@@ -547,43 +906,52 @@ impl BootstrapLock {
 
     /// Reads and validates an optional pending retry.
     fn read_retry(&self) -> Result<Option<PendingRetry>, RuntimeError> {
-        let path = self.private_dir.join(RETRY_FILE);
+        let path = self.private_dir.join(self.operation.retry_file());
         let metadata = match std::fs::symlink_metadata(path.as_path()) {
             Ok(metadata) => metadata,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(_) => return Err(retry_state_invalid()),
+            Err(_) => return Err(self.operation.retry_state_invalid()),
         };
-        validate_private_file(&metadata, home_owner(self.home.as_path())?)?;
+        validate_private_file(
+            &metadata,
+            home_owner(self.home.as_path())
+                .map_err(|_| self.operation.retry_state_unavailable())?,
+        )?;
         if metadata.len() > 16 * 1024 {
-            return Err(retry_state_invalid());
+            return Err(self.operation.retry_state_invalid());
         }
-        let contents = std::fs::read_to_string(path).map_err(|_| retry_state_invalid())?;
+        let contents =
+            std::fs::read_to_string(path).map_err(|_| self.operation.retry_state_invalid())?;
         let value = serde_json::from_str::<serde_json::Value>(contents.as_str())
-            .map_err(|_| retry_state_invalid())?;
-        PendingRetry::parse(&value).map(Some)
+            .map_err(|_| self.operation.retry_state_invalid())?;
+        PendingRetry::parse(&value, self.operation).map(Some)
     }
 
     /// Atomically persists a pending retry before network activity.
     fn write_retry(&self, pending: &PendingRetry) -> Result<(), RuntimeError> {
-        let mut file = atomic_write_file::AtomicWriteFile::open(self.private_dir.join(RETRY_FILE))
-            .map_err(|_| retry_state_unavailable())?;
-        set_private_file_permissions(file.as_file())?;
+        let mut file = atomic_write_file::AtomicWriteFile::open(
+            self.private_dir.join(self.operation.retry_file()),
+        )
+        .map_err(|_| self.operation.retry_state_unavailable())?;
+        set_private_file_permissions(file.as_file())
+            .map_err(|_| self.operation.retry_state_unavailable())?;
         file.write_all(pending.value().to_string().as_bytes())
-            .map_err(|_| retry_state_unavailable())?;
+            .map_err(|_| self.operation.retry_state_unavailable())?;
         file.as_file()
             .sync_all()
-            .map_err(|_| retry_state_unavailable())?;
-        file.commit().map_err(|_| retry_state_unavailable())?;
+            .map_err(|_| self.operation.retry_state_unavailable())?;
+        file.commit()
+            .map_err(|_| self.operation.retry_state_unavailable())?;
         sync_directory(self.private_dir.as_path())?;
         Ok(())
     }
 
     /// Removes durable retry state after key persistence or explicit abandonment.
     fn clear_retry(&self) -> Result<(), RuntimeError> {
-        match std::fs::remove_file(self.private_dir.join(RETRY_FILE)) {
+        match std::fs::remove_file(self.private_dir.join(self.operation.retry_file())) {
             Ok(()) => sync_directory(self.private_dir.as_path()),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(_) => Err(retry_state_unavailable()),
+            Err(_) => Err(self.operation.retry_state_unavailable()),
         }
     }
 }
@@ -822,6 +1190,113 @@ fn safe_api_error(
         auth_source: credential.source(),
         auth_label: credential.label(),
     })
+}
+
+/// Converts one ingest-key API error to fixed local guidance.
+fn safe_ingest_key_api_error(
+    status: u16,
+    body: &str,
+    credential: &AuthCredential,
+) -> Result<RuntimeError, RuntimeError> {
+    let operation = CredentialOperation::ProjectIngestKeyCreate;
+    let parsed: Result<RuntimeError, RuntimeError> = (|| {
+        let value = serde_json::from_str::<serde_json::Value>(body)
+            .map_err(|_| operation.invalid_error_response())?;
+        let object = object(Some(&value)).map_err(|_| operation.invalid_error_response())?;
+        let allowed_keys = if status == 429 {
+            &[
+                "error",
+                "code",
+                "next",
+                "next_action",
+                "retry_after_seconds",
+            ][..]
+        } else {
+            &["error", "code", "next", "next_action"][..]
+        };
+        if object
+            .keys()
+            .any(|key| !allowed_keys.contains(&key.as_str()))
+            || !["error", "code", "next", "next_action"]
+                .iter()
+                .all(|key| object.contains_key(*key))
+            || required_safe(object, "error", 512).is_err()
+            || required_safe(object, "next", 512).is_err()
+            || safe_action(object.get("next_action")).is_err()
+        {
+            return Err(operation.invalid_error_response());
+        }
+        if status == 429
+            && object
+                .get("retry_after_seconds")
+                .is_some_and(|value| value.as_u64().is_none())
+        {
+            return Err(operation.invalid_error_response());
+        }
+        let code =
+            required_safe(object, "code", 64).map_err(|_| operation.invalid_error_response())?;
+        let (safe_code, safe_error, safe_next, action_code, action_target) = match (
+            status,
+            code.as_str(),
+        ) {
+            (401, "unauthorized") => (
+                "unauthorized",
+                "authentication failed",
+                "run logbrew login",
+                "sign_in",
+                "auth",
+            ),
+            (404, "not_found") => (
+                "not_found",
+                "project was not found",
+                "run logbrew projects --json and retry with an active project_id",
+                "check_project",
+                "projects",
+            ),
+            (409, "idempotency_conflict") => (
+                "idempotency_conflict",
+                "ingest key creation retry conflict",
+                "rerun with --abandon-retry only when intentionally discarding the pending attempt",
+                "use_new_idempotency_key",
+                "request",
+            ),
+            (422, "validation_failed" | "invalid_json") => (
+                code.as_str(),
+                "ingest key creation request was rejected",
+                "correct key fields, then use --abandon-retry to start the corrected request",
+                "fix_request",
+                "request",
+            ),
+            (429, "rate_limited") => (
+                "rate_limited",
+                "ingest key creation is rate limited",
+                "retry the exact same command later",
+                "retry",
+                "request",
+            ),
+            (500..=599, _) => (
+                "server_error",
+                "ingest key creation could not be confirmed",
+                "retry the exact same command to reuse the pending request",
+                "retry",
+                "request",
+            ),
+            _ => return Err(operation.invalid_error_response()),
+        };
+        let safe_body = serde_json::json!({
+            "error": safe_error,
+            "code": safe_code,
+            "next": safe_next,
+            "next_action": {"code": action_code, "target": action_target},
+        });
+        Ok(RuntimeError::Api {
+            status,
+            body: safe_body.to_string(),
+            auth_source: credential.source(),
+            auth_label: credential.label(),
+        })
+    })();
+    parsed.map_err(|_| operation.invalid_error_response())
 }
 
 /// Requires one JSON object to contain exactly the named keys.
@@ -1322,14 +1797,6 @@ const fn retry_state_unavailable() -> RuntimeError {
     }
 }
 
-/// Fixed recovery when this build cannot prove owner-only key storage.
-const fn private_storage_unavailable() -> RuntimeError {
-    RuntimeError::Unavailable {
-        message: "secure ingest key storage is unavailable on this platform",
-        next: "run project creation on a platform with enforceable owner-only file permissions",
-    }
-}
-
 /// Fixed recovery for unreadable or malformed local authentication state.
 const fn local_auth_unavailable() -> RuntimeError {
     RuntimeError::Unavailable {
@@ -1343,14 +1810,6 @@ const fn retry_state_invalid() -> RuntimeError {
     RuntimeError::Unavailable {
         message: "pending project creation state is invalid",
         next: "inspect local permissions, then use --abandon-retry to start a new attempt",
-    }
-}
-
-/// Fixed recovery for a command that differs from a pending retry.
-const fn retry_mismatch() -> RuntimeError {
-    RuntimeError::Unavailable {
-        message: "pending project creation does not match this request",
-        next: "retry the exact original command or use --abandon-retry to start a new attempt",
     }
 }
 
@@ -1383,14 +1842,6 @@ const fn key_storage_ambiguous() -> RuntimeError {
     RuntimeError::Unavailable {
         message: "ingest key storage could not be confirmed",
         next: "retry the exact same command to reuse the pending response",
-    }
-}
-
-/// Fixed recovery for transport failures with an exact pending retry.
-const fn transport_unavailable() -> RuntimeError {
-    RuntimeError::Unavailable {
-        message: "project creation could not confirm the server result",
-        next: "retry the exact same command to reuse the pending request",
     }
 }
 
