@@ -13,9 +13,9 @@ const SDK_NEXT_STEP: &str = "use the released SDK guidance for this runtime; thi
 const PYTHON_NEXT_STEP: &str =
     "review the compatibility requirements, then run the install command; no files were changed";
 /// Minimum Python version required by the current public Python SDK family.
-const PYTHON_MINIMUM_VERSION: &str = ">=3.11";
-/// Minimum Django version required by the current public Django integration.
-const DJANGO_MINIMUM_VERSION: &str = "Django>=5.2";
+const PYTHON_MINIMUM_VERSION: &str = ">=3.10";
+/// Supported Django range for the current public Django integration.
+const DJANGO_VERSION_REQUIREMENT: &str = "Django>=4.2.30,<6";
 /// Minimum Flask version required by the current public Flask integration.
 const FLASK_MINIMUM_VERSION: &str = "Flask>=3.1";
 /// Minimum `FastAPI` version required by the current public `FastAPI` integration.
@@ -86,7 +86,7 @@ impl PythonIntegration {
     const fn framework_requirement(self) -> Option<&'static str> {
         match self {
             Self::Core => None,
-            Self::Django => Some(DJANGO_MINIMUM_VERSION),
+            Self::Django => Some(DJANGO_VERSION_REQUIREMENT),
             Self::Flask => Some(FLASK_MINIMUM_VERSION),
             Self::FastApi => Some(FASTAPI_MINIMUM_VERSION),
         }
