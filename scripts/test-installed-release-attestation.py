@@ -149,50 +149,50 @@ class InstalledReleaseAttestationTests(unittest.TestCase):
             ),
             (
                 "LogBrewCo/cli",
-                "v0.1.29",
-                "0.1.29",
-                "68864a3517cf4892f67ecc82e231988d63f4fa43",
-                "d10bb331b4c7dedd4bb5073f04ba8c09c16bc7b7",
-                30506181844,
+                "v0.1.30",
+                "0.1.30",
+                "a9fee72e4d11f6550e4ca441e685c5c1847b2199",
+                "4a28d6f4365bc841f88db38e8802fff0a7cb4a9d",
+                30517312639,
                 289984708,
-                362140600,
-                "2026-07-30T01:46:37Z",
+                362211634,
+                "2026-07-30T05:46:31Z",
                 "sha256.sum",
-                494769005,
+                494974700,
                 820,
-                "fd332e712d261ced9066af41c13363450cc910b85cf7371427561bfc22aa71b5",
+                "8180b4976185b971e0ba7b162c82faa5ea034cc585922633645d912aedb741ec",
             ),
         )
         expected_receipts = {
             "shell-linux-x64": (
-                494768956,
+                494974671,
                 54183,
-                "c0d69ad4c36605589411f8d00b9cf963fe86e2ccf59b087f16f15b66ac08f739",
+                "97297d4c837c362d549a1a31db5072951cf74079301101d8587980cb79203bca",
             ),
             "native-linux-arm64": (
-                494768948,
-                1961976,
-                "9cd14f8119d7f39f8fcf928b84a3a1f3c00f1290c0e425d2d98fb810ef53f02a",
+                494974653,
+                1962476,
+                "927445aed393391479208151c11ba401cde37048748670fc0f277a4ae3533ca3",
             ),
             "native-linux-x64": (
-                494768999,
-                2203584,
-                "5513bd607c33340b0432850114b6cce5da7e0e46ae07f8340f354108980c48bb",
+                494974688,
+                2203536,
+                "6cb97b16333ac73eb4c665b397ce2fd60f1003e88b3b8b4357b1ef242bf4bd22",
             ),
             "powershell-windows-x64": (
-                494768955,
+                494974670,
                 22325,
-                "e3c36f8689c028dd663c3aea16f43c627bee61f75ffce0f2c1f98864d22981bd",
+                "8ef81731b027b294404816aa217409ffcbd269a50d9f7715f985e5859e3f51d6",
             ),
             "native-windows-x64": (
-                494768991,
-                2763830,
-                "d79bbdcbb5c69bdd29291c4f1cfd03e0cd21a89d16580578b6cb72e735fae316",
+                494974685,
+                2763899,
+                "e31da20f33ed83db83722a1e4ba6260698f6ad7eb0e07e9d83d2c2fd4f6dbfc0",
             ),
             "native-macos-x64": (
-                494768958,
-                2169168,
-                "0f0f43dee49c3e6b383e203645518ec7a7d56858f1978f60b76e7d50bd21fac8",
+                494974674,
+                2168932,
+                "84c65282dd67f6d695c766b767c9f9dbbb095f22289070a62b2d4bf028b8fd4d",
             ),
         }
         self.assertEqual(
@@ -509,8 +509,8 @@ class InstalledReleaseAttestationTests(unittest.TestCase):
     def test_github_metadata_reader_uses_only_the_scoped_job_token(self) -> None:
         module = load_subject()
         token = "job-token-value"
-        url = "https://api.github.com/repos/LogBrewCo/cli/releases/tags/v0.1.29"
-        payload = {"tag_name": "v0.1.29"}
+        url = "https://api.github.com/repos/LogBrewCo/cli/releases/tags/v0.1.30"
+        payload = {"tag_name": "v0.1.30"}
         with mock.patch.object(module, "fetch_json", return_value=payload) as fetch:
             reader = module.github_metadata_reader({"GITHUB_TOKEN": token})
             self.assertEqual(reader(url), payload)
