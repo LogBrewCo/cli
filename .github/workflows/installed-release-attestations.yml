@@ -7,22 +7,22 @@ on:
         description: Immutable release tag
         required: true
         type: string
-        default: v0.1.31
+        default: v0.1.32
       version:
         description: Exact released version
         required: true
         type: string
-        default: 0.1.31
+        default: 0.1.32
       source_commit:
         description: Exact released source commit
         required: true
         type: string
-        default: 3635832e83407167cbd0997eb8072cd2d71869a6
+        default: 2588c7cf21e1a653e54c5c876773ebe48898fa48
       release_run:
         description: Exact successful release workflow run
         required: true
         type: string
-        default: "30528894908"
+        default: "30588053659"
       receipt_scope:
         description: Receipt targets to execute
         required: true
@@ -104,7 +104,7 @@ jobs:
         if: ${{ contains(fromJSON(matrix.scopes), inputs.receipt_scope) }}
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
-          ref: 3635832e83407167cbd0997eb8072cd2d71869a6
+          ref: 2588c7cf21e1a653e54c5c876773ebe48898fa48
           path: released-source
           persist-credentials: false
 
