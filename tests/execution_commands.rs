@@ -131,8 +131,8 @@ async fn setup_json_detects_node_project_without_claiming_install()
         assert_eq!(body["detected"][0]["manifest"], "package.json");
         assert_eq!(
             body["next"],
-            "install the matching LogBrew SDK package when packages are ready; send release and \
-             environment with logs, issues, actions, and traces"
+            "use the released SDK guidance for this runtime; this CLI version does not yet provide \
+             a structured install plan"
         );
     }
     Ok(())
@@ -252,9 +252,9 @@ async fn setup_human_detects_project_without_claiming_install()
     assert_eq!(
         text,
         "LogBrew setup plan\nMode: non-mutating plan\nNo files changed.\nInstall: not \
-         ready\nDetected runtimes:\n- Rust (cargo) at Cargo.toml\nNext: install the matching \
-         LogBrew SDK package when packages are ready; send release and environment with logs, \
-         issues, actions, and traces\n"
+         ready\nDetected runtimes:\n- Rust (cargo) at Cargo.toml\nNext: use the released SDK \
+         guidance for this runtime; this CLI version does not yet provide a structured install \
+         plan\n"
     );
     Ok(())
 }

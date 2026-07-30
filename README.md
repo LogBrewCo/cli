@@ -105,6 +105,20 @@ material. `logbrew logout` attempts to revoke the stored refresh-backed server
 session and always removes local credentials; `LOGBREW_TOKEN` must be unset
 separately.
 
+### Plan SDK installation without changing files
+
+Run `logbrew setup --json` from a project directory to detect nearby manifests
+and receive a stable, non-mutating installation plan. SwiftPM and XcodeGen
+projects receive the released Swift package declaration. Python projects
+receive a package-index plan for the core SDK or the detected Django, Flask, or
+FastAPI integration, including the pip, uv, poetry, or pipenv command.
+
+Python plans report the public package compatibility requirements separately.
+Review them before running the command, especially when a library supports
+older Python or framework versions. The CLI reads only bounded local metadata,
+does not install a package, does not change a manifest, and does not require
+authentication for this plan.
+
 ### Create a project without dashboard sign-in
 
 After `logbrew login`, the same authenticated CLI session can create an
