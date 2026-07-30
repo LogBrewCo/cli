@@ -29,8 +29,8 @@ use crate::flags::{
 use crate::ids::{infer_explain_target, is_issue_id, is_pasted_detail_id, is_trace_id, is_uuid};
 use crate::{
     CliError, Command, ExplainTarget, HelpTopic, ISSUE_STATUS_ARGUMENT_NEXT_STEP,
-    ProjectCreateOptions, ProjectSetupSeenOptions, ReadOptions, ReadTarget, SetTarget,
-    auth_namespace,
+    ProjectCreateOptions, ProjectIngestKeyCreateOptions, ProjectSetupSeenOptions, ReadOptions,
+    ReadTarget, SetTarget, auth_namespace,
 };
 
 /// Standard next step for malformed help invocations.
@@ -681,6 +681,17 @@ fn parse_setup_create_project(args: &[String]) -> Result<Command, CliError> {
 /// Parses backend-owned project commands.
 fn parse_project(args: &[String]) -> Result<Command, CliError> {
     let normalized = move_leading_json_to_tail(args);
+    if let Some((namespace, tail)) = normalized.split_first()
+        && matches!(namespace.as_str(), "key" | "keys")
+    {
+        let Some((subcommand, create_args)) = tail.split_first() else {
+            return Err(CliError::InvalidProjectsCommand);
+        };
+        if subcommand == "create" {
+            return parse_project_ingest_key_create(create_args);
+        }
+        return Err(CliError::InvalidProjectsCommand);
+    }
     if let Some((subcommand, tail)) = normalized.split_first()
         && subcommand == "create"
     {
@@ -702,6 +713,94 @@ fn parse_project(args: &[String]) -> Result<Command, CliError> {
         [flag] if flag == "--json" => Ok(Command::Projects { json: true }),
         [_, ..] => Err(CliError::InvalidProjectsCommand),
     }
+}
+
+/// Parses the closed secure existing-project ingest-key creation grammar.
+fn parse_project_ingest_key_create(args: &[String]) -> Result<Command, CliError> {
+    let Some((project_id, tail)) = args.split_first() else {
+        return Err(CliError::InvalidProjectIngestKeyCreateCommand);
+    };
+    if !is_uuid(project_id) {
+        return Err(CliError::InvalidProjectIngestKeyCreateCommand);
+    }
+    let mut label = None;
+    let mut kind = None;
+    let mut ingest_key_file = None;
+    let mut abandon_retry = false;
+    let mut json = false;
+    let mut index = 0;
+
+    while let Some(argument) = tail.get(index) {
+        let (flag, inline_value) = argument
+            .split_once('=')
+            .map_or((argument.as_str(), None), |(flag, value)| {
+                (flag, Some(value))
+            });
+        match flag {
+            "--label" if label.is_none() => {
+                let value = project_ingest_key_create_flag_value(tail, &mut index, inline_value)?;
+                label = Some(
+                    bounded_project_create_value(value, 120, false)
+                        .ok_or(CliError::InvalidProjectIngestKeyCreateCommand)?,
+                );
+            }
+            "--kind" if kind.is_none() => {
+                let value = project_ingest_key_create_flag_value(tail, &mut index, inline_value)?;
+                kind = Some(match value.trim() {
+                    "sdk" => String::from("sdk"),
+                    "browser" => String::from("browser"),
+                    "server" => String::from("server"),
+                    "cli" => String::from("cli"),
+                    _ => return Err(CliError::InvalidProjectIngestKeyCreateCommand),
+                });
+            }
+            "--ingest-key-file" if ingest_key_file.is_none() => {
+                let value = project_ingest_key_create_flag_value(tail, &mut index, inline_value)?;
+                let trimmed = value.trim();
+                if trimmed.is_empty()
+                    || trimmed.len() > 4096
+                    || trimmed.chars().any(char::is_control)
+                {
+                    return Err(CliError::InvalidProjectIngestKeyCreateCommand);
+                }
+                ingest_key_file = Some(trimmed.to_owned());
+            }
+            "--abandon-retry" if inline_value.is_none() && !abandon_retry => {
+                abandon_retry = true;
+            }
+            "--json" if inline_value.is_none() && !json => json = true,
+            _ => return Err(CliError::InvalidProjectIngestKeyCreateCommand),
+        }
+        index += 1;
+    }
+
+    Ok(Command::ProjectIngestKeyCreate {
+        options: ProjectIngestKeyCreateOptions {
+            project_id: project_id.to_ascii_lowercase(),
+            label: label.unwrap_or_else(|| String::from("CLI-created SDK key")),
+            kind: kind.unwrap_or_else(|| String::from("sdk")),
+            ingest_key_file: ingest_key_file
+                .ok_or(CliError::InvalidProjectIngestKeyCreateCommand)?,
+            abandon_retry,
+        },
+        json,
+    })
+}
+
+/// Takes one existing-project key-create flag value without reflection.
+fn project_ingest_key_create_flag_value<'a>(
+    args: &'a [String],
+    index: &mut usize,
+    inline: Option<&'a str>,
+) -> Result<&'a str, CliError> {
+    if let Some(value) = inline {
+        return Ok(value);
+    }
+    *index += 1;
+    args.get(*index)
+        .map(String::as_str)
+        .filter(|value| !value.starts_with('-'))
+        .ok_or(CliError::InvalidProjectIngestKeyCreateCommand)
 }
 
 /// Parses the closed, explicitly confirmed project archival grammar.

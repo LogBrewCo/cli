@@ -134,6 +134,9 @@ pub enum CliError {
     /// Secure project creation syntax is malformed.
     #[error("invalid project create command")]
     InvalidProjectCreateCommand,
+    /// Secure existing-project ingest-key creation syntax is malformed.
+    #[error("invalid project ingest key create command")]
+    InvalidProjectIngestKeyCreateCommand,
     /// Confirmed project archival syntax is malformed.
     #[error("invalid project archive command")]
     InvalidProjectArchiveCommand,
@@ -590,6 +593,9 @@ const fn cli_error_code(error: &CliError) -> &'static str {
         CliError::InvalidInvestigationCommand => "invalid_investigation_command",
         CliError::InvalidDoctorCommand => "invalid_doctor_command",
         CliError::InvalidProjectCreateCommand => "invalid_project_create_command",
+        CliError::InvalidProjectIngestKeyCreateCommand => {
+            "invalid_project_ingest_key_create_command"
+        }
         CliError::InvalidProjectArchiveCommand => "invalid_project_archive_command",
         CliError::InvalidProjectsCommand => "invalid_projects_command",
         CliError::InvalidLoginProvider => "invalid_login_provider",
@@ -639,6 +645,9 @@ const fn cli_error_next_step(error: &CliError) -> &'static str {
         }
         CliError::InvalidProjectCreateCommand => {
             "use logbrew projects create <name> --ingest-key-file <path> with optional --runtime, --environment, --abandon-retry, and --json"
+        }
+        CliError::InvalidProjectIngestKeyCreateCommand => {
+            "use logbrew projects keys create <project_id> --ingest-key-file <path> with optional --label, --kind sdk|browser|server|cli, --abandon-retry, and --json"
         }
         CliError::InvalidProjectArchiveCommand => {
             "use logbrew projects archive <project_id> --yes with optional --json"
