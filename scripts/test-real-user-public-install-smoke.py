@@ -101,6 +101,7 @@ def write_fake_installer_command(path: pathlib.Path, kind: str) -> None:
                     "has_token": "LOGBREW_TOKEN" in os.environ,
                     "has_receipt_control": "LOGBREW_RELEASE_RECEIPT_MODE" in os.environ,
                     "no_install_cleanup": os.environ.get("HOMEBREW_NO_INSTALL_CLEANUP"),
+                    "rustup_home": os.environ.get("RUSTUP_HOME"),
                 }}) + "\\n")
 
         def install(root, windows=False):
@@ -241,8 +242,11 @@ class PublicInstallVerifierTests(unittest.TestCase):
 
     def environment(self, artifact_id: str, artifact: pathlib.Path) -> dict[str, str]:
         environment = os.environ.copy()
+        tool_home = self.temp_dir / "tool-home"
+        (tool_home / ".rustup").mkdir(parents=True, exist_ok=True)
         environment.update(
             {
+                "HOME": str(tool_home),
                 "PATH": f"{self.fake_bin}{os.pathsep}{environment['PATH']}",
                 "FAKE_BREW_PREFIX": str(self.temp_dir / "brew-prefix"),
                 "FAKE_BREW_REPOSITORY": str(self.temp_dir / "brew-repository"),
@@ -256,6 +260,7 @@ class PublicInstallVerifierTests(unittest.TestCase):
                 "LOGBREW_TOKEN": "must-not-reach-child-processes",
             }
         )
+        environment.pop("RUSTUP_HOME", None)
         return environment
 
     def artifact_for(self, mode: str) -> tuple[str, pathlib.Path]:
@@ -280,7 +285,14 @@ class PublicInstallVerifierTests(unittest.TestCase):
                 textwrap.dedent(
                     '''
                     class Logbrew < Formula
-                      version "0.1.29"
+                      if OS.mac?
+                        if Hardware::CPU.arm?
+                          url "https://github.com/LogBrewCo/cli/releases/download/v0.1.29/logbrew-cli-aarch64-apple-darwin.tar.xz"
+                        end
+                        if Hardware::CPU.intel?
+                          url "https://github.com/LogBrewCo/cli/releases/download/v0.1.29/logbrew-cli-x86_64-apple-darwin.tar.xz"
+                        end
+                      end
                       BINARY_ALIASES = {
                         "aarch64-apple-darwin": {}
                       }
@@ -349,6 +361,41 @@ class PublicInstallVerifierTests(unittest.TestCase):
             return "npm:logbrew-cli", artifact
         self.fail(f"unsupported fixture mode: {mode}")
 
+    def test_homebrew_formula_rejects_mixed_derived_release_versions(self) -> None:
+        artifact_id, artifact = self.artifact_for("homebrew")
+        source = artifact.read_text(encoding="utf-8")
+        artifact.write_text(
+            source.replace(
+                "v0.1.29/logbrew-cli-x86_64",
+                "v0.1.28/logbrew-cli-x86_64",
+            ),
+            encoding="utf-8",
+        )
+
+        result = self.run_verifier(
+            "homebrew",
+            artifact_override=(artifact_id, artifact),
+        )
+
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(result.stdout, "")
+        self.assertEqual(result.stderr, "verification_failed\n")
+        self.assertFalse(self.command_log.exists())
+
+    def test_homebrew_formula_accepts_one_exact_explicit_version(self) -> None:
+        module = load_verifier_module()
+        matcher = getattr(module, "homebrew_formula_matches_version", None)
+        self.assertIsNotNone(matcher)
+
+        self.assertTrue(matcher('version "0.1.29"\n', VERSION))
+        self.assertFalse(matcher('version "0.1.28"\n', VERSION))
+        self.assertFalse(
+            matcher(
+                'version "0.1.29"\nversion "0.1.29"\n',
+                VERSION,
+            )
+        )
+
     def run_verifier(
         self,
         mode: str,
@@ -400,6 +447,11 @@ class PublicInstallVerifierTests(unittest.TestCase):
         self.assertTrue(all(record["has_token"] is False for record in records))
         self.assertTrue(
             all(record["has_receipt_control"] is False for record in records)
+        )
+        cargo_record = next(record for record in records if record["command"] == "cargo")
+        self.assertEqual(
+            cargo_record["rustup_home"],
+            str(self.temp_dir / "tool-home" / ".rustup"),
         )
         brew_args = [
             record["args"] for record in records if record["command"] == "brew"
