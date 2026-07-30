@@ -160,8 +160,8 @@ classifiers = ["Framework :: Django", "Programming Language :: Python :: 3.10"]
             ],
             "compatibility": {
                 "status": "review_required",
-                "requires_python": ">=3.11",
-                "requires_framework": "Django>=5.2"
+                "requires_python": ">=3.10",
+                "requires_framework": "Django>=4.2.30,<6"
             },
             "install_command": "python3 -m pip install --upgrade logbrew-sdk logbrew-django",
             "next_action": {
@@ -245,6 +245,10 @@ async fn released_python_frameworks_use_the_detected_package_manager()
             body["install_plan"]["compatibility"]["requires_framework"],
             framework_requirement
         );
+        assert_eq!(
+            body["install_plan"]["compatibility"]["requires_python"],
+            ">=3.10"
+        );
         assert_eq!(body["install_plan"]["install_command"], install_command);
     }
     Ok(())
@@ -285,6 +289,10 @@ async fn framework_neutral_pipenv_project_gets_the_core_python_plan()
         serde_json::Value::Null
     );
     assert_eq!(
+        body["install_plan"]["compatibility"]["requires_python"],
+        ">=3.10"
+    );
+    assert_eq!(
         body["install_plan"]["install_command"],
         "pipenv install logbrew-sdk"
     );
@@ -296,7 +304,7 @@ async fn django_human_plan_is_explicit_and_path_free() -> Result<(), Box<dyn std
     let root = fixture_root("django-human")?;
     std::fs::write(
         root.join("pyproject.toml"),
-        "[project]\nname = \"fixture\"\ndependencies = [\"Django>=5.2\"]\n",
+        "[project]\nname = \"fixture\"\ndependencies = [\"Django==4.2.30\"]\n",
     )?;
     let command = parse_command(["logbrew", "setup"])?;
     let mut output = Vec::new();
@@ -308,7 +316,7 @@ async fn django_human_plan_is_explicit_and_path_free() -> Result<(), Box<dyn std
     assert!(text.contains("Package manager: pip\n"));
     assert!(text.contains("Integration: Django\n"));
     assert!(text.contains("Packages: logbrew-sdk logbrew-django\n"));
-    assert!(text.contains("Compatibility review: Python >=3.11; Django>=5.2\n"));
+    assert!(text.contains("Compatibility review: Python >=3.10; Django>=4.2.30,<6\n"));
     assert!(
         text.contains("Command: python3 -m pip install --upgrade logbrew-sdk logbrew-django\n")
     );
