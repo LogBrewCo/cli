@@ -101,6 +101,7 @@ def write_fake_installer_command(path: pathlib.Path, kind: str) -> None:
                     "has_token": "LOGBREW_TOKEN" in os.environ,
                     "has_receipt_control": "LOGBREW_RELEASE_RECEIPT_MODE" in os.environ,
                     "no_install_cleanup": os.environ.get("HOMEBREW_NO_INSTALL_CLEANUP"),
+                    "rustup_home": os.environ.get("RUSTUP_HOME"),
                 }}) + "\\n")
 
         def install(root, windows=False):
@@ -241,8 +242,11 @@ class PublicInstallVerifierTests(unittest.TestCase):
 
     def environment(self, artifact_id: str, artifact: pathlib.Path) -> dict[str, str]:
         environment = os.environ.copy()
+        tool_home = self.temp_dir / "tool-home"
+        (tool_home / ".rustup").mkdir(parents=True, exist_ok=True)
         environment.update(
             {
+                "HOME": str(tool_home),
                 "PATH": f"{self.fake_bin}{os.pathsep}{environment['PATH']}",
                 "FAKE_BREW_PREFIX": str(self.temp_dir / "brew-prefix"),
                 "FAKE_BREW_REPOSITORY": str(self.temp_dir / "brew-repository"),
@@ -256,6 +260,7 @@ class PublicInstallVerifierTests(unittest.TestCase):
                 "LOGBREW_TOKEN": "must-not-reach-child-processes",
             }
         )
+        environment.pop("RUSTUP_HOME", None)
         return environment
 
     def artifact_for(self, mode: str) -> tuple[str, pathlib.Path]:
@@ -442,6 +447,11 @@ class PublicInstallVerifierTests(unittest.TestCase):
         self.assertTrue(all(record["has_token"] is False for record in records))
         self.assertTrue(
             all(record["has_receipt_control"] is False for record in records)
+        )
+        cargo_record = next(record for record in records if record["command"] == "cargo")
+        self.assertEqual(
+            cargo_record["rustup_home"],
+            str(self.temp_dir / "tool-home" / ".rustup"),
         )
         brew_args = [
             record["args"] for record in records if record["command"] == "brew"

@@ -120,6 +120,22 @@ def clean_environment() -> dict[str, str]:
     }
 
 
+def preserve_rustup_home(environment: dict[str, str]) -> None:
+    """Keep an existing default Rust toolchain reachable after HOME isolation."""
+    if environment.get("RUSTUP_HOME"):
+        return
+    original_home = environment.get("HOME")
+    if not original_home or "\x00" in original_home:
+        return
+    candidate = pathlib.Path(original_home) / ".rustup"
+    try:
+        metadata = candidate.lstat()
+    except OSError:
+        return
+    if candidate.is_absolute() and stat.S_ISDIR(metadata.st_mode):
+        environment["RUSTUP_HOME"] = str(candidate)
+
+
 def run_command(
     command: Sequence[str],
     environment: Mapping[str, str],
@@ -825,6 +841,8 @@ def verify_mode(
 ) -> None:
     """Install one family through its public user surface and execute the result."""
     environment = clean_environment()
+    if mode == "crates":
+        preserve_rustup_home(environment)
     isolated_home = workspace / "home"
     isolated_home.mkdir()
     environment["HOME"] = str(isolated_home)
