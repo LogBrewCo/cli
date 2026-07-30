@@ -512,6 +512,32 @@ def install_powershell(
     return installed_binary(cargo_home, windows=True)
 
 
+def homebrew_formula_matches_version(formula: str, version: str) -> bool:
+    """Accept one explicit version or cargo-dist URLs for exactly that release."""
+    version_statements = re.findall(r"(?m)^\s*version\b.*$", formula)
+    declared_versions = re.findall(
+        r"""(?m)^\s*version\s+["']([^"']+)["']\s*$""",
+        formula,
+    )
+    if version_statements:
+        return len(version_statements) == 1 and declared_versions == [version]
+
+    url_statements = re.findall(r"(?m)^\s*url\b.*$", formula)
+    declared_urls = re.findall(
+        r"""(?m)^\s*url\s+["']([^"']+)["']\s*$""",
+        formula,
+    )
+    expected_url = re.compile(
+        r"https://github\.com/LogBrewCo/cli/releases/download/"
+        rf"v{re.escape(version)}/logbrew-cli-[A-Za-z0-9._-]+\.tar\.xz"
+    )
+    return (
+        bool(url_statements)
+        and len(url_statements) == len(declared_urls)
+        and all(expected_url.fullmatch(url) for url in declared_urls)
+    )
+
+
 def install_homebrew(
     artifact: pathlib.Path,
     version: str,
@@ -523,12 +549,9 @@ def install_homebrew(
         formula = formula_bytes.decode("utf-8")
     except UnicodeDecodeError as error:
         raise VerificationError from error
-    version_declaration = re.compile(
-        rf"(?m)^\s*version\s+[\"']{re.escape(version)}[\"']\s*$"
-    )
     class_declaration = re.compile(r"(?m)^class Logbrew < Formula\s*$")
     if (
-        len(version_declaration.findall(formula)) != 1
+        not homebrew_formula_matches_version(formula, version)
         or len(class_declaration.findall(formula)) != 1
     ):
         raise VerificationError

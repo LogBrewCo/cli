@@ -280,7 +280,14 @@ class PublicInstallVerifierTests(unittest.TestCase):
                 textwrap.dedent(
                     '''
                     class Logbrew < Formula
-                      version "0.1.29"
+                      if OS.mac?
+                        if Hardware::CPU.arm?
+                          url "https://github.com/LogBrewCo/cli/releases/download/v0.1.29/logbrew-cli-aarch64-apple-darwin.tar.xz"
+                        end
+                        if Hardware::CPU.intel?
+                          url "https://github.com/LogBrewCo/cli/releases/download/v0.1.29/logbrew-cli-x86_64-apple-darwin.tar.xz"
+                        end
+                      end
                       BINARY_ALIASES = {
                         "aarch64-apple-darwin": {}
                       }
@@ -348,6 +355,41 @@ class PublicInstallVerifierTests(unittest.TestCase):
             )
             return "npm:logbrew-cli", artifact
         self.fail(f"unsupported fixture mode: {mode}")
+
+    def test_homebrew_formula_rejects_mixed_derived_release_versions(self) -> None:
+        artifact_id, artifact = self.artifact_for("homebrew")
+        source = artifact.read_text(encoding="utf-8")
+        artifact.write_text(
+            source.replace(
+                "v0.1.29/logbrew-cli-x86_64",
+                "v0.1.28/logbrew-cli-x86_64",
+            ),
+            encoding="utf-8",
+        )
+
+        result = self.run_verifier(
+            "homebrew",
+            artifact_override=(artifact_id, artifact),
+        )
+
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(result.stdout, "")
+        self.assertEqual(result.stderr, "verification_failed\n")
+        self.assertFalse(self.command_log.exists())
+
+    def test_homebrew_formula_accepts_one_exact_explicit_version(self) -> None:
+        module = load_verifier_module()
+        matcher = getattr(module, "homebrew_formula_matches_version", None)
+        self.assertIsNotNone(matcher)
+
+        self.assertTrue(matcher('version "0.1.29"\n', VERSION))
+        self.assertFalse(matcher('version "0.1.28"\n', VERSION))
+        self.assertFalse(
+            matcher(
+                'version "0.1.29"\nversion "0.1.29"\n',
+                VERSION,
+            )
+        )
 
     def run_verifier(
         self,
