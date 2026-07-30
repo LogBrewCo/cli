@@ -51,10 +51,10 @@ class InstalledReleaseAttestationWorkflowTests(unittest.TestCase):
     def test_dispatch_inputs_bind_the_exact_release(self) -> None:
         workflow = self.workflow()
         for name, value in [
-            ("tag", "v0.1.31"),
-            ("version", "0.1.31"),
-            ("source_commit", "3635832e83407167cbd0997eb8072cd2d71869a6"),
-            ("release_run", "30528894908"),
+            ("tag", "v0.1.32"),
+            ("version", "0.1.32"),
+            ("source_commit", "2588c7cf21e1a653e54c5c876773ebe48898fa48"),
+            ("release_run", "30588053659"),
         ]:
             with self.subTest(name=name):
                 self.assertRegex(
@@ -215,7 +215,7 @@ class InstalledReleaseAttestationWorkflowTests(unittest.TestCase):
             workflow.count("actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803"),
             2,
         )
-        self.assertIn("ref: 3635832e83407167cbd0997eb8072cd2d71869a6", workflow)
+        self.assertIn("ref: 2588c7cf21e1a653e54c5c876773ebe48898fa48", workflow)
         self.assertIn("path: released-source", workflow)
         self.assertEqual(workflow.count("persist-credentials: false"), 2)
         self.assertIn(
@@ -287,10 +287,10 @@ class InstalledReleaseAttestationWorkflowTests(unittest.TestCase):
             )
 
             hostile = {
-                "tag": 'v0.1.31\'\";|&<>',
-                "version": f'0.1.31;$(touch "{marker_one}")',
+                "tag": 'v0.1.32\'\";|&<>',
+                "version": f'0.1.32;$(touch "{marker_one}")',
                 "source_commit": f'${{{{ github.token }}}}`touch "{marker_two}"`',
-                "release_run": "30528894908\r\n$(exit 91)",
+                "release_run": "30588053659\r\n$(exit 91)",
             }
             replacements = {
                 "${{ matrix.python }}": sys.executable,
