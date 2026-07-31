@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 /// Maximum serialized start manifest size.
 const MAX_MANIFEST_BYTES: usize = 256 * 1024;
 /// Maximum reconstructed bytes declared by one session.
-const MAX_AGGREGATE_BYTES: usize = 128 * 1024 * 1024;
+const MAX_AGGREGATE_BYTES: usize = 512 * 1024 * 1024;
 /// Maximum server-directed retry delay accepted by the CLI.
 const MAX_RETRY_AFTER_SECONDS: u64 = 30;
 /// Exact chunk receipt guidance.
@@ -874,7 +874,19 @@ struct ErrorEnvelope {
 
 #[cfg(test)]
 mod tests {
-    use super::{MAX_RETRY_AFTER_SECONDS, RESUMABLE_CHUNK_BYTES, is_public_id, retryable_status};
+    use super::{
+        MAX_AGGREGATE_BYTES, MAX_RETRY_AFTER_SECONDS, RESUMABLE_CHUNK_BYTES, is_public_id,
+        retryable_status,
+    };
+
+    #[test]
+    fn resumable_boundary_accepts_a_large_universal_ios_dsym() {
+        const LARGE_THIN_OBJECT_BYTES: usize = 224 * 1024 * 1024;
+
+        const {
+            assert!(MAX_AGGREGATE_BYTES >= LARGE_THIN_OBJECT_BYTES * 2);
+        }
+    }
 
     #[test]
     fn retry_and_identity_policy_is_exact() {

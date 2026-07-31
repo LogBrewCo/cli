@@ -31,12 +31,16 @@ const IMPLEMENTATION: &str = include_str!("../src/native_debug_artifacts.rs");
 #[test]
 fn native_debug_transport_has_explicit_request_and_overall_bounds_without_hidden_retries() {
     assert!(
-        IMPLEMENTATION.contains("const OVERALL_UPLOAD_TIMEOUT: std::time::Duration"),
+        IMPLEMENTATION.contains(
+            "const OVERALL_UPLOAD_TIMEOUT: std::time::Duration = \
+             std::time::Duration::from_secs(30 * 60);"
+        ),
         "native debug upload needs one fixed overall network deadline"
     );
     assert!(
-        IMPLEMENTATION.contains("const UPLOAD_TIMEOUT: std::time::Duration =")
-            && !IMPLEMENTATION.contains("from_secs(30 * 60)"),
+        IMPLEMENTATION.contains(
+            "const UPLOAD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);"
+        ),
         "compatibility upload must not retain the multi-minute request timeout"
     );
     assert!(

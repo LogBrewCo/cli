@@ -13,9 +13,9 @@ use std::path::{Path, PathBuf};
 /// Maximum number of exact object identities accepted by one upload.
 const MAX_ARTIFACTS: usize = 50;
 /// Maximum bytes accepted for one uploaded thin debug object.
-pub(super) const MAX_ARTIFACT_BYTES: usize = 50 * 1024 * 1024;
+pub(super) const MAX_ARTIFACT_BYTES: usize = 256 * 1024 * 1024;
 /// Maximum bytes accepted for one source file before slice extraction.
-const MAX_SOURCE_BYTES: usize = 128 * 1024 * 1024;
+const MAX_SOURCE_BYTES: usize = 512 * 1024 * 1024;
 /// Fixed public resumable upload chunk size.
 pub(super) const RESUMABLE_CHUNK_BYTES: usize = 4 * 1024 * 1024;
 /// Maximum central-directory entries inspected in one bounded ZIP.
@@ -522,7 +522,7 @@ const fn invalid_artifact() -> RuntimeError {
 #[cfg(test)]
 mod tests {
     use super::{
-        Artifact, MAX_ARTIFACT_BYTES, NativeArchitecture, RESUMABLE_CHUNK_BYTES,
+        Artifact, MAX_ARTIFACT_BYTES, MAX_SOURCE_BYTES, NativeArchitecture, RESUMABLE_CHUNK_BYTES,
         artifact_size_allowed, finalize, sha256_hex, validate_expected_uuids,
         zip_expansion_is_unsafe,
     };
@@ -570,6 +570,17 @@ mod tests {
         assert!(!artifact_size_allowed(0));
         assert!(artifact_size_allowed(MAX_ARTIFACT_BYTES));
         assert!(!artifact_size_allowed(MAX_ARTIFACT_BYTES + 1));
+    }
+
+    /// Proves realistic universal iOS dSYMs fit without weakening finite bounds.
+    #[test]
+    fn large_ios_debug_objects_fit_the_public_upload_boundary() {
+        const LARGE_THIN_OBJECT_BYTES: usize = 224 * 1024 * 1024;
+
+        const {
+            assert!(artifact_size_allowed(LARGE_THIN_OBJECT_BYTES));
+            assert!(MAX_SOURCE_BYTES >= LARGE_THIN_OBJECT_BYTES * 2);
+        }
     }
 
     /// Proves compressed-size policy from synthetic lengths without a ZIP bomb fixture.
