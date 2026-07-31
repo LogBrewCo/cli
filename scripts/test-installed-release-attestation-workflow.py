@@ -212,7 +212,7 @@ class InstalledReleaseAttestationWorkflowTests(unittest.TestCase):
     def test_workflow_checks_out_released_source_and_uploads_one_fixed_receipt(self) -> None:
         workflow = self.workflow()
         self.assertEqual(
-            workflow.count("actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803"),
+            workflow.count("actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"),
             2,
         )
         self.assertIn("ref: 2588c7cf21e1a653e54c5c876773ebe48898fa48", workflow)
