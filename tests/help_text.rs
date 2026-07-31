@@ -117,6 +117,15 @@ fn project_and_usage_help_are_honest_about_supported_behavior() {
 }
 
 #[test]
+fn native_debug_help_documents_large_artifact_boundaries() {
+    let text = help::help_text(HelpTopic::NativeDebugArtifacts);
+
+    assert!(text.contains("256 MiB per thin debug object"));
+    assert!(text.contains("512 MiB per source file or resumable upload session"));
+    assert!(text.contains("4 MiB resumable chunks"));
+}
+
+#[test]
 fn setup_help_advertises_first_contact_aliases() {
     let text = help::help_text(HelpTopic::Setup);
 

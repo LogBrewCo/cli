@@ -20,11 +20,11 @@ const START_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
 /// Bounded 4 MiB chunk request window.
 const CHUNK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 /// Bounded completion request window.
-const COMPLETE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+const COMPLETE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 /// Bounded exact lookup window.
 const LOOKUP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
 /// Overall network deadline for one upload invocation.
-const OVERALL_UPLOAD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+const OVERALL_UPLOAD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30 * 60);
 /// Maximum same-phase attempts: one request plus one explicit idempotent retry.
 const MAX_PHASE_ATTEMPTS: usize = 2;
 
@@ -703,10 +703,13 @@ mod tests {
         assert_eq!(CONNECT_TIMEOUT, std::time::Duration::from_secs(10));
         assert_eq!(START_TIMEOUT, std::time::Duration::from_secs(15));
         assert_eq!(CHUNK_TIMEOUT, std::time::Duration::from_secs(60));
-        assert_eq!(COMPLETE_TIMEOUT, std::time::Duration::from_secs(15));
+        assert_eq!(COMPLETE_TIMEOUT, std::time::Duration::from_secs(60));
         assert_eq!(LOOKUP_TIMEOUT, std::time::Duration::from_secs(15));
         assert_eq!(UPLOAD_TIMEOUT, std::time::Duration::from_secs(60));
-        assert_eq!(OVERALL_UPLOAD_TIMEOUT, std::time::Duration::from_secs(120));
+        assert_eq!(
+            OVERALL_UPLOAD_TIMEOUT,
+            std::time::Duration::from_secs(30 * 60)
+        );
         let _upload = build_client(UPLOAD_TIMEOUT)?;
         let _lookup = build_client(LOOKUP_TIMEOUT)?;
         Ok(())

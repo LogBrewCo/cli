@@ -525,8 +525,10 @@ Usage:
 Discovers and validates Apple dSYM, ZIP, or Mach-O debug objects locally, uploads every supported \
 exact identity, and verifies each identity with an authenticated lookup. Optional repeated \
 --expect-image-uuid values require an exact discovered UUID set for release automation. --dry-run \
-performs the same local validation without authentication or network access. Local paths and \
-filenames are never included in output or API metadata.";
+performs the same local validation without authentication or network access. Upload limits are \
+256 MiB per thin debug object and 512 MiB per source file or resumable upload session. Large \
+uploads use fixed 4 MiB resumable chunks. Local paths and filenames are never included in output \
+or API metadata.";
 
 /// Set command help text.
 const SET_HELP: &str = "\
