@@ -96,13 +96,13 @@ jobs:
     steps:
       - name: Checkout attestation workflow
         if: ${{ contains(fromJSON(matrix.scopes), inputs.receipt_scope) }}
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
 
       - name: Checkout released source
         if: ${{ contains(fromJSON(matrix.scopes), inputs.receipt_scope) }}
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: 2588c7cf21e1a653e54c5c876773ebe48898fa48
           path: released-source
