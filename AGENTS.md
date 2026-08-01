@@ -58,6 +58,18 @@ separate release evidence. Bind release evidence to exact source, version,
 workflow, and digest inputs. Preserve historical evidence, and change generated
 release workflows through their pinned owning configuration.
 
+## Code Review Rules
+
+- Flag command grammar and help drift, changes to tested output or exit
+  behavior, fail-open response handling, and any path that can render raw
+  server data or credential material.
+- Flag generated release state changed outside its owner and release claims
+  that are not bound to the exact published and installed artifact.
+- The safe path is to change the owning parser, renderer, auth, or release
+  configuration; add the nearest adversarial regression; and run the checks
+  for that boundary. Keep formatting and other mechanical policy in scripts or
+  CI rather than expanding this guide.
+
 ## Public History
 
 Public files, commit and pull-request text, fixtures, logs, and generated
