@@ -85,7 +85,7 @@ async fn human_release_explanation_connects_health_sdk_and_every_signal()
         "High-severity logs: status=available count=1",
         "Log: message=processor rejected charge level=error",
         "Action: name=checkout.submit events=4 users=3 sessions=3",
-        "Metric: name=checkout.duration latest=240 min=120 max=300 average=220 events=3",
+        "Metric: name=checkout.duration kind=histogram temporality=delta latest=240 min=120 max=300 average=220 events=3",
         "Timeline item: at=2026-08-03T11:05:00Z kind=issue summary=Payment failed",
         "Comparison: status=unavailable reason=deployment_boundary_not_captured",
         "Next 1: code=inspect_release_issue target=issue_investigation",
