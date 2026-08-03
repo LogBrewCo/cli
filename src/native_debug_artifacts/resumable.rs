@@ -471,6 +471,7 @@ fn request_failure(error: RuntimeError) -> AttemptFailure {
         | RuntimeError::Io(_)
         | RuntimeError::StatusUnavailable { .. }
         | RuntimeError::InvestigationResponseInvalid
+        | RuntimeError::ExplainResponseInvalid
         | RuntimeError::NativeDebugArtifactInvalid
         | RuntimeError::NativeDebugResponseInvalid
         | RuntimeError::NativeDebugVerificationFailed => terminal_failure(transport_error()),

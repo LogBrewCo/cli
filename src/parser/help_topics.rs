@@ -132,7 +132,7 @@ pub(super) fn help_topic(head: &str, tail: &[String]) -> Result<HelpTopic, CliEr
         "explain" => subresource_help_topic(
             HelpTopic::Explain,
             positionals.as_slice(),
-            &["issue", "trace"],
+            &["issue", "log", "trace", "release", "metric", "metrics"],
             EXPLAIN_RESOURCE_NEXT_STEP,
         ),
         "set" => subresource_help_topic(
@@ -450,7 +450,10 @@ fn single_optional_positional_command_help_topic(
 /// Resolves help for explain commands that include an ID.
 fn explain_command_shaped_help_topic(positionals: &[&str]) -> Option<HelpTopic> {
     match positionals {
-        ["issue" | "trace", _] => Some(HelpTopic::Explain),
+        [
+            "issue" | "log" | "trace" | "release" | "metric" | "metrics",
+            _,
+        ] => Some(HelpTopic::Explain),
         [id] if infer_explain_target(id).is_some() => Some(HelpTopic::Explain),
         _ => None,
     }
@@ -580,8 +583,18 @@ fn explicit_help_topic(args: &[&str]) -> Result<HelpTopic, CliError> {
 /// Resolves explicit explain help, including copied IDs.
 fn explain_help_topic(args: &[&str]) -> Result<HelpTopic, CliError> {
     match args {
-        [] | ["issue" | "trace"] | ["issue" | "trace", _] => Ok(HelpTopic::Explain),
-        ["issue" | "trace", _, extra, ..] => Err(unexpected_help_argument(extra)),
+        []
+        | ["issue" | "log" | "trace" | "release" | "metric" | "metrics"]
+        | [
+            "issue" | "log" | "trace" | "release" | "metric" | "metrics",
+            _,
+        ] => Ok(HelpTopic::Explain),
+        [
+            "issue" | "log" | "trace" | "release" | "metric" | "metrics",
+            _,
+            extra,
+            ..,
+        ] => Err(unexpected_help_argument(extra)),
         [id] if infer_explain_target(id).is_some() => Ok(HelpTopic::Explain),
         [id, extra, ..] if infer_explain_target(id).is_some() => {
             Err(unexpected_help_argument(extra))

@@ -512,15 +512,70 @@ async fn human_read_releases_prints_all_telemetry_counts() {
 async fn human_explain_trace_prints_scan_friendly_summary() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
-        .and(path("/api/telemetry/traces/trace_123"))
+        .and(path("/api/telemetry/traces/trace_123/investigation"))
         .and(header("authorization", "Bearer test-token"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "trace": {
+            "schema_version": 1,
+            "subject": {
+                "kind": "trace",
                 "trace_id": "trace_123",
-                "release": "checkout@1.2.3",
-                "environment": "production",
-                "spans": [{"name": "checkout"}]
-            }
+                "analyzed_span_count": 2,
+                "error_span_count": 1,
+                "service_count": 1,
+                "project_count": 1,
+                "started_at": "2026-06-02T20:00:00Z",
+                "duration_ms": 845,
+                "releases": ["checkout@1.2.3"],
+                "environments": ["production"]
+            },
+            "analysis": {
+                "status": "errors_observed",
+                "causality": "evidence_only",
+                "root_span": null,
+                "first_error_span": {
+                    "name": "charge card",
+                    "service_name": "checkout-api",
+                    "operation": "payment.charge",
+                    "status": "error",
+                    "duration_ms": 420,
+                    "span_id": "0123456789abcdef",
+                    "parent_span_id": null
+                },
+                "first_error_path": [{"name": "charge card"}],
+                "bottleneck_span": null,
+                "bottleneck_path": []
+            },
+            "spans": {"items": [], "truncated": false},
+            "correlations": {
+                "window": {
+                    "since": "2026-06-02T20:00:00Z",
+                    "until": "2026-06-02T20:00:01Z",
+                    "scopes": [{
+                        "project_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+                        "environment": "production",
+                        "release": "checkout@1.2.3"
+                    }],
+                    "truncated": false
+                },
+                "issues": {"status": "not_found", "items": [], "truncated": false},
+                "logs": {"status": "not_found", "items": [], "truncated": false},
+                "actions": {"status": "not_found", "items": [], "truncated": false},
+                "metrics": {"status": "not_found", "items": [], "truncated": false}
+            },
+            "timeline": {"items": [], "truncated": false},
+            "evidence": {
+                "status": "partial",
+                "captured_fields": ["trace.spans"],
+                "missing_fields": ["span.attributes"],
+                "redacted_fields": [],
+                "truncated_fields": []
+            },
+            "next_actions": [{
+                "priority": 1,
+                "code": "inspect_error_span",
+                "target": "trace_span",
+                "reason": "inspect the first retained error span"
+            }]
         })))
         .mount(&server)
         .await;
@@ -533,7 +588,17 @@ async fn human_explain_trace_prints_scan_friendly_summary() {
     .expect("explain succeeds");
     assert_eq!(
         text,
-        "Trace trace_123 spans=1 [checkout@1.2.3 / production]\n- checkout\n"
+        "Trace trace_123 status=errors_observed causality=evidence_only spans=2 errors=1 services=1 \
+         projects=1 duration_ms=845\nStarted: 2026-06-02T20:00:00Z\nReleases: \
+         checkout@1.2.3\nEnvironments: production\nFirst error: charge card \
+         service=checkout-api operation=payment.charge status=error duration_ms=420 \
+         span=0123456789abcdef\nFirst error path: charge card\nRelated issues: \
+         status=not_found count=0 truncated=false\nRelated logs: status=not_found \
+         count=0 truncated=false\nRelated actions: status=not_found count=0 \
+         truncated=false\nRelated metrics: status=not_found count=0 truncated=false\nTimeline: \
+         count=0 truncated=false\nEvidence: status=partial captured=1 missing=1 redacted=0 \
+         truncated=0\nMissing: span.attributes\nNext 1: code=inspect_error_span target=trace_span \
+         reason=inspect the first retained error span\n"
     );
 }
 

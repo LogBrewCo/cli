@@ -13,6 +13,7 @@ pub mod auth_namespace;
 #[doc(hidden)]
 pub mod doctor;
 mod error;
+mod explain;
 #[doc(hidden)]
 pub mod flags;
 pub mod help;
@@ -210,7 +211,7 @@ pub enum Command {
         /// Emit machine-readable JSON.
         json: bool,
     },
-    /// Fetches context for an issue or trace so an agent can explain it.
+    /// Fetches bounded investigation context for one telemetry subject.
     Explain {
         /// Resource to explain.
         target: ExplainTarget,
@@ -744,8 +745,52 @@ pub struct SupportTicketListOptions {
 pub enum ExplainTarget {
     /// One issue by ID.
     Issue(String),
+    /// One structured log by ID.
+    Log(String),
     /// One trace by ID.
     Trace(String),
+    /// One exact service release.
+    Release(ExplainReleaseTarget),
+    /// One bounded metric time series.
+    Metric(ExplainMetricTarget),
+}
+
+/// Exact identity required by a release investigation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExplainReleaseTarget {
+    /// Owned project identifier.
+    pub project_id: String,
+    /// Exact application release.
+    pub release: String,
+    /// Exact deployment environment.
+    pub environment: String,
+    /// Exact logical service name.
+    pub service_name: String,
+}
+
+/// Bounded query required by a metric investigation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExplainMetricTarget {
+    /// Owned project identifier.
+    pub project_id: String,
+    /// Exact metric name.
+    pub name: String,
+    /// Inclusive compact duration or RFC 3339 lower bound.
+    pub since: String,
+    /// Optional exclusive RFC 3339 upper bound.
+    pub until: Option<String>,
+    /// Optional fixed or automatic bucket interval.
+    pub interval: Option<String>,
+    /// Optional fixed low-cardinality grouping dimension.
+    pub group_by: Option<String>,
+    /// Optional exact service filter.
+    pub service_name: Option<String>,
+    /// Optional exact release filter.
+    pub release: Option<String>,
+    /// Optional exact environment filter.
+    pub environment: Option<String>,
+    /// Optional maximum number of returned series.
+    pub series_limit: Option<u8>,
 }
 
 /// Mutation target for `set`.
@@ -1113,11 +1158,11 @@ pub async fn execute_command<W: std::io::Write>(
         Command::InvestigateIssue { issue_id, json } => {
             investigate::execute(env, issue_id.as_str(), *json, output).await
         }
+        Command::Explain { target, json } => explain::execute(env, target, *json, output).await,
         Command::NativeDebugArtifacts { target, json } => {
             native_debug_artifacts::execute(env, target, *json, output).await
         }
         Command::Read { .. }
-        | Command::Explain { .. }
         | Command::Set { .. }
         | Command::ProjectSetupSeen { .. }
         | Command::Support { .. } => execute_http(command, env, output).await,
@@ -1673,9 +1718,52 @@ fn read_path(target: &ReadTarget, filters: &ReadPathFilters<'_>) -> String {
 /// Builds an explain endpoint path.
 fn explain_path(target: &ExplainTarget) -> String {
     match target {
-        ExplainTarget::Issue(id) => format!("/api/telemetry/issues/{}", encode_component(id)),
-        ExplainTarget::Trace(id) => format!("/api/telemetry/traces/{}", encode_component(id)),
+        ExplainTarget::Issue(id) => {
+            format!(
+                "/api/telemetry/issues/{}/investigation",
+                encode_component(id)
+            )
+        }
+        ExplainTarget::Log(id) => {
+            format!("/api/logs/{}/investigation", encode_component(id))
+        }
+        ExplainTarget::Trace(id) => {
+            format!(
+                "/api/telemetry/traces/{}/investigation",
+                encode_component(id)
+            )
+        }
+        ExplainTarget::Release(release) => path_with_query(
+            "/api/telemetry/releases/investigation",
+            &[
+                ("project_id", Some(release.project_id.as_str())),
+                ("release", Some(release.release.as_str())),
+                ("environment", Some(release.environment.as_str())),
+                ("service_name", Some(release.service_name.as_str())),
+            ],
+        ),
+        ExplainTarget::Metric(metric) => metric_explain_path(metric),
     }
+}
+
+/// Builds one bounded metric-series endpoint path.
+fn metric_explain_path(metric: &ExplainMetricTarget) -> String {
+    let series_limit = metric.series_limit.map(|value| value.to_string());
+    path_with_query(
+        "/api/telemetry/metrics/series",
+        &[
+            ("project_id", Some(metric.project_id.as_str())),
+            ("name", Some(metric.name.as_str())),
+            ("since", Some(metric.since.as_str())),
+            ("until", metric.until.as_deref()),
+            ("interval", metric.interval.as_deref()),
+            ("group_by", metric.group_by.as_deref()),
+            ("service_name", metric.service_name.as_deref()),
+            ("release", metric.release.as_deref()),
+            ("environment", metric.environment.as_deref()),
+            ("series_limit", series_limit.as_deref()),
+        ],
+    )
 }
 
 /// Builds a mutation endpoint path.

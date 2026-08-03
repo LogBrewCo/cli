@@ -112,7 +112,7 @@ Usage:
   logbrew reopen <issue_id> [--json]
 
 Popular terms: auth, status, health, setup, projects, usage, logs, issues, errors, traces, spans, \
-                         actions, events, releases, environments, support.
+                         metrics, actions, events, releases, environments, support.
 Health aliases: logbrew status, logbrew health, logbrew ping, logbrew doctor.
 Setup aliases (non-mutating plan): logbrew init, logbrew install, logbrew configure, logbrew sdk.
 Authenticated project creation: logbrew projects create <name> --ingest-key-file <path>.
@@ -494,13 +494,26 @@ Server-side live filters are not sent yet; severity filtering is applied client-
 const EXPLAIN_HELP: &str = "\
 Usage:
   logbrew explain issue <issue_id> [--json]
+  logbrew explain log <log_id> [--json]
   logbrew explain trace <trace_id> [--json]
+  logbrew explain release <release> --project <project_id> --environment <environment> --service \
+                            <service_name> [--json]
+  logbrew explain metric <name> --project <project_id> --since <24h|RFC3339> [--until <RFC3339>] \
+                            [--interval <auto|1m|5m|15m|1h|6h|1d>] \
+                            [--group-by <none|service_name|release|environment>] \
+                            [--service <service_name>] [--release <release>] \
+                            [--environment <environment>] [--series-limit <1-20>] [--json]
   logbrew explain <issue_id_or_trace_id> [--json]
   logbrew issue <issue_id> explain [--json]
   logbrew trace <trace_id> explain [--json]
   logbrew <issue_id_or_trace_id> explain [--json]
 
-Fetches enough context for an AI agent to explain what happened.
+Fetches bounded failure, correlation, timeline, evidence, or metric-series context for humans and \
+                            AI agents.
+Metric explanations preserve gauge, delta-counter, histogram, and cumulative-stream semantics; \
+                            they never invent reset-unsafe rates.
+Release investigation requires the exact project, environment, and service identity returned by \
+                            logbrew read releases.
 Pasted UUID/issue_* values are treated as issues; 32-hex/trace_* values are treated as traces.";
 
 /// Server-directed issue investigation help text.

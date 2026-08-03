@@ -216,6 +216,9 @@ pub enum RuntimeError {
     /// A successful investigation response violated the public contract.
     #[error("issue investigation returned an invalid response")]
     InvestigationResponseInvalid,
+    /// A successful explanation response violated its versioned public contract.
+    #[error("explanation response is invalid")]
+    ExplainResponseInvalid,
     /// A local Apple native debug artifact failed validation.
     #[error("native debug artifact is invalid")]
     NativeDebugArtifactInvalid,
@@ -306,6 +309,7 @@ pub fn write_native_debug_runtime_error<W: std::io::Write>(
         | RuntimeError::StatusUnavailable { .. }
         | RuntimeError::Unavailable { .. }
         | RuntimeError::InvestigationResponseInvalid
+        | RuntimeError::ExplainResponseInvalid
         | RuntimeError::NativeDebugArtifactInvalid
         | RuntimeError::NativeDebugResponseInvalid
         | RuntimeError::NativeDebugVerificationFailed => serde_json::json!({
@@ -486,6 +490,7 @@ fn write_human_runtime_error<W: std::io::Write>(
         | RuntimeError::Http(_)
         | RuntimeError::MissingToken
         | RuntimeError::InvestigationResponseInvalid
+        | RuntimeError::ExplainResponseInvalid
         | RuntimeError::NativeDebugArtifactInvalid
         | RuntimeError::NativeDebugResponseInvalid
         | RuntimeError::NativeDebugVerificationFailed
@@ -503,6 +508,7 @@ fn runtime_error_json(error: &RuntimeError) -> serde_json::Value {
         RuntimeError::MissingToken
         | RuntimeError::Unavailable { .. }
         | RuntimeError::InvestigationResponseInvalid
+        | RuntimeError::ExplainResponseInvalid
         | RuntimeError::NativeDebugArtifactInvalid
         | RuntimeError::NativeDebugResponseInvalid
         | RuntimeError::NativeDebugVerificationFailed
@@ -690,6 +696,7 @@ const fn runtime_error_code(error: &RuntimeError) -> &'static str {
         RuntimeError::StatusUnavailable { .. } => "status_unreachable",
         RuntimeError::Unavailable { .. } => "unavailable",
         RuntimeError::InvestigationResponseInvalid => "investigation_response_invalid",
+        RuntimeError::ExplainResponseInvalid => "explain_response_invalid",
         RuntimeError::NativeDebugArtifactInvalid => "native_debug_artifact_invalid",
         RuntimeError::NativeDebugResponseInvalid => "native_debug_response_invalid",
         RuntimeError::NativeDebugVerificationFailed => "native_debug_verification_failed",
@@ -747,6 +754,7 @@ fn runtime_error_next_step(error: &RuntimeError) -> Cow<'static, str> {
         | RuntimeError::Http(_)
         | RuntimeError::MissingToken
         | RuntimeError::InvestigationResponseInvalid
+        | RuntimeError::ExplainResponseInvalid
         | RuntimeError::NativeDebugArtifactInvalid
         | RuntimeError::NativeDebugResponseInvalid
         | RuntimeError::NativeDebugVerificationFailed
@@ -789,6 +797,9 @@ const fn fallback_runtime_error_next_step(error: &RuntimeError) -> &'static str 
         RuntimeError::Unavailable { next, .. } => next,
         RuntimeError::InvestigationResponseInvalid => {
             "retry the issue investigation; if it repeats, report the public response contract"
+        }
+        RuntimeError::ExplainResponseInvalid => {
+            "retry the same explanation; if it repeats, report the public response contract"
         }
         RuntimeError::NativeDebugArtifactInvalid => {
             "provide one validated Apple dSYM, ZIP, or Mach-O object matching every --expect-image-uuid value"

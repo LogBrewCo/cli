@@ -430,6 +430,7 @@ const fn upload_error_is_retryable(error: &RuntimeError) -> bool {
         | RuntimeError::MissingToken
         | RuntimeError::StatusUnavailable { .. }
         | RuntimeError::InvestigationResponseInvalid
+        | RuntimeError::ExplainResponseInvalid
         | RuntimeError::NativeDebugArtifactInvalid
         | RuntimeError::NativeDebugResponseInvalid
         | RuntimeError::NativeDebugVerificationFailed => false,

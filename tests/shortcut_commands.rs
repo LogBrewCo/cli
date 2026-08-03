@@ -1377,7 +1377,7 @@ fn parses_pasted_explain_ids_without_resource_word() {
     );
     assert_eq!(
         issue.http_path().expect("inferred issue has endpoint"),
-        "/api/telemetry/issues/issue_123"
+        "/api/telemetry/issues/issue_123/investigation"
     );
 
     let uuid_issue = parse_command([
@@ -1412,7 +1412,7 @@ fn parses_pasted_explain_ids_without_resource_word() {
     );
     assert_eq!(
         trace.http_path().expect("inferred trace has endpoint"),
-        "/api/telemetry/traces/4bf92f3577b34da6a3ce929d0e0e4736"
+        "/api/telemetry/traces/4bf92f3577b34da6a3ce929d0e0e4736/investigation"
     );
 
     let issue_suffix = parse_command(["logbrew", "issue_123", "explain", "--json"])

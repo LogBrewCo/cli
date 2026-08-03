@@ -1716,8 +1716,83 @@ fn parses_explain_trace_for_agent_context() {
     );
     assert_eq!(
         command.http_path().expect("explain trace has endpoint"),
-        "/api/telemetry/traces/trace-123"
+        "/api/telemetry/traces/trace-123/investigation"
     );
+}
+
+#[test]
+fn parses_log_release_and_metric_explanations() {
+    let log = parse_command([
+        "logbrew",
+        "explain",
+        "log",
+        "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "--json",
+    ])
+    .expect("log explanation parses");
+    assert_eq!(
+        log.http_path().expect("log explanation has endpoint"),
+        "/api/logs/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/investigation"
+    );
+
+    let release = parse_command([
+        "logbrew",
+        "explain",
+        "release",
+        "checkout@1.2.3",
+        "--project",
+        "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA",
+        "--environment",
+        "production",
+        "--service",
+        "checkout-api",
+    ])
+    .expect("release explanation parses");
+    assert_eq!(
+        release
+            .http_path()
+            .expect("release explanation has endpoint"),
+        "/api/telemetry/releases/investigation?project_id=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa&release=checkout%401.2.3&environment=production&service_name=checkout-api"
+    );
+
+    let metric = parse_command([
+        "logbrew",
+        "explain",
+        "metric",
+        "http.server.duration",
+        "--project",
+        "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "--since",
+        "24h",
+        "--interval",
+        "5m",
+        "--group-by",
+        "service",
+        "--environment",
+        "production",
+        "--series-limit",
+        "12",
+        "--json",
+    ])
+    .expect("metric explanation parses");
+    assert_eq!(
+        metric.http_path().expect("metric explanation has endpoint"),
+        "/api/telemetry/metrics/series?project_id=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa&name=http.server.duration&since=24h&interval=5m&group_by=service_name&environment=production&series_limit=12"
+    );
+}
+
+#[test]
+fn rejects_malformed_explicit_explanation_identifiers_before_network_use() {
+    for args in [
+        &["logbrew", "explain", "issue", "issue_"][..],
+        &["logbrew", "explain", "log", "not-a-uuid"][..],
+        &["logbrew", "explain", "trace", "not-a-trace"][..],
+    ] {
+        assert!(
+            parse_command(args.iter().copied()).is_err(),
+            "malformed explanation identifier must fail locally"
+        );
+    }
 }
 
 #[test]

@@ -160,6 +160,7 @@ fn request_error(error: RuntimeError) -> RuntimeError {
         | RuntimeError::Api { .. }
         | RuntimeError::StatusUnavailable { .. }
         | RuntimeError::InvestigationResponseInvalid
+        | RuntimeError::ExplainResponseInvalid
         | RuntimeError::NativeDebugArtifactInvalid
         | RuntimeError::NativeDebugResponseInvalid
         | RuntimeError::NativeDebugVerificationFailed => transport_error(),
