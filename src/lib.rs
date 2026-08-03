@@ -7,6 +7,7 @@
 #![forbid(unsafe_code)]
 
 mod analytics;
+mod analytics_lifecycle;
 mod analytics_retention;
 #[doc(hidden)]
 pub mod auth;
@@ -234,6 +235,13 @@ pub enum Command {
         /// Emit the exact validated server response.
         json: bool,
     },
+    /// Classifies bounded identified-user lifecycle state for one exact product event.
+    AnalyticsLifecycle {
+        /// Normalized privacy-safe lifecycle query.
+        options: AnalyticsLifecycleOptions,
+        /// Emit the exact validated server response.
+        json: bool,
+    },
     /// Follows the backend-directed, read-only investigation for one issue.
     InvestigateIssue {
         /// Grouped issue identifier.
@@ -324,6 +332,8 @@ pub enum HelpTopic {
     AnalyticsPaths,
     /// Product-analytics retention command.
     AnalyticsRetention,
+    /// Product-analytics lifecycle command.
+    AnalyticsLifecycle,
     /// Server-directed issue investigation command.
     Investigate,
     /// Apple native debug-artifact upload and lookup commands.
@@ -363,6 +373,7 @@ impl HelpTopic {
             Self::Analytics => "analytics",
             Self::AnalyticsPaths => "analytics_paths",
             Self::AnalyticsRetention => "analytics_retention",
+            Self::AnalyticsLifecycle => "analytics_lifecycle",
             Self::Investigate => "investigate",
             Self::NativeDebugArtifacts => "debug_artifacts",
             Self::Set => "set",
@@ -1026,6 +1037,37 @@ pub struct AnalyticsRetentionOptions {
     pub cohort_mode: AnalyticsRetentionCohortMode,
 }
 
+/// Supported version-1 classified event kind used in lifecycle queries.
+pub type AnalyticsLifecycleEventKind = AnalyticsRetentionEventKind;
+
+/// Fixed period width used in lifecycle queries.
+pub type AnalyticsLifecycleInterval = AnalyticsRetentionInterval;
+
+/// Exact, bounded product-analytics lifecycle request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AnalyticsLifecycleOptions {
+    /// Account-owned project UUID.
+    pub project_id: String,
+    /// Inclusive compact duration or RFC 3339 lower bound.
+    pub since: String,
+    /// Optional exclusive RFC 3339 upper bound.
+    pub until: Option<String>,
+    /// Optional exact service filter.
+    pub service_name: Option<String>,
+    /// Optional exact release filter.
+    pub release: Option<String>,
+    /// Optional exact environment filter.
+    pub environment: Option<String>,
+    /// Exact classified event kind.
+    pub event_kind: AnalyticsLifecycleEventKind,
+    /// Exact route template, screen name, or interaction name.
+    pub event_name: String,
+    /// Optional fixed period width; omission lets the backend choose by range.
+    pub interval: Option<AnalyticsLifecycleInterval>,
+    /// Complete fixed periods observed before the analysis lower bound.
+    pub history_period_count: u8,
+}
+
 /// Mutation target for `set`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SetTarget {
@@ -1098,6 +1140,9 @@ impl Command {
             Self::AnalyticsRetention { .. } => {
                 Some(String::from("/api/telemetry/analytics/retention"))
             }
+            Self::AnalyticsLifecycle { .. } => {
+                Some(String::from("/api/telemetry/analytics/lifecycle"))
+            }
             Self::Set { target, .. } => Some(set_path(target)),
             Self::ProjectSetupSeen { project_id, .. } => {
                 Some(format!("/api/projects/{project_id}/setup/seen"))
@@ -1146,6 +1191,7 @@ impl Command {
             | Self::Explain { json, .. }
             | Self::AnalyticsPaths { json, .. }
             | Self::AnalyticsRetention { json, .. }
+            | Self::AnalyticsLifecycle { json, .. }
             | Self::InvestigateIssue { json, .. }
             | Self::NativeDebugArtifacts { json, .. }
             | Self::Set { json, .. }
@@ -1164,12 +1210,9 @@ impl Command {
             | Self::ProjectSetupSeen { .. }
             | Self::AnalyticsPaths { .. }
             | Self::AnalyticsRetention { .. }
+            | Self::AnalyticsLifecycle { .. }
             | Self::Support {
-                target: SupportTarget::Create(_),
-                ..
-            }
-            | Self::Support {
-                target: SupportTarget::ReplyContext(_),
+                target: SupportTarget::Create(_) | SupportTarget::ReplyContext(_),
                 ..
             } => Some(HttpMethod::Post),
             Self::Support {
@@ -1214,6 +1257,9 @@ impl Command {
             Self::AnalyticsPaths { options, .. } => Some(analytics::request_body(options)),
             Self::AnalyticsRetention { options, .. } => {
                 Some(analytics_retention::request_body(options))
+            }
+            Self::AnalyticsLifecycle { options, .. } => {
+                Some(analytics_lifecycle::request_body(options))
             }
             Self::ProjectSetupSeen { options, .. } => Some(project_setup_seen_body(options, token)),
             Self::ProjectCreate { options, .. } => Some(project_create_body(options)),
@@ -1273,6 +1319,7 @@ impl Command {
             | Self::Explain { .. }
             | Self::AnalyticsPaths { .. }
             | Self::AnalyticsRetention { .. }
+            | Self::AnalyticsLifecycle { .. }
             | Self::InvestigateIssue { .. }
             | Self::NativeDebugArtifacts { .. }
             | Self::Set { .. }
@@ -1411,6 +1458,9 @@ pub async fn execute_command<W: std::io::Write>(
         }
         Command::AnalyticsRetention { options, json } => {
             analytics_retention::execute(env, options, *json, output).await
+        }
+        Command::AnalyticsLifecycle { options, json } => {
+            analytics_lifecycle::execute(env, options, *json, output).await
         }
         Command::NativeDebugArtifacts { target, json } => {
             native_debug_artifacts::execute(env, target, *json, output).await

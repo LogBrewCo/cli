@@ -30,6 +30,7 @@ pub const fn help_text(topic: HelpTopic) -> &'static str {
         HelpTopic::Analytics => ANALYTICS_HELP,
         HelpTopic::AnalyticsPaths => ANALYTICS_PATHS_HELP,
         HelpTopic::AnalyticsRetention => ANALYTICS_RETENTION_HELP,
+        HelpTopic::AnalyticsLifecycle => ANALYTICS_LIFECYCLE_HELP,
         HelpTopic::Investigate => INVESTIGATE_HELP,
         HelpTopic::NativeDebugArtifacts => NATIVE_DEBUG_ARTIFACTS_HELP,
         HelpTopic::Set => SET_HELP,
@@ -105,6 +106,8 @@ Usage:
   logbrew analytics retention --project <project_id> --since 30d --start-kind page-view \
                          --start-event /signup --return-kind interaction \
                          --return-event dashboard_opened [--json]
+  logbrew analytics lifecycle --project <project_id> --since 30d --event-kind interaction \
+                         --event dashboard_opened [--json]
   logbrew investigate issue <issue_id> [--json]
   logbrew debug-artifacts upload <path> --project <project_id> --release <release> --environment \
                          <environment> --service <service> [--expect-image-uuid <uuid>]... \
@@ -529,14 +532,17 @@ const ANALYTICS_HELP: &str = "\
 Usage:
   logbrew analytics paths --help
   logbrew analytics retention --help
+  logbrew analytics lifecycle --help
 
 Paths shows the most common aggregate journeys around one exact event without returning session \
 or user identifiers.
 Retention measures whether opaque identified users return after one exact start event, with \
 maturity-aware denominators that do not classify unobservable users as churned.
-Both commands return bounded human guidance and an exact validated schema-version-1 JSON contract \
+Lifecycle classifies identified users as new in observed history, returning, resurrected, or \
+dormant for one exact event, with explicit history and capture bounds.
+All commands return bounded human guidance and an exact validated schema-version-1 JSON contract \
 for AI agents.
-Next: choose paths to understand journeys or retention to measure return behavior.";
+Next: choose paths for journeys, retention for return behavior, or lifecycle for population change.";
 
 /// Product-analytics path exploration help text.
 const ANALYTICS_PATHS_HELP: &str = "\
@@ -593,6 +599,34 @@ subject's first-ever historical start.
 Human output shows headline return rate, every eligible period, cohort maturity, capture gaps, and \
 the next useful action. JSON emits the exact validated schema-version-1 response for AI agents.
 Next: use exact captured start and return event names from Product Analytics overview.";
+
+/// Product-analytics lifecycle help text.
+const ANALYTICS_LIFECYCLE_HELP: &str = "\
+Usage:
+  logbrew analytics lifecycle --project <project_id> --since <24h|RFC3339> \
+      --event-kind <page-view|screen-view|interaction> --event <name> [options] [--json]
+
+Options:
+  --until <RFC3339>                 Exclusive upper time bound.
+  --service <name>                  Exact service context.
+  --release <release>               Exact release context.
+  --environment <name>             Exact environment context.
+  --interval <hour|day|week|thirty-day>
+                                     Fixed lifecycle period; the backend chooses by range when omitted.
+  --history-periods <2-31>          Complete periods before since (default: 2; max history: 62 days).
+
+Returns lifecycle state for explicit opaque identified users performing one exact classified event.
+New in observed history means active now with no earlier matching event between history_since and \
+the current bucket; it does not prove a lifetime-new user. Returning means active in the current \
+and immediately previous fixed period. Resurrected means active now after a gap. Dormant means \
+active in the previous period but not the current period.
+States are disjoint, the bounded history window is always visible, and an incomplete final bucket \
+is marked provisional. thirty-day is a fixed 30-day duration, not a calendar month.
+Identity, event-name, session, trace, and history coverage qualify every conclusion. Raw subject IDs \
+are never returned.
+Human output shows every lifecycle bucket, population change, capture gaps, partial-period status, \
+and the next useful action. JSON emits the exact validated schema-version-1 response for AI agents.
+Next: choose one exact captured page, screen, or interaction name from Product Analytics overview.";
 
 /// Server-directed issue investigation help text.
 const INVESTIGATE_HELP: &str = "\
