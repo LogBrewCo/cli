@@ -655,7 +655,7 @@ fn rejects_missing_resources_with_command_specific_next_steps() {
         ),
         (
             &["logbrew", "explain", "--json"][..],
-            "choose issue or trace",
+            "choose issue, log, trace, release, or metric",
         ),
         (&["logbrew", "set", "--json"][..], "choose issue"),
     ] {
