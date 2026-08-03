@@ -5,8 +5,98 @@ use wiremock::matchers::{header, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 const PROJECT_ID: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const ISSUE_ID: &str = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
 const LOG_ID: &str = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const TRACE_ID: &str = "4bf92f3577b34da6a3ce929d0e0e4736";
+
+#[tokio::test]
+async fn human_issue_explanation_surfaces_fix_context_timeline_and_evidence()
+-> Result<(), Box<dyn std::error::Error>> {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path(format!(
+            "/api/telemetry/issues/{ISSUE_ID}/investigation"
+        )))
+        .respond_with(ResponseTemplate::new(200).set_body_json(issue_response()))
+        .mount(&server)
+        .await;
+    let command = parse_command(["logbrew", "explain", "issue", ISSUE_ID])?;
+    let mut output = Vec::new();
+
+    execute_command(&command, &authenticated_env(&server), &mut output).await?;
+
+    let text = String::from_utf8(output)?;
+    for expected in [
+        "Issue cccccccc-cccc-4ccc-8ccc-cccccccccccc unresolved severity=error",
+        "Exception: PaymentError mechanism=unhandled handled=false",
+        "Frame: module=checkout function=charge file=payment.rs line=42 in_app=true",
+        "Breadcrumb: at=2026-08-03T11:04:55Z category=ui.click",
+        "Runtime: service=checkout-api@1.2.3 runtime=rust@1.88",
+        "Captured correlation: trace=4bf92f3577b34da6a3ce929d0e0e4736",
+        "Tag: plan=pro",
+        "Cause assessment: status=evidence_only provenance=backend_observed",
+        "Fix area: status=observed_application_frame provenance=backend_observed",
+        "Impact: occurrences=3 affected_users=2",
+        "Related logs: status=available count=1",
+        "Evidence: status=partial",
+        "Next 1: code=inspect_code_location target=source_file",
+    ] {
+        assert!(text.contains(expected), "missing issue detail: {expected}");
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn human_release_explanation_connects_health_sdk_and_every_signal()
+-> Result<(), Box<dyn std::error::Error>> {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/telemetry/releases/investigation"))
+        .and(query_param("project_id", PROJECT_ID))
+        .and(query_param("release", "checkout@1.2.3"))
+        .and(query_param("environment", "production"))
+        .and(query_param("service_name", "checkout-api"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(release_response()))
+        .mount(&server)
+        .await;
+    let command = parse_command([
+        "logbrew",
+        "explain",
+        "release",
+        "checkout@1.2.3",
+        "--project",
+        PROJECT_ID,
+        "--environment",
+        "production",
+        "--service",
+        "checkout-api",
+    ])?;
+    let mut output = Vec::new();
+
+    execute_command(&command, &authenticated_env(&server), &mut output).await?;
+
+    let text = String::from_utf8(output)?;
+    for expected in [
+        "Release checkout@1.2.3 status=failures_observed causality=evidence_only",
+        "Signals: issues=1 logs=1 spans=2 actions=4 metrics=3",
+        "Trace health: status=available traces=1 error_traces=1 error_rate_bps=10000",
+        "SDK: name=logbrew-rust version=1.2.3 stream=issues items=1",
+        "Release issues: status=available count=1",
+        "High-severity logs: status=available count=1",
+        "Log: message=processor rejected charge level=error",
+        "Action: name=checkout.submit events=4 users=3 sessions=3",
+        "Metric: name=checkout.duration latest=240 min=120 max=300 average=220 events=3",
+        "Timeline item: at=2026-08-03T11:05:00Z kind=issue summary=Payment failed",
+        "Comparison: status=unavailable reason=deployment_boundary_not_captured",
+        "Next 1: code=inspect_release_issue target=issue_investigation",
+    ] {
+        assert!(
+            text.contains(expected),
+            "missing release detail: {expected}"
+        );
+    }
+    Ok(())
+}
 
 #[tokio::test]
 async fn metric_explanation_preserves_validated_json_and_exact_scope()
@@ -417,6 +507,282 @@ fn log_response() -> serde_json::Value {
             "code": "inspect_trace",
             "target": "trace_investigation",
             "reason": "inspect the exact correlated trace"
+        }]
+    })
+}
+
+fn issue_response() -> serde_json::Value {
+    serde_json::json!({
+        "schema_version": 1,
+        "subject": {
+            "kind": "issue",
+            "id": ISSUE_ID,
+            "project_id": PROJECT_ID,
+            "fingerprint": "payment-charge",
+            "status": "unresolved",
+            "severity": "error",
+            "title": "Payment failed",
+            "message": "processor rejected the charge",
+            "occurrence_count": 3,
+            "first_seen_at": "2026-08-03T10:00:00Z",
+            "last_seen_at": "2026-08-03T11:05:00Z"
+        },
+        "event": {
+            "id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+            "occurred_at": "2026-08-03T11:05:00Z",
+            "sdk": {"name": "logbrew-rust", "version": "1.2.3"},
+            "context": {
+                "schema_version": 1,
+                "resource": {
+                    "service": {"name": "checkout-api", "version": "1.2.3"},
+                    "deployment": {"environment": "production", "release": "checkout@1.2.3"},
+                    "runtime": {"name": "rust", "version": "1.88"},
+                    "framework": {"name": "axum", "version": "0.8"},
+                    "operating_system": {"name": "linux", "version": "6.8", "build": null},
+                    "device": {"family": "server", "model": null, "architecture": "arm64"},
+                    "application": {"name": "checkout", "version": "1.2.3", "build": "42"}
+                },
+                "trace": {
+                    "trace_id": TRACE_ID,
+                    "span_id": "0123456789abcdef",
+                    "parent_span_id": null,
+                    "sampled": true
+                },
+                "session": {"id": "session-42", "previous_id": null},
+                "subject": {"id": "user-opaque", "kind": "user"},
+                "tags": {"plan": "pro"}
+            },
+            "exception": {
+                "type": "PaymentError",
+                "mechanism": {"type": "unhandled", "handled": false}
+            },
+            "stack_frames": [{
+                "index": 0,
+                "module": "checkout",
+                "function": "charge",
+                "file": "payment.rs",
+                "line": 42,
+                "column": 7,
+                "in_app": true,
+                "source": "captured"
+            }],
+            "breadcrumbs": [{
+                "timestamp": "2026-08-03T11:04:55Z",
+                "type": "user",
+                "category": "ui.click",
+                "level": "info",
+                "message": "submit checkout",
+                "data": {"screen": "checkout"}
+            }],
+            "breadcrumbs_truncated": false
+        },
+        "cause": {
+            "status": "evidence_only",
+            "summary": "The processor rejection preceded the error.",
+            "provenance": "backend_observed",
+            "signals": ["unhandled_exception", "error_trace_span"]
+        },
+        "fix": {
+            "status": "observed_application_frame",
+            "location": {
+                "component": "payments",
+                "module": "checkout",
+                "function": "charge",
+                "file": "payment.rs",
+                "line": 42,
+                "column": 7,
+                "in_app": true
+            },
+            "provenance": "backend_observed"
+        },
+        "impact": {
+            "occurrence_count": 3,
+            "first_seen_at": "2026-08-03T10:00:00Z",
+            "last_seen_at": "2026-08-03T11:05:00Z",
+            "affected_users": 2,
+            "reported": null
+        },
+        "correlations": {
+            "trace": {
+                "status": "available",
+                "trace_id": TRACE_ID,
+                "summary": null,
+                "truncated": false
+            },
+            "logs": {
+                "status": "available",
+                "items": [{
+                    "id": LOG_ID,
+                    "severity": "error",
+                    "source": "payments",
+                    "message": "processor rejected charge",
+                    "occurred_at": "2026-08-03T11:04:59Z",
+                    "service_name": "checkout-api",
+                    "span_id": "0123456789abcdef"
+                }],
+                "truncated": false
+            },
+            "actions": {"status": "not_found", "items": [], "truncated": false},
+            "metrics": {"status": "not_found", "items": [], "truncated": false},
+            "release": {
+                "release": "checkout@1.2.3",
+                "environment": "production",
+                "service_name": "checkout-api"
+            }
+        },
+        "evidence": {
+            "status": "partial",
+            "captured_fields": ["issue.exception", "issue.stack_frames"],
+            "missing_fields": ["issue.attachment"],
+            "redacted_fields": [],
+            "truncated_fields": []
+        },
+        "next_actions": [{
+            "priority": 1,
+            "code": "inspect_code_location",
+            "target": "source_file",
+            "reason": "inspect the first application-owned frame"
+        }]
+    })
+}
+
+fn release_response() -> serde_json::Value {
+    serde_json::json!({
+        "schema_version": 1,
+        "subject": {
+            "kind": "release",
+            "project_id": PROJECT_ID,
+            "release": "checkout@1.2.3",
+            "environment": "production",
+            "service_name": "checkout-api",
+            "issue_count": 1,
+            "log_count": 1,
+            "trace_span_count": 2,
+            "action_count": 4,
+            "metric_count": 3,
+            "first_seen_at": "2026-08-03T10:00:00Z",
+            "last_seen_at": "2026-08-03T11:10:00Z",
+            "trace_health_status": "available",
+            "trace_health": {
+                "status": "failures_observed",
+                "trace_count": 1,
+                "error_trace_count": 1,
+                "error_rate_basis_points": 10000
+            }
+        },
+        "analysis": {"status": "failures_observed", "causality": "evidence_only"},
+        "sdk_coverage": {
+            "status": "available",
+            "items": [{
+                "name": "logbrew-rust",
+                "version": "1.2.3",
+                "stream": "issues",
+                "item_count": 1,
+                "first_seen_at": "2026-08-03T11:05:00Z",
+                "last_seen_at": "2026-08-03T11:05:00Z"
+            }],
+            "truncated": false
+        },
+        "signals": {
+            "issues": {
+                "status": "available",
+                "items": [{
+                    "issue_id": ISSUE_ID,
+                    "severity": "error",
+                    "title": "Payment failed",
+                    "message": "processor rejected the charge",
+                    "occurrence_count": 1,
+                    "first_seen_at": "2026-08-03T11:05:00Z",
+                    "last_seen_at": "2026-08-03T11:05:00Z",
+                    "trace_id": TRACE_ID
+                }],
+                "truncated": false
+            },
+            "traces": {
+                "status": "available",
+                "items": [{
+                    "trace_id": TRACE_ID,
+                    "root_span_name": "POST /checkout",
+                    "span_count": 2,
+                    "error_span_count": 1,
+                    "started_at": "2026-08-03T11:04:58Z",
+                    "duration_ms": 900
+                }],
+                "truncated": false
+            },
+            "logs": {
+                "status": "available",
+                "selection": "warning_error_critical",
+                "items": [{
+                    "id": LOG_ID,
+                    "level": "error",
+                    "source": "payments",
+                    "message": "processor rejected charge",
+                    "occurred_at": "2026-08-03T11:04:59Z",
+                    "trace_id": TRACE_ID,
+                    "span_id": "0123456789abcdef"
+                }],
+                "truncated": false
+            },
+            "actions": {
+                "status": "available",
+                "items": [{
+                    "name": "checkout.submit",
+                    "event_count": 4,
+                    "identified_user_count": 3,
+                    "session_count": 3,
+                    "first_seen_at": "2026-08-03T10:30:00Z",
+                    "last_seen_at": "2026-08-03T11:04:57Z",
+                    "trace_id": TRACE_ID
+                }],
+                "truncated": false
+            },
+            "metrics": {
+                "status": "available",
+                "items": [{
+                    "name": "checkout.duration",
+                    "kind": "histogram",
+                    "unit": "ms",
+                    "temporality": "delta",
+                    "event_count": 3,
+                    "minimum_value": 120.0,
+                    "maximum_value": 300.0,
+                    "average_value": 220.0,
+                    "latest_value": 240.0,
+                    "latest_at": "2026-08-03T11:05:01Z",
+                    "trace_id": TRACE_ID
+                }],
+                "truncated": false
+            }
+        },
+        "timeline": {
+            "items": [{
+                "kind": "issue",
+                "occurred_at": "2026-08-03T11:05:00Z",
+                "summary": "Payment failed",
+                "issue_id": ISSUE_ID,
+                "trace_id": TRACE_ID
+            }],
+            "truncated": false
+        },
+        "comparison": {
+            "status": "unavailable",
+            "reason": "deployment_boundary_not_captured"
+        },
+        "evidence": {
+            "status": "partial",
+            "captured_fields": ["release.issues", "release.traces"],
+            "missing_fields": ["deployment.boundary"],
+            "redacted_fields": [],
+            "truncated_fields": []
+        },
+        "next_actions": [{
+            "priority": 1,
+            "code": "inspect_release_issue",
+            "target": "issue_investigation",
+            "reason": "open the highest-frequency issue",
+            "issue_id": ISSUE_ID,
+            "trace_id": null
         }]
     })
 }
