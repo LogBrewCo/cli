@@ -1782,6 +1782,20 @@ fn parses_log_release_and_metric_explanations() {
 }
 
 #[test]
+fn rejects_malformed_explicit_explanation_identifiers_before_network_use() {
+    for args in [
+        &["logbrew", "explain", "issue", "issue_"][..],
+        &["logbrew", "explain", "log", "not-a-uuid"][..],
+        &["logbrew", "explain", "trace", "not-a-trace"][..],
+    ] {
+        assert!(
+            parse_command(args.iter().copied()).is_err(),
+            "malformed explanation identifier must fail locally"
+        );
+    }
+}
+
+#[test]
 fn parses_json_before_explain_resource_and_id() {
     let inferred =
         parse_command(["logbrew", "explain", "--json", "issue_123"]).expect("inferred explain");

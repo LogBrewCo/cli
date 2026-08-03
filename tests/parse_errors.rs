@@ -117,7 +117,7 @@ fn rejects_unknown_resources_with_command_specific_next_steps() {
         (
             &["logbrew", "explain", "logs", "--json"][..],
             "unknown resource: logs",
-            "choose issue or trace",
+            "choose issue, log, trace, release, or metric",
         ),
         (
             &["logbrew", "set", "release", "api@1", "resolved", "--json"][..],

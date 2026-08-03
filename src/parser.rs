@@ -1941,16 +1941,25 @@ fn parse_explain(args: &[String]) -> Result<Command, CliError> {
         "issue" => {
             let (id, tail) =
                 take_required_position(rest.as_slice(), "issue_id", "provide an issue id")?;
-            (ExplainTarget::Issue(id), tail)
+            (
+                ExplainTarget::Issue(validate_explain_id(id, ExplainIdKind::Issue)?),
+                tail,
+            )
         }
         "log" => {
             let (id, tail) = take_required_position(rest.as_slice(), "log_id", "provide a log id")?;
-            (ExplainTarget::Log(id), tail)
+            (
+                ExplainTarget::Log(validate_explain_id(id, ExplainIdKind::Log)?),
+                tail,
+            )
         }
         "trace" => {
             let (id, tail) =
                 take_required_position(rest.as_slice(), "trace_id", "provide a trace id")?;
-            (ExplainTarget::Trace(id), tail)
+            (
+                ExplainTarget::Trace(validate_explain_id(id, ExplainIdKind::Trace)?),
+                tail,
+            )
         }
         other => {
             if let Some(target) = infer_explain_target(other) {
@@ -1965,6 +1974,50 @@ fn parse_explain(args: &[String]) -> Result<Command, CliError> {
         target,
         json: flags.is_json(),
     })
+}
+
+/// Explicit identifier vocabulary for explanation detail reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ExplainIdKind {
+    /// Grouped issue identifier.
+    Issue,
+    /// Stored log UUID.
+    Log,
+    /// W3C or public-prefixed trace identifier.
+    Trace,
+}
+
+/// Validates one explicit identifier before constructing an authenticated request.
+fn validate_explain_id(value: String, kind: ExplainIdKind) -> Result<String, CliError> {
+    let value = value.trim();
+    let prefixed_value_is_nonempty = |prefixes: &[&str]| {
+        prefixes.iter().any(|prefix| {
+            value
+                .strip_prefix(prefix)
+                .is_some_and(|suffix| !suffix.is_empty())
+        })
+    };
+    let valid_shape = match kind {
+        ExplainIdKind::Issue => is_uuid(value) || prefixed_value_is_nonempty(&["issue_", "issue-"]),
+        ExplainIdKind::Log => is_uuid(value),
+        ExplainIdKind::Trace => {
+            (value.len() == 32 && value.bytes().all(|byte| byte.is_ascii_hexdigit()))
+                || prefixed_value_is_nonempty(&["trace_", "trace-"])
+        }
+    };
+    if value.len() > 128 || value.chars().any(char::is_control) || !valid_shape {
+        let (argument, command, next) = match kind {
+            ExplainIdKind::Issue => ("invalid issue id", "explain issue", "provide an issue id"),
+            ExplainIdKind::Log => ("invalid log id", "explain log", "provide a log UUID"),
+            ExplainIdKind::Trace => ("invalid trace id", "explain trace", "provide a trace id"),
+        };
+        return Err(CliError::UnexpectedArgument {
+            argument: argument.to_owned(),
+            command,
+            next,
+        });
+    }
+    Ok(value.to_owned())
 }
 
 /// Parses one exact service-release investigation without accepting list ambiguity.

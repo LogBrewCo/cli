@@ -5,10 +5,10 @@ use serde::{Deserialize, Deserializer};
 use serde_json::{Map, Value};
 
 use crate::auth::{AuthCredential, send_authenticated_with_refresh};
-use crate::ids::{is_trace_id, is_uuid};
+use crate::ids::is_trace_id;
 use crate::{
     CliEnvironment, ExplainMetricTarget, ExplainReleaseTarget, ExplainTarget, RuntimeError,
-    explain_path, terminal_safe,
+    explain_path,
 };
 
 /// Maximum accepted explanation response body.
@@ -797,22 +797,33 @@ fn append_runtime_context(output: &mut String, context: Option<&Value>) {
     let Some(context) = context.filter(|value| !value.is_null()) else {
         return;
     };
-    let Some(resource) = context.get("resource").filter(|value| !value.is_null()) else {
-        return;
-    };
-    output.push_str("Runtime:");
-    for (label, name) in [
-        ("service", "service"),
-        ("runtime", "runtime"),
-        ("framework", "framework"),
-        ("os", "operating_system"),
-        ("app", "application"),
-    ] {
-        if let Some(identity) = resource.get(name).filter(|value| !value.is_null()) {
-            append_named_version_label(output, label, identity);
+    if let Some(resource) = context.get("resource").filter(|value| !value.is_null()) {
+        let mut runtime = String::from("Runtime:");
+        for (label, name) in [
+            ("service", "service"),
+            ("runtime", "runtime"),
+            ("framework", "framework"),
+            ("os", "operating_system"),
+            ("app", "application"),
+        ] {
+            if let Some(identity) = resource.get(name).filter(|value| !value.is_null()) {
+                append_named_version_label(&mut runtime, label, identity);
+            }
+        }
+        if let Some(deployment) = resource.get("deployment").filter(|value| !value.is_null()) {
+            append_labeled_text(&mut runtime, "environment", deployment, "environment", 120);
+            append_labeled_text(&mut runtime, "release", deployment, "release", 200);
+        }
+        if let Some(device) = resource.get("device").filter(|value| !value.is_null()) {
+            append_labeled_text(&mut runtime, "device_family", device, "family", 120);
+            append_labeled_text(&mut runtime, "device_model", device, "model", 120);
+            append_labeled_text(&mut runtime, "architecture", device, "architecture", 80);
+        }
+        if runtime != "Runtime:" {
+            runtime.push('\n');
+            output.push_str(runtime.as_str());
         }
     }
-    output.push('\n');
     if let Some(trace) = context.get("trace").filter(|value| !value.is_null()) {
         output.push_str("Captured correlation:");
         append_labeled_text(output, "trace", trace, "trace_id", 80);
@@ -820,6 +831,35 @@ fn append_runtime_context(output: &mut String, context: Option<&Value>) {
         append_labeled_text(output, "parent", trace, "parent_span_id", 40);
         append_labeled_bool(output, "sampled", trace, "sampled");
         output.push('\n');
+    }
+    if let Some(session) = context.get("session").filter(|value| !value.is_null()) {
+        output.push_str("Session correlation:");
+        append_labeled_text(output, "id", session, "id", 160);
+        append_labeled_text(output, "previous", session, "previous_id", 160);
+        output.push('\n');
+    }
+    if let Some(subject) = context.get("subject").filter(|value| !value.is_null()) {
+        output.push_str("Subject correlation:");
+        append_labeled_text(output, "kind", subject, "kind", 40);
+        append_labeled_text(output, "id", subject, "id", 160);
+        output.push('\n');
+    }
+    if let Some(tags) = context.get("tags").and_then(Value::as_object) {
+        for (key, value) in tags.iter().take(8) {
+            let Some(value) = value.as_str() else {
+                continue;
+            };
+            output.push_str("Tag: ");
+            output.push_str(display_text(key, 120).as_str());
+            output.push('=');
+            output.push_str(display_text(value, 200).as_str());
+            output.push('\n');
+        }
+        if tags.len() > 8 {
+            output.push_str("Tags omitted from human view: ");
+            output.push_str((tags.len() - 8).to_string().as_str());
+            output.push_str("; use --json for all retained tags.\n");
+        }
     }
 }
 
@@ -1223,7 +1263,10 @@ fn render_release(value: &Value) -> Option<String> {
             output.push_str("SDK:");
             append_labeled_text(&mut output, "name", item, "name", 120);
             append_labeled_text(&mut output, "version", item, "version", 80);
-            append_labeled_integer(&mut output, "events", item, "event_count");
+            append_labeled_text(&mut output, "stream", item, "stream", 80);
+            append_labeled_integer(&mut output, "items", item, "item_count");
+            append_labeled_text(&mut output, "first", item, "first_seen_at", 64);
+            append_labeled_text(&mut output, "last", item, "last_seen_at", 64);
             output.push('\n');
         }
     }
@@ -1442,7 +1485,14 @@ fn append_timeline(output: &mut String, timeline: Option<&Value>) {
         append_labeled_text(output, "relationship", item, "relationship", 80);
         append_labeled_text(output, "service", item, "service_name", 160);
         append_labeled_text(output, "name", item, "name", 220);
+        append_labeled_text(output, "summary", item, "summary", 300);
+        append_labeled_text(output, "message", item, "message", 300);
         append_labeled_text(output, "severity", item, "severity", 32);
+        append_labeled_text(output, "status", item, "status", 40);
+        append_labeled_integer(output, "duration_ms", item, "duration_ms");
+        append_labeled_text(output, "issue", item, "issue_id", 80);
+        append_labeled_text(output, "trace", item, "trace_id", 80);
+        append_labeled_text(output, "span", item, "span_id", 40);
         output.push('\n');
     }
 }
@@ -1486,6 +1536,7 @@ fn append_log_previews(output: &mut String, items: Option<&[Value]>) {
         output.push_str("Log:");
         append_labeled_text(output, "message", log, "message", 300);
         append_labeled_text(output, "severity", log, "severity", 32);
+        append_labeled_text(output, "level", log, "level", 32);
         append_labeled_text(output, "source", log, "source", 100);
         append_labeled_text(output, "service", log, "service_name", 160);
         append_labeled_text(output, "span", log, "span_id", 40);
@@ -1519,9 +1570,13 @@ fn append_metric_previews(output: &mut String, items: Option<&[Value]>) {
         append_labeled_number(output, "latest", metric, "latest_value");
         append_labeled_number(output, "min", metric, "minimum_value");
         append_labeled_number(output, "max", metric, "maximum_value");
+        append_labeled_number(output, "average", metric, "average_value");
+        append_labeled_integer(output, "events", metric, "event_count");
         append_labeled_text(output, "unit", metric, "unit", 80);
         append_labeled_text(output, "service", metric, "service_name", 160);
         append_labeled_text(output, "at", metric, "occurred_at", 64);
+        append_labeled_text(output, "latest_at", metric, "latest_at", 64);
+        append_labeled_text(output, "trace", metric, "trace_id", 80);
         output.push('\n');
     }
 }
@@ -1713,6 +1768,29 @@ fn display_text(value: &str, limit: usize) -> String {
     let mut output = characters.by_ref().take(limit).collect::<String>();
     if characters.next().is_some() {
         output.push_str("...");
+    }
+    output
+}
+
+/// Escapes terminal controls and bidirectional-display characters in untrusted telemetry.
+fn terminal_safe(value: &str) -> String {
+    let mut output = String::with_capacity(value.len());
+    for character in value.chars() {
+        if character.is_control() {
+            output.extend(character.escape_default());
+        } else if matches!(
+            character,
+            '\u{061c}'
+                | '\u{200b}'..='\u{200f}'
+                | '\u{2028}'..='\u{202e}'
+                | '\u{2060}'..='\u{206f}'
+                | '\u{feff}'
+                | '\u{fff9}'..='\u{fffb}'
+        ) {
+            output.extend(character.escape_unicode());
+        } else {
+            output.push(character);
+        }
     }
     output
 }
