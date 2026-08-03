@@ -308,7 +308,9 @@ async fn redirects_are_not_followed_with_authentication() -> Result<(), Box<dyn 
     write_runtime_error(&error, true, &mut output)?;
     let response: serde_json::Value = serde_json::from_slice(output.as_slice())?;
 
-    assert_eq!(response["error"], "request_failed");
+    assert_eq!(response["error"], "api_error");
+    assert_eq!(response["api_code"], "request_failed");
+    assert_eq!(response["status"], 302);
     Ok(())
 }
 
