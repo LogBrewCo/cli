@@ -545,8 +545,23 @@ async fn human_explain_trace_prints_scan_friendly_summary() {
                 "bottleneck_span": null,
                 "bottleneck_path": []
             },
-            "spans": {},
-            "correlations": {},
+            "spans": {"items": [], "truncated": false},
+            "correlations": {
+                "window": {
+                    "since": "2026-06-02T20:00:00Z",
+                    "until": "2026-06-02T20:00:01Z",
+                    "scopes": [{
+                        "project_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+                        "environment": "production",
+                        "release": "checkout@1.2.3"
+                    }],
+                    "truncated": false
+                },
+                "issues": {"status": "not_found", "items": [], "truncated": false},
+                "logs": {"status": "not_found", "items": [], "truncated": false},
+                "actions": {"status": "not_found", "items": [], "truncated": false},
+                "metrics": {"status": "not_found", "items": [], "truncated": false}
+            },
             "timeline": {"items": [], "truncated": false},
             "evidence": {
                 "status": "partial",
@@ -578,7 +593,10 @@ async fn human_explain_trace_prints_scan_friendly_summary() {
          checkout@1.2.3\nEnvironments: production\nFirst error: charge card \
          service=checkout-api operation=payment.charge status=error duration_ms=420 \
          span=0123456789abcdef\nFirst error path: charge card\nTimeline: count=0 \
-         truncated=false\nEvidence: status=partial captured=1 missing=1 redacted=0 \
+         Related issues: status=not_found count=0 truncated=false\nRelated logs: status=not_found \
+         count=0 truncated=false\nRelated actions: status=not_found count=0 \
+         truncated=false\nRelated metrics: status=not_found count=0 truncated=false\nTimeline: \
+         count=0 truncated=false\nEvidence: status=partial captured=1 missing=1 redacted=0 \
          truncated=0\nMissing: span.attributes\nNext 1: code=inspect_error_span target=trace_span \
          reason=inspect the first retained error span\n"
     );

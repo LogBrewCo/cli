@@ -5,7 +5,7 @@ use serde::{Deserialize, Deserializer};
 use serde_json::{Map, Value};
 
 use crate::auth::{AuthCredential, send_authenticated_with_refresh};
-use crate::ids::is_trace_id;
+use crate::ids::{is_trace_id, is_uuid};
 use crate::{
     CliEnvironment, ExplainMetricTarget, ExplainReleaseTarget, ExplainTarget, RuntimeError,
     explain_path,
@@ -55,49 +55,49 @@ impl<'de> Visitor<'de> for UniqueValueVisitor {
         formatter.write_str("valid JSON without duplicate object fields")
     }
 
-    fn visit_bool<E>(self, value: bool) -> Result<Self::Value, E>
+    fn visit_bool<E>(self, v: bool) -> Result<Self::Value, E>
     where
         E: serde::de::Error,
     {
-        Ok(UniqueValue(Value::Bool(value)))
+        Ok(UniqueValue(Value::Bool(v)))
     }
 
-    fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E>
+    fn visit_i64<E>(self, v: i64) -> Result<Self::Value, E>
     where
         E: serde::de::Error,
     {
-        Ok(UniqueValue(Value::Number(value.into())))
+        Ok(UniqueValue(Value::Number(v.into())))
     }
 
-    fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E>
+    fn visit_u64<E>(self, v: u64) -> Result<Self::Value, E>
     where
         E: serde::de::Error,
     {
-        Ok(UniqueValue(Value::Number(value.into())))
+        Ok(UniqueValue(Value::Number(v.into())))
     }
 
-    fn visit_f64<E>(self, value: f64) -> Result<Self::Value, E>
+    fn visit_f64<E>(self, v: f64) -> Result<Self::Value, E>
     where
         E: serde::de::Error,
     {
-        serde_json::Number::from_f64(value)
+        serde_json::Number::from_f64(v)
             .map(Value::Number)
             .map(UniqueValue)
             .ok_or_else(|| E::custom("non-finite JSON number"))
     }
 
-    fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+    fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
     where
         E: serde::de::Error,
     {
-        Ok(UniqueValue(Value::String(value.to_owned())))
+        Ok(UniqueValue(Value::String(v.to_owned())))
     }
 
-    fn visit_string<E>(self, value: String) -> Result<Self::Value, E>
+    fn visit_string<E>(self, v: String) -> Result<Self::Value, E>
     where
         E: serde::de::Error,
     {
-        Ok(UniqueValue(Value::String(value)))
+        Ok(UniqueValue(Value::String(v)))
     }
 
     fn visit_none<E>(self) -> Result<Self::Value, E>
@@ -114,23 +114,23 @@ impl<'de> Visitor<'de> for UniqueValueVisitor {
         Ok(UniqueValue(Value::Null))
     }
 
-    fn visit_seq<A>(self, mut access: A) -> Result<Self::Value, A::Error>
+    fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
     where
         A: SeqAccess<'de>,
     {
         let mut values = Vec::new();
-        while let Some(UniqueValue(value)) = access.next_element()? {
+        while let Some(UniqueValue(value)) = seq.next_element()? {
             values.push(value);
         }
         Ok(UniqueValue(Value::Array(values)))
     }
 
-    fn visit_map<A>(self, mut access: A) -> Result<Self::Value, A::Error>
+    fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
     where
         A: MapAccess<'de>,
     {
         let mut fields = Map::new();
-        while let Some((key, UniqueValue(value))) = access.next_entry::<String, UniqueValue>()? {
+        while let Some((key, UniqueValue(value))) = map.next_entry::<String, UniqueValue>()? {
             if fields.insert(key, value).is_some() {
                 return Err(A::Error::custom("duplicate response field"));
             }
@@ -140,7 +140,7 @@ impl<'de> Visitor<'de> for UniqueValueVisitor {
 }
 
 /// Executes one versioned read-only explanation.
-pub(super) async fn execute<W: std::io::Write>(
+pub async fn execute<W: std::io::Write>(
     env: &CliEnvironment,
     target: &ExplainTarget,
     json: bool,
@@ -256,13 +256,50 @@ fn validate_issue_response(value: &Value, expected_id: &str) -> Result<(), Runti
     let subject = required_object(response, "subject")?;
     require_string_equals(subject, "kind", "issue")?;
     require_string_equals(subject, "id", expected_id)?;
+    require_uuid(subject, "project_id")?;
+    let _fingerprint = require_string(subject, "fingerprint")?;
+    let _status = require_string(subject, "status")?;
+    let _severity = require_string(subject, "severity")?;
     let _title = require_string(subject, "title")?;
     let _message = require_string(subject, "message")?;
     require_nonnegative_integer(subject, "occurrence_count")?;
-    let _cause = required_object(response, "cause")?;
-    let _fix = required_object(response, "fix")?;
-    let _impact = required_object(response, "impact")?;
-    let _correlations = required_object(response, "correlations")?;
+    let _first_seen = require_timestamp(subject, "first_seen_at")?;
+    let _last_seen = require_timestamp(subject, "last_seen_at")?;
+
+    match response.get("event") {
+        Some(Value::Null) => {}
+        Some(Value::Object(event)) => {
+            require_uuid(event, "id")?;
+            let _occurred_at = require_timestamp(event, "occurred_at")?;
+            validate_name_version(required_object(event, "sdk")?)?;
+            validate_nullable_object(event, "context")?;
+            validate_nullable_object(event, "exception")?;
+            validate_object_array(event, "stack_frames", 256)?;
+            validate_object_array(event, "breadcrumbs", 256)?;
+            let _breadcrumbs_truncated = require_bool(event, "breadcrumbs_truncated")?;
+        }
+        _ => return Err(invalid_response()),
+    }
+
+    let cause = required_object(response, "cause")?;
+    let _cause_status = require_string(cause, "status")?;
+    let _cause_summary = optional_string(cause, "summary")?;
+    let _cause_provenance = optional_string(cause, "provenance")?;
+    validate_string_array(cause, "signals", 32)?;
+
+    let fix = required_object(response, "fix")?;
+    let _fix_status = require_string(fix, "status")?;
+    validate_nullable_object(fix, "location")?;
+    let _fix_provenance = optional_string(fix, "provenance")?;
+
+    let impact = required_object(response, "impact")?;
+    require_nonnegative_integer(impact, "occurrence_count")?;
+    let _impact_first = require_timestamp(impact, "first_seen_at")?;
+    let _impact_last = require_timestamp(impact, "last_seen_at")?;
+    validate_optional_u64(impact, "affected_users")?;
+    validate_nullable_object(impact, "reported")?;
+
+    validate_issue_correlations(required_object(response, "correlations")?)?;
     validate_evidence(required_object(response, "evidence")?)?;
     validate_next_actions(response.get("next_actions"))
 }
@@ -287,12 +324,33 @@ fn validate_log_response(value: &Value, expected_id: &str) -> Result<(), Runtime
     let subject = required_object(response, "subject")?;
     require_string_equals(subject, "kind", "log")?;
     require_string_equals(subject, "id", expected_id)?;
+    require_uuid(subject, "project_id")?;
     require_string_equals(subject, "content_trust", "untrusted_telemetry")?;
+    let _severity = require_string(subject, "severity")?;
+    let _source = require_string(subject, "source")?;
     let _message = require_string(subject, "message")?;
-    let _attributes = required_object(response, "attributes")?;
-    let _analysis = required_object(response, "analysis")?;
-    let _correlations = required_object(response, "correlations")?;
-    let _timeline = required_object(response, "timeline")?;
+    let _occurred_at = require_timestamp(subject, "occurred_at")?;
+    let _service = require_string(subject, "service_name")?;
+    let _environment = require_string(subject, "environment")?;
+    let _release = require_string(subject, "release")?;
+    validate_name_version(required_object(subject, "sdk")?)?;
+    validate_nullable_object(response, "context")?;
+
+    let attributes = required_object(response, "attributes")?;
+    if !attributes.contains_key("values") {
+        return Err(invalid_response());
+    }
+    let _included_leaf_count = require_u64(attributes, "included_leaf_count")?;
+    let _redacted = require_bool(attributes, "redacted")?;
+    let _truncated = require_bool(attributes, "truncated")?;
+
+    let analysis = required_object(response, "analysis")?;
+    let _analysis_status = require_string(analysis, "status")?;
+    let _causality = require_string(analysis, "causality")?;
+    validate_string_array(analysis, "observations", 32)?;
+
+    validate_log_correlations(required_object(response, "correlations")?)?;
+    validate_timeline(required_object(response, "timeline")?)?;
     validate_evidence(required_object(response, "evidence")?)?;
     validate_next_actions(response.get("next_actions"))
 }
@@ -316,11 +374,27 @@ fn validate_trace_response(value: &Value, expected_id: &str) -> Result<(), Runti
     let subject = required_object(response, "subject")?;
     require_string_equals(subject, "kind", "trace")?;
     require_string_equals(subject, "trace_id", expected_id)?;
-    require_nonnegative_integer(subject, "analyzed_span_count")?;
-    let _analysis = required_object(response, "analysis")?;
-    let _spans = required_object(response, "spans")?;
-    let _correlations = required_object(response, "correlations")?;
-    let _timeline = required_object(response, "timeline")?;
+    let _analyzed_span_count = require_u64(subject, "analyzed_span_count")?;
+    let _error_span_count = require_u64(subject, "error_span_count")?;
+    let _service_count = require_u64(subject, "service_count")?;
+    let _project_count = require_u64(subject, "project_count")?;
+    let _started_at = require_timestamp(subject, "started_at")?;
+    require_nonnegative_integer(subject, "duration_ms")?;
+    validate_string_array(subject, "releases", 256)?;
+    validate_string_array(subject, "environments", 256)?;
+
+    let analysis = required_object(response, "analysis")?;
+    let _analysis_status = require_string(analysis, "status")?;
+    let _causality = require_string(analysis, "causality")?;
+    for name in ["root_span", "first_error_span", "bottleneck_span"] {
+        validate_nullable_object(analysis, name)?;
+    }
+    validate_object_array(analysis, "first_error_path", 256)?;
+    validate_object_array(analysis, "bottleneck_path", 256)?;
+
+    validate_items_collection(required_object(response, "spans")?, false)?;
+    validate_trace_correlations(required_object(response, "correlations")?)?;
+    validate_timeline(required_object(response, "timeline")?)?;
     validate_evidence(required_object(response, "evidence")?)?;
     validate_next_actions(response.get("next_actions"))
 }
@@ -351,13 +425,227 @@ fn validate_release_response(
     require_string_equals(subject, "release", expected.release.as_str())?;
     require_string_equals(subject, "environment", expected.environment.as_str())?;
     require_string_equals(subject, "service_name", expected.service_name.as_str())?;
-    let _analysis = required_object(response, "analysis")?;
-    let _sdk_coverage = required_object(response, "sdk_coverage")?;
-    let _signals = required_object(response, "signals")?;
-    let _timeline = required_object(response, "timeline")?;
-    let _comparison = required_object(response, "comparison")?;
+    for name in [
+        "issue_count",
+        "log_count",
+        "trace_span_count",
+        "action_count",
+        "metric_count",
+    ] {
+        require_nonnegative_integer(subject, name)?;
+    }
+    let _first_seen = require_timestamp(subject, "first_seen_at")?;
+    let _last_seen = require_timestamp(subject, "last_seen_at")?;
+    validate_availability(subject, "trace_health_status")?;
+    let trace_health = required_object(subject, "trace_health")?;
+    let _trace_health_status = require_string(trace_health, "status")?;
+    let trace_count = require_u64(trace_health, "trace_count")?;
+    let error_trace_count = require_u64(trace_health, "error_trace_count")?;
+    let error_rate = require_u64(trace_health, "error_rate_basis_points")?;
+    if error_trace_count > trace_count || error_rate > 10_000 {
+        return Err(invalid_response());
+    }
+
+    let analysis = required_object(response, "analysis")?;
+    let _analysis_status = require_string(analysis, "status")?;
+    let _causality = require_string(analysis, "causality")?;
+    validate_items_collection(required_object(response, "sdk_coverage")?, true)?;
+
+    let signals = required_object(response, "signals")?;
+    for name in ["issues", "traces", "logs", "actions", "metrics"] {
+        validate_items_collection(required_object(signals, name)?, true)?;
+    }
+    validate_timeline(required_object(response, "timeline")?)?;
+    let comparison = required_object(response, "comparison")?;
+    validate_availability(comparison, "status")?;
+    let _comparison_reason = require_string(comparison, "reason")?;
     validate_evidence(required_object(response, "evidence")?)?;
     validate_next_actions(response.get("next_actions"))
+}
+
+/// Validates one UUID string field.
+fn require_uuid(value: &Map<String, Value>, name: &str) -> Result<(), RuntimeError> {
+    if is_uuid(require_string(value, name)?) {
+        Ok(())
+    } else {
+        Err(invalid_response())
+    }
+}
+
+/// Validates one required SDK or runtime name/version object.
+fn validate_name_version(value: &Map<String, Value>) -> Result<(), RuntimeError> {
+    let _name = require_string(value, "name")?;
+    let _version = require_string(value, "version")?;
+    Ok(())
+}
+
+/// Validates one required nullable object field.
+fn validate_nullable_object(value: &Map<String, Value>, name: &str) -> Result<(), RuntimeError> {
+    match value.get(name) {
+        Some(Value::Null | Value::Object(_)) => Ok(()),
+        _ => Err(invalid_response()),
+    }
+}
+
+/// Validates one required bounded array of objects.
+fn validate_object_array(
+    value: &Map<String, Value>,
+    name: &str,
+    limit: usize,
+) -> Result<(), RuntimeError> {
+    let items = value
+        .get(name)
+        .and_then(Value::as_array)
+        .ok_or_else(invalid_response)?;
+    if items.len() > limit || items.iter().any(|item| !item.is_object()) {
+        Err(invalid_response())
+    } else {
+        Ok(())
+    }
+}
+
+/// Validates one required bounded array of non-empty strings.
+fn validate_string_array(
+    value: &Map<String, Value>,
+    name: &str,
+    limit: usize,
+) -> Result<(), RuntimeError> {
+    let items = value
+        .get(name)
+        .and_then(Value::as_array)
+        .ok_or_else(invalid_response)?;
+    if items.len() > limit
+        || items
+            .iter()
+            .any(|item| item.as_str().is_none_or(str::is_empty))
+    {
+        Err(invalid_response())
+    } else {
+        Ok(())
+    }
+}
+
+/// Validates one required nullable unsigned integer.
+fn validate_optional_u64(value: &Map<String, Value>, name: &str) -> Result<(), RuntimeError> {
+    match value.get(name) {
+        Some(Value::Null) => Ok(()),
+        Some(value) if value.as_u64().is_some() => Ok(()),
+        _ => Err(invalid_response()),
+    }
+}
+
+/// Validates one optional-evidence availability field.
+fn validate_availability(value: &Map<String, Value>, name: &str) -> Result<(), RuntimeError> {
+    if matches!(
+        require_string(value, name)?,
+        "available" | "not_linked" | "not_found" | "unavailable"
+    ) {
+        Ok(())
+    } else {
+        Err(invalid_response())
+    }
+}
+
+/// Validates one bounded investigation collection.
+fn validate_items_collection(
+    value: &Map<String, Value>,
+    status_required: bool,
+) -> Result<(), RuntimeError> {
+    if status_required {
+        validate_availability(value, "status")?;
+    }
+    validate_object_array(value, "items", 1_000)?;
+    let _truncated = require_bool(value, "truncated")?;
+    Ok(())
+}
+
+/// Validates one exact-trace availability and summary object.
+fn validate_trace_link(value: &Map<String, Value>, exact_span: bool) -> Result<(), RuntimeError> {
+    validate_availability(value, "status")?;
+    if optional_string(value, "trace_id")?.is_some_and(|trace| !is_trace_id(trace)) {
+        return Err(invalid_response());
+    }
+    if exact_span {
+        let _span_id = optional_string(value, "span_id")?;
+        validate_nullable_object(value, "exact_span")?;
+    }
+    validate_nullable_object(value, "summary")?;
+    let _truncated = require_bool(value, "truncated")?;
+    Ok(())
+}
+
+/// Validates issue correlation containers and exact release identity.
+fn validate_issue_correlations(value: &Map<String, Value>) -> Result<(), RuntimeError> {
+    validate_trace_link(required_object(value, "trace")?, false)?;
+    for name in ["logs", "actions", "metrics"] {
+        validate_items_collection(required_object(value, name)?, true)?;
+    }
+    validate_release_scope(required_object(value, "release")?)
+}
+
+/// Validates log correlation containers and exact release identity.
+fn validate_log_correlations(value: &Map<String, Value>) -> Result<(), RuntimeError> {
+    validate_trace_link(required_object(value, "trace")?, true)?;
+    for name in ["issues", "trace_logs", "nearby_logs", "actions", "metrics"] {
+        validate_items_collection(required_object(value, name)?, true)?;
+    }
+    validate_release_scope(required_object(value, "release")?)
+}
+
+/// Validates trace correlation scope and bounded related evidence.
+fn validate_trace_correlations(value: &Map<String, Value>) -> Result<(), RuntimeError> {
+    let window = required_object(value, "window")?;
+    let _since = require_timestamp(window, "since")?;
+    let _until = require_timestamp(window, "until")?;
+    let scopes = window
+        .get("scopes")
+        .and_then(Value::as_array)
+        .ok_or_else(invalid_response)?;
+    if scopes.len() > 256 {
+        return Err(invalid_response());
+    }
+    for scope in scopes {
+        let scope = scope.as_object().ok_or_else(invalid_response)?;
+        require_uuid(scope, "project_id")?;
+        let _environment = require_string(scope, "environment")?;
+        let _release = require_string(scope, "release")?;
+    }
+    let _truncated = require_bool(window, "truncated")?;
+    for name in ["issues", "logs", "actions", "metrics"] {
+        validate_items_collection(required_object(value, name)?, true)?;
+    }
+    Ok(())
+}
+
+/// Validates one project-independent release scope.
+fn validate_release_scope(value: &Map<String, Value>) -> Result<(), RuntimeError> {
+    let _release = require_string(value, "release")?;
+    let _environment = require_string(value, "environment")?;
+    let _service = require_string(value, "service_name")?;
+    Ok(())
+}
+
+/// Validates one bounded causal timeline shared by investigation responses.
+fn validate_timeline(value: &Map<String, Value>) -> Result<(), RuntimeError> {
+    let items = value
+        .get("items")
+        .and_then(Value::as_array)
+        .ok_or_else(invalid_response)?;
+    if items.len() > 1_000 {
+        return Err(invalid_response());
+    }
+    let mut previous_time = None;
+    for item in items {
+        let item = item.as_object().ok_or_else(invalid_response)?;
+        let _kind = require_string(item, "kind")?;
+        let occurred_at = require_timestamp(item, "occurred_at")?;
+        if previous_time.is_some_and(|previous| previous > occurred_at) {
+            return Err(invalid_response());
+        }
+        previous_time = Some(occurred_at);
+    }
+    let _truncated = require_bool(value, "truncated")?;
+    Ok(())
 }
 
 /// Validates one versioned semantics-preserving metric response.
@@ -463,6 +751,33 @@ fn validate_metric_series(
     expected_group_by: &str,
 ) -> Result<(u64, u64), RuntimeError> {
     let series = value.as_object().ok_or_else(invalid_response)?;
+    let code = validate_metric_series_identity(series, expected_group_by)?;
+    let sample_count = require_u64(series, "sample_count")?;
+    if sample_count == 0 {
+        return Err(invalid_response());
+    }
+    let points = series
+        .get("points")
+        .and_then(Value::as_array)
+        .ok_or_else(invalid_response)?;
+    if points.is_empty() || points.len() > METRIC_POINT_LIMIT {
+        return Err(invalid_response());
+    }
+    let represented_samples = validate_metric_points(points, code)?;
+    if represented_samples != sample_count {
+        return Err(invalid_response());
+    }
+    Ok((
+        u64::try_from(points.len()).map_err(|_error| invalid_response())?,
+        sample_count,
+    ))
+}
+
+/// Validates one metric identity and its semantics, returning the aggregation code.
+fn validate_metric_series_identity<'a>(
+    series: &'a Map<String, Value>,
+    expected_group_by: &str,
+) -> Result<&'a str, RuntimeError> {
     let identity = required_object(series, "identity")?;
     let kind = require_string(identity, "kind")?;
     let temporality = require_string(identity, "temporality")?;
@@ -504,17 +819,11 @@ fn validate_metric_series(
     if status == "limited" && optional_string(aggregation, "limitation")?.is_none() {
         return Err(invalid_response());
     }
-    let sample_count = require_u64(series, "sample_count")?;
-    if sample_count == 0 {
-        return Err(invalid_response());
-    }
-    let points = series
-        .get("points")
-        .and_then(Value::as_array)
-        .ok_or_else(invalid_response)?;
-    if points.is_empty() || points.len() > METRIC_POINT_LIMIT {
-        return Err(invalid_response());
-    }
+    Ok(code)
+}
+
+/// Validates ordered metric points and returns their represented sample count.
+fn validate_metric_points(points: &[Value], code: &str) -> Result<u64, RuntimeError> {
     let required_statistics: &[&str] = match code {
         "gauge_last" => &["last", "min", "max", "average"],
         "delta_sum" => &["last", "min", "max", "average", "sum", "rate_per_second"],
@@ -566,13 +875,7 @@ fn validate_metric_series(
             return Err(invalid_response());
         }
     }
-    if represented_samples != sample_count {
-        return Err(invalid_response());
-    }
-    Ok((
-        u64::try_from(points.len()).map_err(|_error| invalid_response())?,
-        sample_count,
-    ))
+    Ok(represented_samples)
 }
 
 /// Validates a metric follow-up action.
@@ -1151,7 +1454,7 @@ fn collect_scalar_fields(value: &Value, prefix: &str, fields: &mut Vec<(String, 
     match value {
         Value::Object(object) => {
             let mut entries = object.iter().collect::<Vec<_>>();
-            entries.sort_unstable_by(|(left, _), (right, _)| left.cmp(right));
+            entries.sort_unstable_by_key(|(key, _)| *key);
             for (key, child) in entries {
                 let path = if prefix.is_empty() {
                     terminal_safe(key)

@@ -1942,14 +1942,14 @@ fn parse_explain(args: &[String]) -> Result<Command, CliError> {
             let (id, tail) =
                 take_required_position(rest.as_slice(), "issue_id", "provide an issue id")?;
             (
-                ExplainTarget::Issue(validate_explain_id(id, ExplainIdKind::Issue)?),
+                ExplainTarget::Issue(validate_explain_id(id.as_str(), ExplainIdKind::Issue)?),
                 tail,
             )
         }
         "log" => {
             let (id, tail) = take_required_position(rest.as_slice(), "log_id", "provide a log id")?;
             (
-                ExplainTarget::Log(validate_explain_id(id, ExplainIdKind::Log)?),
+                ExplainTarget::Log(validate_explain_id(id.as_str(), ExplainIdKind::Log)?),
                 tail,
             )
         }
@@ -1957,7 +1957,7 @@ fn parse_explain(args: &[String]) -> Result<Command, CliError> {
             let (id, tail) =
                 take_required_position(rest.as_slice(), "trace_id", "provide a trace id")?;
             (
-                ExplainTarget::Trace(validate_explain_id(id, ExplainIdKind::Trace)?),
+                ExplainTarget::Trace(validate_explain_id(id.as_str(), ExplainIdKind::Trace)?),
                 tail,
             )
         }
@@ -1988,7 +1988,7 @@ enum ExplainIdKind {
 }
 
 /// Validates one explicit identifier before constructing an authenticated request.
-fn validate_explain_id(value: String, kind: ExplainIdKind) -> Result<String, CliError> {
+fn validate_explain_id(value: &str, kind: ExplainIdKind) -> Result<String, CliError> {
     let value = value.trim();
     let prefixed_value_is_nonempty = |prefixes: &[&str]| {
         prefixes.iter().any(|prefix| {
@@ -2036,10 +2036,18 @@ fn parse_explain_release(args: &[String]) -> Result<Command, CliError> {
         required_explain_scope(flags.service_name, "--service", EXPLAIN_RELEASE_NEXT_STEP)?;
     Ok(Command::Explain {
         target: ExplainTarget::Release(ExplainReleaseTarget {
-            project_id: normalize_project_id(project_id, EXPLAIN_RELEASE_NEXT_STEP)?,
-            release: normalize_explain_text(release, 256, EXPLAIN_RELEASE_NEXT_STEP)?,
-            environment: normalize_explain_text(environment, 256, EXPLAIN_RELEASE_NEXT_STEP)?,
-            service_name: normalize_explain_text(service_name, 256, EXPLAIN_RELEASE_NEXT_STEP)?,
+            project_id: normalize_project_id(project_id.as_str(), EXPLAIN_RELEASE_NEXT_STEP)?,
+            release: normalize_explain_text(release.as_str(), 256, EXPLAIN_RELEASE_NEXT_STEP)?,
+            environment: normalize_explain_text(
+                environment.as_str(),
+                256,
+                EXPLAIN_RELEASE_NEXT_STEP,
+            )?,
+            service_name: normalize_explain_text(
+                service_name.as_str(),
+                256,
+                EXPLAIN_RELEASE_NEXT_STEP,
+            )?,
         }),
         json: flags.json,
     })
@@ -2054,9 +2062,9 @@ fn parse_explain_metric(args: &[String]) -> Result<Command, CliError> {
     let since = required_explain_scope(flags.since, "--since", EXPLAIN_METRIC_NEXT_STEP)?;
     Ok(Command::Explain {
         target: ExplainTarget::Metric(ExplainMetricTarget {
-            project_id: normalize_project_id(project_id, EXPLAIN_METRIC_NEXT_STEP)?,
-            name: normalize_explain_text(name, 200, EXPLAIN_METRIC_NEXT_STEP)?,
-            since: normalize_explain_text(since, 64, EXPLAIN_METRIC_NEXT_STEP)?,
+            project_id: normalize_project_id(project_id.as_str(), EXPLAIN_METRIC_NEXT_STEP)?,
+            name: normalize_explain_text(name.as_str(), 200, EXPLAIN_METRIC_NEXT_STEP)?,
+            since: normalize_explain_text(since.as_str(), 64, EXPLAIN_METRIC_NEXT_STEP)?,
             until: normalize_optional_explain_text(flags.until, 64, EXPLAIN_METRIC_NEXT_STEP)?,
             interval: normalize_metric_interval(flags.interval)?,
             group_by: normalize_metric_group_by(flags.group_by)?,
@@ -2278,7 +2286,7 @@ fn required_explain_scope(
 }
 
 /// Normalizes and validates one exact project UUID.
-fn normalize_project_id(value: String, next: &'static str) -> Result<String, CliError> {
+fn normalize_project_id(value: &str, next: &'static str) -> Result<String, CliError> {
     let value = value.trim();
     if !is_uuid(value) {
         return Err(CliError::UnexpectedArgument {
@@ -2292,15 +2300,12 @@ fn normalize_project_id(value: String, next: &'static str) -> Result<String, Cli
 
 /// Trims and bounds one exact public query value.
 fn normalize_explain_text(
-    value: String,
+    value: &str,
     limit: usize,
     next: &'static str,
 ) -> Result<String, CliError> {
     let value = value.trim();
-    if value.is_empty()
-        || value.chars().count() > limit
-        || value.chars().any(|character| character.is_control())
-    {
+    if value.is_empty() || value.chars().count() > limit || value.chars().any(char::is_control) {
         return Err(CliError::UnexpectedArgument {
             argument: String::from("invalid query value"),
             command: "explain",
@@ -2317,7 +2322,7 @@ fn normalize_optional_explain_text(
     next: &'static str,
 ) -> Result<Option<String>, CliError> {
     value
-        .map(|value| normalize_explain_text(value, limit, next))
+        .map(|value| normalize_explain_text(value.as_str(), limit, next))
         .transpose()
 }
 

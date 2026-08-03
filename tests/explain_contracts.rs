@@ -383,7 +383,27 @@ fn log_response() -> serde_json::Value {
             "causality": "evidence_only",
             "observations": ["error_severity"]
         },
-        "correlations": {},
+        "correlations": {
+            "trace": {
+                "status": "available",
+                "trace_id": TRACE_ID,
+                "span_id": null,
+                "exact_span": null,
+                "summary": null,
+                "truncated": false
+            },
+            "issues": {"status": "not_found", "items": [], "truncated": false},
+            "trace_logs": {"status": "not_found", "items": [], "truncated": false},
+            "nearby_logs": {"status": "not_found", "items": [], "truncated": false},
+            "actions": {"status": "not_found", "items": [], "truncated": false},
+            "metrics": {"status": "not_found", "items": [], "truncated": false},
+            "release": {
+                "project_id": PROJECT_ID,
+                "release": "checkout@1.2.3",
+                "environment": "production",
+                "service_name": "checkout-api"
+            }
+        },
         "timeline": {"items": [], "truncated": false},
         "evidence": {
             "status": "complete",
