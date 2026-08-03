@@ -340,6 +340,7 @@ fn request_error(error: RuntimeError, operation: CredentialOperation) -> Runtime
         | RuntimeError::Api { .. }
         | RuntimeError::StatusUnavailable { .. }
         | RuntimeError::InvestigationResponseInvalid
+        | RuntimeError::ExplainResponseInvalid
         | RuntimeError::NativeDebugArtifactInvalid
         | RuntimeError::NativeDebugResponseInvalid
         | RuntimeError::NativeDebugVerificationFailed => operation.transport_unavailable(),

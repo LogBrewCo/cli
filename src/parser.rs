@@ -28,9 +28,9 @@ use crate::flags::{
 };
 use crate::ids::{infer_explain_target, is_issue_id, is_pasted_detail_id, is_trace_id, is_uuid};
 use crate::{
-    CliError, Command, ExplainTarget, HelpTopic, ISSUE_STATUS_ARGUMENT_NEXT_STEP,
-    ProjectCreateOptions, ProjectIngestKeyCreateOptions, ProjectSetupSeenOptions, ReadOptions,
-    ReadTarget, SetTarget, auth_namespace,
+    CliError, Command, ExplainMetricTarget, ExplainReleaseTarget, ExplainTarget, HelpTopic,
+    ISSUE_STATUS_ARGUMENT_NEXT_STEP, ProjectCreateOptions, ProjectIngestKeyCreateOptions,
+    ProjectSetupSeenOptions, ReadOptions, ReadTarget, SetTarget, auth_namespace,
 };
 
 /// Standard next step for malformed help invocations.
@@ -69,7 +69,16 @@ const PROJECT_SETUP_SOURCE_NEXT_STEP: &str = "use --source api, cli, or sdk";
 /// Valid resources for live watch.
 const WATCH_RESOURCE_NEXT_STEP: &str = "choose logs, issues, actions, or omit a resource";
 /// Valid resources for explain.
-const EXPLAIN_RESOURCE_NEXT_STEP: &str = "choose issue or trace";
+const EXPLAIN_RESOURCE_NEXT_STEP: &str = "choose issue, log, trace, release, or metric";
+/// Exact required identity for release investigation.
+const EXPLAIN_RELEASE_NEXT_STEP: &str = "use logbrew explain release <release> --project \
+                                         <project_id> --environment <environment> --service \
+                                         <service_name> [--json]";
+/// Bounded required query for metric investigation.
+const EXPLAIN_METRIC_NEXT_STEP: &str = "use logbrew explain metric <name> --project <project_id> \
+                                        --since <24h|RFC3339> with optional --until, --interval, \
+                                        --group-by, --service, --release, --environment, \
+                                        --series-limit, and --json";
 /// Valid resources for state mutation.
 const SET_RESOURCE_NEXT_STEP: &str = "choose issue";
 /// Filters trace detail reads cannot apply.
@@ -1922,11 +1931,21 @@ fn validate_read_cursor(
 /// Parses `explain`.
 fn parse_explain(args: &[String]) -> Result<Command, CliError> {
     let (resource, rest) = take_required_position(args, "resource", EXPLAIN_RESOURCE_NEXT_STEP)?;
+    if resource == "release" {
+        return parse_explain_release(rest.as_slice());
+    }
+    if matches!(resource.as_str(), "metric" | "metrics") {
+        return parse_explain_metric(rest.as_slice());
+    }
     let (target, tail) = match resource.as_str() {
         "issue" => {
             let (id, tail) =
                 take_required_position(rest.as_slice(), "issue_id", "provide an issue id")?;
             (ExplainTarget::Issue(id), tail)
+        }
+        "log" => {
+            let (id, tail) = take_required_position(rest.as_slice(), "log_id", "provide a log id")?;
+            (ExplainTarget::Log(id), tail)
         }
         "trace" => {
             let (id, tail) =
@@ -1946,6 +1965,356 @@ fn parse_explain(args: &[String]) -> Result<Command, CliError> {
         target,
         json: flags.is_json(),
     })
+}
+
+/// Parses one exact service-release investigation without accepting list ambiguity.
+fn parse_explain_release(args: &[String]) -> Result<Command, CliError> {
+    let (release, tail) =
+        take_required_position(args, "release", "provide the exact release value")?;
+    let flags = parse_explain_scope_flags(tail.as_slice(), ExplainScopeKind::Release)?;
+    let project_id =
+        required_explain_scope(flags.project_id, "--project", EXPLAIN_RELEASE_NEXT_STEP)?;
+    let environment = required_explain_scope(
+        flags.environment,
+        "--environment",
+        EXPLAIN_RELEASE_NEXT_STEP,
+    )?;
+    let service_name =
+        required_explain_scope(flags.service_name, "--service", EXPLAIN_RELEASE_NEXT_STEP)?;
+    Ok(Command::Explain {
+        target: ExplainTarget::Release(ExplainReleaseTarget {
+            project_id: normalize_project_id(project_id, EXPLAIN_RELEASE_NEXT_STEP)?,
+            release: normalize_explain_text(release, 256, EXPLAIN_RELEASE_NEXT_STEP)?,
+            environment: normalize_explain_text(environment, 256, EXPLAIN_RELEASE_NEXT_STEP)?,
+            service_name: normalize_explain_text(service_name, 256, EXPLAIN_RELEASE_NEXT_STEP)?,
+        }),
+        json: flags.json,
+    })
+}
+
+/// Parses one semantics-preserving metric investigation query.
+fn parse_explain_metric(args: &[String]) -> Result<Command, CliError> {
+    let (name, tail) = take_required_position(args, "name", "provide the exact metric name")?;
+    let flags = parse_explain_scope_flags(tail.as_slice(), ExplainScopeKind::Metric)?;
+    let project_id =
+        required_explain_scope(flags.project_id, "--project", EXPLAIN_METRIC_NEXT_STEP)?;
+    let since = required_explain_scope(flags.since, "--since", EXPLAIN_METRIC_NEXT_STEP)?;
+    Ok(Command::Explain {
+        target: ExplainTarget::Metric(ExplainMetricTarget {
+            project_id: normalize_project_id(project_id, EXPLAIN_METRIC_NEXT_STEP)?,
+            name: normalize_explain_text(name, 200, EXPLAIN_METRIC_NEXT_STEP)?,
+            since: normalize_explain_text(since, 64, EXPLAIN_METRIC_NEXT_STEP)?,
+            until: normalize_optional_explain_text(flags.until, 64, EXPLAIN_METRIC_NEXT_STEP)?,
+            interval: normalize_metric_interval(flags.interval)?,
+            group_by: normalize_metric_group_by(flags.group_by)?,
+            service_name: normalize_optional_explain_text(
+                flags.service_name,
+                256,
+                EXPLAIN_METRIC_NEXT_STEP,
+            )?,
+            release: normalize_optional_explain_text(flags.release, 256, EXPLAIN_METRIC_NEXT_STEP)?,
+            environment: normalize_optional_explain_text(
+                flags.environment,
+                256,
+                EXPLAIN_METRIC_NEXT_STEP,
+            )?,
+            series_limit: flags.series_limit,
+        }),
+        json: flags.json,
+    })
+}
+
+/// Exact flag vocabulary for release and metric explanations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ExplainScopeKind {
+    /// Release identity flags only.
+    Release,
+    /// Metric query flags.
+    Metric,
+}
+
+impl ExplainScopeKind {
+    /// Returns the command name shown in fixed parse errors.
+    const fn command(self) -> &'static str {
+        match self {
+            Self::Release => "explain release",
+            Self::Metric => "explain metric",
+        }
+    }
+
+    /// Returns exact recovery guidance for this grammar.
+    const fn next(self) -> &'static str {
+        match self {
+            Self::Release => EXPLAIN_RELEASE_NEXT_STEP,
+            Self::Metric => EXPLAIN_METRIC_NEXT_STEP,
+        }
+    }
+}
+
+/// Parsed exact scope before required-field validation.
+#[derive(Debug, Default)]
+struct ExplainScopeFlags {
+    /// Owned project identifier.
+    project_id: Option<String>,
+    /// Exact deployment environment.
+    environment: Option<String>,
+    /// Exact logical service name.
+    service_name: Option<String>,
+    /// Exact metric release filter.
+    release: Option<String>,
+    /// Inclusive metric lower bound.
+    since: Option<String>,
+    /// Exclusive metric upper bound.
+    until: Option<String>,
+    /// Requested metric bucket interval.
+    interval: Option<String>,
+    /// Requested fixed grouping dimension.
+    group_by: Option<String>,
+    /// Maximum returned metric series.
+    series_limit: Option<u8>,
+    /// Stable machine-readable output mode.
+    json: bool,
+}
+
+/// Parses only the exact release or metric flags supported by its API contract.
+fn parse_explain_scope_flags(
+    args: &[String],
+    kind: ExplainScopeKind,
+) -> Result<ExplainScopeFlags, CliError> {
+    let mut parsed = ExplainScopeFlags::default();
+    let mut index = 0;
+    while let Some(raw) = args.get(index) {
+        let (flag, inline) = raw
+            .split_once('=')
+            .map_or((raw.as_str(), None), |(name, value)| (name, Some(value)));
+        match flag {
+            "--json" if inline.is_none() => {
+                if std::mem::replace(&mut parsed.json, true) {
+                    return Err(CliError::DuplicateFlag {
+                        flag: "--json",
+                        next: "use --json once",
+                    });
+                }
+            }
+            "--project" | "--project-id" => {
+                let value = explain_scope_flag_value(args, &mut index, flag, inline, kind)?;
+                set_explain_scope_flag(&mut parsed.project_id, value, "--project", kind)?;
+            }
+            "--environment" | "--env" => {
+                let value = explain_scope_flag_value(args, &mut index, flag, inline, kind)?;
+                set_explain_scope_flag(&mut parsed.environment, value, "--environment", kind)?;
+            }
+            "--service" | "--service-name" => {
+                let value = explain_scope_flag_value(args, &mut index, flag, inline, kind)?;
+                set_explain_scope_flag(&mut parsed.service_name, value, "--service", kind)?;
+            }
+            "--release" if kind == ExplainScopeKind::Metric => {
+                let value = explain_scope_flag_value(args, &mut index, flag, inline, kind)?;
+                set_explain_scope_flag(&mut parsed.release, value, "--release", kind)?;
+            }
+            "--since" if kind == ExplainScopeKind::Metric => {
+                let value = explain_scope_flag_value(args, &mut index, flag, inline, kind)?;
+                set_explain_scope_flag(&mut parsed.since, value, "--since", kind)?;
+            }
+            "--until" if kind == ExplainScopeKind::Metric => {
+                let value = explain_scope_flag_value(args, &mut index, flag, inline, kind)?;
+                set_explain_scope_flag(&mut parsed.until, value, "--until", kind)?;
+            }
+            "--interval" if kind == ExplainScopeKind::Metric => {
+                let value = explain_scope_flag_value(args, &mut index, flag, inline, kind)?;
+                set_explain_scope_flag(&mut parsed.interval, value, "--interval", kind)?;
+            }
+            "--group-by" if kind == ExplainScopeKind::Metric => {
+                let value = explain_scope_flag_value(args, &mut index, flag, inline, kind)?;
+                set_explain_scope_flag(&mut parsed.group_by, value, "--group-by", kind)?;
+            }
+            "--series-limit" if kind == ExplainScopeKind::Metric => {
+                let value = explain_scope_flag_value(args, &mut index, flag, inline, kind)?;
+                if parsed.series_limit.is_some() {
+                    return Err(CliError::DuplicateFlag {
+                        flag: "--series-limit",
+                        next: "use --series-limit once",
+                    });
+                }
+                let series_limit = value
+                    .parse::<u8>()
+                    .map_err(|_| invalid_metric_series_limit())?;
+                if !(1..=20).contains(&series_limit) {
+                    return Err(invalid_metric_series_limit());
+                }
+                parsed.series_limit = Some(series_limit);
+            }
+            _ if raw.starts_with('-') => {
+                return Err(CliError::UnknownFlag {
+                    flag: raw.clone(),
+                    next: kind.next(),
+                });
+            }
+            _ => {
+                return Err(CliError::UnexpectedArgument {
+                    argument: raw.clone(),
+                    command: kind.command(),
+                    next: kind.next(),
+                });
+            }
+        }
+        index += 1;
+    }
+    Ok(parsed)
+}
+
+/// Reads one separate or inline exact-scope flag value.
+fn explain_scope_flag_value(
+    args: &[String],
+    index: &mut usize,
+    flag: &str,
+    inline: Option<&str>,
+    kind: ExplainScopeKind,
+) -> Result<String, CliError> {
+    let visible_flag = match flag {
+        "--project" | "--project-id" => "--project",
+        "--environment" | "--env" => "--environment",
+        "--service" | "--service-name" => "--service",
+        "--release" => "--release",
+        "--since" => "--since",
+        "--until" => "--until",
+        "--interval" => "--interval",
+        "--group-by" => "--group-by",
+        "--series-limit" => "--series-limit",
+        _ => "--scope",
+    };
+    let value = inline.map_or_else(
+        || {
+            *index += 1;
+            args.get(*index).cloned().unwrap_or_default()
+        },
+        str::to_owned,
+    );
+    if value.is_empty() || value.starts_with('-') {
+        return Err(CliError::MissingFlagValue {
+            flag: visible_flag,
+            next: kind.next(),
+        });
+    }
+    Ok(value)
+}
+
+/// Stores one canonical scope flag while rejecting aliases used twice.
+fn set_explain_scope_flag(
+    target: &mut Option<String>,
+    value: String,
+    flag: &'static str,
+    kind: ExplainScopeKind,
+) -> Result<(), CliError> {
+    if target.replace(value).is_some() {
+        return Err(CliError::DuplicateFlag {
+            flag,
+            next: kind.next(),
+        });
+    }
+    Ok(())
+}
+
+/// Requires one explanation scope flag.
+fn required_explain_scope(
+    value: Option<String>,
+    argument: &'static str,
+    next: &'static str,
+) -> Result<String, CliError> {
+    value.ok_or(CliError::MissingArgument { argument, next })
+}
+
+/// Normalizes and validates one exact project UUID.
+fn normalize_project_id(value: String, next: &'static str) -> Result<String, CliError> {
+    let value = value.trim();
+    if !is_uuid(value) {
+        return Err(CliError::UnexpectedArgument {
+            argument: String::from("invalid project id"),
+            command: "explain",
+            next,
+        });
+    }
+    Ok(value.to_ascii_lowercase())
+}
+
+/// Trims and bounds one exact public query value.
+fn normalize_explain_text(
+    value: String,
+    limit: usize,
+    next: &'static str,
+) -> Result<String, CliError> {
+    let value = value.trim();
+    if value.is_empty()
+        || value.chars().count() > limit
+        || value.chars().any(|character| character.is_control())
+    {
+        return Err(CliError::UnexpectedArgument {
+            argument: String::from("invalid query value"),
+            command: "explain",
+            next,
+        });
+    }
+    Ok(value.to_owned())
+}
+
+/// Normalizes one optional public query value.
+fn normalize_optional_explain_text(
+    value: Option<String>,
+    limit: usize,
+    next: &'static str,
+) -> Result<Option<String>, CliError> {
+    value
+        .map(|value| normalize_explain_text(value, limit, next))
+        .transpose()
+}
+
+/// Normalizes one supported metric interval.
+fn normalize_metric_interval(value: Option<String>) -> Result<Option<String>, CliError> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let value = value.trim().to_ascii_lowercase();
+    if !matches!(
+        value.as_str(),
+        "auto" | "1m" | "5m" | "15m" | "1h" | "6h" | "1d"
+    ) {
+        return Err(CliError::UnexpectedArgument {
+            argument: String::from("invalid metric interval"),
+            command: "explain metric",
+            next: EXPLAIN_METRIC_NEXT_STEP,
+        });
+    }
+    Ok(Some(value))
+}
+
+/// Normalizes one fixed metric grouping dimension.
+fn normalize_metric_group_by(value: Option<String>) -> Result<Option<String>, CliError> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let normalized = match value.trim().to_ascii_lowercase().as_str() {
+        "none" => "none",
+        "service" | "service_name" => "service_name",
+        "release" => "release",
+        "environment" | "env" => "environment",
+        _ => {
+            return Err(CliError::UnexpectedArgument {
+                argument: String::from("invalid metric grouping"),
+                command: "explain metric",
+                next: EXPLAIN_METRIC_NEXT_STEP,
+            });
+        }
+    };
+    Ok(Some(normalized.to_owned()))
+}
+
+/// Builds one value-safe metric cardinality error.
+fn invalid_metric_series_limit() -> CliError {
+    CliError::UnexpectedArgument {
+        argument: String::from("invalid metric series limit"),
+        command: "explain metric",
+        next: EXPLAIN_METRIC_NEXT_STEP,
+    }
 }
 
 /// Parses `set`.
