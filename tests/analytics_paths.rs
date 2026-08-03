@@ -9,16 +9,26 @@ const PROJECT_ID: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 #[test]
 fn public_grammar_help_and_request_model_stay_aligned() -> Result<(), Box<dyn std::error::Error>> {
     for args in [
-        vec!["logbrew", "analytics", "--help"],
         vec!["logbrew", "analytics", "paths", "--help"],
         vec!["logbrew", "analytics", "paths", "following", "--help"],
-        vec!["logbrew", "help", "analytics"],
         vec!["logbrew", "help", "analytics", "paths"],
     ] {
         assert_eq!(
             parse_command(args)?,
             Command::Help {
                 topic: HelpTopic::AnalyticsPaths,
+                json: false,
+            }
+        );
+    }
+    for args in [
+        vec!["logbrew", "analytics", "--help"],
+        vec!["logbrew", "help", "analytics"],
+    ] {
+        assert_eq!(
+            parse_command(args)?,
+            Command::Help {
+                topic: HelpTopic::Analytics,
                 json: false,
             }
         );
@@ -53,6 +63,8 @@ fn public_grammar_help_and_request_model_stay_aligned() -> Result<(), Box<dyn st
     assert!(text.contains("explicit opaque session boundaries"));
     assert!(text.contains("never return session or user identifiers"));
     assert!(text.contains("JSON emits the exact validated schema-version-1 response"));
+    let overview = help::help_text(HelpTopic::Analytics);
+    assert!(overview.contains("logbrew analytics retention --help"));
     Ok(())
 }
 

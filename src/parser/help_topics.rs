@@ -1,6 +1,6 @@
 //! Help-topic parsing for the CLI grammar.
 
-use super::analytics::ANALYTICS_PATHS_NEXT_STEP;
+use super::analytics::ANALYTICS_NEXT_STEP;
 use super::{
     EXPLAIN_RESOURCE_NEXT_STEP, HELP_NEXT_STEP, SET_RESOURCE_NEXT_STEP, WATCH_RESOURCE_NEXT_STEP,
     is_action_collection_alias, is_ambiguous_log_search_word, is_examples_help_alias,
@@ -95,12 +95,7 @@ pub(super) fn help_topic(head: &str, tail: &[String]) -> Result<HelpTopic, CliEr
         "support" => help_topic_without_positionals(HelpTopic::Support, positionals.as_slice()),
         "investigate" => Ok(HelpTopic::Investigate),
         "debug-artifacts" => Ok(HelpTopic::NativeDebugArtifacts),
-        "analytics" => subresource_help_topic(
-            HelpTopic::AnalyticsPaths,
-            positionals.as_slice(),
-            &["paths"],
-            ANALYTICS_PATHS_NEXT_STEP,
-        ),
+        "analytics" => analytics_help_topic(positionals.as_slice()),
         "list" if positionals.first().is_some_and(|arg| *arg == "issue") => {
             help_topic_without_positionals(HelpTopic::ReadIssues, &positionals[1..])
         }
@@ -182,9 +177,11 @@ pub(super) fn command_shaped_help_topic(head: &str, tail: &[String]) -> Option<H
         "investigate" => Some(HelpTopic::Investigate),
         "debug-artifacts" => Some(HelpTopic::NativeDebugArtifacts),
         "analytics" => match positionals.as_slice() {
-            [] | ["paths"] | ["paths", "following" | "preceding" | "after" | "before"] => {
+            [] => Some(HelpTopic::Analytics),
+            ["paths"] | ["paths", "following" | "preceding" | "after" | "before"] => {
                 Some(HelpTopic::AnalyticsPaths)
             }
+            ["retention"] => Some(HelpTopic::AnalyticsRetention),
             _ => None,
         },
         "resolve" | "close" | "ignore" | "reopen" => {
@@ -542,12 +539,7 @@ fn explicit_help_topic(args: &[&str]) -> Result<HelpTopic, CliError> {
         ["support", tail @ ..] => help_topic_without_positionals(HelpTopic::Support, tail),
         ["investigate", ..] => Ok(HelpTopic::Investigate),
         ["debug-artifacts", ..] => Ok(HelpTopic::NativeDebugArtifacts),
-        ["analytics", tail @ ..] => subresource_help_topic(
-            HelpTopic::AnalyticsPaths,
-            tail,
-            &["paths"],
-            ANALYTICS_PATHS_NEXT_STEP,
-        ),
+        ["analytics", tail @ ..] => analytics_help_topic(tail),
         [topic, tail @ ..] if auth_namespace::is_namespace(topic) => {
             auth_namespace::help_topic(tail)
         }
@@ -728,6 +720,19 @@ fn subresource_help_topic(
             Err(unexpected_help_argument(extra))
         }
         [resource, ..] => Err(unknown_resource(resource, next)),
+    }
+}
+
+/// Selects the analytics overview, paths, or retention help contract.
+fn analytics_help_topic(args: &[&str]) -> Result<HelpTopic, CliError> {
+    match args {
+        [] => Ok(HelpTopic::Analytics),
+        ["paths"] | ["paths", "following" | "preceding" | "after" | "before"] => {
+            Ok(HelpTopic::AnalyticsPaths)
+        }
+        ["retention"] => Ok(HelpTopic::AnalyticsRetention),
+        ["paths" | "retention", extra, ..] => Err(unexpected_help_argument(extra)),
+        [resource, ..] => Err(unknown_resource(resource, ANALYTICS_NEXT_STEP)),
     }
 }
 
