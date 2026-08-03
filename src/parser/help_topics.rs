@@ -1,5 +1,6 @@
 //! Help-topic parsing for the CLI grammar.
 
+use super::analytics::ANALYTICS_PATHS_NEXT_STEP;
 use super::{
     EXPLAIN_RESOURCE_NEXT_STEP, HELP_NEXT_STEP, SET_RESOURCE_NEXT_STEP, WATCH_RESOURCE_NEXT_STEP,
     is_action_collection_alias, is_ambiguous_log_search_word, is_examples_help_alias,
@@ -94,6 +95,12 @@ pub(super) fn help_topic(head: &str, tail: &[String]) -> Result<HelpTopic, CliEr
         "support" => help_topic_without_positionals(HelpTopic::Support, positionals.as_slice()),
         "investigate" => Ok(HelpTopic::Investigate),
         "debug-artifacts" => Ok(HelpTopic::NativeDebugArtifacts),
+        "analytics" => subresource_help_topic(
+            HelpTopic::AnalyticsPaths,
+            positionals.as_slice(),
+            &["paths"],
+            ANALYTICS_PATHS_NEXT_STEP,
+        ),
         "list" if positionals.first().is_some_and(|arg| *arg == "issue") => {
             help_topic_without_positionals(HelpTopic::ReadIssues, &positionals[1..])
         }
@@ -174,6 +181,12 @@ pub(super) fn command_shaped_help_topic(head: &str, tail: &[String]) -> Option<H
         "support" => Some(HelpTopic::Support),
         "investigate" => Some(HelpTopic::Investigate),
         "debug-artifacts" => Some(HelpTopic::NativeDebugArtifacts),
+        "analytics" => match positionals.as_slice() {
+            [] | ["paths"] | ["paths", "following" | "preceding" | "after" | "before"] => {
+                Some(HelpTopic::AnalyticsPaths)
+            }
+            _ => None,
+        },
         "resolve" | "close" | "ignore" | "reopen" => {
             single_id_help_topic(positionals.as_slice(), HelpTopic::Set)
         }
@@ -529,6 +542,12 @@ fn explicit_help_topic(args: &[&str]) -> Result<HelpTopic, CliError> {
         ["support", tail @ ..] => help_topic_without_positionals(HelpTopic::Support, tail),
         ["investigate", ..] => Ok(HelpTopic::Investigate),
         ["debug-artifacts", ..] => Ok(HelpTopic::NativeDebugArtifacts),
+        ["analytics", tail @ ..] => subresource_help_topic(
+            HelpTopic::AnalyticsPaths,
+            tail,
+            &["paths"],
+            ANALYTICS_PATHS_NEXT_STEP,
+        ),
         [topic, tail @ ..] if auth_namespace::is_namespace(topic) => {
             auth_namespace::help_topic(tail)
         }

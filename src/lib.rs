@@ -6,6 +6,7 @@
 
 #![forbid(unsafe_code)]
 
+mod analytics;
 #[doc(hidden)]
 pub mod auth;
 #[doc(hidden)]
@@ -218,6 +219,13 @@ pub enum Command {
         /// Emit machine-readable JSON.
         json: bool,
     },
+    /// Explores bounded aggregate product journeys around one exact event.
+    AnalyticsPaths {
+        /// Normalized privacy-safe path query.
+        options: AnalyticsPathOptions,
+        /// Emit the exact validated server response.
+        json: bool,
+    },
     /// Follows the backend-directed, read-only investigation for one issue.
     InvestigateIssue {
         /// Grouped issue identifier.
@@ -302,6 +310,8 @@ pub enum HelpTopic {
     Watch,
     /// Explain command.
     Explain,
+    /// Product-analytics path exploration command.
+    AnalyticsPaths,
     /// Server-directed issue investigation command.
     Investigate,
     /// Apple native debug-artifact upload and lookup commands.
@@ -338,6 +348,7 @@ impl HelpTopic {
             Self::ReadIssue => "read_issue",
             Self::Watch => "watch",
             Self::Explain => "explain",
+            Self::AnalyticsPaths => "analytics_paths",
             Self::Investigate => "investigate",
             Self::NativeDebugArtifacts => "debug_artifacts",
             Self::Set => "set",
@@ -793,6 +804,80 @@ pub struct ExplainMetricTarget {
     pub series_limit: Option<u8>,
 }
 
+/// Direction explored from one exact product-event anchor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AnalyticsPathDirection {
+    /// Show the anchor followed by later named events in the same session.
+    Following,
+    /// Show earlier named events in chronological order followed by the anchor.
+    Preceding,
+}
+
+impl AnalyticsPathDirection {
+    /// Returns the stable public API token.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Following => "following",
+            Self::Preceding => "preceding",
+        }
+    }
+}
+
+/// Supported version-1 classified event kind used in product paths.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AnalyticsPathEventKind {
+    /// Browser route view.
+    PageView,
+    /// Application screen view.
+    ScreenView,
+    /// Explicit product interaction.
+    Interaction,
+}
+
+impl AnalyticsPathEventKind {
+    /// Returns the stable public API token.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::PageView => "page_view",
+            Self::ScreenView => "screen_view",
+            Self::Interaction => "interaction",
+        }
+    }
+}
+
+/// Exact, bounded product-analytics path request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AnalyticsPathOptions {
+    /// Account-owned project UUID.
+    pub project_id: String,
+    /// Inclusive compact duration or RFC 3339 lower bound.
+    pub since: String,
+    /// Optional exclusive RFC 3339 upper bound.
+    pub until: Option<String>,
+    /// Optional exact service filter.
+    pub service_name: Option<String>,
+    /// Optional exact release filter.
+    pub release: Option<String>,
+    /// Optional exact environment filter.
+    pub environment: Option<String>,
+    /// Direction explored from the anchor.
+    pub direction: AnalyticsPathDirection,
+    /// Exact classified anchor kind.
+    pub anchor_kind: AnalyticsPathEventKind,
+    /// Exact route template, screen name, or interaction name.
+    pub anchor_event: String,
+    /// Maximum adjacent named events on the selected side.
+    pub depth: u8,
+    /// Whether consecutive identical events collapse before anchoring.
+    pub collapse_repeated: bool,
+    /// Maximum highest-volume aggregate paths returned.
+    pub path_limit: u8,
+}
+
 /// Mutation target for `set`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SetTarget {
@@ -861,6 +946,7 @@ impl Command {
                 },
             )),
             Self::Explain { target, .. } => Some(explain_path(target)),
+            Self::AnalyticsPaths { .. } => Some(String::from("/api/telemetry/analytics/paths")),
             Self::Set { target, .. } => Some(set_path(target)),
             Self::ProjectSetupSeen { project_id, .. } => {
                 Some(format!("/api/projects/{project_id}/setup/seen"))
@@ -907,6 +993,7 @@ impl Command {
             | Self::Read { json, .. }
             | Self::Watch { json, .. }
             | Self::Explain { json, .. }
+            | Self::AnalyticsPaths { json, .. }
             | Self::InvestigateIssue { json, .. }
             | Self::NativeDebugArtifacts { json, .. }
             | Self::Set { json, .. }
@@ -923,6 +1010,7 @@ impl Command {
             Self::ProjectCreate { .. }
             | Self::ProjectIngestKeyCreate { .. }
             | Self::ProjectSetupSeen { .. }
+            | Self::AnalyticsPaths { .. }
             | Self::Support {
                 target: SupportTarget::Create(_),
                 ..
@@ -970,6 +1058,7 @@ impl Command {
                 target: SetTarget::IssueStatus { status, .. },
                 ..
             } => Some(serde_json::json!({ "status": status })),
+            Self::AnalyticsPaths { options, .. } => Some(analytics::request_body(options)),
             Self::ProjectSetupSeen { options, .. } => Some(project_setup_seen_body(options, token)),
             Self::ProjectCreate { options, .. } => Some(project_create_body(options)),
             Self::ProjectIngestKeyCreate { options, .. } => {
@@ -1026,6 +1115,7 @@ impl Command {
             | Self::Read { .. }
             | Self::Watch { .. }
             | Self::Explain { .. }
+            | Self::AnalyticsPaths { .. }
             | Self::InvestigateIssue { .. }
             | Self::NativeDebugArtifacts { .. }
             | Self::Set { .. }
@@ -1159,6 +1249,9 @@ pub async fn execute_command<W: std::io::Write>(
             investigate::execute(env, issue_id.as_str(), *json, output).await
         }
         Command::Explain { target, json } => explain::execute(env, target, *json, output).await,
+        Command::AnalyticsPaths { options, json } => {
+            analytics::execute(env, options, *json, output).await
+        }
         Command::NativeDebugArtifacts { target, json } => {
             native_debug_artifacts::execute(env, target, *json, output).await
         }

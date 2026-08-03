@@ -1,5 +1,6 @@
 //! CLI command grammar.
 
+mod analytics;
 mod help_topics;
 mod issue_shortcuts;
 mod log_shortcuts;
@@ -7,6 +8,7 @@ mod support;
 mod trace_reads;
 mod watch;
 
+use analytics::parse_analytics;
 use help_topics::{
     command_shaped_help_topic, contains_help_flag, ensure_no_help_positionals, help_command,
     help_topic, is_direct_filter_help_alias, is_help_flag, parse_help, parse_help_alias,
@@ -202,6 +204,7 @@ fn parse_values(values: &[String]) -> Result<Command, CliError> {
         "support" => parse_support(tail),
         "investigate" => parse_investigate(tail),
         "debug-artifacts" => parse_native_debug_artifacts(tail),
+        "analytics" => parse_analytics(tail),
         alias if is_direct_filter_help_alias(alias) => parse_help_alias(HelpTopic::Read, tail),
         "read" => parse_read(tail),
         alias if is_read_verb(alias) => parse_read_verb(alias, tail),
