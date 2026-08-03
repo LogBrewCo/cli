@@ -121,6 +121,7 @@ fn request_error(error: RuntimeError) -> RuntimeError {
         | RuntimeError::ExplainResponseInvalid
         | RuntimeError::AnalyticsResponseInvalid
         | RuntimeError::AnalyticsRetentionResponseInvalid
+        | RuntimeError::AnalyticsLifecycleResponseInvalid
         | RuntimeError::NativeDebugArtifactInvalid
         | RuntimeError::NativeDebugResponseInvalid
         | RuntimeError::NativeDebugVerificationFailed => transport_error(),

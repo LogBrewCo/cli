@@ -1,5 +1,6 @@
 //! Closed product-analytics command grammar.
 
+mod lifecycle;
 mod retention;
 
 use crate::ids::is_uuid;
@@ -11,8 +12,7 @@ use crate::{
 pub(super) const ANALYTICS_PATHS_NEXT_STEP: &str = "use logbrew analytics paths following|preceding --project <project_id> --since <24h|RFC3339> --anchor-kind <page-view|screen-view|interaction> --anchor-event <name> with optional --until, --service, --release, --environment, --depth 1-8, --path-limit 1-20, --keep-repeated, and --json";
 
 /// Exact recovery text for the product-analytics namespace.
-pub(super) const ANALYTICS_NEXT_STEP: &str =
-    "use logbrew analytics paths --help or logbrew analytics retention --help";
+pub(super) const ANALYTICS_NEXT_STEP: &str = "use logbrew analytics paths --help, logbrew analytics retention --help, or logbrew analytics lifecycle --help";
 
 /// Parses the closed `analytics paths` namespace.
 pub(super) fn parse_analytics(args: &[String]) -> Result<Command, CliError> {
@@ -24,6 +24,7 @@ pub(super) fn parse_analytics(args: &[String]) -> Result<Command, CliError> {
         });
     };
     match resource.as_str() {
+        "lifecycle" => lifecycle::parse_lifecycle(tail),
         "paths" => parse_paths(tail),
         "retention" => retention::parse_retention(tail),
         _ => Err(CliError::UnknownResource {

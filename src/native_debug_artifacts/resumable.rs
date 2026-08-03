@@ -474,6 +474,7 @@ fn request_failure(error: RuntimeError) -> AttemptFailure {
         | RuntimeError::ExplainResponseInvalid
         | RuntimeError::AnalyticsResponseInvalid
         | RuntimeError::AnalyticsRetentionResponseInvalid
+        | RuntimeError::AnalyticsLifecycleResponseInvalid
         | RuntimeError::NativeDebugArtifactInvalid
         | RuntimeError::NativeDebugResponseInvalid
         | RuntimeError::NativeDebugVerificationFailed => terminal_failure(transport_error()),

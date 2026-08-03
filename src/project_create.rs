@@ -343,6 +343,7 @@ fn request_error(error: RuntimeError, operation: CredentialOperation) -> Runtime
         | RuntimeError::ExplainResponseInvalid
         | RuntimeError::AnalyticsResponseInvalid
         | RuntimeError::AnalyticsRetentionResponseInvalid
+        | RuntimeError::AnalyticsLifecycleResponseInvalid
         | RuntimeError::NativeDebugArtifactInvalid
         | RuntimeError::NativeDebugResponseInvalid
         | RuntimeError::NativeDebugVerificationFailed => operation.transport_unavailable(),

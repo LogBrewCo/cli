@@ -182,6 +182,7 @@ pub(super) fn command_shaped_help_topic(head: &str, tail: &[String]) -> Option<H
                 Some(HelpTopic::AnalyticsPaths)
             }
             ["retention"] => Some(HelpTopic::AnalyticsRetention),
+            ["lifecycle"] => Some(HelpTopic::AnalyticsLifecycle),
             _ => None,
         },
         "resolve" | "close" | "ignore" | "reopen" => {
@@ -250,7 +251,7 @@ fn natural_read_command_shaped_help_topic(positionals: &[&str]) -> Option<HelpTo
 }
 
 /// Resolves help for a command followed by exactly one ID.
-fn single_id_help_topic(positionals: &[&str], topic: HelpTopic) -> Option<HelpTopic> {
+const fn single_id_help_topic(positionals: &[&str], topic: HelpTopic) -> Option<HelpTopic> {
     match positionals {
         [_] => Some(topic),
         _ => None,
@@ -381,7 +382,7 @@ fn status_first_issue_command_shaped_help_topic(positionals: &[&str]) -> Option<
 }
 
 /// Resolves help for action list aliases that include one positional name.
-fn action_alias_command_shaped_help_topic(positionals: &[&str]) -> Option<HelpTopic> {
+const fn action_alias_command_shaped_help_topic(positionals: &[&str]) -> Option<HelpTopic> {
     single_optional_positional_command_help_topic(positionals, HelpTopic::ReadActions)
 }
 
@@ -431,7 +432,7 @@ fn log_search_help_topic(args: &[&str]) -> Result<HelpTopic, CliError> {
 }
 
 /// Resolves command-shaped search shortcut help with a copied search term.
-fn log_search_command_shaped_help_topic(positionals: &[&str]) -> Option<HelpTopic> {
+const fn log_search_command_shaped_help_topic(positionals: &[&str]) -> Option<HelpTopic> {
     single_optional_positional_command_help_topic(positionals, HelpTopic::ReadLogs)
 }
 
@@ -447,7 +448,7 @@ fn single_optional_positional_help_topic(
 }
 
 /// Resolves command-shaped help when one copied positional argument is allowed.
-fn single_optional_positional_command_help_topic(
+const fn single_optional_positional_command_help_topic(
     positionals: &[&str],
     topic: HelpTopic,
 ) -> Option<HelpTopic> {
@@ -723,7 +724,7 @@ fn subresource_help_topic(
     }
 }
 
-/// Selects the analytics overview, paths, or retention help contract.
+/// Selects the analytics overview, paths, retention, or lifecycle help contract.
 fn analytics_help_topic(args: &[&str]) -> Result<HelpTopic, CliError> {
     match args {
         [] => Ok(HelpTopic::Analytics),
@@ -731,7 +732,8 @@ fn analytics_help_topic(args: &[&str]) -> Result<HelpTopic, CliError> {
             Ok(HelpTopic::AnalyticsPaths)
         }
         ["retention"] => Ok(HelpTopic::AnalyticsRetention),
-        ["paths" | "retention", extra, ..] => Err(unexpected_help_argument(extra)),
+        ["lifecycle"] => Ok(HelpTopic::AnalyticsLifecycle),
+        ["paths" | "retention" | "lifecycle", extra, ..] => Err(unexpected_help_argument(extra)),
         [resource, ..] => Err(unknown_resource(resource, ANALYTICS_NEXT_STEP)),
     }
 }
