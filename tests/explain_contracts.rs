@@ -29,7 +29,7 @@ async fn human_issue_explanation_surfaces_fix_context_timeline_and_evidence()
     for expected in [
         "Issue cccccccc-cccc-4ccc-8ccc-cccccccccccc unresolved severity=error",
         "Exception: PaymentError mechanism=unhandled handled=false",
-        "Frame: module=checkout function=charge file=payment.rs line=42 in_app=true",
+        "Frame: module=checkout function=charge file=payment.rs line=42 column=7 in_app=true",
         "Breadcrumb: at=2026-08-03T11:04:55Z category=ui.click",
         "Runtime: service=checkout-api@1.2.3 runtime=rust@1.88",
         "Captured correlation: trace=4bf92f3577b34da6a3ce929d0e0e4736",
