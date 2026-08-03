@@ -160,6 +160,37 @@ async fn explanation_rejects_identity_mismatch_and_hostile_api_errors()
 }
 
 #[tokio::test]
+async fn metric_explanation_rejects_contradictory_semantics_and_group_identity()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut contradictory_semantics = metric_response();
+    contradictory_semantics["series"][0]["identity"]["kind"] = serde_json::json!("counter");
+    let mut contradictory_group = metric_response();
+    contradictory_group["series"][0]["identity"]["group_by"] = serde_json::json!("environment");
+
+    for response in [contradictory_semantics, contradictory_group] {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/telemetry/metrics/series"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(response))
+            .mount(&server)
+            .await;
+        let command = metric_command(true)?;
+        let mut output = Vec::new();
+
+        let error = execute_command(&command, &authenticated_env(&server), &mut output)
+            .await
+            .expect_err("contradictory metric contract fails closed");
+
+        assert!(matches!(
+            error,
+            logbrew_cli::RuntimeError::ExplainResponseInvalid
+        ));
+        assert!(output.is_empty());
+    }
+    Ok(())
+}
+
+#[tokio::test]
 async fn redirects_are_not_followed_with_authentication() -> Result<(), Box<dyn std::error::Error>>
 {
     let server = MockServer::start().await;

@@ -256,13 +256,13 @@ fn validate_issue_response(value: &Value, expected_id: &str) -> Result<(), Runti
     let subject = required_object(response, "subject")?;
     require_string_equals(subject, "kind", "issue")?;
     require_string_equals(subject, "id", expected_id)?;
-    require_string(subject, "title")?;
-    require_string(subject, "message")?;
+    let _title = require_string(subject, "title")?;
+    let _message = require_string(subject, "message")?;
     require_nonnegative_integer(subject, "occurrence_count")?;
-    required_object(response, "cause")?;
-    required_object(response, "fix")?;
-    required_object(response, "impact")?;
-    required_object(response, "correlations")?;
+    let _cause = required_object(response, "cause")?;
+    let _fix = required_object(response, "fix")?;
+    let _impact = required_object(response, "impact")?;
+    let _correlations = required_object(response, "correlations")?;
     validate_evidence(required_object(response, "evidence")?)?;
     validate_next_actions(response.get("next_actions"))
 }
@@ -288,11 +288,11 @@ fn validate_log_response(value: &Value, expected_id: &str) -> Result<(), Runtime
     require_string_equals(subject, "kind", "log")?;
     require_string_equals(subject, "id", expected_id)?;
     require_string_equals(subject, "content_trust", "untrusted_telemetry")?;
-    require_string(subject, "message")?;
-    required_object(response, "attributes")?;
-    required_object(response, "analysis")?;
-    required_object(response, "correlations")?;
-    required_object(response, "timeline")?;
+    let _message = require_string(subject, "message")?;
+    let _attributes = required_object(response, "attributes")?;
+    let _analysis = required_object(response, "analysis")?;
+    let _correlations = required_object(response, "correlations")?;
+    let _timeline = required_object(response, "timeline")?;
     validate_evidence(required_object(response, "evidence")?)?;
     validate_next_actions(response.get("next_actions"))
 }
@@ -317,10 +317,10 @@ fn validate_trace_response(value: &Value, expected_id: &str) -> Result<(), Runti
     require_string_equals(subject, "kind", "trace")?;
     require_string_equals(subject, "trace_id", expected_id)?;
     require_nonnegative_integer(subject, "analyzed_span_count")?;
-    required_object(response, "analysis")?;
-    required_object(response, "spans")?;
-    required_object(response, "correlations")?;
-    required_object(response, "timeline")?;
+    let _analysis = required_object(response, "analysis")?;
+    let _spans = required_object(response, "spans")?;
+    let _correlations = required_object(response, "correlations")?;
+    let _timeline = required_object(response, "timeline")?;
     validate_evidence(required_object(response, "evidence")?)?;
     validate_next_actions(response.get("next_actions"))
 }
@@ -351,11 +351,11 @@ fn validate_release_response(
     require_string_equals(subject, "release", expected.release.as_str())?;
     require_string_equals(subject, "environment", expected.environment.as_str())?;
     require_string_equals(subject, "service_name", expected.service_name.as_str())?;
-    required_object(response, "analysis")?;
-    required_object(response, "sdk_coverage")?;
-    required_object(response, "signals")?;
-    required_object(response, "timeline")?;
-    required_object(response, "comparison")?;
+    let _analysis = required_object(response, "analysis")?;
+    let _sdk_coverage = required_object(response, "sdk_coverage")?;
+    let _signals = required_object(response, "signals")?;
+    let _timeline = required_object(response, "timeline")?;
+    let _comparison = required_object(response, "comparison")?;
     validate_evidence(required_object(response, "evidence")?)?;
     validate_next_actions(response.get("next_actions"))
 }
@@ -377,14 +377,27 @@ fn validate_metric_response(
         ],
     )?;
     validate_schema_version(response)?;
-    require_string(response, "purpose")?;
+    let _purpose = require_string(response, "purpose")?;
     let query = required_object(response, "query")?;
     require_string_equals(query, "project_id", expected.project_id.as_str())?;
     require_string_equals(query, "name", expected.name.as_str())?;
-    require_timestamp(query, "since")?;
-    require_timestamp(query, "until")?;
+    let _since = require_timestamp(query, "since")?;
+    let _until = require_timestamp(query, "until")?;
     let interval = require_string(query, "interval")?;
     if !matches!(interval, "1m" | "5m" | "15m" | "1h" | "6h" | "1d") {
+        return Err(invalid_response());
+    }
+    let interval_seconds = require_u64(query, "interval_seconds")?;
+    let expected_interval_seconds = match interval {
+        "1m" => 60,
+        "5m" => 300,
+        "15m" => 900,
+        "1h" => 3_600,
+        "6h" => 21_600,
+        "1d" => 86_400,
+        _ => return Err(invalid_response()),
+    };
+    if interval_seconds != expected_interval_seconds {
         return Err(invalid_response());
     }
     if expected
@@ -410,52 +423,91 @@ fn validate_metric_response(
     let total_series = require_u64(coverage, "series")?;
     let returned_series = require_u64(coverage, "returned_series")?;
     let returned_points = require_u64(coverage, "points")?;
-    require_u64(coverage, "samples")?;
-    require_u64(coverage, "expected_buckets_per_series")?;
-    require_bool(coverage, "truncated")?;
+    let total_samples = require_u64(coverage, "samples")?;
+    let expected_buckets = require_u64(coverage, "expected_buckets_per_series")?;
+    let truncated = require_bool(coverage, "truncated")?;
+    if expected_buckets == 0 {
+        return Err(invalid_response());
+    }
 
     let series = response
         .get("series")
         .and_then(Value::as_array)
         .ok_or_else(invalid_response)?;
     if series.len() > METRIC_SERIES_LIMIT
+        || series.len() > usize::try_from(query_limit).map_err(|_error| invalid_response())?
         || returned_series != u64::try_from(series.len()).map_err(|_error| invalid_response())?
         || total_series < returned_series
     {
         return Err(invalid_response());
     }
     let mut point_count = 0_u64;
+    let mut represented_samples = 0_u64;
     for item in series {
-        point_count = point_count.saturating_add(validate_metric_series(item)?);
+        let (points, samples) = validate_metric_series(item, group_by)?;
+        point_count = point_count.saturating_add(points);
+        represented_samples = represented_samples.saturating_add(samples);
     }
-    if point_count != returned_points {
+    if point_count != returned_points
+        || represented_samples > total_samples
+        || (!truncated && total_series == returned_series && represented_samples != total_samples)
+    {
         return Err(invalid_response());
     }
     validate_metric_next_action(response.get("next_action"))
 }
 
-/// Validates one metric series and returns its point count.
-fn validate_metric_series(value: &Value) -> Result<u64, RuntimeError> {
+/// Validates one metric series and returns its point and represented-sample counts.
+fn validate_metric_series(
+    value: &Value,
+    expected_group_by: &str,
+) -> Result<(u64, u64), RuntimeError> {
     let series = value.as_object().ok_or_else(invalid_response)?;
     let identity = required_object(series, "identity")?;
-    require_string(identity, "kind")?;
-    require_string(identity, "temporality")?;
+    let kind = require_string(identity, "kind")?;
+    let temporality = require_string(identity, "temporality")?;
+    match expected_group_by {
+        "none" => {
+            if optional_string(identity, "group_by")?.is_some()
+                || optional_string(identity, "group_value")?.is_some()
+            {
+                return Err(invalid_response());
+            }
+        }
+        expected => {
+            if optional_string(identity, "group_by")? != Some(expected)
+                || optional_string(identity, "group_value")?.is_none()
+            {
+                return Err(invalid_response());
+            }
+        }
+    }
     let status = require_string(series, "status")?;
     let aggregation = required_object(series, "aggregation")?;
     let code = require_string(aggregation, "code")?;
-    let supported = matches!(
-        (status, code),
-        ("ready", "gauge_last" | "delta_sum" | "distribution_p95")
-            | ("limited", "raw_cumulative_last" | "raw_last")
+    let known_contract = matches!(
+        (kind, temporality),
+        ("gauge", "instant") | ("counter" | "histogram", "delta")
     );
+    let supported = match (status, code) {
+        ("ready", "gauge_last") => (kind, temporality) == ("gauge", "instant"),
+        ("ready", "delta_sum") => (kind, temporality) == ("counter", "delta"),
+        ("ready", "distribution_p95") => (kind, temporality) == ("histogram", "delta"),
+        ("limited", "raw_cumulative_last") => temporality == "cumulative",
+        ("limited", "raw_last") => temporality != "cumulative" && !known_contract,
+        _ => false,
+    };
     if !supported {
         return Err(invalid_response());
     }
-    require_string(aggregation, "description")?;
+    let _description = require_string(aggregation, "description")?;
     if status == "limited" && optional_string(aggregation, "limitation")?.is_none() {
         return Err(invalid_response());
     }
     let sample_count = require_u64(series, "sample_count")?;
+    if sample_count == 0 {
+        return Err(invalid_response());
+    }
     let points = series
         .get("points")
         .and_then(Value::as_array)
@@ -463,14 +515,45 @@ fn validate_metric_series(value: &Value) -> Result<u64, RuntimeError> {
     if points.is_empty() || points.len() > METRIC_POINT_LIMIT {
         return Err(invalid_response());
     }
+    let required_statistics: &[&str] = match code {
+        "gauge_last" => &["last", "min", "max", "average"],
+        "delta_sum" => &["last", "min", "max", "average", "sum", "rate_per_second"],
+        "distribution_p95" => &["min", "max", "average", "sum", "p50", "p95", "p99"],
+        "raw_cumulative_last" | "raw_last" => &["last", "min", "max"],
+        _ => return Err(invalid_response()),
+    };
     let mut represented_samples = 0_u64;
+    let mut previous_start = None;
     for point in points {
         let point = point.as_object().ok_or_else(invalid_response)?;
-        require_timestamp(point, "bucket_start")?;
-        require_timestamp(point, "bucket_end")?;
-        represented_samples =
-            represented_samples.saturating_add(require_u64(point, "sample_count")?);
-        require_finite_number(point, "value")?;
+        let start = require_timestamp(point, "bucket_start")?;
+        let end = require_timestamp(point, "bucket_end")?;
+        if start >= end || previous_start.is_some_and(|previous| previous >= start) {
+            return Err(invalid_response());
+        }
+        previous_start = Some(start);
+        let point_samples = require_u64(point, "sample_count")?;
+        if point_samples == 0 {
+            return Err(invalid_response());
+        }
+        represented_samples = represented_samples.saturating_add(point_samples);
+        let _value = require_finite_number(point, "value")?;
+        for name in [
+            "last",
+            "min",
+            "max",
+            "average",
+            "sum",
+            "p50",
+            "p95",
+            "p99",
+            "rate_per_second",
+        ] {
+            let _optional_value = optional_finite_number(point, name)?;
+        }
+        for name in required_statistics {
+            let _required_value = require_finite_number(point, name)?;
+        }
         let exemplars = point
             .get("trace_exemplars")
             .and_then(Value::as_array)
@@ -486,7 +569,10 @@ fn validate_metric_series(value: &Value) -> Result<u64, RuntimeError> {
     if represented_samples != sample_count {
         return Err(invalid_response());
     }
-    u64::try_from(points.len()).map_err(|_error| invalid_response())
+    Ok((
+        u64::try_from(points.len()).map_err(|_error| invalid_response())?,
+        sample_count,
+    ))
 }
 
 /// Validates a metric follow-up action.
@@ -494,9 +580,9 @@ fn validate_metric_next_action(value: Option<&Value>) -> Result<(), RuntimeError
     let action = value
         .and_then(Value::as_object)
         .ok_or_else(invalid_response)?;
-    require_string(action, "code")?;
-    require_string(action, "target")?;
-    require_string(action, "reason")?;
+    let _code = require_string(action, "code")?;
+    let _target = require_string(action, "target")?;
+    let _reason = require_string(action, "reason")?;
     Ok(())
 }
 
@@ -551,9 +637,9 @@ fn validate_next_actions(value: Option<&Value>) -> Result<(), RuntimeError> {
         {
             return Err(invalid_response());
         }
-        require_string(action, "code")?;
-        require_string(action, "target")?;
-        require_string(action, "reason")?;
+        let _code = require_string(action, "code")?;
+        let _target = require_string(action, "target")?;
+        let _reason = require_string(action, "reason")?;
     }
     Ok(())
 }
@@ -660,6 +746,21 @@ fn require_finite_number(value: &Map<String, Value>, name: &str) -> Result<f64, 
         .and_then(Value::as_f64)
         .filter(|value| value.is_finite())
         .ok_or_else(invalid_response)
+}
+
+/// Validates one optional finite JSON number while rejecting other types.
+fn optional_finite_number(
+    value: &Map<String, Value>,
+    name: &str,
+) -> Result<Option<f64>, RuntimeError> {
+    match value.get(name) {
+        None | Some(Value::Null) => Ok(None),
+        Some(value) => value
+            .as_f64()
+            .filter(|value| value.is_finite())
+            .map(Some)
+            .ok_or_else(invalid_response),
+    }
 }
 
 /// Requires one UTC RFC 3339 timestamp.
