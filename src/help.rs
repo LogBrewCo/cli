@@ -27,6 +27,7 @@ pub const fn help_text(topic: HelpTopic) -> &'static str {
         HelpTopic::ReadIssue => READ_ISSUE_HELP,
         HelpTopic::Watch => WATCH_HELP,
         HelpTopic::Explain => EXPLAIN_HELP,
+        HelpTopic::AnalyticsPaths => ANALYTICS_PATHS_HELP,
         HelpTopic::Investigate => INVESTIGATE_HELP,
         HelpTopic::NativeDebugArtifacts => NATIVE_DEBUG_ARTIFACTS_HELP,
         HelpTopic::Set => SET_HELP,
@@ -97,6 +98,8 @@ Usage:
   logbrew explain issue <issue_id> [--json]
   logbrew explain trace <trace_id> [--json]
   logbrew explain <issue_id_or_trace_id> [--json]
+  logbrew analytics paths following --project <project_id> --since 24h --anchor-kind page-view \
+                         --anchor-event /pricing [--json]
   logbrew investigate issue <issue_id> [--json]
   logbrew debug-artifacts upload <path> --project <project_id> --release <release> --environment \
                          <environment> --service <service> [--expect-image-uuid <uuid>]... \
@@ -515,6 +518,30 @@ Metric explanations preserve gauge, delta-counter, histogram, and cumulative-str
 Release investigation requires the exact project, environment, and service identity returned by \
                             logbrew read releases.
 Pasted UUID/issue_* values are treated as issues; 32-hex/trace_* values are treated as traces.";
+
+/// Product-analytics path exploration help text.
+const ANALYTICS_PATHS_HELP: &str = "\
+Usage:
+  logbrew analytics paths following --project <project_id> --since <24h|RFC3339> \
+      --anchor-kind <page-view|screen-view|interaction> --anchor-event <name> [options] [--json]
+  logbrew analytics paths preceding --project <project_id> --since <24h|RFC3339> \
+      --anchor-kind <page-view|screen-view|interaction> --anchor-event <name> [options] [--json]
+
+Options:
+  --until <RFC3339>       Exclusive upper time bound.
+  --service <name>        Exact service context.
+  --release <release>     Exact release context.
+  --environment <name>   Exact environment context.
+  --depth <1-8>           Adjacent named events (default: 4).
+  --path-limit <1-20>     Highest-volume aggregate paths (default: 10).
+  --keep-repeated         Keep consecutive identical events instead of collapsing them.
+
+Shows the most common named product-event journeys immediately after or before one exact anchor.
+Aliases after/before map to following/preceding; page_view and screen_view are accepted kind aliases.
+Results use explicit opaque session boundaries and never return session or user identifiers.
+Human output highlights represented sessions, capture gaps, truncation, and the next useful action.
+JSON emits the exact validated schema-version-1 response for AI agents.
+Next: choose an exact captured page, screen, or interaction name from Product Analytics.";
 
 /// Server-directed issue investigation help text.
 const INVESTIGATE_HELP: &str = "\

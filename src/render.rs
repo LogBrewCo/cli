@@ -94,6 +94,7 @@ fn cursor_response_title(command: &Command) -> Option<&'static str> {
         | Command::Version { .. }
         | Command::Watch { .. }
         | Command::Explain { .. }
+        | Command::AnalyticsPaths { .. }
         | Command::InvestigateIssue { .. }
         | Command::NativeDebugArtifacts { .. }
         | Command::Set { .. }
@@ -315,6 +316,7 @@ fn human_summary(command: &Command, value: &serde_json::Value) -> Option<String>
         | Command::Doctor { .. }
         | Command::Usage { .. }
         | Command::Version { .. }
+        | Command::AnalyticsPaths { .. }
         | Command::InvestigateIssue { .. }
         | Command::NativeDebugArtifacts { .. }
         | Command::Watch { .. } => None,
