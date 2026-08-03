@@ -592,8 +592,8 @@ async fn human_explain_trace_prints_scan_friendly_summary() {
          projects=1 duration_ms=845\nStarted: 2026-06-02T20:00:00Z\nReleases: \
          checkout@1.2.3\nEnvironments: production\nFirst error: charge card \
          service=checkout-api operation=payment.charge status=error duration_ms=420 \
-         span=0123456789abcdef\nFirst error path: charge card\nTimeline: count=0 \
-         Related issues: status=not_found count=0 truncated=false\nRelated logs: status=not_found \
+         span=0123456789abcdef\nFirst error path: charge card\nRelated issues: \
+         status=not_found count=0 truncated=false\nRelated logs: status=not_found \
          count=0 truncated=false\nRelated actions: status=not_found count=0 \
          truncated=false\nRelated metrics: status=not_found count=0 truncated=false\nTimeline: \
          count=0 truncated=false\nEvidence: status=partial captured=1 missing=1 redacted=0 \
