@@ -7,6 +7,7 @@
 #![forbid(unsafe_code)]
 
 mod analytics;
+mod analytics_retention;
 #[doc(hidden)]
 pub mod auth;
 #[doc(hidden)]
@@ -226,6 +227,13 @@ pub enum Command {
         /// Emit the exact validated server response.
         json: bool,
     },
+    /// Measures maturity-aware identified-user retention between two exact product events.
+    AnalyticsRetention {
+        /// Normalized privacy-safe retention query.
+        options: AnalyticsRetentionOptions,
+        /// Emit the exact validated server response.
+        json: bool,
+    },
     /// Follows the backend-directed, read-only investigation for one issue.
     InvestigateIssue {
         /// Grouped issue identifier.
@@ -310,8 +318,12 @@ pub enum HelpTopic {
     Watch,
     /// Explain command.
     Explain,
+    /// Product-analytics command overview.
+    Analytics,
     /// Product-analytics path exploration command.
     AnalyticsPaths,
+    /// Product-analytics retention command.
+    AnalyticsRetention,
     /// Server-directed issue investigation command.
     Investigate,
     /// Apple native debug-artifact upload and lookup commands.
@@ -348,7 +360,9 @@ impl HelpTopic {
             Self::ReadIssue => "read_issue",
             Self::Watch => "watch",
             Self::Explain => "explain",
+            Self::Analytics => "analytics",
             Self::AnalyticsPaths => "analytics_paths",
+            Self::AnalyticsRetention => "analytics_retention",
             Self::Investigate => "investigate",
             Self::NativeDebugArtifacts => "debug_artifacts",
             Self::Set => "set",
@@ -878,6 +892,140 @@ pub struct AnalyticsPathOptions {
     pub path_limit: u8,
 }
 
+/// Supported version-1 classified event kind used in retention queries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AnalyticsRetentionEventKind {
+    /// Browser route view.
+    PageView,
+    /// Application screen view.
+    ScreenView,
+    /// Explicit product interaction.
+    Interaction,
+}
+
+impl AnalyticsRetentionEventKind {
+    /// Returns the stable public API token.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::PageView => "page_view",
+            Self::ScreenView => "screen_view",
+            Self::Interaction => "interaction",
+        }
+    }
+}
+
+/// Fixed subject-relative period width for retention.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AnalyticsRetentionInterval {
+    /// One fixed hour.
+    Hour,
+    /// One fixed 24-hour day.
+    Day,
+    /// One fixed seven-day week.
+    Week,
+    /// One fixed 30-day period, not a calendar month.
+    ThirtyDay,
+}
+
+impl AnalyticsRetentionInterval {
+    /// Returns the stable public API token.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Hour => "hour",
+            Self::Day => "day",
+            Self::Week => "week",
+            Self::ThirtyDay => "thirty_day",
+        }
+    }
+
+    /// Returns the exact fixed interval width in seconds.
+    #[must_use]
+    pub const fn seconds(self) -> u64 {
+        match self {
+            Self::Hour => 3_600,
+            Self::Day => 86_400,
+            Self::Week => 604_800,
+            Self::ThirtyDay => 2_592_000,
+        }
+    }
+}
+
+/// Return qualification semantics for each retention period.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AnalyticsRetentionMode {
+    /// Count returns inside each exact subject-relative period.
+    ReturnOn,
+    /// Count returns from each period threshold through the query upper bound.
+    ReturnOnOrAfter,
+}
+
+impl AnalyticsRetentionMode {
+    /// Returns the stable public API token.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::ReturnOn => "return_on",
+            Self::ReturnOnOrAfter => "return_on_or_after",
+        }
+    }
+}
+
+/// Subject cohort-anchor semantics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AnalyticsRetentionCohortMode {
+    /// Anchor each subject at its first matching start inside the selected range.
+    FirstInRange,
+}
+
+impl AnalyticsRetentionCohortMode {
+    /// Returns the stable public API token.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::FirstInRange => "first_in_range",
+        }
+    }
+}
+
+/// Exact, bounded product-analytics retention request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AnalyticsRetentionOptions {
+    /// Account-owned project UUID.
+    pub project_id: String,
+    /// Inclusive compact duration or RFC 3339 lower bound.
+    pub since: String,
+    /// Optional exclusive RFC 3339 upper bound.
+    pub until: Option<String>,
+    /// Optional exact service filter.
+    pub service_name: Option<String>,
+    /// Optional exact release filter.
+    pub release: Option<String>,
+    /// Optional exact environment filter.
+    pub environment: Option<String>,
+    /// Exact event that anchors each subject.
+    pub start_kind: AnalyticsRetentionEventKind,
+    /// Exact start route, screen, or interaction name.
+    pub start_event: String,
+    /// Exact event that qualifies a return.
+    pub return_kind: AnalyticsRetentionEventKind,
+    /// Exact return route, screen, or interaction name.
+    pub return_event: String,
+    /// Fixed period and cohort width.
+    pub interval: AnalyticsRetentionInterval,
+    /// Number of zero-based periods to evaluate.
+    pub interval_count: u8,
+    /// Exact-period or rolling retention semantics.
+    pub mode: AnalyticsRetentionMode,
+    /// First-in-range cohort semantics.
+    pub cohort_mode: AnalyticsRetentionCohortMode,
+}
+
 /// Mutation target for `set`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SetTarget {
@@ -947,6 +1095,9 @@ impl Command {
             )),
             Self::Explain { target, .. } => Some(explain_path(target)),
             Self::AnalyticsPaths { .. } => Some(String::from("/api/telemetry/analytics/paths")),
+            Self::AnalyticsRetention { .. } => {
+                Some(String::from("/api/telemetry/analytics/retention"))
+            }
             Self::Set { target, .. } => Some(set_path(target)),
             Self::ProjectSetupSeen { project_id, .. } => {
                 Some(format!("/api/projects/{project_id}/setup/seen"))
@@ -994,6 +1145,7 @@ impl Command {
             | Self::Watch { json, .. }
             | Self::Explain { json, .. }
             | Self::AnalyticsPaths { json, .. }
+            | Self::AnalyticsRetention { json, .. }
             | Self::InvestigateIssue { json, .. }
             | Self::NativeDebugArtifacts { json, .. }
             | Self::Set { json, .. }
@@ -1011,6 +1163,7 @@ impl Command {
             | Self::ProjectIngestKeyCreate { .. }
             | Self::ProjectSetupSeen { .. }
             | Self::AnalyticsPaths { .. }
+            | Self::AnalyticsRetention { .. }
             | Self::Support {
                 target: SupportTarget::Create(_),
                 ..
@@ -1059,6 +1212,9 @@ impl Command {
                 ..
             } => Some(serde_json::json!({ "status": status })),
             Self::AnalyticsPaths { options, .. } => Some(analytics::request_body(options)),
+            Self::AnalyticsRetention { options, .. } => {
+                Some(analytics_retention::request_body(options))
+            }
             Self::ProjectSetupSeen { options, .. } => Some(project_setup_seen_body(options, token)),
             Self::ProjectCreate { options, .. } => Some(project_create_body(options)),
             Self::ProjectIngestKeyCreate { options, .. } => {
@@ -1116,6 +1272,7 @@ impl Command {
             | Self::Watch { .. }
             | Self::Explain { .. }
             | Self::AnalyticsPaths { .. }
+            | Self::AnalyticsRetention { .. }
             | Self::InvestigateIssue { .. }
             | Self::NativeDebugArtifacts { .. }
             | Self::Set { .. }
@@ -1251,6 +1408,9 @@ pub async fn execute_command<W: std::io::Write>(
         Command::Explain { target, json } => explain::execute(env, target, *json, output).await,
         Command::AnalyticsPaths { options, json } => {
             analytics::execute(env, options, *json, output).await
+        }
+        Command::AnalyticsRetention { options, json } => {
+            analytics_retention::execute(env, options, *json, output).await
         }
         Command::NativeDebugArtifacts { target, json } => {
             native_debug_artifacts::execute(env, target, *json, output).await

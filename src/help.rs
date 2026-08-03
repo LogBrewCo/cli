@@ -27,7 +27,9 @@ pub const fn help_text(topic: HelpTopic) -> &'static str {
         HelpTopic::ReadIssue => READ_ISSUE_HELP,
         HelpTopic::Watch => WATCH_HELP,
         HelpTopic::Explain => EXPLAIN_HELP,
+        HelpTopic::Analytics => ANALYTICS_HELP,
         HelpTopic::AnalyticsPaths => ANALYTICS_PATHS_HELP,
+        HelpTopic::AnalyticsRetention => ANALYTICS_RETENTION_HELP,
         HelpTopic::Investigate => INVESTIGATE_HELP,
         HelpTopic::NativeDebugArtifacts => NATIVE_DEBUG_ARTIFACTS_HELP,
         HelpTopic::Set => SET_HELP,
@@ -100,6 +102,9 @@ Usage:
   logbrew explain <issue_id_or_trace_id> [--json]
   logbrew analytics paths following --project <project_id> --since 24h --anchor-kind page-view \
                          --anchor-event /pricing [--json]
+  logbrew analytics retention --project <project_id> --since 30d --start-kind page-view \
+                         --start-event /signup --return-kind interaction \
+                         --return-event dashboard_opened [--json]
   logbrew investigate issue <issue_id> [--json]
   logbrew debug-artifacts upload <path> --project <project_id> --release <release> --environment \
                          <environment> --service <service> [--expect-image-uuid <uuid>]... \
@@ -519,6 +524,20 @@ Release investigation requires the exact project, environment, and service ident
                             logbrew read releases.
 Pasted UUID/issue_* values are treated as issues; 32-hex/trace_* values are treated as traces.";
 
+/// Product-analytics command overview.
+const ANALYTICS_HELP: &str = "\
+Usage:
+  logbrew analytics paths --help
+  logbrew analytics retention --help
+
+Paths shows the most common aggregate journeys around one exact event without returning session \
+or user identifiers.
+Retention measures whether opaque identified users return after one exact start event, with \
+maturity-aware denominators that do not classify unobservable users as churned.
+Both commands return bounded human guidance and an exact validated schema-version-1 JSON contract \
+for AI agents.
+Next: choose paths to understand journeys or retention to measure return behavior.";
+
 /// Product-analytics path exploration help text.
 const ANALYTICS_PATHS_HELP: &str = "\
 Usage:
@@ -542,6 +561,38 @@ Results use explicit opaque session boundaries and never return session or user 
 Human output highlights represented sessions, capture gaps, truncation, and the next useful action.
 JSON emits the exact validated schema-version-1 response for AI agents.
 Next: choose an exact captured page, screen, or interaction name from Product Analytics.";
+
+/// Product-analytics retention help text.
+const ANALYTICS_RETENTION_HELP: &str = "\
+Usage:
+  logbrew analytics retention --project <project_id> --since <24h|RFC3339> \
+      --start-kind <page-view|screen-view|interaction> --start-event <name> \
+      --return-kind <page-view|screen-view|interaction> --return-event <name> [options] [--json]
+
+Options:
+  --until <RFC3339>                 Exclusive upper time bound.
+  --service <name>                  Exact service context.
+  --release <release>               Exact release context.
+  --environment <name>             Exact environment context.
+  --interval <hour|day|week|thirty-day>
+                                     Fixed period and cohort width (default: day).
+  --interval-count <1-31>           Zero-based periods to evaluate (default: 10).
+  --mode <return-on|return-on-or-after>
+                                     Exact-period or rolling retention (default: return-on).
+  --cohort-mode <first-in-range>    First matching start inside the query range (default).
+
+Returns an identified-user retention curve and a query-relative cohort matrix for two exact \
+classified events. page_view, screen_view, exact, rolling, 1h, 1d, 1w, and 30d are accepted \
+aliases.
+Only explicit opaque subject IDs qualify. Raw IDs are never returned, and missing identities are \
+reported as capture coverage gaps.
+Returns must occur strictly after each subject's start anchor. Maturity-aware denominators exclude \
+subjects whose selected period cannot yet be observed instead of reporting them as churned.
+thirty-day is a fixed 30-day duration, not a calendar month. first-in-range does not prove a \
+subject's first-ever historical start.
+Human output shows headline return rate, every eligible period, cohort maturity, capture gaps, and \
+the next useful action. JSON emits the exact validated schema-version-1 response for AI agents.
+Next: use exact captured start and return event names from Product Analytics overview.";
 
 /// Server-directed issue investigation help text.
 const INVESTIGATE_HELP: &str = "\

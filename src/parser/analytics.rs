@@ -1,5 +1,7 @@
 //! Closed product-analytics command grammar.
 
+mod retention;
+
 use crate::ids::is_uuid;
 use crate::{
     AnalyticsPathDirection, AnalyticsPathEventKind, AnalyticsPathOptions, CliError, Command,
@@ -8,22 +10,27 @@ use crate::{
 /// Exact recovery text shared by every malformed path invocation.
 pub(super) const ANALYTICS_PATHS_NEXT_STEP: &str = "use logbrew analytics paths following|preceding --project <project_id> --since <24h|RFC3339> --anchor-kind <page-view|screen-view|interaction> --anchor-event <name> with optional --until, --service, --release, --environment, --depth 1-8, --path-limit 1-20, --keep-repeated, and --json";
 
+/// Exact recovery text for the product-analytics namespace.
+pub(super) const ANALYTICS_NEXT_STEP: &str =
+    "use logbrew analytics paths --help or logbrew analytics retention --help";
+
 /// Parses the closed `analytics paths` namespace.
 pub(super) fn parse_analytics(args: &[String]) -> Result<Command, CliError> {
     let normalized = normalize_json(args)?;
     let Some((resource, tail)) = normalized.split_first() else {
         return Err(CliError::MissingArgument {
             argument: "resource",
-            next: ANALYTICS_PATHS_NEXT_STEP,
+            next: ANALYTICS_NEXT_STEP,
         });
     };
-    if resource != "paths" {
-        return Err(CliError::UnknownResource {
+    match resource.as_str() {
+        "paths" => parse_paths(tail),
+        "retention" => retention::parse_retention(tail),
+        _ => Err(CliError::UnknownResource {
             resource: resource.clone(),
-            next: ANALYTICS_PATHS_NEXT_STEP,
-        });
+            next: ANALYTICS_NEXT_STEP,
+        }),
     }
-    parse_paths(tail)
 }
 
 /// Allows the output flag at any command position while keeping it singular.
