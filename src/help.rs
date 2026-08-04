@@ -782,9 +782,12 @@ const INVESTIGATE_HELP: &str = "\
 Usage:
   logbrew investigate issue <issue_id> [--json]
 
-Reads the issue first, then follows only its public trace-summary or related-log next action.
-The command is read-only and preserves issue scope in the directed request.
-JSON preserves the issue and exactly one directed result in a stable four-key envelope.";
+Reads one versioned, bounded issue investigation with the selected occurrence, exception, frames, \
+breadcrumbs, typed runtime context, honest cause and fix assessments, impact, trace, related logs, \
+actions, metric exemplars, release scope, evidence completeness, and prioritized next actions.
+The command is read-only and uses the same contract as logbrew explain issue.
+Human output is bounded and marks application telemetry as untrusted evidence. JSON emits the exact \
+validated schema-version-1 response for AI agents.";
 
 /// Apple native debug-artifact command help text.
 const NATIVE_DEBUG_ARTIFACTS_HELP: &str = "\

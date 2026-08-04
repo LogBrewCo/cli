@@ -34,12 +34,12 @@ async fn human_issue_explanation_surfaces_fix_context_timeline_and_evidence()
         "Runtime: service=checkout-api@1.2.3 runtime=rust@1.88",
         "Captured correlation: trace=4bf92f3577b34da6a3ce929d0e0e4736",
         "Tag: plan=pro",
-        "Cause assessment: status=evidence_only provenance=backend_observed",
+        "Cause assessment: status=evidence_only",
         "Fix area: status=observed_application_frame provenance=backend_observed",
-        "Impact: occurrences=3 affected_users=2",
+        "Impact: occurrences=3",
         "Related logs: status=available count=1",
         "Evidence: status=partial",
-        "Next 1: code=inspect_code_location target=source_file",
+        "Next 1: code=inspect_code_location target=source_code reason=likely_fix_location_available",
     ] {
         assert!(text.contains(expected), "missing issue detail: {expected}");
     }
@@ -580,8 +580,8 @@ fn issue_response() -> serde_json::Value {
         },
         "cause": {
             "status": "evidence_only",
-            "summary": "The processor rejection preceded the error.",
-            "provenance": "backend_observed",
+            "summary": null,
+            "provenance": null,
             "signals": ["unhandled_exception", "error_trace_span"]
         },
         "fix": {
@@ -601,7 +601,7 @@ fn issue_response() -> serde_json::Value {
             "occurrence_count": 3,
             "first_seen_at": "2026-08-03T10:00:00Z",
             "last_seen_at": "2026-08-03T11:05:00Z",
-            "affected_users": 2,
+            "affected_users": null,
             "reported": null
         },
         "correlations": {
@@ -642,8 +642,8 @@ fn issue_response() -> serde_json::Value {
         "next_actions": [{
             "priority": 1,
             "code": "inspect_code_location",
-            "target": "source_file",
-            "reason": "inspect the first application-owned frame"
+            "target": "source_code",
+            "reason": "likely_fix_location_available"
         }]
     })
 }
