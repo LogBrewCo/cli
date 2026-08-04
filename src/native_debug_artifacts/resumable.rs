@@ -473,6 +473,7 @@ fn request_failure(error: RuntimeError) -> AttemptFailure {
         | RuntimeError::InvestigationResponseInvalid
         | RuntimeError::ExplainResponseInvalid
         | RuntimeError::AnalyticsResponseInvalid
+        | RuntimeError::AnalyticsFunnelResponseInvalid
         | RuntimeError::AnalyticsRetentionResponseInvalid
         | RuntimeError::AnalyticsLifecycleResponseInvalid
         | RuntimeError::NativeDebugArtifactInvalid

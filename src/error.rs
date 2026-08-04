@@ -222,6 +222,9 @@ pub enum RuntimeError {
     /// A successful product-analytics path response violated its versioned public contract.
     #[error("product analytics path response is invalid")]
     AnalyticsResponseInvalid,
+    /// A successful product-analytics funnel response violated its versioned public contract.
+    #[error("product analytics funnel response is invalid")]
+    AnalyticsFunnelResponseInvalid,
     /// A successful product-analytics retention response violated its versioned public contract.
     #[error("product analytics retention response is invalid")]
     AnalyticsRetentionResponseInvalid,
@@ -320,6 +323,7 @@ pub fn write_native_debug_runtime_error<W: std::io::Write>(
         | RuntimeError::InvestigationResponseInvalid
         | RuntimeError::ExplainResponseInvalid
         | RuntimeError::AnalyticsResponseInvalid
+        | RuntimeError::AnalyticsFunnelResponseInvalid
         | RuntimeError::AnalyticsRetentionResponseInvalid
         | RuntimeError::AnalyticsLifecycleResponseInvalid
         | RuntimeError::NativeDebugArtifactInvalid
@@ -504,6 +508,7 @@ fn write_human_runtime_error<W: std::io::Write>(
         | RuntimeError::InvestigationResponseInvalid
         | RuntimeError::ExplainResponseInvalid
         | RuntimeError::AnalyticsResponseInvalid
+        | RuntimeError::AnalyticsFunnelResponseInvalid
         | RuntimeError::AnalyticsRetentionResponseInvalid
         | RuntimeError::AnalyticsLifecycleResponseInvalid
         | RuntimeError::NativeDebugArtifactInvalid
@@ -525,6 +530,7 @@ fn runtime_error_json(error: &RuntimeError) -> serde_json::Value {
         | RuntimeError::InvestigationResponseInvalid
         | RuntimeError::ExplainResponseInvalid
         | RuntimeError::AnalyticsResponseInvalid
+        | RuntimeError::AnalyticsFunnelResponseInvalid
         | RuntimeError::AnalyticsRetentionResponseInvalid
         | RuntimeError::AnalyticsLifecycleResponseInvalid
         | RuntimeError::NativeDebugArtifactInvalid
@@ -716,6 +722,7 @@ const fn runtime_error_code(error: &RuntimeError) -> &'static str {
         RuntimeError::InvestigationResponseInvalid => "investigation_response_invalid",
         RuntimeError::ExplainResponseInvalid => "explain_response_invalid",
         RuntimeError::AnalyticsResponseInvalid => "analytics_response_invalid",
+        RuntimeError::AnalyticsFunnelResponseInvalid => "analytics_funnel_response_invalid",
         RuntimeError::AnalyticsRetentionResponseInvalid => "analytics_retention_response_invalid",
         RuntimeError::AnalyticsLifecycleResponseInvalid => "analytics_lifecycle_response_invalid",
         RuntimeError::NativeDebugArtifactInvalid => "native_debug_artifact_invalid",
@@ -777,6 +784,7 @@ fn runtime_error_next_step(error: &RuntimeError) -> Cow<'static, str> {
         | RuntimeError::InvestigationResponseInvalid
         | RuntimeError::ExplainResponseInvalid
         | RuntimeError::AnalyticsResponseInvalid
+        | RuntimeError::AnalyticsFunnelResponseInvalid
         | RuntimeError::AnalyticsRetentionResponseInvalid
         | RuntimeError::AnalyticsLifecycleResponseInvalid
         | RuntimeError::NativeDebugArtifactInvalid
@@ -827,6 +835,9 @@ const fn fallback_runtime_error_next_step(error: &RuntimeError) -> &'static str 
         }
         RuntimeError::AnalyticsResponseInvalid => {
             "retry the same analytics path query; if it repeats, report the public response contract"
+        }
+        RuntimeError::AnalyticsFunnelResponseInvalid => {
+            "retry the same analytics funnel query; if it repeats, report the public response contract"
         }
         RuntimeError::AnalyticsRetentionResponseInvalid => {
             "retry the same analytics retention query; if it repeats, report the public response contract"

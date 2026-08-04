@@ -181,6 +181,7 @@ pub(super) fn command_shaped_help_topic(head: &str, tail: &[String]) -> Option<H
             ["paths"] | ["paths", "following" | "preceding" | "after" | "before"] => {
                 Some(HelpTopic::AnalyticsPaths)
             }
+            ["funnel" | "funnels"] => Some(HelpTopic::AnalyticsFunnel),
             ["retention"] => Some(HelpTopic::AnalyticsRetention),
             ["lifecycle"] => Some(HelpTopic::AnalyticsLifecycle),
             _ => None,
@@ -724,16 +725,21 @@ fn subresource_help_topic(
     }
 }
 
-/// Selects the analytics overview, paths, retention, or lifecycle help contract.
+/// Selects the analytics overview, paths, funnel, retention, or lifecycle help contract.
 fn analytics_help_topic(args: &[&str]) -> Result<HelpTopic, CliError> {
     match args {
         [] => Ok(HelpTopic::Analytics),
         ["paths"] | ["paths", "following" | "preceding" | "after" | "before"] => {
             Ok(HelpTopic::AnalyticsPaths)
         }
+        ["funnel" | "funnels"] => Ok(HelpTopic::AnalyticsFunnel),
         ["retention"] => Ok(HelpTopic::AnalyticsRetention),
         ["lifecycle"] => Ok(HelpTopic::AnalyticsLifecycle),
-        ["paths" | "retention" | "lifecycle", extra, ..] => Err(unexpected_help_argument(extra)),
+        [
+            "paths" | "funnel" | "funnels" | "retention" | "lifecycle",
+            extra,
+            ..,
+        ] => Err(unexpected_help_argument(extra)),
         [resource, ..] => Err(unknown_resource(resource, ANALYTICS_NEXT_STEP)),
     }
 }
