@@ -8,6 +8,8 @@ use crate::{
     AnalyticsSegmentPropertyFilter, AnalyticsSegmentUnit, CliError, Command,
 };
 
+use super::normalize_property_key;
+
 /// Exact recovery text shared by every malformed comparison invocation.
 pub(super) const ANALYTICS_COMPARE_NEXT_STEP: &str = "use logbrew analytics compare --project <project_id> --since <24h|RFC3339> --target-kind <page-view|screen-view|interaction> --target-event <name> --segment <key>=<label> --segment <key>=<label> with two through four ordered segments and optional --segment-service <key>=<value>, --segment-release <key>=<value>, --segment-environment <key>=<value>, --segment-property <segment>:<property-key>=<exact-value> up to four times per segment, --until, --interval auto|1m|5m|15m|1h|6h|1d, --unit session|identified-user, and --json";
 
@@ -256,16 +258,6 @@ fn apply_segment_property_filters(
             .sort_unstable_by(|left, right| left.key.cmp(&right.key));
     }
     Ok(())
-}
-
-/// Applies the backend's exact safe analytics-property key contract.
-fn normalize_property_key(value: &str) -> Result<String, CliError> {
-    let value = value.trim();
-    if crate::analytics_property_contract::is_safe_key(value) {
-        Ok(value.to_owned())
-    } else {
-        Err(invalid_argument("unsupported analytics property key"))
-    }
 }
 
 /// Applies repeated keyed filter assignments after all segment keys are known.
