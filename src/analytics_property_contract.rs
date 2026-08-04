@@ -2,7 +2,7 @@
 
 /// Returns whether one version-1 property key is supported and privacy-safe.
 #[must_use]
-pub fn is_safe_key(value: &str) -> bool {
+pub(super) fn is_safe_key(value: &str) -> bool {
     STANDARD_PROPERTY_KEYS.contains(&value)
         || value
             .strip_prefix("tag.")
