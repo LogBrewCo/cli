@@ -11,6 +11,7 @@ mod analytics_funnel;
 mod analytics_lifecycle;
 mod analytics_overview;
 mod analytics_retention;
+mod analytics_segments;
 #[doc(hidden)]
 pub mod auth;
 #[doc(hidden)]
@@ -230,6 +231,13 @@ pub enum Command {
         /// Emit the exact validated server response.
         json: bool,
     },
+    /// Compares one exact product outcome across named context segments.
+    AnalyticsCompare {
+        /// Normalized privacy-safe segment-comparison query.
+        options: AnalyticsSegmentComparisonOptions,
+        /// Emit the exact validated server response.
+        json: bool,
+    },
     /// Explores bounded aggregate product journeys around one exact event.
     AnalyticsPaths {
         /// Normalized privacy-safe path query.
@@ -346,6 +354,8 @@ pub enum HelpTopic {
     Analytics,
     /// Product-analytics project overview command.
     AnalyticsOverview,
+    /// Product-analytics segment comparison command.
+    AnalyticsCompare,
     /// Product-analytics path exploration command.
     AnalyticsPaths,
     /// Product-analytics ordered funnel command.
@@ -392,6 +402,7 @@ impl HelpTopic {
             Self::Explain => "explain",
             Self::Analytics => "analytics",
             Self::AnalyticsOverview => "analytics_overview",
+            Self::AnalyticsCompare => "analytics_compare",
             Self::AnalyticsPaths => "analytics_paths",
             Self::AnalyticsFunnel => "analytics_funnel",
             Self::AnalyticsRetention => "analytics_retention",
@@ -872,6 +883,48 @@ pub struct AnalyticsOverviewOptions {
     pub top_limit: u8,
 }
 
+/// Supported version-1 classified target-event kind used in segment comparisons.
+pub type AnalyticsSegmentEventKind = AnalyticsPathEventKind;
+
+/// Identity boundary used to calculate eligibility and reach in segment comparisons.
+pub type AnalyticsSegmentUnit = AnalyticsFunnelUnit;
+
+/// One named exact service, release, and environment segment.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AnalyticsSegment {
+    /// Stable machine-safe key unique inside the request.
+    pub key: String,
+    /// Short human-readable label.
+    pub label: String,
+    /// Optional exact service filter.
+    pub service_name: Option<String>,
+    /// Optional exact release filter.
+    pub release: Option<String>,
+    /// Optional exact environment filter.
+    pub environment: Option<String>,
+}
+
+/// Exact, bounded product-analytics segment-comparison request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AnalyticsSegmentComparisonOptions {
+    /// Account-owned project UUID.
+    pub project_id: String,
+    /// Inclusive compact duration or RFC 3339 lower bound.
+    pub since: String,
+    /// Optional exclusive RFC 3339 upper bound.
+    pub until: Option<String>,
+    /// Automatic or fixed comparison-series interval.
+    pub interval: String,
+    /// Session or explicit opaque identified-user counting boundary.
+    pub analysis_unit: AnalyticsSegmentUnit,
+    /// Exact classified target kind.
+    pub target_kind: AnalyticsSegmentEventKind,
+    /// Exact route template, screen name, or interaction name.
+    pub target_event: String,
+    /// Two through four ordered segments; the first is the descriptive baseline.
+    pub segments: Vec<AnalyticsSegment>,
+}
+
 /// Direction explored from one exact product-event anchor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -1238,6 +1291,9 @@ impl Command {
             Self::AnalyticsOverview { options, .. } => {
                 Some(analytics_overview::request_path(options))
             }
+            Self::AnalyticsCompare { .. } => {
+                Some(String::from("/api/telemetry/analytics/segments/compare"))
+            }
             Self::AnalyticsPaths { .. } => Some(String::from("/api/telemetry/analytics/paths")),
             Self::AnalyticsFunnel { .. } => Some(String::from("/api/telemetry/analytics/funnel")),
             Self::AnalyticsRetention { .. } => {
@@ -1293,6 +1349,7 @@ impl Command {
             | Self::Watch { json, .. }
             | Self::Explain { json, .. }
             | Self::AnalyticsOverview { json, .. }
+            | Self::AnalyticsCompare { json, .. }
             | Self::AnalyticsPaths { json, .. }
             | Self::AnalyticsFunnel { json, .. }
             | Self::AnalyticsRetention { json, .. }
@@ -1314,6 +1371,7 @@ impl Command {
             | Self::ProjectIngestKeyCreate { .. }
             | Self::ProjectSetupSeen { .. }
             | Self::AnalyticsPaths { .. }
+            | Self::AnalyticsCompare { .. }
             | Self::AnalyticsFunnel { .. }
             | Self::AnalyticsRetention { .. }
             | Self::AnalyticsLifecycle { .. }
@@ -1362,6 +1420,9 @@ impl Command {
                 ..
             } => Some(serde_json::json!({ "status": status })),
             Self::AnalyticsPaths { options, .. } => Some(analytics::request_body(options)),
+            Self::AnalyticsCompare { options, .. } => {
+                Some(analytics_segments::request_body(options))
+            }
             Self::AnalyticsFunnel { options, .. } => Some(analytics_funnel::request_body(options)),
             Self::AnalyticsRetention { options, .. } => {
                 Some(analytics_retention::request_body(options))
@@ -1427,6 +1488,7 @@ impl Command {
             | Self::Watch { .. }
             | Self::Explain { .. }
             | Self::AnalyticsOverview { .. }
+            | Self::AnalyticsCompare { .. }
             | Self::AnalyticsPaths { .. }
             | Self::AnalyticsFunnel { .. }
             | Self::AnalyticsRetention { .. }
@@ -1566,6 +1628,9 @@ pub async fn execute_command<W: std::io::Write>(
         Command::Explain { target, json } => explain::execute(env, target, *json, output).await,
         Command::AnalyticsOverview { options, json } => {
             analytics_overview::execute(env, options, *json, output).await
+        }
+        Command::AnalyticsCompare { options, json } => {
+            analytics_segments::execute(env, options, *json, output).await
         }
         Command::AnalyticsPaths { options, json } => {
             analytics::execute(env, options, *json, output).await
