@@ -94,6 +94,7 @@ fn cursor_response_title(command: &Command) -> Option<&'static str> {
         | Command::Version { .. }
         | Command::Watch { .. }
         | Command::Explain { .. }
+        | Command::AnalyticsOverview { .. }
         | Command::AnalyticsPaths { .. }
         | Command::AnalyticsFunnel { .. }
         | Command::AnalyticsRetention { .. }
@@ -319,6 +320,7 @@ fn human_summary(command: &Command, value: &serde_json::Value) -> Option<String>
         | Command::Doctor { .. }
         | Command::Usage { .. }
         | Command::Version { .. }
+        | Command::AnalyticsOverview { .. }
         | Command::AnalyticsPaths { .. }
         | Command::AnalyticsFunnel { .. }
         | Command::AnalyticsRetention { .. }

@@ -28,6 +28,7 @@ pub const fn help_text(topic: HelpTopic) -> &'static str {
         HelpTopic::Watch => WATCH_HELP,
         HelpTopic::Explain => EXPLAIN_HELP,
         HelpTopic::Analytics => ANALYTICS_HELP,
+        HelpTopic::AnalyticsOverview => ANALYTICS_OVERVIEW_HELP,
         HelpTopic::AnalyticsPaths => ANALYTICS_PATHS_HELP,
         HelpTopic::AnalyticsFunnel => ANALYTICS_FUNNEL_HELP,
         HelpTopic::AnalyticsRetention => ANALYTICS_RETENTION_HELP,
@@ -102,6 +103,7 @@ Usage:
   logbrew explain issue <issue_id> [--json]
   logbrew explain trace <trace_id> [--json]
   logbrew explain <issue_id_or_trace_id> [--json]
+  logbrew analytics overview --project <project_id> --since 24h [--json]
   logbrew analytics paths following --project <project_id> --since 24h --anchor-kind page-view \
                          --anchor-event /pricing [--json]
   logbrew analytics funnel --project <project_id> --since 24h --step page-view /pricing \
@@ -533,11 +535,14 @@ Pasted UUID/issue_* values are treated as issues; 32-hex/trace_* values are trea
 /// Product-analytics command overview.
 const ANALYTICS_HELP: &str = "\
 Usage:
+  logbrew analytics overview --help
   logbrew analytics paths --help
   logbrew analytics funnel --help
   logbrew analytics retention --help
   logbrew analytics lifecycle --help
 
+Overview discovers captured activity, exact event names, surfaces, capture quality, and analysis \
+readiness before a more specific query.
 Paths shows the most common aggregate journeys around one exact event without returning session \
 or user identifiers.
 Funnels measure exact ordered conversion and drop-off across two through eight product events \
@@ -548,8 +553,32 @@ Lifecycle classifies identified users as new in observed history, returning, res
 dormant for one exact event, with explicit history and capture bounds.
 All commands return bounded human guidance and an exact validated schema-version-1 JSON contract \
 for AI agents.
-Next: choose paths for journeys, funnels for conversion, retention for return behavior, or \
-lifecycle for population change.";
+Next: start with overview, then choose paths for journeys, funnels for conversion, retention for \
+return behavior, or lifecycle for population change.";
+
+/// Product-analytics project overview help text.
+const ANALYTICS_OVERVIEW_HELP: &str = "\
+Usage:
+  logbrew analytics overview --project <project_id> --since <24h|RFC3339> [options] [--json]
+
+Options:
+  --until <RFC3339>       Exclusive upper time bound.
+  --interval <value>      auto, 1m, 5m, 15m, 1h, 6h, or 1d (default: auto).
+  --service <name>        Exact service context.
+  --release <release>     Exact release context.
+  --environment <name>   Exact environment context.
+  --top-limit <1-20>      Action, surface, and exact-event rows per ranking (default: 10).
+
+Shows bounded action volume, active identified users, explicit sessions, classified page views, \
+screen views and interactions, time coverage, top surfaces, and exact event names.
+Capture-quality counts disclose anonymous, unsessionized, untraced, unnamed, and unclassified \
+activity instead of silently promoting it into user analysis.
+Unique user, session, name, and surface counts are approximate; event and coverage totals are \
+exact within the selected window.
+Human output is terminal-safe and recommends the next useful capture or analysis action.
+JSON emits the exact validated schema-version-1 response without user or session identifiers.
+Next: use exact event names from the overview with analytics paths, funnel, retention, or \
+lifecycle.";
 
 /// Product-analytics path exploration help text.
 const ANALYTICS_PATHS_HELP: &str = "\

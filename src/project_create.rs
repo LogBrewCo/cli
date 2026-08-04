@@ -341,6 +341,7 @@ fn request_error(error: RuntimeError, operation: CredentialOperation) -> Runtime
         | RuntimeError::StatusUnavailable { .. }
         | RuntimeError::InvestigationResponseInvalid
         | RuntimeError::ExplainResponseInvalid
+        | RuntimeError::AnalyticsOverviewResponseInvalid
         | RuntimeError::AnalyticsResponseInvalid
         | RuntimeError::AnalyticsFunnelResponseInvalid
         | RuntimeError::AnalyticsRetentionResponseInvalid
