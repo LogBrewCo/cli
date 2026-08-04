@@ -571,10 +571,6 @@ fn valid_action_activity(response: &OverviewResponse) -> bool {
 }
 
 /// Proves common bucket and top-ranking response bounds.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the arguments are the paired point and ranking receipts from one response section"
-)]
 fn valid_result_bounds(
     expected_buckets: u64,
     returned_points: u64,
