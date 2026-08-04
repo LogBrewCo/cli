@@ -5,11 +5,11 @@ use std::collections::HashSet;
 use crate::ids::is_uuid;
 use crate::{
     AnalyticsSegment, AnalyticsSegmentComparisonOptions, AnalyticsSegmentEventKind,
-    AnalyticsSegmentUnit, CliError, Command,
+    AnalyticsSegmentPropertyFilter, AnalyticsSegmentUnit, CliError, Command,
 };
 
 /// Exact recovery text shared by every malformed comparison invocation.
-pub(super) const ANALYTICS_COMPARE_NEXT_STEP: &str = "use logbrew analytics compare --project <project_id> --since <24h|RFC3339> --target-kind <page-view|screen-view|interaction> --target-event <name> --segment <key>=<label> --segment <key>=<label> with two through four ordered segments and optional --segment-service <key>=<value>, --segment-release <key>=<value>, --segment-environment <key>=<value>, --until, --interval auto|1m|5m|15m|1h|6h|1d, --unit session|identified-user, and --json";
+pub(super) const ANALYTICS_COMPARE_NEXT_STEP: &str = "use logbrew analytics compare --project <project_id> --since <24h|RFC3339> --target-kind <page-view|screen-view|interaction> --target-event <name> --segment <key>=<label> --segment <key>=<label> with two through four ordered segments and optional --segment-service <key>=<value>, --segment-release <key>=<value>, --segment-environment <key>=<value>, --segment-property <segment>:<property-key>=<exact-value> up to four times per segment, --until, --interval auto|1m|5m|15m|1h|6h|1d, --unit session|identified-user, and --json";
 
 /// Parses one exact target and two through four named context segments.
 pub(super) fn parse_compare(args: &[String]) -> Result<Command, CliError> {
@@ -73,6 +73,10 @@ pub(super) fn parse_compare(args: &[String]) -> Result<Command, CliError> {
                 flag_value(args, &mut index, "--segment-environment", inline)?,
                 "too many segment environment filters",
             )?,
+            "--segment-property" => push_property_assignment(
+                &mut parsed.segment_properties,
+                flag_value(args, &mut index, "--segment-property", inline)?,
+            )?,
             value if value.starts_with('-') => {
                 return Err(CliError::UnknownFlag {
                     flag: flag.to_owned(),
@@ -114,6 +118,7 @@ struct ParsedCompareFlags {
     segment_services: Vec<String>,
     segment_releases: Vec<String>,
     segment_environments: Vec<String>,
+    segment_properties: Vec<String>,
     json: bool,
 }
 
@@ -149,6 +154,10 @@ impl ParsedCompareFlags {
             segments.as_mut_slice(),
             self.segment_environments.as_slice(),
             SegmentFilter::Environment,
+        )?;
+        apply_segment_property_filters(
+            segments.as_mut_slice(),
+            self.segment_properties.as_slice(),
         )?;
         require_unique_filters(segments.as_slice())?;
 
@@ -198,9 +207,65 @@ fn normalize_segments(values: &[String]) -> Result<Vec<AnalyticsSegment>, CliErr
                 service_name: None,
                 release: None,
                 environment: None,
+                property_filters: Vec::new(),
             })
         })
         .collect()
+}
+
+/// Applies repeated exact property predicates after all segment keys are known.
+fn apply_segment_property_filters(
+    segments: &mut [AnalyticsSegment],
+    values: &[String],
+) -> Result<(), CliError> {
+    for value in values {
+        let (selector, value) = assignment(value.as_str(), 256)?;
+        let (segment_key, property_key) = selector
+            .split_once(':')
+            .ok_or_else(|| invalid_argument("invalid segment property assignment"))?;
+        let segment_key = normalize_segment_key(segment_key)?;
+        let property_key = normalize_property_key(property_key)?;
+        let Some(segment) = segments
+            .iter_mut()
+            .find(|segment| segment.key == segment_key)
+        else {
+            return Err(invalid_argument(
+                "segment property references an unknown key",
+            ));
+        };
+        if segment.property_filters.len() >= 4 {
+            return Err(invalid_argument("too many segment property filters"));
+        }
+        if segment
+            .property_filters
+            .iter()
+            .any(|filter| filter.key == property_key)
+        {
+            return Err(invalid_argument("duplicate segment property key"));
+        }
+        segment
+            .property_filters
+            .push(AnalyticsSegmentPropertyFilter {
+                key: property_key,
+                value: normalize_text(value, 256)?,
+            });
+    }
+    for segment in segments {
+        segment
+            .property_filters
+            .sort_unstable_by(|left, right| left.key.cmp(&right.key));
+    }
+    Ok(())
+}
+
+/// Applies the backend's exact safe analytics-property key contract.
+fn normalize_property_key(value: &str) -> Result<String, CliError> {
+    let value = value.trim();
+    if crate::analytics_property_contract::is_safe_key(value) {
+        Ok(value.to_owned())
+    } else {
+        Err(invalid_argument("unsupported analytics property key"))
+    }
 }
 
 /// Applies repeated keyed filter assignments after all segment keys are known.
@@ -236,6 +301,7 @@ fn require_unique_filters(segments: &[AnalyticsSegment]) -> Result<(), CliError>
             segment.service_name.as_deref(),
             segment.release.as_deref(),
             segment.environment.as_deref(),
+            segment.property_filters.as_slice(),
         ))
     }) {
         Ok(())
@@ -357,6 +423,15 @@ fn push_bounded(
     Ok(())
 }
 
+/// Adds one property assignment while preserving the four-by-four request bound.
+fn push_property_assignment(values: &mut Vec<String>, value: String) -> Result<(), CliError> {
+    if values.len() >= 16 {
+        return Err(invalid_argument("too many segment property filters"));
+    }
+    values.push(value);
+    Ok(())
+}
+
 /// Reads a separate or inline flag value without swallowing another flag.
 fn flag_value(
     args: &[String],
@@ -452,6 +527,12 @@ mod tests {
             "old=production",
             "--segment-env",
             "new=production",
+            "--segment-property",
+            "old:tag.plan=legacy",
+            "--segment-property",
+            "new:tag.plan=pro",
+            "--segment-property",
+            "new:resource.framework.name=React",
             "--unit",
             "identified-user",
             "--json",
@@ -466,6 +547,12 @@ mod tests {
         assert_eq!(options.interval, "auto");
         assert_eq!(options.segments[0].key, "old");
         assert_eq!(options.segments[1].release.as_deref(), Some("1.1.0"));
+        assert_eq!(options.segments[0].property_filters[0].key, "tag.plan");
+        assert_eq!(
+            options.segments[1].property_filters[0].key,
+            "resource.framework.name"
+        );
+        assert_eq!(options.segments[1].property_filters[1].value, "pro");
         assert!(json);
     }
 
@@ -506,5 +593,52 @@ mod tests {
         let mut unsafe_target = base.to_vec();
         unsafe_target[7] = "checkout completed";
         assert!(parse_compare(&args(&unsafe_target)).is_err());
+    }
+
+    #[test]
+    fn rejects_sensitive_duplicate_and_unbounded_property_filters() {
+        let base = [
+            "--project",
+            "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            "--since",
+            "7d",
+            "--target-kind",
+            "interaction",
+            "--target-event",
+            "checkout_completed",
+            "--segment",
+            "free=Free",
+            "--segment",
+            "pro=Pro",
+            "--segment-property",
+            "free:tag.plan=free",
+            "--segment-property",
+            "pro:tag.plan=pro",
+        ];
+        assert!(parse_compare(&args(&base)).is_ok());
+
+        for invalid in [
+            "free:tag.user_id=subject-1",
+            "free:tag.plan=free",
+            "unknown:tag.plan=free",
+            "free:resource.unknown.name=value",
+        ] {
+            let mut values = base.to_vec();
+            values.extend(["--segment-property", invalid]);
+            assert!(parse_compare(&args(&values)).is_err());
+        }
+
+        let mut too_many = base.to_vec();
+        too_many.extend([
+            "--segment-property",
+            "free:tag.region=eu",
+            "--segment-property",
+            "free:tag.channel=direct",
+            "--segment-property",
+            "free:tag.cohort=beta",
+            "--segment-property",
+            "free:tag.locale=en",
+        ]);
+        assert!(parse_compare(&args(&too_many)).is_err());
     }
 }

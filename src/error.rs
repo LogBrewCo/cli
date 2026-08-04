@@ -222,6 +222,9 @@ pub enum RuntimeError {
     /// A successful product-analytics overview violated its versioned public contract.
     #[error("product analytics overview response is invalid")]
     AnalyticsOverviewResponseInvalid,
+    /// A successful product-analytics property catalog violated its versioned public contract.
+    #[error("product analytics property response is invalid")]
+    AnalyticsPropertiesResponseInvalid,
     /// A successful product-analytics path response violated its versioned public contract.
     #[error("product analytics path response is invalid")]
     AnalyticsResponseInvalid,
@@ -329,6 +332,7 @@ pub fn write_native_debug_runtime_error<W: std::io::Write>(
         | RuntimeError::InvestigationResponseInvalid
         | RuntimeError::ExplainResponseInvalid
         | RuntimeError::AnalyticsOverviewResponseInvalid
+        | RuntimeError::AnalyticsPropertiesResponseInvalid
         | RuntimeError::AnalyticsResponseInvalid
         | RuntimeError::AnalyticsFunnelResponseInvalid
         | RuntimeError::AnalyticsRetentionResponseInvalid
@@ -516,6 +520,7 @@ fn write_human_runtime_error<W: std::io::Write>(
         | RuntimeError::InvestigationResponseInvalid
         | RuntimeError::ExplainResponseInvalid
         | RuntimeError::AnalyticsOverviewResponseInvalid
+        | RuntimeError::AnalyticsPropertiesResponseInvalid
         | RuntimeError::AnalyticsResponseInvalid
         | RuntimeError::AnalyticsFunnelResponseInvalid
         | RuntimeError::AnalyticsRetentionResponseInvalid
@@ -540,6 +545,7 @@ fn runtime_error_json(error: &RuntimeError) -> serde_json::Value {
         | RuntimeError::InvestigationResponseInvalid
         | RuntimeError::ExplainResponseInvalid
         | RuntimeError::AnalyticsOverviewResponseInvalid
+        | RuntimeError::AnalyticsPropertiesResponseInvalid
         | RuntimeError::AnalyticsResponseInvalid
         | RuntimeError::AnalyticsFunnelResponseInvalid
         | RuntimeError::AnalyticsRetentionResponseInvalid
@@ -734,6 +740,7 @@ const fn runtime_error_code(error: &RuntimeError) -> &'static str {
         RuntimeError::InvestigationResponseInvalid => "investigation_response_invalid",
         RuntimeError::ExplainResponseInvalid => "explain_response_invalid",
         RuntimeError::AnalyticsOverviewResponseInvalid => "analytics_overview_response_invalid",
+        RuntimeError::AnalyticsPropertiesResponseInvalid => "analytics_properties_response_invalid",
         RuntimeError::AnalyticsResponseInvalid => "analytics_response_invalid",
         RuntimeError::AnalyticsFunnelResponseInvalid => "analytics_funnel_response_invalid",
         RuntimeError::AnalyticsRetentionResponseInvalid => "analytics_retention_response_invalid",
@@ -798,6 +805,7 @@ fn runtime_error_next_step(error: &RuntimeError) -> Cow<'static, str> {
         | RuntimeError::InvestigationResponseInvalid
         | RuntimeError::ExplainResponseInvalid
         | RuntimeError::AnalyticsOverviewResponseInvalid
+        | RuntimeError::AnalyticsPropertiesResponseInvalid
         | RuntimeError::AnalyticsResponseInvalid
         | RuntimeError::AnalyticsFunnelResponseInvalid
         | RuntimeError::AnalyticsRetentionResponseInvalid
@@ -851,6 +859,9 @@ const fn fallback_runtime_error_next_step(error: &RuntimeError) -> &'static str 
         }
         RuntimeError::AnalyticsOverviewResponseInvalid => {
             "retry the same analytics overview query; if it repeats, report the public response contract"
+        }
+        RuntimeError::AnalyticsPropertiesResponseInvalid => {
+            "retry the same analytics property query; if it repeats, report the public response contract"
         }
         RuntimeError::AnalyticsResponseInvalid => {
             "retry the same analytics path query; if it repeats, report the public response contract"

@@ -43,6 +43,34 @@ fn public_grammar_help_and_request_model_stay_aligned() -> Result<(), Box<dyn st
     Ok(())
 }
 
+#[test]
+fn property_predicates_are_bounded_canonical_and_part_of_segment_identity()
+-> Result<(), Box<dyn std::error::Error>> {
+    let command = parse_command(property_compare_args(true))?;
+    let body = command.request_body().ok_or("comparison body missing")?;
+
+    assert_eq!(
+        body["segments"][0]["property_filters"][0]["key"],
+        "resource.framework.name"
+    );
+    assert_eq!(body["segments"][0]["property_filters"][0]["value"], "React");
+    assert_eq!(
+        body["segments"][0]["property_filters"][1]["key"],
+        "tag.plan"
+    );
+    assert_eq!(body["segments"][0]["property_filters"][1]["value"], "free");
+    assert_eq!(
+        body["segments"][1]["property_filters"][0]["key"],
+        "tag.plan"
+    );
+    assert_eq!(body["segments"][1]["property_filters"][0]["value"], "pro");
+
+    let help = help::help_text(HelpTopic::AnalyticsCompare);
+    assert!(help.contains("--segment-property <segment>:<key>=<value>"));
+    assert!(help.contains("missing-key coverage"));
+    Ok(())
+}
+
 #[tokio::test]
 async fn built_binary_posts_exact_segments_and_preserves_validated_json()
 -> Result<(), Box<dyn std::error::Error>> {
@@ -129,6 +157,73 @@ async fn built_binary_human_output_explains_reach_differences_coverage_and_limit
 }
 
 #[tokio::test]
+async fn built_binary_separates_missing_properties_from_nonmatching_values()
+-> Result<(), Box<dyn std::error::Error>> {
+    let server = MockServer::start().await;
+    let response = property_comparison_response();
+    Mock::given(method("POST"))
+        .and(path("/api/telemetry/analytics/segments/compare"))
+        .and(body_json(
+            parse_command(property_compare_args(false))?
+                .request_body()
+                .ok_or("comparison body missing")?,
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(response))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let process = run_binary_args(&server, property_compare_args(false)).await?;
+
+    assert!(
+        process.status.success(),
+        "built binary failed: {}",
+        String::from_utf8_lossy(process.stderr.as_slice())
+    );
+    assert!(process.stderr.is_empty());
+    let text = String::from_utf8(process.stdout)?;
+    for expected in [
+        "Property predicates: 2 exact case-sensitive values across resource.framework.name, tag.plan; values hidden in human output.",
+        "Property coverage: ready 120/130 (92.3%) | matched 100/120 (83.3%) | missing keys 10 | nonmatching values 20",
+        "Property predicates: 1 exact case-sensitive value across tag.plan; values hidden in human output.",
+        "Property coverage: ready 140/150 (93.3%) | matched 120/140 (85.7%) | missing keys 10 | nonmatching values 20",
+    ] {
+        assert!(
+            text.contains(expected),
+            "missing property detail: {expected}"
+        );
+    }
+    assert!(!text.contains("tag.plan=free"));
+    assert!(!text.contains("tag.plan=pro"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn built_binary_fails_closed_on_contradictory_property_populations()
+-> Result<(), Box<dyn std::error::Error>> {
+    let server = MockServer::start().await;
+    let mut response = property_comparison_response();
+    response["segments"][0]["coverage"]["property_filters"]["missing_property_events"] = 9.into();
+    response["next_action"]["reason"] = "property-contradiction-marker".into();
+    Mock::given(method("POST"))
+        .and(path("/api/telemetry/analytics/segments/compare"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(response))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let process = run_binary_args(&server, property_compare_args(true)).await?;
+
+    assert!(!process.status.success());
+    assert!(process.stdout.is_empty());
+    let text = String::from_utf8(process.stderr)?;
+    let error: serde_json::Value = serde_json::from_str(text.as_str())?;
+    assert_eq!(error["error"], "analytics_segment_response_invalid");
+    assert!(!text.contains("property-contradiction-marker"));
+    Ok(())
+}
+
+#[tokio::test]
 async fn built_binary_fails_closed_on_unknown_identity_and_contradictory_difference_fields()
 -> Result<(), Box<dyn std::error::Error>> {
     for response in [
@@ -192,7 +287,14 @@ async fn run_binary(
     json: bool,
     baseline: &str,
 ) -> Result<std::process::Output, Box<dyn std::error::Error>> {
-    let args = compare_args(json, baseline);
+    run_binary_args(server, compare_args(json, baseline)).await
+}
+
+/// Runs the actual CLI process for one fully assembled comparison invocation.
+async fn run_binary_args(
+    server: &MockServer,
+    args: Vec<String>,
+) -> Result<std::process::Output, Box<dyn std::error::Error>> {
     let base_url = server.uri();
     let process = tokio::task::spawn_blocking(move || {
         std::process::Command::new(env!("CARGO_BIN_EXE_logbrew"))
@@ -205,6 +307,54 @@ async fn run_binary(
     })
     .await??;
     Ok(process)
+}
+
+/// Builds one property-based comparison with values known only by the caller.
+fn property_compare_args(json: bool) -> Vec<String> {
+    let mut args = [
+        "logbrew",
+        "analytics",
+        "compare",
+        "--project",
+        PROJECT_ID,
+        "--since",
+        "7d",
+        "--target-kind",
+        "interaction",
+        "--target-event",
+        "checkout_completed",
+        "--segment",
+        "old=Old release",
+        "--segment",
+        "new=New release",
+        "--segment-service",
+        "old=checkout",
+        "--segment-service",
+        "new=checkout",
+        "--segment-release",
+        "old=1.0.0",
+        "--segment-release",
+        "new=1.1.0",
+        "--segment-environment",
+        "old=production",
+        "--segment-environment",
+        "new=production",
+        "--segment-property",
+        "old:tag.plan=free",
+        "--segment-property",
+        "old:resource.framework.name=React",
+        "--segment-property",
+        "new:tag.plan=pro",
+        "--interval",
+        "1h",
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect::<Vec<_>>();
+    if json {
+        args.push("--json".to_owned());
+    }
+    args
 }
 
 /// Builds one exact public comparison invocation.
@@ -401,4 +551,41 @@ fn comparison_response(baseline_label: &str) -> serde_json::Value {
             "reason": "Repeat this server-authored reason verbatim."
         }
     })
+}
+
+/// Adds exact property predicates and their disjoint readiness/value coverage receipts.
+fn property_comparison_response() -> serde_json::Value {
+    let mut response = comparison_response("Old release");
+    response["query"]["segments"][0]["property_filters"] = serde_json::json!([
+        {"key": "resource.framework.name", "value": "React"},
+        {"key": "tag.plan", "value": "free"}
+    ]);
+    response["query"]["segments"][1]["property_filters"] =
+        serde_json::json!([{"key": "tag.plan", "value": "pro"}]);
+    response["segments"][0]["coverage"]["property_filters"] = serde_json::json!({
+        "context_events": 130,
+        "property_ready_events": 120,
+        "missing_property_events": 10,
+        "property_ready_rate": 120.0 / 130.0,
+        "matching_events": 100,
+        "nonmatching_value_events": 20,
+        "match_rate": 100.0 / 120.0
+    });
+    response["segments"][1]["coverage"]["property_filters"] = serde_json::json!({
+        "context_events": 150,
+        "property_ready_events": 140,
+        "missing_property_events": 10,
+        "property_ready_rate": 140.0 / 150.0,
+        "matching_events": 120,
+        "nonmatching_value_events": 20,
+        "match_rate": 120.0 / 140.0
+    });
+    response["confidence"]["limitations"]
+        .as_array_mut()
+        .expect("limitations are an array")
+        .extend([
+            serde_json::json!("Property predicates use exact case-sensitive values."),
+            serde_json::json!("Sensitive custom property keys are excluded."),
+        ]);
+    response
 }

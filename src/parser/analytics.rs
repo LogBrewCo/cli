@@ -4,6 +4,7 @@ mod compare;
 mod funnel;
 mod lifecycle;
 mod overview;
+mod properties;
 mod retention;
 
 use crate::ids::is_uuid;
@@ -15,7 +16,7 @@ use crate::{
 pub(super) const ANALYTICS_PATHS_NEXT_STEP: &str = "use logbrew analytics paths following|preceding --project <project_id> --since <24h|RFC3339> --anchor-kind <page-view|screen-view|interaction> --anchor-event <name> with optional --until, --service, --release, --environment, --depth 1-8, --path-limit 1-20, --keep-repeated, and --json";
 
 /// Exact recovery text for the product-analytics namespace.
-pub(super) const ANALYTICS_NEXT_STEP: &str = "use logbrew analytics overview --help, logbrew analytics compare --help, logbrew analytics paths --help, logbrew analytics funnel --help, logbrew analytics retention --help, or logbrew analytics lifecycle --help";
+pub(super) const ANALYTICS_NEXT_STEP: &str = "use logbrew analytics overview --help, logbrew analytics properties --help, logbrew analytics compare --help, logbrew analytics paths --help, logbrew analytics funnel --help, logbrew analytics retention --help, or logbrew analytics lifecycle --help";
 
 /// Parses the closed product-analytics namespace.
 pub(super) fn parse_analytics(args: &[String]) -> Result<Command, CliError> {
@@ -32,6 +33,7 @@ pub(super) fn parse_analytics(args: &[String]) -> Result<Command, CliError> {
         "lifecycle" => lifecycle::parse_lifecycle(tail),
         "overview" => overview::parse_overview(tail),
         "paths" => parse_paths(tail),
+        "properties" | "property" | "dimensions" => properties::parse_properties(tail),
         "retention" => retention::parse_retention(tail),
         _ => Err(CliError::UnknownResource {
             resource: resource.clone(),
