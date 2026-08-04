@@ -1,5 +1,7 @@
 //! Versioned, bounded telemetry investigation reads.
 
+use std::collections::BTreeSet;
+
 use serde::de::{Error as _, MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer};
 use serde_json::{Map, Value};
@@ -31,6 +33,8 @@ const RELATED_PREVIEW_LIMIT: usize = 3;
 const METRIC_SERIES_LIMIT: usize = 20;
 /// Maximum points returned for one metric series.
 const METRIC_POINT_LIMIT: usize = 500;
+/// Largest integer accepted from JSON-number investigation contracts.
+const MAX_SAFE_JSON_INTEGER: u64 = 9_007_199_254_740_991;
 
 /// Duplicate-aware JSON value.
 #[derive(Debug)]
@@ -266,9 +270,9 @@ fn validate_issue_response(value: &Value, expected_id: &str) -> Result<(), Runti
     let _severity = require_string(subject, "severity")?;
     let _title = require_string(subject, "title")?;
     let _message = require_string(subject, "message")?;
-    require_nonnegative_integer(subject, "occurrence_count")?;
-    let _first_seen = require_timestamp(subject, "first_seen_at")?;
-    let _last_seen = require_timestamp(subject, "last_seen_at")?;
+    let occurrence_count = require_safe_positive_u64(subject, "occurrence_count")?;
+    let first_seen = require_timestamp(subject, "first_seen_at")?;
+    let last_seen = require_timestamp(subject, "last_seen_at")?;
 
     match response.get("event") {
         Some(Value::Null) => {}
@@ -297,15 +301,233 @@ fn validate_issue_response(value: &Value, expected_id: &str) -> Result<(), Runti
     let _fix_provenance = optional_string(fix, "provenance")?;
 
     let impact = required_object(response, "impact")?;
-    require_nonnegative_integer(impact, "occurrence_count")?;
-    let _impact_first = require_timestamp(impact, "first_seen_at")?;
-    let _impact_last = require_timestamp(impact, "last_seen_at")?;
-    validate_optional_u64(impact, "affected_users")?;
+    let impact_occurrence_count = require_safe_positive_u64(impact, "occurrence_count")?;
+    let impact_first = require_timestamp(impact, "first_seen_at")?;
+    let impact_last = require_timestamp(impact, "last_seen_at")?;
+    if impact_occurrence_count != occurrence_count
+        || impact_first != first_seen
+        || impact_last != last_seen
+    {
+        return Err(invalid_response());
+    }
+    validate_issue_user_impact(impact, occurrence_count)?;
     validate_nullable_object(impact, "reported")?;
 
     validate_issue_correlations(required_object(response, "correlations")?)?;
     validate_evidence(required_object(response, "evidence")?)?;
     validate_next_actions(response.get("next_actions"))
+}
+
+/// Exact occurrence-level capture receipt used to validate affected-user semantics.
+#[derive(Clone, Copy)]
+struct IssueUserImpactCoverage {
+    /// Grouped occurrences retained for this issue and investigation window.
+    retained: u64,
+    /// Retained occurrences written with a supported subject-index version.
+    indexed: u64,
+    /// Retained occurrences predating subject indexing.
+    historical: u64,
+    /// Indexed occurrences carrying a privacy-safe identified-subject key.
+    identified: u64,
+    /// Indexed occurrences explicitly captured without an identified subject.
+    anonymous: u64,
+    /// Indexed occurrences missing the expected subject context.
+    missing: u64,
+    /// Indexed occurrences whose subject context was excluded by privacy policy.
+    privacy_filtered: u64,
+}
+
+/// Validates affected-user status, method, coverage, legacy alias, and limitation invariants.
+fn validate_issue_user_impact(
+    impact: &Map<String, Value>,
+    occurrence_count: u64,
+) -> Result<(), RuntimeError> {
+    let user_impact = required_object(impact, "user_impact")?;
+    let status = require_string(user_impact, "status")?;
+    if !matches!(
+        status,
+        "complete" | "partial" | "not_captured" | "unavailable"
+    ) {
+        return Err(invalid_response());
+    }
+    let known = optional_safe_u64(user_impact, "known_affected_users")?;
+    let method = require_string(user_impact, "count_method")?;
+    if !matches!(method, "approximate_uniq_combined64" | "unavailable") {
+        return Err(invalid_response());
+    }
+    let coverage = match user_impact.get("coverage") {
+        Some(Value::Null) => None,
+        Some(Value::Object(value)) => Some(validate_issue_user_impact_coverage(value)?),
+        _ => return Err(invalid_response()),
+    };
+    let limitations = issue_user_impact_limitations(user_impact)?;
+    let legacy = optional_safe_u64(impact, "affected_users")?;
+
+    if status == "unavailable" {
+        let expected = BTreeSet::from([String::from("user_impact_read_unavailable")]);
+        return if known.is_none()
+            && method == "unavailable"
+            && coverage.is_none()
+            && legacy.is_none()
+            && limitations == expected
+        {
+            Ok(())
+        } else {
+            Err(invalid_response())
+        };
+    }
+    let coverage = coverage.ok_or_else(invalid_response)?;
+    if coverage.retained != occurrence_count {
+        return Err(invalid_response());
+    }
+    validate_available_issue_user_impact(status, method, known, legacy, coverage, &limitations)
+}
+
+/// Validates exact coverage arithmetic and basis-point receipts.
+fn validate_issue_user_impact_coverage(
+    value: &Map<String, Value>,
+) -> Result<IssueUserImpactCoverage, RuntimeError> {
+    let coverage = IssueUserImpactCoverage {
+        retained: require_safe_u64(value, "retained_occurrences")?,
+        indexed: require_safe_u64(value, "indexed_occurrences")?,
+        historical: require_safe_u64(value, "historical_unindexed_occurrences")?,
+        identified: require_safe_u64(value, "identified_user_occurrences")?,
+        anonymous: require_safe_u64(value, "anonymous_subject_occurrences")?,
+        missing: require_safe_u64(value, "missing_subject_occurrences")?,
+        privacy_filtered: require_safe_u64(value, "privacy_filtered_subject_occurrences")?,
+    };
+    let indexed_and_historical = coverage
+        .indexed
+        .checked_add(coverage.historical)
+        .ok_or_else(invalid_response)?;
+    let classified = coverage
+        .identified
+        .checked_add(coverage.anonymous)
+        .and_then(|value| value.checked_add(coverage.missing))
+        .and_then(|value| value.checked_add(coverage.privacy_filtered))
+        .ok_or_else(invalid_response)?;
+    let index_basis_points = require_safe_u64(value, "index_coverage_basis_points")?;
+    let identified_basis_points =
+        optional_safe_u64(value, "identified_user_coverage_basis_points")?;
+    if coverage.retained == 0
+        || coverage.retained != indexed_and_historical
+        || coverage.indexed != classified
+        || index_basis_points != exact_basis_points(coverage.indexed, coverage.retained)
+        || identified_basis_points
+            != (coverage.indexed > 0)
+                .then(|| exact_basis_points(coverage.identified, coverage.indexed))
+    {
+        return Err(invalid_response());
+    }
+    Ok(coverage)
+}
+
+/// Validates status-specific known counts and derives the exact limitation set.
+fn validate_available_issue_user_impact(
+    status: &str,
+    method: &str,
+    known: Option<u64>,
+    legacy: Option<u64>,
+    coverage: IssueUserImpactCoverage,
+    limitations: &BTreeSet<String>,
+) -> Result<(), RuntimeError> {
+    let complete = coverage.indexed == coverage.retained
+        && coverage.identified == coverage.indexed
+        && coverage.historical == 0
+        && coverage.anonymous == 0
+        && coverage.missing == 0
+        && coverage.privacy_filtered == 0;
+    let has_valid_known = known.is_some_and(|value| value > 0 && value <= coverage.identified);
+    let valid_shape = match status {
+        "complete" => {
+            complete
+                && has_valid_known
+                && method == "approximate_uniq_combined64"
+                && legacy == known
+        }
+        "partial" => {
+            !complete
+                && coverage.identified > 0
+                && has_valid_known
+                && method == "approximate_uniq_combined64"
+                && legacy.is_none()
+        }
+        "not_captured" => {
+            coverage.identified == 0
+                && known.is_none()
+                && method == "unavailable"
+                && legacy.is_none()
+        }
+        _ => false,
+    };
+    if !valid_shape || *limitations != expected_issue_user_impact_limitations(known, coverage) {
+        return Err(invalid_response());
+    }
+    Ok(())
+}
+
+/// Parses a unique bounded set of supported user-impact limitation codes.
+fn issue_user_impact_limitations(
+    value: &Map<String, Value>,
+) -> Result<BTreeSet<String>, RuntimeError> {
+    let values = value
+        .get("limitations")
+        .and_then(Value::as_array)
+        .ok_or_else(invalid_response)?;
+    if values.len() > 6 {
+        return Err(invalid_response());
+    }
+    let mut limitations = BTreeSet::new();
+    for value in values {
+        let code = value.as_str().ok_or_else(invalid_response)?;
+        if !matches!(
+            code,
+            "approximate_distinct_count"
+                | "historical_occurrences_unindexed"
+                | "anonymous_subjects_excluded"
+                | "missing_subject_context"
+                | "privacy_filtered_subject_context"
+                | "user_impact_read_unavailable"
+        ) || !limitations.insert(code.to_owned())
+        {
+            return Err(invalid_response());
+        }
+    }
+    Ok(limitations)
+}
+
+/// Derives every limitation implied by exact coverage; order is intentionally irrelevant.
+fn expected_issue_user_impact_limitations(
+    known: Option<u64>,
+    coverage: IssueUserImpactCoverage,
+) -> BTreeSet<String> {
+    let mut limitations = BTreeSet::new();
+    if known.is_some() {
+        let _ = limitations.insert(String::from("approximate_distinct_count"));
+    }
+    for (count, code) in [
+        (coverage.historical, "historical_occurrences_unindexed"),
+        (coverage.anonymous, "anonymous_subjects_excluded"),
+        (coverage.missing, "missing_subject_context"),
+        (
+            coverage.privacy_filtered,
+            "privacy_filtered_subject_context",
+        ),
+    ] {
+        if count > 0 {
+            let _ = limitations.insert(String::from(code));
+        }
+    }
+    limitations
+}
+
+/// Computes an exact floor-rounded percentage in basis points.
+fn exact_basis_points(numerator: u64, denominator: u64) -> u64 {
+    debug_assert!(
+        denominator > 0,
+        "validated coverage denominator must be positive"
+    );
+    u64::try_from(u128::from(numerator) * 10_000 / u128::from(denominator)).unwrap_or(10_000)
 }
 
 /// Validates one versioned log investigation envelope.
@@ -529,11 +751,30 @@ fn validate_string_array(
     }
 }
 
-/// Validates one required nullable unsigned integer.
-fn validate_optional_u64(value: &Map<String, Value>, name: &str) -> Result<(), RuntimeError> {
+/// Returns one required safe JSON-number unsigned integer.
+fn require_safe_u64(value: &Map<String, Value>, name: &str) -> Result<u64, RuntimeError> {
+    require_u64(value, name).and_then(|value| {
+        (value <= MAX_SAFE_JSON_INTEGER)
+            .then_some(value)
+            .ok_or_else(invalid_response)
+    })
+}
+
+/// Returns one required positive safe JSON-number unsigned integer.
+fn require_safe_positive_u64(value: &Map<String, Value>, name: &str) -> Result<u64, RuntimeError> {
+    require_safe_u64(value, name)
+        .and_then(|value| (value > 0).then_some(value).ok_or_else(invalid_response))
+}
+
+/// Returns one required nullable safe JSON-number unsigned integer.
+fn optional_safe_u64(value: &Map<String, Value>, name: &str) -> Result<Option<u64>, RuntimeError> {
     match value.get(name) {
-        Some(Value::Null) => Ok(()),
-        Some(value) if value.as_u64().is_some() => Ok(()),
+        Some(Value::Null) => Ok(None),
+        Some(value) => value
+            .as_u64()
+            .filter(|value| *value <= MAX_SAFE_JSON_INTEGER)
+            .map(Some)
+            .ok_or_else(invalid_response),
         _ => Err(invalid_response()),
     }
 }
@@ -1332,10 +1573,10 @@ fn append_issue_impact(output: &mut String, impact: Option<&Value>) {
     };
     output.push_str("Impact:");
     append_labeled_integer(output, "occurrences", impact, "occurrence_count");
-    append_labeled_integer(output, "affected_users", impact, "affected_users");
     append_labeled_text(output, "first", impact, "first_seen_at", 64);
     append_labeled_text(output, "last", impact, "last_seen_at", 64);
     output.push('\n');
+    append_issue_user_impact(output, impact.get("user_impact"));
     if let Some(reported) = impact.get("reported").filter(|value| !value.is_null()) {
         output.push_str("Reported impact (unverified):");
         append_labeled_text(output, "segment", reported, "affected_user_segment", 120);
@@ -1343,6 +1584,58 @@ fn append_issue_impact(output: &mut String, impact: Option<&Value>) {
         append_labeled_text(output, "outcome", reported, "user_visible_outcome", 300);
         output.push('\n');
     }
+}
+
+/// Appends approximate known-user cardinality with exact capture-quality receipts.
+fn append_issue_user_impact(output: &mut String, user_impact: Option<&Value>) {
+    let Some(user_impact) = user_impact else {
+        return;
+    };
+    let status = user_impact
+        .get("status")
+        .and_then(Value::as_str)
+        .unwrap_or("unavailable");
+    match (status, integer_text(user_impact, "known_affected_users")) {
+        ("complete" | "partial", Some(known)) => {
+            output.push_str("Known affected users: ~");
+            output.push_str(known.as_str());
+            append_labeled_text(output, "status", user_impact, "status", 32);
+            append_labeled_text(output, "method", user_impact, "count_method", 64);
+            output.push('\n');
+        }
+        ("not_captured", _) => {
+            output.push_str("Known affected users: not captured in retained issue context.\n");
+        }
+        _ => output.push_str("Known affected users: unavailable; retry this investigation.\n"),
+    }
+    if let Some(coverage) = user_impact.get("coverage").filter(|value| !value.is_null()) {
+        output.push_str("User-impact coverage:");
+        for (label, name) in [
+            ("retained", "retained_occurrences"),
+            ("indexed", "indexed_occurrences"),
+            ("identified", "identified_user_occurrences"),
+            ("anonymous", "anonymous_subject_occurrences"),
+            ("missing", "missing_subject_occurrences"),
+            ("privacy_filtered", "privacy_filtered_subject_occurrences"),
+            ("historical_unindexed", "historical_unindexed_occurrences"),
+        ] {
+            append_labeled_integer(output, label, coverage, name);
+        }
+        append_labeled_basis_points(output, "index", coverage, "index_coverage_basis_points");
+        append_labeled_basis_points(
+            output,
+            "identified_share",
+            coverage,
+            "identified_user_coverage_basis_points",
+        );
+        output.push('\n');
+    }
+    append_string_array(
+        output,
+        "User-impact limitations",
+        user_impact.get("limitations"),
+        6,
+    );
 }
 
 /// Appends issue-linked trace, log, action, metric, and release evidence.
@@ -2123,6 +2416,17 @@ fn append_labeled_integer(output: &mut String, label: &str, value: &Value, name:
     output.push_str(label);
     output.push('=');
     output.push_str(value.as_str());
+}
+
+/// Appends one compact basis-point field as a two-decimal percentage.
+fn append_labeled_basis_points(output: &mut String, label: &str, value: &Value, name: &str) {
+    let Some(value) = value.get(name).and_then(Value::as_u64) else {
+        return;
+    };
+    output.push(' ');
+    output.push_str(label);
+    output.push('=');
+    output.push_str(format!("{}.{:02}%", value / 100, value % 100).as_str());
 }
 
 /// Appends one compact finite numeric field.
