@@ -37,6 +37,10 @@ async fn human_issue_explanation_surfaces_fix_context_timeline_and_evidence()
         "Cause assessment: status=evidence_only",
         "Fix area: status=observed_application_frame provenance=backend_observed",
         "Impact: occurrences=3",
+        "Known affected users: not captured in retained issue context.",
+        "User-impact coverage: retained=3 indexed=0 identified=0 anonymous=0 missing=0 \
+         privacy_filtered=0 historical_unindexed=3 index=0.00%",
+        "User-impact limitations: historical_occurrences_unindexed",
         "Related logs: status=available count=1",
         "Evidence: status=partial",
         "Next 1: code=inspect_code_location target=source_code reason=likely_fix_location_available",
@@ -602,6 +606,23 @@ fn issue_response() -> serde_json::Value {
             "first_seen_at": "2026-08-03T10:00:00Z",
             "last_seen_at": "2026-08-03T11:05:00Z",
             "affected_users": null,
+            "user_impact": {
+                "status": "not_captured",
+                "known_affected_users": null,
+                "count_method": "unavailable",
+                "coverage": {
+                    "retained_occurrences": 3,
+                    "indexed_occurrences": 0,
+                    "historical_unindexed_occurrences": 3,
+                    "identified_user_occurrences": 0,
+                    "anonymous_subject_occurrences": 0,
+                    "missing_subject_occurrences": 0,
+                    "privacy_filtered_subject_occurrences": 0,
+                    "index_coverage_basis_points": 0,
+                    "identified_user_coverage_basis_points": null
+                },
+                "limitations": ["historical_occurrences_unindexed"]
+            },
             "reported": null
         },
         "correlations": {

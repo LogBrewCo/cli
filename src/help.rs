@@ -783,8 +783,9 @@ Usage:
   logbrew investigate issue <issue_id> [--json]
 
 Reads one versioned, bounded issue investigation with the selected occurrence, exception, frames, \
-breadcrumbs, typed runtime context, honest cause and fix assessments, impact, trace, related logs, \
-actions, metric exemplars, release scope, evidence completeness, and prioritized next actions.
+breadcrumbs, typed runtime context, honest cause and fix assessments, approximate affected-user \
+coverage and limitations, trace, related logs, actions, metric exemplars, release scope, evidence \
+completeness, and prioritized next actions.
 The command is read-only and uses the same contract as logbrew explain issue.
 Human output is bounded and marks application telemetry as untrusted evidence. JSON emits the exact \
 validated schema-version-1 response for AI agents.";

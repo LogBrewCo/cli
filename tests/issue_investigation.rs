@@ -62,6 +62,7 @@ fn help_describes_the_complete_versioned_bundle() {
     let text = logbrew_cli::help::help_text(topic);
 
     assert!(text.contains("selected occurrence, exception, frames"));
+    assert!(text.contains("approximate affected-user coverage and limitations"));
     assert!(text.contains("trace, related logs, actions, metric exemplars"));
     assert!(text.contains("same contract as logbrew explain issue"));
     assert!(text.contains("exact validated schema-version-1 response"));
@@ -87,6 +88,25 @@ async fn investigation_uses_the_versioned_cross_signal_bundle()
 }
 
 #[tokio::test]
+async fn complete_and_unavailable_user_impact_states_preserve_exact_json()
+-> Result<(), Box<dyn std::error::Error>> {
+    for (bundle, status) in [
+        (complete_user_impact_bundle(), "complete"),
+        (unavailable_user_impact_bundle(), "unavailable"),
+    ] {
+        let server = MockServer::start().await;
+        mount_bundle(&server, bundle.clone(), 1).await;
+
+        let output = run(&server, true, "investigate").await?;
+        let body: serde_json::Value = serde_json::from_str(output.as_str())?;
+
+        assert_eq!(body, bundle);
+        assert_eq!(body["impact"]["user_impact"]["status"], status);
+    }
+    Ok(())
+}
+
+#[tokio::test]
 async fn human_output_surfaces_failure_fix_timeline_correlations_and_limits()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
@@ -104,6 +124,10 @@ async fn human_output_surfaces_failure_fix_timeline_correlations_and_limits()
         "Cause assessment: status=reported_hypothesis provenance=application_reported",
         "Reported hypothesis (unverified): The provider returned 503 after retries.",
         "Fix area: status=reported_location provenance=application_reported",
+        "Known affected users: ~2 status=partial method=approximate_uniq_combined64",
+        "User-impact coverage: retained=3 indexed=3 identified=2 anonymous=0 missing=0 \
+         privacy_filtered=1 historical_unindexed=0 index=100.00% identified_share=66.66%",
+        "User-impact limitations: approximate_distinct_count, privacy_filtered_subject_context",
         "Reported impact (unverified): segment=paying failed_action=checkout.submit",
         "Trace: status=available trace=4bf92f3577b34da6a3ce929d0e0e4736 spans=3 errors=1",
         "Related logs: status=available count=1",
@@ -178,6 +202,28 @@ async fn invalid_or_duplicate_bundles_fail_closed_without_reflection()
         let error = execute_command(&command, &authenticated_env(&server), &mut output)
             .await
             .expect_err("invalid bundle fails closed");
+        write_runtime_error(&error, true, &mut output)?;
+        let text = String::from_utf8(output)?;
+        let response: serde_json::Value = serde_json::from_str(text.as_str())?;
+
+        assert_eq!(response["error"], "investigation_response_invalid");
+        assert!(!text.contains(marker));
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn contradictory_user_impact_bundles_fail_closed_without_reflection()
+-> Result<(), Box<dyn std::error::Error>> {
+    for (bundle, marker) in invalid_user_impact_bundles() {
+        let server = MockServer::start().await;
+        mount_bundle(&server, bundle, 1).await;
+        let command = parse_command(["logbrew", "investigate", "issue", ISSUE_ID, "--json"])?;
+        let mut output = Vec::new();
+
+        let error = execute_command(&command, &authenticated_env(&server), &mut output)
+            .await
+            .expect_err("contradictory user impact fails closed");
         write_runtime_error(&error, true, &mut output)?;
         let text = String::from_utf8(output)?;
         let response: serde_json::Value = serde_json::from_str(text.as_str())?;
@@ -411,6 +457,26 @@ fn rich_investigation_bundle() -> serde_json::Value {
             "first_seen_at": "2026-08-04T07:30:00Z",
             "last_seen_at": "2026-08-04T08:00:00Z",
             "affected_users": null,
+            "user_impact": {
+                "status": "partial",
+                "known_affected_users": 2,
+                "count_method": "approximate_uniq_combined64",
+                "coverage": {
+                    "retained_occurrences": 3,
+                    "indexed_occurrences": 3,
+                    "historical_unindexed_occurrences": 0,
+                    "identified_user_occurrences": 2,
+                    "anonymous_subject_occurrences": 0,
+                    "missing_subject_occurrences": 0,
+                    "privacy_filtered_subject_occurrences": 1,
+                    "index_coverage_basis_points": 10000,
+                    "identified_user_coverage_basis_points": 6666
+                },
+                "limitations": [
+                    "approximate_distinct_count",
+                    "privacy_filtered_subject_context"
+                ]
+            },
             "reported": {
                 "affected_user_segment": "paying",
                 "failed_action": "checkout.submit",
@@ -493,9 +559,10 @@ fn rich_investigation_bundle() -> serde_json::Value {
                 "metrics",
                 "release",
                 "stack_frames",
-                "trace"
+                "trace",
+                "affected_users.known"
             ],
-            "missing_fields": ["affected_users"],
+            "missing_fields": ["affected_users.complete_coverage"],
             "redacted_fields": [],
             "truncated_fields": []
         },
@@ -544,4 +611,103 @@ fn rich_investigation_bundle() -> serde_json::Value {
             }
         ]
     })
+}
+
+fn invalid_user_impact_bundles() -> Vec<(serde_json::Value, &'static str)> {
+    let mut cases = Vec::new();
+    macro_rules! invalid_case {
+        ($pointer:literal, $value:tt, $marker:literal) => {{
+            let mut bundle = rich_investigation_bundle();
+            *bundle
+                .pointer_mut($pointer)
+                .expect("fixture pointer exists") = serde_json::json!($value);
+            bundle["marker"] = serde_json::json!($marker);
+            cases.push((bundle, $marker));
+        }};
+    }
+    invalid_case!(
+        "/impact/user_impact/known_affected_users",
+        9_007_199_254_740_992_u64,
+        "unsafe-count-marker"
+    );
+    invalid_case!(
+        "/impact/user_impact/coverage/retained_occurrences",
+        4,
+        "arithmetic-marker"
+    );
+    invalid_case!(
+        "/impact/user_impact/coverage/index_coverage_basis_points",
+        9_999,
+        "basis-point-marker"
+    );
+    invalid_case!(
+        "/impact/user_impact/known_affected_users",
+        3,
+        "cardinality-marker"
+    );
+    invalid_case!(
+        "/impact/user_impact/limitations",
+        ["approximate_distinct_count", "approximate_distinct_count"],
+        "duplicate-limitation-marker"
+    );
+    invalid_case!(
+        "/impact/user_impact/limitations",
+        [
+            "unknown-limitation-marker",
+            "privacy_filtered_subject_context"
+        ],
+        "unknown-limitation-marker"
+    );
+    invalid_case!("/impact/affected_users", 2, "legacy-alias-marker");
+    invalid_case!(
+        "/impact/user_impact/coverage",
+        null,
+        "missing-coverage-marker"
+    );
+    invalid_case!(
+        "/impact/user_impact/status",
+        "unavailable",
+        "status-shape-marker"
+    );
+    invalid_case!(
+        "/impact/user_impact/coverage/identified_user_coverage_basis_points",
+        null,
+        "denominator-marker"
+    );
+    cases
+}
+
+fn complete_user_impact_bundle() -> serde_json::Value {
+    let mut bundle = rich_investigation_bundle();
+    bundle["impact"]["affected_users"] = serde_json::json!(2);
+    bundle["impact"]["user_impact"] = serde_json::json!({
+        "status": "complete",
+        "known_affected_users": 2,
+        "count_method": "approximate_uniq_combined64",
+        "coverage": {
+            "retained_occurrences": 3,
+            "indexed_occurrences": 3,
+            "historical_unindexed_occurrences": 0,
+            "identified_user_occurrences": 3,
+            "anonymous_subject_occurrences": 0,
+            "missing_subject_occurrences": 0,
+            "privacy_filtered_subject_occurrences": 0,
+            "index_coverage_basis_points": 10000,
+            "identified_user_coverage_basis_points": 10000
+        },
+        "limitations": ["approximate_distinct_count"]
+    });
+    bundle
+}
+
+fn unavailable_user_impact_bundle() -> serde_json::Value {
+    let mut bundle = rich_investigation_bundle();
+    bundle["impact"]["user_impact"] = serde_json::json!({
+        "status": "unavailable",
+        "known_affected_users": null,
+        "count_method": "unavailable",
+        "coverage": null,
+        "limitations": ["user_impact_read_unavailable"]
+    });
+    bundle
 }
