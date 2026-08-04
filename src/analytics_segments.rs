@@ -636,18 +636,24 @@ fn valid_segment_result(
             result.reached_units,
         )
         && valid_series(response, result)
-        && match baseline {
-            None => result.comparison_to_baseline.is_none(),
-            Some(baseline) => result
-                .comparison_to_baseline
-                .as_ref()
-                .is_some_and(|comparison| valid_baseline_comparison(result, baseline, comparison)),
-        }
+        && baseline.map_or_else(
+            || result.comparison_to_baseline.is_none(),
+            |baseline| {
+                result
+                    .comparison_to_baseline
+                    .as_ref()
+                    .is_some_and(|comparison| {
+                        valid_baseline_comparison(result, baseline, comparison)
+                    })
+            },
+        )
 }
 
 /// Proves every derived capture count and ratio for one segment.
 fn valid_segment_coverage(result: &SegmentResult) -> bool {
     let coverage = &result.coverage;
+    let eligible_units_fit_identified_events =
+        result.eligible_units <= coverage.unit_identified_events;
     bounded_counts(&[
         result.eligible_units,
         result.reached_units,
@@ -657,7 +663,7 @@ fn valid_segment_coverage(result: &SegmentResult) -> bool {
         coverage.usable_target_events,
         coverage.traced_target_events,
     ]) && coverage.unit_identified_events <= coverage.classified_events
-        && result.eligible_units <= coverage.unit_identified_events
+        && eligible_units_fit_identified_events
         && coverage.target_events <= coverage.classified_events
         && coverage.usable_target_events <= coverage.target_events
         && coverage.usable_target_events <= coverage.unit_identified_events
