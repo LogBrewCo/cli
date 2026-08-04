@@ -58,6 +58,7 @@ async fn built_binary_gets_exact_scope_and_preserves_validated_json()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
     let response = overview_response();
+    let response_body = serde_json::to_string(&response)?;
     Mock::given(method("GET"))
         .and(path("/api/telemetry/analytics/overview"))
         .and(header("authorization", "Bearer account-token"))
@@ -66,7 +67,9 @@ async fn built_binary_gets_exact_scope_and_preserves_validated_json()
         .and(query_param("interval", "5m"))
         .and(query_param("environment", "production"))
         .and(query_param("top_limit", "2"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(response.clone()))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_raw(response_body.clone(), "application/json"),
+        )
         .expect(1)
         .mount(&server)
         .await;
@@ -79,8 +82,8 @@ async fn built_binary_gets_exact_scope_and_preserves_validated_json()
         String::from_utf8_lossy(process.stderr.as_slice())
     );
     assert!(process.stderr.is_empty());
-    let actual: serde_json::Value = serde_json::from_slice(process.stdout.as_slice())?;
-    assert_eq!(actual, response);
+    let actual = String::from_utf8(process.stdout)?;
+    assert_eq!(actual.trim_end(), response_body);
     Ok(())
 }
 
