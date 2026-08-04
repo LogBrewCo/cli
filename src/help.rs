@@ -29,6 +29,7 @@ pub const fn help_text(topic: HelpTopic) -> &'static str {
         HelpTopic::Explain => EXPLAIN_HELP,
         HelpTopic::Analytics => ANALYTICS_HELP,
         HelpTopic::AnalyticsPaths => ANALYTICS_PATHS_HELP,
+        HelpTopic::AnalyticsFunnel => ANALYTICS_FUNNEL_HELP,
         HelpTopic::AnalyticsRetention => ANALYTICS_RETENTION_HELP,
         HelpTopic::AnalyticsLifecycle => ANALYTICS_LIFECYCLE_HELP,
         HelpTopic::Investigate => INVESTIGATE_HELP,
@@ -103,6 +104,8 @@ Usage:
   logbrew explain <issue_id_or_trace_id> [--json]
   logbrew analytics paths following --project <project_id> --since 24h --anchor-kind page-view \
                          --anchor-event /pricing [--json]
+  logbrew analytics funnel --project <project_id> --since 24h --step page-view /pricing \
+                         --step interaction signup_completed [--json]
   logbrew analytics retention --project <project_id> --since 30d --start-kind page-view \
                          --start-event /signup --return-kind interaction \
                          --return-event dashboard_opened [--json]
@@ -531,18 +534,22 @@ Pasted UUID/issue_* values are treated as issues; 32-hex/trace_* values are trea
 const ANALYTICS_HELP: &str = "\
 Usage:
   logbrew analytics paths --help
+  logbrew analytics funnel --help
   logbrew analytics retention --help
   logbrew analytics lifecycle --help
 
 Paths shows the most common aggregate journeys around one exact event without returning session \
 or user identifiers.
+Funnels measure exact ordered conversion and drop-off across two through eight product events \
+using explicit session or opaque identified-user boundaries.
 Retention measures whether opaque identified users return after one exact start event, with \
 maturity-aware denominators that do not classify unobservable users as churned.
 Lifecycle classifies identified users as new in observed history, returning, resurrected, or \
 dormant for one exact event, with explicit history and capture bounds.
 All commands return bounded human guidance and an exact validated schema-version-1 JSON contract \
 for AI agents.
-Next: choose paths for journeys, retention for return behavior, or lifecycle for population change.";
+Next: choose paths for journeys, funnels for conversion, retention for return behavior, or \
+lifecycle for population change.";
 
 /// Product-analytics path exploration help text.
 const ANALYTICS_PATHS_HELP: &str = "\
@@ -567,6 +574,37 @@ Results use explicit opaque session boundaries and never return session or user 
 Human output highlights represented sessions, capture gaps, truncation, and the next useful action.
 JSON emits the exact validated schema-version-1 response for AI agents.
 Next: choose an exact captured page, screen, or interaction name from Product Analytics.";
+
+/// Product-analytics ordered funnel help text.
+const ANALYTICS_FUNNEL_HELP: &str = "\
+Usage:
+  logbrew analytics funnel --project <project_id> --since <24h|RFC3339> \
+      --step <page-view|screen-view|interaction> <name> \
+      --step <page-view|screen-view|interaction> <name> [--step <kind> <name>]... \
+      [options] [--json]
+
+Options:
+  --until <RFC3339>                 Exclusive upper time bound.
+  --service <name>                  Exact service context.
+  --release <release>               Exact release context.
+  --environment <name>             Exact environment context.
+  --unit <session|identified-user>  Counting boundary (default: session).
+  --conversion-window <duration>   First-to-final window as seconds, 30m, 1h, or 1d.
+
+Measures where explicit sessions or opaque identified users enter, progress, complete, and drop \
+off across two through eight exact classified events. Repeat --step in the required order. \
+page_view, screen_view, identified_user, page, screen, and user are accepted aliases.
+Every later step must have a strictly greater timestamp than the prior match and the final step \
+must remain inside the conversion window from the first match. One event cannot satisfy multiple \
+steps.
+Session funnels count visits or app sessions, not people. Identified-user funnels require stable \
+application-supplied opaque subject IDs and can connect separate sessions. Raw IDs are never \
+returned; missing IDs are reported as capture gaps.
+Human output shows candidate, entered, and completed units; every step's conversion and drop-off; \
+capture coverage; interpretation limits; and the next useful action. JSON emits the exact \
+validated schema-version-1 response for AI agents.
+Next: use exact captured event names from Product Analytics overview and inspect correlated traces \
+around the earliest material drop-off.";
 
 /// Product-analytics retention help text.
 const ANALYTICS_RETENTION_HELP: &str = "\

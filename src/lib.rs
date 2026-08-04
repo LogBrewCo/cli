@@ -7,6 +7,7 @@
 #![forbid(unsafe_code)]
 
 mod analytics;
+mod analytics_funnel;
 mod analytics_lifecycle;
 mod analytics_retention;
 #[doc(hidden)]
@@ -228,6 +229,13 @@ pub enum Command {
         /// Emit the exact validated server response.
         json: bool,
     },
+    /// Measures ordered conversion and drop-off across exact product events.
+    AnalyticsFunnel {
+        /// Normalized privacy-safe funnel query.
+        options: AnalyticsFunnelOptions,
+        /// Emit the exact validated server response.
+        json: bool,
+    },
     /// Measures maturity-aware identified-user retention between two exact product events.
     AnalyticsRetention {
         /// Normalized privacy-safe retention query.
@@ -330,6 +338,8 @@ pub enum HelpTopic {
     Analytics,
     /// Product-analytics path exploration command.
     AnalyticsPaths,
+    /// Product-analytics ordered funnel command.
+    AnalyticsFunnel,
     /// Product-analytics retention command.
     AnalyticsRetention,
     /// Product-analytics lifecycle command.
@@ -372,6 +382,7 @@ impl HelpTopic {
             Self::Explain => "explain",
             Self::Analytics => "analytics",
             Self::AnalyticsPaths => "analytics_paths",
+            Self::AnalyticsFunnel => "analytics_funnel",
             Self::AnalyticsRetention => "analytics_retention",
             Self::AnalyticsLifecycle => "analytics_lifecycle",
             Self::Investigate => "investigate",
@@ -903,6 +914,62 @@ pub struct AnalyticsPathOptions {
     pub path_limit: u8,
 }
 
+/// Supported version-1 classified event kind used in funnel steps.
+pub type AnalyticsFunnelEventKind = AnalyticsPathEventKind;
+
+/// Identity boundary used to order and count one funnel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AnalyticsFunnelUnit {
+    /// Count separate browser or application sessions.
+    Session,
+    /// Count explicit application-supplied opaque subject IDs.
+    IdentifiedUser,
+}
+
+impl AnalyticsFunnelUnit {
+    /// Returns the stable public API token.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Session => "session",
+            Self::IdentifiedUser => "identified_user",
+        }
+    }
+}
+
+/// One exact ordered product-analytics funnel step.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AnalyticsFunnelStep {
+    /// Supported classified product-event kind.
+    pub kind: AnalyticsFunnelEventKind,
+    /// Exact route template, screen name, or interaction name.
+    pub event_name: String,
+}
+
+/// Exact, bounded product-analytics funnel request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AnalyticsFunnelOptions {
+    /// Account-owned project UUID.
+    pub project_id: String,
+    /// Inclusive compact duration or RFC 3339 lower bound.
+    pub since: String,
+    /// Optional exclusive RFC 3339 upper bound.
+    pub until: Option<String>,
+    /// Optional exact service filter.
+    pub service_name: Option<String>,
+    /// Optional exact release filter.
+    pub release: Option<String>,
+    /// Optional exact environment filter.
+    pub environment: Option<String>,
+    /// Session or explicit opaque identified-user counting boundary.
+    pub analysis_unit: AnalyticsFunnelUnit,
+    /// Optional first-to-final step window in seconds.
+    pub conversion_window_seconds: Option<u32>,
+    /// Two through eight exact ordered event selectors.
+    pub steps: Vec<AnalyticsFunnelStep>,
+}
+
 /// Supported version-1 classified event kind used in retention queries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -1137,6 +1204,7 @@ impl Command {
             )),
             Self::Explain { target, .. } => Some(explain_path(target)),
             Self::AnalyticsPaths { .. } => Some(String::from("/api/telemetry/analytics/paths")),
+            Self::AnalyticsFunnel { .. } => Some(String::from("/api/telemetry/analytics/funnel")),
             Self::AnalyticsRetention { .. } => {
                 Some(String::from("/api/telemetry/analytics/retention"))
             }
@@ -1190,6 +1258,7 @@ impl Command {
             | Self::Watch { json, .. }
             | Self::Explain { json, .. }
             | Self::AnalyticsPaths { json, .. }
+            | Self::AnalyticsFunnel { json, .. }
             | Self::AnalyticsRetention { json, .. }
             | Self::AnalyticsLifecycle { json, .. }
             | Self::InvestigateIssue { json, .. }
@@ -1209,6 +1278,7 @@ impl Command {
             | Self::ProjectIngestKeyCreate { .. }
             | Self::ProjectSetupSeen { .. }
             | Self::AnalyticsPaths { .. }
+            | Self::AnalyticsFunnel { .. }
             | Self::AnalyticsRetention { .. }
             | Self::AnalyticsLifecycle { .. }
             | Self::Support {
@@ -1255,6 +1325,7 @@ impl Command {
                 ..
             } => Some(serde_json::json!({ "status": status })),
             Self::AnalyticsPaths { options, .. } => Some(analytics::request_body(options)),
+            Self::AnalyticsFunnel { options, .. } => Some(analytics_funnel::request_body(options)),
             Self::AnalyticsRetention { options, .. } => {
                 Some(analytics_retention::request_body(options))
             }
@@ -1318,6 +1389,7 @@ impl Command {
             | Self::Watch { .. }
             | Self::Explain { .. }
             | Self::AnalyticsPaths { .. }
+            | Self::AnalyticsFunnel { .. }
             | Self::AnalyticsRetention { .. }
             | Self::AnalyticsLifecycle { .. }
             | Self::InvestigateIssue { .. }
@@ -1455,6 +1527,9 @@ pub async fn execute_command<W: std::io::Write>(
         Command::Explain { target, json } => explain::execute(env, target, *json, output).await,
         Command::AnalyticsPaths { options, json } => {
             analytics::execute(env, options, *json, output).await
+        }
+        Command::AnalyticsFunnel { options, json } => {
+            analytics_funnel::execute(env, options, *json, output).await
         }
         Command::AnalyticsRetention { options, json } => {
             analytics_retention::execute(env, options, *json, output).await

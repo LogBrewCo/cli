@@ -120,6 +120,7 @@ fn request_error(error: RuntimeError) -> RuntimeError {
         | RuntimeError::InvestigationResponseInvalid
         | RuntimeError::ExplainResponseInvalid
         | RuntimeError::AnalyticsResponseInvalid
+        | RuntimeError::AnalyticsFunnelResponseInvalid
         | RuntimeError::AnalyticsRetentionResponseInvalid
         | RuntimeError::AnalyticsLifecycleResponseInvalid
         | RuntimeError::NativeDebugArtifactInvalid
