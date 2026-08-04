@@ -2,6 +2,10 @@
 
 /// Returns whether one version-1 property key is supported and privacy-safe.
 #[must_use]
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "sibling analytics modules share this helper without exporting a public module"
+)]
 pub(crate) fn is_safe_key(value: &str) -> bool {
     STANDARD_PROPERTY_KEYS.contains(&value)
         || value
