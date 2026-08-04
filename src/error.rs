@@ -234,6 +234,9 @@ pub enum RuntimeError {
     /// A successful product-analytics lifecycle response violated its versioned public contract.
     #[error("product analytics lifecycle response is invalid")]
     AnalyticsLifecycleResponseInvalid,
+    /// A successful product-analytics segment comparison violated its public contract.
+    #[error("product analytics segment comparison response is invalid")]
+    AnalyticsSegmentResponseInvalid,
     /// A local Apple native debug artifact failed validation.
     #[error("native debug artifact is invalid")]
     NativeDebugArtifactInvalid,
@@ -330,6 +333,7 @@ pub fn write_native_debug_runtime_error<W: std::io::Write>(
         | RuntimeError::AnalyticsFunnelResponseInvalid
         | RuntimeError::AnalyticsRetentionResponseInvalid
         | RuntimeError::AnalyticsLifecycleResponseInvalid
+        | RuntimeError::AnalyticsSegmentResponseInvalid
         | RuntimeError::NativeDebugArtifactInvalid
         | RuntimeError::NativeDebugResponseInvalid
         | RuntimeError::NativeDebugVerificationFailed => serde_json::json!({
@@ -516,6 +520,7 @@ fn write_human_runtime_error<W: std::io::Write>(
         | RuntimeError::AnalyticsFunnelResponseInvalid
         | RuntimeError::AnalyticsRetentionResponseInvalid
         | RuntimeError::AnalyticsLifecycleResponseInvalid
+        | RuntimeError::AnalyticsSegmentResponseInvalid
         | RuntimeError::NativeDebugArtifactInvalid
         | RuntimeError::NativeDebugResponseInvalid
         | RuntimeError::NativeDebugVerificationFailed
@@ -539,6 +544,7 @@ fn runtime_error_json(error: &RuntimeError) -> serde_json::Value {
         | RuntimeError::AnalyticsFunnelResponseInvalid
         | RuntimeError::AnalyticsRetentionResponseInvalid
         | RuntimeError::AnalyticsLifecycleResponseInvalid
+        | RuntimeError::AnalyticsSegmentResponseInvalid
         | RuntimeError::NativeDebugArtifactInvalid
         | RuntimeError::NativeDebugResponseInvalid
         | RuntimeError::NativeDebugVerificationFailed
@@ -732,6 +738,7 @@ const fn runtime_error_code(error: &RuntimeError) -> &'static str {
         RuntimeError::AnalyticsFunnelResponseInvalid => "analytics_funnel_response_invalid",
         RuntimeError::AnalyticsRetentionResponseInvalid => "analytics_retention_response_invalid",
         RuntimeError::AnalyticsLifecycleResponseInvalid => "analytics_lifecycle_response_invalid",
+        RuntimeError::AnalyticsSegmentResponseInvalid => "analytics_segment_response_invalid",
         RuntimeError::NativeDebugArtifactInvalid => "native_debug_artifact_invalid",
         RuntimeError::NativeDebugResponseInvalid => "native_debug_response_invalid",
         RuntimeError::NativeDebugVerificationFailed => "native_debug_verification_failed",
@@ -795,6 +802,7 @@ fn runtime_error_next_step(error: &RuntimeError) -> Cow<'static, str> {
         | RuntimeError::AnalyticsFunnelResponseInvalid
         | RuntimeError::AnalyticsRetentionResponseInvalid
         | RuntimeError::AnalyticsLifecycleResponseInvalid
+        | RuntimeError::AnalyticsSegmentResponseInvalid
         | RuntimeError::NativeDebugArtifactInvalid
         | RuntimeError::NativeDebugResponseInvalid
         | RuntimeError::NativeDebugVerificationFailed
@@ -855,6 +863,9 @@ const fn fallback_runtime_error_next_step(error: &RuntimeError) -> &'static str 
         }
         RuntimeError::AnalyticsLifecycleResponseInvalid => {
             "retry the same analytics lifecycle query; if it repeats, report the public response contract"
+        }
+        RuntimeError::AnalyticsSegmentResponseInvalid => {
+            "retry the same analytics segment comparison; if it repeats, report the public response contract"
         }
         RuntimeError::NativeDebugArtifactInvalid => {
             "provide one validated Apple dSYM, ZIP, or Mach-O object matching every --expect-image-uuid value"

@@ -2236,6 +2236,7 @@ fn request_error(error: RuntimeError) -> RuntimeError {
         | RuntimeError::AnalyticsFunnelResponseInvalid
         | RuntimeError::AnalyticsRetentionResponseInvalid
         | RuntimeError::AnalyticsLifecycleResponseInvalid
+        | RuntimeError::AnalyticsSegmentResponseInvalid
         | RuntimeError::NativeDebugArtifactInvalid
         | RuntimeError::NativeDebugResponseInvalid
         | RuntimeError::NativeDebugVerificationFailed => transport_error(),

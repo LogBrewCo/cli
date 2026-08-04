@@ -29,6 +29,7 @@ pub const fn help_text(topic: HelpTopic) -> &'static str {
         HelpTopic::Explain => EXPLAIN_HELP,
         HelpTopic::Analytics => ANALYTICS_HELP,
         HelpTopic::AnalyticsOverview => ANALYTICS_OVERVIEW_HELP,
+        HelpTopic::AnalyticsCompare => ANALYTICS_COMPARE_HELP,
         HelpTopic::AnalyticsPaths => ANALYTICS_PATHS_HELP,
         HelpTopic::AnalyticsFunnel => ANALYTICS_FUNNEL_HELP,
         HelpTopic::AnalyticsRetention => ANALYTICS_RETENTION_HELP,
@@ -104,6 +105,10 @@ Usage:
   logbrew explain trace <trace_id> [--json]
   logbrew explain <issue_id_or_trace_id> [--json]
   logbrew analytics overview --project <project_id> --since 24h [--json]
+  logbrew analytics compare --project <project_id> --since 7d --target-kind interaction \
+                         --target-event checkout_completed --segment old=Old-release \
+                         --segment new=New-release --segment-release old=1.0.0 \
+                         --segment-release new=1.1.0 [--json]
   logbrew analytics paths following --project <project_id> --since 24h --anchor-kind page-view \
                          --anchor-event /pricing [--json]
   logbrew analytics funnel --project <project_id> --since 24h --step page-view /pricing \
@@ -536,6 +541,7 @@ Pasted UUID/issue_* values are treated as issues; 32-hex/trace_* values are trea
 const ANALYTICS_HELP: &str = "\
 Usage:
   logbrew analytics overview --help
+  logbrew analytics compare --help
   logbrew analytics paths --help
   logbrew analytics funnel --help
   logbrew analytics retention --help
@@ -543,6 +549,8 @@ Usage:
 
 Overview discovers captured activity, exact event names, surfaces, capture quality, and analysis \
 readiness before a more specific query.
+Compare measures one exact outcome across two through four named service, release, or environment \
+segments, with the first segment as a descriptive baseline.
 Paths shows the most common aggregate journeys around one exact event without returning session \
 or user identifiers.
 Funnels measure exact ordered conversion and drop-off across two through eight product events \
@@ -553,8 +561,8 @@ Lifecycle classifies identified users as new in observed history, returning, res
 dormant for one exact event, with explicit history and capture bounds.
 All commands return bounded human guidance and an exact validated schema-version-1 JSON contract \
 for AI agents.
-Next: start with overview, then choose paths for journeys, funnels for conversion, retention for \
-return behavior, or lifecycle for population change.";
+Next: start with overview, then choose compare for context differences, paths for journeys, funnels \
+for conversion, retention for return behavior, or lifecycle for population change.";
 
 /// Product-analytics project overview help text.
 const ANALYTICS_OVERVIEW_HELP: &str = "\
@@ -577,8 +585,39 @@ Unique user, session, name, and surface counts are approximate; event and covera
 exact within the selected window.
 Human output is terminal-safe and recommends the next useful capture or analysis action.
 JSON emits the exact validated schema-version-1 response without user or session identifiers.
-Next: use exact event names from the overview with analytics paths, funnel, retention, or \
+Next: use exact event names from the overview with analytics compare, paths, funnel, retention, or \
 lifecycle.";
+
+/// Product-analytics context segment comparison help text.
+const ANALYTICS_COMPARE_HELP: &str = "\
+Usage:
+  logbrew analytics compare --project <project_id> --since <24h|RFC3339> \
+      --target-kind <page-view|screen-view|interaction> --target-event <name> \
+      --segment <key>=<label> --segment <key>=<label> [--segment <key>=<label>]... \
+      [options] [--json]
+
+Options:
+  --until <RFC3339>                    Exclusive upper time bound.
+  --interval <value>                   auto, 1m, 5m, 15m, 1h, 6h, or 1d (default: auto).
+  --unit <session|identified-user>     Eligibility and reach boundary (default: session).
+  --segment-service <key>=<value>      Exact service filter for one declared segment.
+  --segment-release <key>=<value>      Exact release filter for one declared segment.
+  --segment-environment <key>=<value>  Exact environment filter for one declared segment.
+
+Repeat --segment two through four times in comparison order. The first segment is the descriptive \
+baseline. Keys use lowercase letters, numbers, underscore, or hyphen; keyed filter flags can \
+appear before or after their matching declaration.
+Each segment must have a unique exact service, release, and environment combination. Segments are \
+evaluated independently and may overlap, so their totals must not be added as a population split.
+Reach is the fraction of eligible explicit sessions or opaque identified users that performed the \
+exact target. Unique-unit counts are approximate; event and coverage totals are exact within the \
+fully evaluated window. Relative lift is descriptive only: no causal inference or statistical \
+significance test is claimed.
+Human output shows segment reach, baseline differences, capture and trace-link coverage, bounded \
+time-series evidence, interpretation limits, and the next useful action. JSON emits the exact \
+validated schema-version-1 response without raw session or subject identifiers.
+Next: choose an exact captured target from Product Analytics overview, compare meaningful exact \
+contexts, then inspect paths and correlated traces in the weakest segment.";
 
 /// Product-analytics path exploration help text.
 const ANALYTICS_PATHS_HELP: &str = "\

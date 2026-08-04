@@ -179,6 +179,7 @@ pub(super) fn command_shaped_help_topic(head: &str, tail: &[String]) -> Option<H
         "analytics" => match positionals.as_slice() {
             [] => Some(HelpTopic::Analytics),
             ["overview"] => Some(HelpTopic::AnalyticsOverview),
+            ["compare" | "comparison" | "segments"] => Some(HelpTopic::AnalyticsCompare),
             ["paths"] | ["paths", "following" | "preceding" | "after" | "before"] => {
                 Some(HelpTopic::AnalyticsPaths)
             }
@@ -726,11 +727,12 @@ fn subresource_help_topic(
     }
 }
 
-/// Selects the analytics namespace, overview, paths, funnel, retention, or lifecycle help.
+/// Selects the analytics namespace or one product-analytics resource help topic.
 fn analytics_help_topic(args: &[&str]) -> Result<HelpTopic, CliError> {
     match args {
         [] => Ok(HelpTopic::Analytics),
         ["overview"] => Ok(HelpTopic::AnalyticsOverview),
+        ["compare" | "comparison" | "segments"] => Ok(HelpTopic::AnalyticsCompare),
         ["paths"] | ["paths", "following" | "preceding" | "after" | "before"] => {
             Ok(HelpTopic::AnalyticsPaths)
         }
@@ -738,7 +740,8 @@ fn analytics_help_topic(args: &[&str]) -> Result<HelpTopic, CliError> {
         ["retention"] => Ok(HelpTopic::AnalyticsRetention),
         ["lifecycle"] => Ok(HelpTopic::AnalyticsLifecycle),
         [
-            "overview" | "paths" | "funnel" | "funnels" | "retention" | "lifecycle",
+            "overview" | "compare" | "comparison" | "segments" | "paths" | "funnel" | "funnels"
+            | "retention" | "lifecycle",
             extra,
             ..,
         ] => Err(unexpected_help_argument(extra)),
