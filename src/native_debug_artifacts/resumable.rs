@@ -472,6 +472,7 @@ fn request_failure(error: RuntimeError) -> AttemptFailure {
         | RuntimeError::StatusUnavailable { .. }
         | RuntimeError::InvestigationResponseInvalid
         | RuntimeError::ExplainResponseInvalid
+        | RuntimeError::AnalyticsOverviewResponseInvalid
         | RuntimeError::AnalyticsResponseInvalid
         | RuntimeError::AnalyticsFunnelResponseInvalid
         | RuntimeError::AnalyticsRetentionResponseInvalid

@@ -9,6 +9,7 @@
 mod analytics;
 mod analytics_funnel;
 mod analytics_lifecycle;
+mod analytics_overview;
 mod analytics_retention;
 #[doc(hidden)]
 pub mod auth;
@@ -222,6 +223,13 @@ pub enum Command {
         /// Emit machine-readable JSON.
         json: bool,
     },
+    /// Summarizes bounded product activity and capture quality for one project.
+    AnalyticsOverview {
+        /// Normalized privacy-safe overview query.
+        options: AnalyticsOverviewOptions,
+        /// Emit the exact validated server response.
+        json: bool,
+    },
     /// Explores bounded aggregate product journeys around one exact event.
     AnalyticsPaths {
         /// Normalized privacy-safe path query.
@@ -336,6 +344,8 @@ pub enum HelpTopic {
     Explain,
     /// Product-analytics command overview.
     Analytics,
+    /// Product-analytics project overview command.
+    AnalyticsOverview,
     /// Product-analytics path exploration command.
     AnalyticsPaths,
     /// Product-analytics ordered funnel command.
@@ -381,6 +391,7 @@ impl HelpTopic {
             Self::Watch => "watch",
             Self::Explain => "explain",
             Self::Analytics => "analytics",
+            Self::AnalyticsOverview => "analytics_overview",
             Self::AnalyticsPaths => "analytics_paths",
             Self::AnalyticsFunnel => "analytics_funnel",
             Self::AnalyticsRetention => "analytics_retention",
@@ -840,6 +851,27 @@ pub struct ExplainMetricTarget {
     pub series_limit: Option<u8>,
 }
 
+/// Exact, bounded product-analytics overview request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AnalyticsOverviewOptions {
+    /// Account-owned project UUID.
+    pub project_id: String,
+    /// Inclusive compact duration or RFC 3339 lower bound.
+    pub since: String,
+    /// Optional exclusive RFC 3339 upper bound.
+    pub until: Option<String>,
+    /// Automatic or fixed activity-series interval.
+    pub interval: String,
+    /// Optional exact service filter.
+    pub service_name: Option<String>,
+    /// Optional exact release filter.
+    pub release: Option<String>,
+    /// Optional exact environment filter.
+    pub environment: Option<String>,
+    /// Maximum returned action, surface, and exact-event rankings.
+    pub top_limit: u8,
+}
+
 /// Direction explored from one exact product-event anchor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -1203,6 +1235,9 @@ impl Command {
                 },
             )),
             Self::Explain { target, .. } => Some(explain_path(target)),
+            Self::AnalyticsOverview { options, .. } => {
+                Some(analytics_overview::request_path(options))
+            }
             Self::AnalyticsPaths { .. } => Some(String::from("/api/telemetry/analytics/paths")),
             Self::AnalyticsFunnel { .. } => Some(String::from("/api/telemetry/analytics/funnel")),
             Self::AnalyticsRetention { .. } => {
@@ -1257,6 +1292,7 @@ impl Command {
             | Self::Read { json, .. }
             | Self::Watch { json, .. }
             | Self::Explain { json, .. }
+            | Self::AnalyticsOverview { json, .. }
             | Self::AnalyticsPaths { json, .. }
             | Self::AnalyticsFunnel { json, .. }
             | Self::AnalyticsRetention { json, .. }
@@ -1294,6 +1330,7 @@ impl Command {
             Self::Projects { .. }
             | Self::Read { .. }
             | Self::Explain { .. }
+            | Self::AnalyticsOverview { .. }
             | Self::Support { .. } => Some(HttpMethod::Get),
             Self::Help { .. }
             | Self::Login { .. }
@@ -1363,6 +1400,7 @@ impl Command {
             | Self::Read { .. }
             | Self::Watch { .. }
             | Self::Explain { .. }
+            | Self::AnalyticsOverview { .. }
             | Self::InvestigateIssue { .. }
             | Self::NativeDebugArtifacts { .. }
             | Self::Support { .. } => None,
@@ -1388,6 +1426,7 @@ impl Command {
             | Self::Read { .. }
             | Self::Watch { .. }
             | Self::Explain { .. }
+            | Self::AnalyticsOverview { .. }
             | Self::AnalyticsPaths { .. }
             | Self::AnalyticsFunnel { .. }
             | Self::AnalyticsRetention { .. }
@@ -1525,6 +1564,9 @@ pub async fn execute_command<W: std::io::Write>(
             investigate::execute(env, issue_id.as_str(), *json, output).await
         }
         Command::Explain { target, json } => explain::execute(env, target, *json, output).await,
+        Command::AnalyticsOverview { options, json } => {
+            analytics_overview::execute(env, options, *json, output).await
+        }
         Command::AnalyticsPaths { options, json } => {
             analytics::execute(env, options, *json, output).await
         }
