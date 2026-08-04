@@ -1,5 +1,7 @@
 //! Closed product-analytics command grammar.
 
+use std::collections::HashSet;
+
 mod compare;
 mod funnel;
 mod lifecycle;
@@ -9,11 +11,12 @@ mod retention;
 
 use crate::ids::is_uuid;
 use crate::{
-    AnalyticsPathDirection, AnalyticsPathEventKind, AnalyticsPathOptions, CliError, Command,
+    AnalyticsPathDirection, AnalyticsPathEventKind, AnalyticsPathOptions,
+    AnalyticsPathPropertyFilter, CliError, Command,
 };
 
 /// Exact recovery text shared by every malformed path invocation.
-pub(super) const ANALYTICS_PATHS_NEXT_STEP: &str = "use logbrew analytics paths following|preceding --project <project_id> --since <24h|RFC3339> --anchor-kind <page-view|screen-view|interaction> --anchor-event <name> with optional --until, --service, --release, --environment, --depth 1-8, --path-limit 1-20, --keep-repeated, and --json";
+pub(super) const ANALYTICS_PATHS_NEXT_STEP: &str = "use logbrew analytics paths following|preceding --project <project_id> --since <24h|RFC3339> --anchor-kind <page-view|screen-view|interaction> --anchor-event <name> with optional repeated --property <key=value>, --until, --service, --release, --environment, --depth 1-8, --path-limit 1-20, --keep-repeated, and --json";
 
 /// Exact recovery text for the product-analytics namespace.
 pub(super) const ANALYTICS_NEXT_STEP: &str = "use logbrew analytics overview --help, logbrew analytics properties --help, logbrew analytics compare --help, logbrew analytics paths --help, logbrew analytics funnel --help, logbrew analytics retention --help, or logbrew analytics lifecycle --help";
@@ -135,6 +138,11 @@ fn parse_paths(args: &[String]) -> Result<Command, CliError> {
                 parsed.anchor_event =
                     Some(flag_value(flags, &mut index, "--anchor-event", inline)?);
             }
+            "--property" | "--property-filter" => {
+                parsed
+                    .properties
+                    .push(flag_value(flags, &mut index, "--property", inline)?);
+            }
             "--depth" => {
                 mark_seen(&mut seen, "--depth")?;
                 parsed.depth = Some(flag_value(flags, &mut index, "--depth", inline)?);
@@ -180,6 +188,7 @@ struct ParsedPathFlags {
     environment: Option<String>,
     anchor_kind: Option<String>,
     anchor_event: Option<String>,
+    properties: Vec<String>,
     depth: Option<String>,
     path_limit: Option<String>,
     collapse_repeated: bool,
@@ -197,6 +206,7 @@ impl Default for ParsedPathFlags {
             environment: None,
             anchor_kind: None,
             anchor_event: None,
+            properties: Vec::new(),
             depth: None,
             path_limit: None,
             collapse_repeated: true,
@@ -227,6 +237,7 @@ impl ParsedPathFlags {
             anchor_kind,
             required(self.anchor_event.as_deref(), "anchor-event")?,
         )?;
+        let property_filters = normalize_path_property_filters(self.properties.as_slice())?;
         let depth = bounded_u8(self.depth.as_deref(), 4, 1, 8, "invalid depth")?;
         let path_limit = bounded_u8(self.path_limit.as_deref(), 10, 1, 20, "invalid path limit")?;
 
@@ -240,10 +251,49 @@ impl ParsedPathFlags {
             direction,
             anchor_kind,
             anchor_event,
+            property_filters,
             depth,
             collapse_repeated: self.collapse_repeated,
             path_limit,
         })
+    }
+}
+
+/// Normalizes, deduplicates, and canonically orders exact anchor predicates.
+fn normalize_path_property_filters(
+    values: &[String],
+) -> Result<Vec<AnalyticsPathPropertyFilter>, CliError> {
+    if values.len() > 4 {
+        return Err(invalid_argument("too many analytics path property filters"));
+    }
+    let mut keys = HashSet::with_capacity(values.len());
+    let mut filters = values
+        .iter()
+        .map(|raw| {
+            let (key, value) = raw
+                .split_once('=')
+                .ok_or_else(|| invalid_argument("invalid analytics path property assignment"))?;
+            let key = normalize_property_key(key)?;
+            if !keys.insert(key.clone()) {
+                return Err(invalid_argument("duplicate analytics path property key"));
+            }
+            Ok(AnalyticsPathPropertyFilter {
+                key,
+                value: normalize_text(value, 256)?,
+            })
+        })
+        .collect::<Result<Vec<_>, CliError>>()?;
+    filters.sort_unstable_by(|left, right| left.key.cmp(&right.key));
+    Ok(filters)
+}
+
+/// Applies the backend's exact safe analytics-property key contract.
+pub(super) fn normalize_property_key(value: &str) -> Result<String, CliError> {
+    let value = value.trim();
+    if crate::analytics_property_contract::is_safe_key(value) {
+        Ok(value.to_owned())
+    } else {
+        Err(invalid_argument("unsupported analytics property key"))
     }
 }
 
@@ -397,6 +447,9 @@ mod tests {
             "/pricing",
             "--env",
             "production",
+            "--property",
+            "tag.plan=pro",
+            "--property=resource.framework.name=React",
             "--keep-repeated",
             "--json",
         ]))
@@ -410,6 +463,10 @@ mod tests {
         assert_eq!(options.project_id, "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
         assert_eq!(options.depth, 4);
         assert_eq!(options.path_limit, 10);
+        assert_eq!(options.property_filters.len(), 2);
+        assert_eq!(options.property_filters[0].key, "resource.framework.name");
+        assert_eq!(options.property_filters[0].value, "React");
+        assert_eq!(options.property_filters[1].key, "tag.plan");
         assert!(!options.collapse_repeated);
         assert!(json);
     }
@@ -447,5 +504,33 @@ mod tests {
         let mut too_deep = base.to_vec();
         too_deep.extend(["--depth", "9"]);
         assert!(parse_analytics(&args(&too_deep)).is_err());
+
+        let mut unsafe_property = base.to_vec();
+        unsafe_property.extend(["--property", "tag.user_id=123"]);
+        assert!(parse_analytics(&args(&unsafe_property)).is_err());
+
+        let mut duplicate_property = base.to_vec();
+        duplicate_property.extend([
+            "--property",
+            "tag.plan=free",
+            "--property-filter",
+            "tag.plan=pro",
+        ]);
+        assert!(parse_analytics(&args(&duplicate_property)).is_err());
+
+        let mut too_many_properties = base.to_vec();
+        too_many_properties.extend([
+            "--property",
+            "tag.a=1",
+            "--property",
+            "tag.b=2",
+            "--property",
+            "tag.c=3",
+            "--property",
+            "tag.d=4",
+            "--property",
+            "tag.e=5",
+        ]);
+        assert!(parse_analytics(&args(&too_many_properties)).is_err());
     }
 }

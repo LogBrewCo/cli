@@ -667,16 +667,24 @@ Options:
   --service <name>        Exact service context.
   --release <release>     Exact release context.
   --environment <name>   Exact environment context.
+  --property <key=value>  Exact safe anchor predicate; repeat up to four times (logical AND).
   --depth <1-8>           Adjacent named events (default: 4).
   --path-limit <1-20>     Highest-volume aggregate paths (default: 10).
   --keep-repeated         Keep consecutive identical events instead of collapsing them.
 
 Shows the most common named product-event journeys immediately after or before one exact anchor.
 Aliases after/before map to following/preceding; page_view and screen_view are accepted kind aliases.
+Property predicates are exact case-sensitive matches applied only to the anchor occurrence. Copy \
+keys from analytics properties; values remain application-known and are not suggested or repeated \
+in human output. Surrounding events remain unfiltered so the session journey stays truthful.
 Results use explicit opaque session boundaries and never return session or user identifiers.
-Human output highlights represented sessions, capture gaps, truncation, and the next useful action.
+Human output highlights represented sessions, property-ready versus missing-key and value-mismatch \
+populations, trace-link coverage, bounded trace investigation commands, capture gaps, truncation, \
+and the next useful action. Trace exemplars are same-trace evidence, never a root-cause claim, and \
+their usefulness depends on retained spans.
 JSON emits the exact validated schema-version-1 response for AI agents.
-Next: choose an exact captured page, screen, or interaction name from Product Analytics.";
+Next: choose an exact captured page, screen, or interaction from Product Analytics, optionally \
+classify its anchor with safe properties, then inspect a returned trace exemplar.";
 
 /// Product-analytics ordered funnel help text.
 const ANALYTICS_FUNNEL_HELP: &str = "\

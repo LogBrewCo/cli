@@ -5,6 +5,7 @@ use wiremock::matchers::{body_json, header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 const PROJECT_ID: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const TRACE_ID: &str = "4bf92f3577b34da6a3ce929d0e0e4736";
 
 #[test]
 fn public_grammar_help_and_request_model_stay_aligned() -> Result<(), Box<dyn std::error::Error>> {
@@ -47,6 +48,8 @@ fn public_grammar_help_and_request_model_stay_aligned() -> Result<(), Box<dyn st
         "screen-view",
         "--anchor-event",
         "Checkout",
+        "--property",
+        "tag.plan=pro",
     ])?;
     assert_eq!(
         command.http_path().as_deref(),
@@ -58,10 +61,14 @@ fn public_grammar_help_and_request_model_stay_aligned() -> Result<(), Box<dyn st
     assert_eq!(body["direction"], "preceding");
     assert_eq!(body["anchor"]["kind"], "screen_view");
     assert_eq!(body["anchor"]["event_name"], "Checkout");
+    assert_eq!(body["property_filters"][0]["key"], "tag.plan");
+    assert_eq!(body["property_filters"][0]["value"], "pro");
 
     let text = help::help_text(HelpTopic::AnalyticsPaths);
     assert!(text.contains("explicit opaque session boundaries"));
     assert!(text.contains("never return session or user identifiers"));
+    assert!(text.contains("Property predicates are exact case-sensitive matches"));
+    assert!(text.contains("same-trace evidence, never a root-cause claim"));
     assert!(text.contains("JSON emits the exact validated schema-version-1 response"));
     let overview = help::help_text(HelpTopic::Analytics);
     assert!(overview.contains("logbrew analytics retention --help"));
@@ -82,6 +89,7 @@ async fn built_binary_posts_exact_scope_and_preserves_validated_json()
             "environment": "production",
             "direction": "following",
             "anchor": {"kind": "page_view", "event_name": "/pricing"},
+            "property_filters": [{"key": "tag.plan", "value": "pro"}],
             "depth": 4,
             "collapse_repeated": true,
             "path_limit": 10
@@ -125,13 +133,16 @@ async fn built_binary_human_output_explains_journey_coverage_and_next_step()
         "Anchored sessions: 20; represented: 12; unrepresented: 8",
         "1. 12 sessions (60.0%): [0] page_view /pricing -> [+1] interaction signup_started",
         "Coverage: named 90/100; sessionized 80/100; usable anchors 24/30",
+        "Anchor property coverage: ready 35/40; matched 30/35; missing keys 5; exact value mismatch 5",
+        "Trace evidence: 18/30 matching anchors carried a trace ID.",
+        "Evidence: logbrew explain trace 4bf92f3577b34da6a3ce929d0e0e4736",
         "Capture gap: 20 classified events lacked an explicit session ID.",
         "Limit: lower-volume or per-session-capped journeys are not represented.",
-        "Next: measure the most material returned sequence as an exact funnel",
+        "Next: open a returned trace exemplar as evidence in the trace investigation workspace",
     ] {
         assert!(text.contains(expected), "missing human detail: {expected}");
     }
-    assert!(!text.contains("Measure this server-authored reason verbatim."));
+    assert!(!text.contains("Inspect this server-authored reason verbatim."));
     Ok(())
 }
 
@@ -176,6 +187,8 @@ async fn run_binary(
         "page-view",
         "--anchor-event",
         "/pricing",
+        "--property",
+        "tag.plan=pro",
         "--environment",
         "production",
     ];
@@ -207,6 +220,7 @@ fn paths_response() -> serde_json::Value {
             "environment": "production",
             "direction": "following",
             "anchor": {"kind": "page_view", "event_name": "/pricing"},
+            "property_filters": [{"key": "tag.plan", "value": "pro"}],
             "depth": 4,
             "collapse_repeated": true,
             "path_limit": 10
@@ -226,11 +240,22 @@ fn paths_response() -> serde_json::Value {
             "sessionized_events": 80,
             "unsessionized_events": 20,
             "anchor_events": 30,
+            "anchor_property_filters": {
+                "context_events": 40,
+                "property_ready_events": 35,
+                "missing_property_events": 5,
+                "matching_events": 30,
+                "nonmatching_value_events": 5,
+                "property_ready_rate": 0.875,
+                "match_rate": 30.0 / 35.0
+            },
             "usable_anchor_events": 24,
             "excluded_anchor_events": 6,
+            "traced_anchor_events": 18,
             "event_name_rate": 0.9,
             "sessionization_rate": 0.8,
             "anchor_session_coverage_rate": 0.8,
+            "anchor_trace_link_rate": 0.6,
             "ordered_event_cap_per_session": 1024,
             "limitations": ["Only classified events are included."]
         },
@@ -238,15 +263,18 @@ fn paths_response() -> serde_json::Value {
             "rank": 1,
             "sessions": 12,
             "share_of_anchored_sessions": 0.6,
+            "traced_sessions": 8,
+            "trace_link_rate": 8.0 / 12.0,
+            "trace_exemplars": [TRACE_ID],
             "nodes": [
                 {"relative_position": 0, "kind": "page_view", "event_name": "/pricing"},
                 {"relative_position": 1, "kind": "interaction", "event_name": "signup_started"}
             ]
         }],
         "next_action": {
-            "code": "measure_top_path_as_funnel",
-            "target": "/api/telemetry/analytics/funnel",
-            "reason": "Measure this server-authored reason verbatim."
+            "code": "inspect_path_trace",
+            "target": "/api/telemetry/traces/{trace_id}/investigation",
+            "reason": "Inspect this server-authored reason verbatim."
         }
     })
 }

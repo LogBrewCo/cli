@@ -929,6 +929,9 @@ pub struct AnalyticsSegmentPropertyFilter {
     pub value: String,
 }
 
+/// One exact privacy-safe property predicate applied to an analytics path anchor.
+pub type AnalyticsPathPropertyFilter = AnalyticsSegmentPropertyFilter;
+
 /// One named exact deployment and property segment.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AnalyticsSegment {
@@ -1033,6 +1036,8 @@ pub struct AnalyticsPathOptions {
     pub anchor_kind: AnalyticsPathEventKind,
     /// Exact route template, screen name, or interaction name.
     pub anchor_event: String,
+    /// Zero through four exact predicates applied only to the selected anchor occurrence.
+    pub property_filters: Vec<AnalyticsPathPropertyFilter>,
     /// Maximum adjacent named events on the selected side.
     pub depth: u8,
     /// Whether consecutive identical events collapse before anchoring.
