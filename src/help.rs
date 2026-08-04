@@ -29,6 +29,7 @@ pub const fn help_text(topic: HelpTopic) -> &'static str {
         HelpTopic::Explain => EXPLAIN_HELP,
         HelpTopic::Analytics => ANALYTICS_HELP,
         HelpTopic::AnalyticsOverview => ANALYTICS_OVERVIEW_HELP,
+        HelpTopic::AnalyticsProperties => ANALYTICS_PROPERTIES_HELP,
         HelpTopic::AnalyticsCompare => ANALYTICS_COMPARE_HELP,
         HelpTopic::AnalyticsPaths => ANALYTICS_PATHS_HELP,
         HelpTopic::AnalyticsFunnel => ANALYTICS_FUNNEL_HELP,
@@ -105,6 +106,7 @@ Usage:
   logbrew explain trace <trace_id> [--json]
   logbrew explain <issue_id_or_trace_id> [--json]
   logbrew analytics overview --project <project_id> --since 24h [--json]
+  logbrew analytics properties --project <project_id> --since 24h [--limit 20] [--json]
   logbrew analytics compare --project <project_id> --since 7d --target-kind interaction \
                          --target-event checkout_completed --segment old=Old-release \
                          --segment new=New-release --segment-release old=1.0.0 \
@@ -541,6 +543,7 @@ Pasted UUID/issue_* values are treated as issues; 32-hex/trace_* values are trea
 const ANALYTICS_HELP: &str = "\
 Usage:
   logbrew analytics overview --help
+  logbrew analytics properties --help
   logbrew analytics compare --help
   logbrew analytics paths --help
   logbrew analytics funnel --help
@@ -549,8 +552,10 @@ Usage:
 
 Overview discovers captured activity, exact event names, surfaces, capture quality, and analysis \
 readiness before a more specific query.
-Compare measures one exact outcome across two through four named service, release, or environment \
-segments, with the first segment as a descriptive baseline.
+Properties discovers privacy-safe typed-context and custom-tag keys, aggregate capture coverage, \
+and migration gaps without exposing property values or identities.
+Compare measures one exact outcome across two through four named service, release, environment, or \
+exact-property segments, with the first segment as a descriptive baseline.
 Paths shows the most common aggregate journeys around one exact event without returning session \
 or user identifiers.
 Funnels measure exact ordered conversion and drop-off across two through eight product events \
@@ -561,8 +566,9 @@ Lifecycle classifies identified users as new in observed history, returning, res
 dormant for one exact event, with explicit history and capture bounds.
 All commands return bounded human guidance and an exact validated schema-version-1 JSON contract \
 for AI agents.
-Next: start with overview, then choose compare for context differences, paths for journeys, funnels \
-for conversion, retention for return behavior, or lifecycle for population change.";
+Next: start with overview, inspect properties before property-based comparisons, then choose compare \
+for context differences, paths for journeys, funnels for conversion, retention for return behavior, \
+or lifecycle for population change.";
 
 /// Product-analytics project overview help text.
 const ANALYTICS_OVERVIEW_HELP: &str = "\
@@ -588,6 +594,29 @@ JSON emits the exact validated schema-version-1 response without user or session
 Next: use exact event names from the overview with analytics compare, paths, funnel, retention, or \
 lifecycle.";
 
+/// Product-analytics privacy-safe property catalog help text.
+const ANALYTICS_PROPERTIES_HELP: &str = "\
+Usage:
+  logbrew analytics properties --project <project_id> --since <24h|RFC3339> [options] [--json]
+
+Options:
+  --until <RFC3339>       Exclusive upper time bound.
+  --service <name>        Exact service context.
+  --release <release>     Exact release context.
+  --environment <name>   Exact environment context.
+  --limit <1-50>          Highest-volume safe property keys (default: 20).
+
+Shows bounded standard runtime, framework, operating-system, device, and application keys plus \
+non-sensitive tag.* keys captured on classified product events. Results include exact per-key event \
+coverage, approximate distinct-value counts, current-index and historical migration coverage, \
+privacy filtering, truncation, and the next useful action.
+Property values and user, session, subject, trace, network-address, or credential identifiers are \
+never returned by this command. Use a value already known by your application with \
+--segment-property <segment-key>:<property-key>=<exact-value> in analytics compare.
+Human output is terminal-safe. JSON emits the exact validated schema-version-1 aggregate response.
+Next: copy an exact returned key into an analytics compare property predicate; verify value spelling \
+and case locally because catalog discovery intentionally does not reveal values.";
+
 /// Product-analytics context segment comparison help text.
 const ANALYTICS_COMPARE_HELP: &str = "\
 Usage:
@@ -603,17 +632,23 @@ Options:
   --segment-service <key>=<value>      Exact service filter for one declared segment.
   --segment-release <key>=<value>      Exact release filter for one declared segment.
   --segment-environment <key>=<value>  Exact environment filter for one declared segment.
+  --segment-property <segment>:<key>=<value>
+                                        Exact safe property predicate; repeat up to four per segment.
 
 Repeat --segment two through four times in comparison order. The first segment is the descriptive \
 baseline. Keys use lowercase letters, numbers, underscore, or hyphen; keyed filter flags can \
 appear before or after their matching declaration.
-Each segment must have a unique exact service, release, and environment combination. Segments are \
+Property predicates are exact case-sensitive bounded string matches and combine with logical AND. \
+Copy keys from analytics properties; property values remain application-known and are not suggested. \
+Each segment must have a unique exact service, release, environment, and property-filter \
+combination. Segments are \
 evaluated independently and may overlap, so their totals must not be added as a population split.
 Reach is the fraction of eligible explicit sessions or opaque identified users that performed the \
 exact target. Unique-unit counts are approximate; event and coverage totals are exact within the \
 fully evaluated window. Relative lift is descriptive only: no causal inference or statistical \
 significance test is claimed.
-Human output shows segment reach, baseline differences, capture and trace-link coverage, bounded \
+Human output shows segment reach, baseline differences, missing-key coverage versus nonmatching-value \
+coverage, capture and trace-link coverage, bounded \
 time-series evidence, interpretation limits, and the next useful action. JSON emits the exact \
 validated schema-version-1 response without raw session or subject identifiers.
 Next: choose an exact captured target from Product Analytics overview, compare meaningful exact \

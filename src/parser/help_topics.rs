@@ -179,6 +179,7 @@ pub(super) fn command_shaped_help_topic(head: &str, tail: &[String]) -> Option<H
         "analytics" => match positionals.as_slice() {
             [] => Some(HelpTopic::Analytics),
             ["overview"] => Some(HelpTopic::AnalyticsOverview),
+            ["properties" | "property" | "dimensions"] => Some(HelpTopic::AnalyticsProperties),
             ["compare" | "comparison" | "segments"] => Some(HelpTopic::AnalyticsCompare),
             ["paths"] | ["paths", "following" | "preceding" | "after" | "before"] => {
                 Some(HelpTopic::AnalyticsPaths)
@@ -732,6 +733,7 @@ fn analytics_help_topic(args: &[&str]) -> Result<HelpTopic, CliError> {
     match args {
         [] => Ok(HelpTopic::Analytics),
         ["overview"] => Ok(HelpTopic::AnalyticsOverview),
+        ["properties" | "property" | "dimensions"] => Ok(HelpTopic::AnalyticsProperties),
         ["compare" | "comparison" | "segments"] => Ok(HelpTopic::AnalyticsCompare),
         ["paths"] | ["paths", "following" | "preceding" | "after" | "before"] => {
             Ok(HelpTopic::AnalyticsPaths)
@@ -740,8 +742,8 @@ fn analytics_help_topic(args: &[&str]) -> Result<HelpTopic, CliError> {
         ["retention"] => Ok(HelpTopic::AnalyticsRetention),
         ["lifecycle"] => Ok(HelpTopic::AnalyticsLifecycle),
         [
-            "overview" | "compare" | "comparison" | "segments" | "paths" | "funnel" | "funnels"
-            | "retention" | "lifecycle",
+            "overview" | "properties" | "property" | "dimensions" | "compare" | "comparison"
+            | "segments" | "paths" | "funnel" | "funnels" | "retention" | "lifecycle",
             extra,
             ..,
         ] => Err(unexpected_help_argument(extra)),

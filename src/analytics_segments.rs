@@ -82,6 +82,25 @@ fn segment_body(segment: &AnalyticsSegment) -> serde_json::Value {
     insert_optional(&mut body, "service_name", segment.service_name.as_deref());
     insert_optional(&mut body, "release", segment.release.as_deref());
     insert_optional(&mut body, "environment", segment.environment.as_deref());
+    if !segment.property_filters.is_empty() {
+        drop(
+            body.insert(
+                "property_filters".to_owned(),
+                serde_json::Value::Array(
+                    segment
+                        .property_filters
+                        .iter()
+                        .map(|filter| {
+                            serde_json::json!({
+                                "key": filter.key,
+                                "value": filter.value,
+                            })
+                        })
+                        .collect(),
+                ),
+            ),
+        );
+    }
     serde_json::Value::Object(body)
 }
 
@@ -277,6 +296,20 @@ struct SegmentScope {
     service_name: Option<String>,
     release: Option<String>,
     environment: Option<String>,
+    #[serde(default)]
+    property_filters: Vec<PropertyFilter>,
+}
+
+/// One normalized exact property predicate echoed by the backend.
+#[expect(
+    clippy::missing_docs_in_private_items,
+    reason = "field names intentionally mirror the validated public JSON contract"
+)]
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PropertyFilter {
+    key: String,
+    value: String,
 }
 
 /// High-level comparison state.
@@ -380,6 +413,24 @@ struct SegmentCoverage {
     target_unit_coverage_rate: Option<f64>,
     traced_target_events: u64,
     target_trace_link_rate: Option<f64>,
+    property_filters: Option<PropertyCoverage>,
+}
+
+/// Property-index readiness and exact-value match coverage for one segment.
+#[expect(
+    clippy::missing_docs_in_private_items,
+    reason = "field names intentionally mirror the validated public JSON contract"
+)]
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PropertyCoverage {
+    context_events: u64,
+    property_ready_events: u64,
+    missing_property_events: u64,
+    property_ready_rate: Option<f64>,
+    matching_events: u64,
+    nonmatching_value_events: u64,
+    match_rate: Option<f64>,
 }
 
 /// One ordered non-empty comparison bucket.
@@ -517,6 +568,7 @@ fn segment_scope_matches(actual: &SegmentScope, expected: &AnalyticsSegment) -> 
         && actual.service_name == expected.service_name
         && actual.release == expected.release
         && actual.environment == expected.environment
+        && property_filters_match(actual.property_filters.as_slice(), expected)
         && valid_segment_key(actual.key.as_str())
         && bounded_contract_text(actual.label.as_str(), 80)
         && [
@@ -527,6 +579,23 @@ fn segment_scope_matches(actual: &SegmentScope, expected: &AnalyticsSegment) -> 
         .into_iter()
         .flatten()
         .all(|value| bounded_contract_text(value, 256))
+}
+
+/// Requires canonical property-filter echoes to match the locally validated request.
+fn property_filters_match(actual: &[PropertyFilter], expected: &AnalyticsSegment) -> bool {
+    actual.len() == expected.property_filters.len()
+        && actual
+            .iter()
+            .zip(expected.property_filters.iter())
+            .all(|(actual, expected)| {
+                actual.key == expected.key
+                    && actual.value == expected.value
+                    && crate::analytics_property_contract::is_safe_key(actual.key.as_str())
+                    && bounded_contract_text(actual.value.as_str(), 256)
+            })
+        && actual
+            .windows(2)
+            .all(|pair| pair[0].key.as_str() < pair[1].key.as_str())
 }
 
 /// Applies the public machine-safe segment-key contract to response echoes.
@@ -624,7 +693,7 @@ fn valid_segment_result(
 ) -> bool {
     result.key == expected.key
         && result.label == expected.label
-        && valid_segment_coverage(result)
+        && valid_segment_coverage(result, expected)
         && ratio_matches(
             result.reach_rate,
             result.reached_units,
@@ -650,7 +719,7 @@ fn valid_segment_result(
 }
 
 /// Proves every derived capture count and ratio for one segment.
-fn valid_segment_coverage(result: &SegmentResult) -> bool {
+fn valid_segment_coverage(result: &SegmentResult, expected: &AnalyticsSegment) -> bool {
     let coverage = &result.coverage;
     let eligible_units_fit_identified_events =
         result.eligible_units <= coverage.unit_identified_events;
@@ -688,6 +757,48 @@ fn valid_segment_coverage(result: &SegmentResult) -> bool {
             coverage.target_trace_link_rate,
             coverage.traced_target_events,
             coverage.target_events,
+        )
+        && valid_property_coverage(
+            coverage.property_filters.as_ref(),
+            expected.property_filters.is_empty(),
+            coverage.classified_events,
+        )
+}
+
+/// Proves missing-key and nonmatching-value populations remain distinct and exhaustive.
+fn valid_property_coverage(
+    coverage: Option<&PropertyCoverage>,
+    filters_empty: bool,
+    matching_classified_events: u64,
+) -> bool {
+    let Some(coverage) = coverage else {
+        return filters_empty;
+    };
+    if filters_empty {
+        return false;
+    }
+    bounded_counts(&[
+        coverage.context_events,
+        coverage.property_ready_events,
+        coverage.missing_property_events,
+        coverage.matching_events,
+        coverage.nonmatching_value_events,
+    ]) && coverage.property_ready_events <= coverage.context_events
+        && coverage.matching_events <= coverage.property_ready_events
+        && coverage.matching_events == matching_classified_events
+        && coverage.missing_property_events
+            == coverage.context_events - coverage.property_ready_events
+        && coverage.nonmatching_value_events
+            == coverage.property_ready_events - coverage.matching_events
+        && ratio_matches(
+            coverage.property_ready_rate,
+            coverage.property_ready_events,
+            coverage.context_events,
+        )
+        && ratio_matches(
+            coverage.match_rate,
+            coverage.matching_events,
+            coverage.property_ready_events,
         )
 }
 
@@ -825,9 +936,40 @@ fn expected_next_action(response: &ComparisonResponse) -> (&'static str, &'stati
     if response
         .segments
         .iter()
-        .all(|segment| segment.coverage.classified_events == 0)
+        .all(|segment| segment_context_events(segment) == 0)
     {
         return ("capture_product_activity", "analyticsSchemaVersion=1");
+    }
+    for (scope, result) in response.query.segments.iter().zip(response.segments.iter()) {
+        if scope.property_filters.is_empty() {
+            continue;
+        }
+        let Some(coverage) = result.coverage.property_filters.as_ref() else {
+            return ("invalid_property_coverage", "invalid_property_coverage");
+        };
+        if coverage.context_events == 0 {
+            continue;
+        }
+        if coverage.property_ready_events == 0 {
+            return (
+                "capture_segment_properties",
+                "context.resource or context.tags",
+            );
+        }
+        if coverage.property_ready_events.saturating_mul(100)
+            < coverage.context_events.saturating_mul(80)
+        {
+            return (
+                "improve_property_coverage",
+                "/api/telemetry/analytics/properties",
+            );
+        }
+        if coverage.matching_events == 0 {
+            return (
+                "verify_property_values",
+                "/api/telemetry/analytics/segments/compare",
+            );
+        }
     }
     if response
         .segments
@@ -879,6 +1021,17 @@ fn expected_next_action(response: &ComparisonResponse) -> (&'static str, &'stati
         "investigate_segment_paths",
         "/api/telemetry/analytics/paths",
     )
+}
+
+/// Returns pre-property context volume when filters are present.
+fn segment_context_events(segment: &SegmentResult) -> u64 {
+    segment
+        .coverage
+        .property_filters
+        .as_ref()
+        .map_or(segment.coverage.classified_events, |coverage| {
+            coverage.context_events
+        })
 }
 
 /// Returns whether every count stays inside the server's public scan bound.
@@ -1129,6 +1282,7 @@ fn render_segments(response: &ComparisonResponse, output: &mut String) {
             )
             .as_str(),
         );
+        render_property_context(scope, result, output);
         output.push_str(
             format!(
                 "    Reach: {}/{} ({}) | target events: {} ({} usable) | usable events/reached unit: {}\n",
@@ -1160,6 +1314,49 @@ fn render_segments(response: &ComparisonResponse, output: &mut String) {
         render_capture_gaps(response.query.analysis_unit, result, output);
         render_series(result, output);
     }
+}
+
+/// Adds key-only predicates and separates missing-key coverage from value mismatch.
+fn render_property_context(scope: &SegmentScope, result: &SegmentResult, output: &mut String) {
+    if scope.property_filters.is_empty() {
+        return;
+    }
+    let keys = scope
+        .property_filters
+        .iter()
+        .map(|filter| display_text(filter.key.as_str()))
+        .collect::<Vec<_>>()
+        .join(", ");
+    output.push_str(
+        format!(
+            "    Property predicates: {} exact case-sensitive {} across {}; values hidden in human output.\n",
+            scope.property_filters.len(),
+            if scope.property_filters.len() == 1 {
+                "value"
+            } else {
+                "values"
+            },
+            keys,
+        )
+        .as_str(),
+    );
+    let Some(coverage) = result.coverage.property_filters.as_ref() else {
+        return;
+    };
+    output.push_str(
+        format!(
+            "    Property coverage: ready {}/{} ({}) | matched {}/{} ({}) | missing keys {} | nonmatching values {}\n",
+            coverage.property_ready_events,
+            coverage.context_events,
+            percentage(coverage.property_ready_rate),
+            coverage.matching_events,
+            coverage.property_ready_events,
+            percentage(coverage.match_rate),
+            coverage.missing_property_events,
+            coverage.nonmatching_value_events,
+        )
+        .as_str(),
+    );
 }
 
 /// Adds one descriptive difference from the first segment.
@@ -1326,6 +1523,15 @@ fn next_step(code: &str) -> &'static str {
         "adjust_segment_filters" => {
             "verify the exact segment contexts or widen the bounded time range"
         }
+        "capture_segment_properties" => {
+            "capture every requested safe property key in this segment before comparing reach"
+        }
+        "improve_property_coverage" => {
+            "inspect analytics properties and improve requested-key coverage in the weaker segment"
+        }
+        "verify_property_values" => {
+            "the keys are present but no event matches every value; verify exact case and spelling"
+        }
         "improve_session_coverage" => {
             "improve context.session.id coverage in the weaker segment before interpreting reach"
         }
@@ -1391,6 +1597,7 @@ fn request_error(error: RuntimeError) -> RuntimeError {
         | RuntimeError::InvestigationResponseInvalid
         | RuntimeError::ExplainResponseInvalid
         | RuntimeError::AnalyticsOverviewResponseInvalid
+        | RuntimeError::AnalyticsPropertiesResponseInvalid
         | RuntimeError::AnalyticsResponseInvalid
         | RuntimeError::AnalyticsFunnelResponseInvalid
         | RuntimeError::AnalyticsRetentionResponseInvalid
@@ -1421,7 +1628,7 @@ fn safe_api_error(status: u16, credential: &AuthCredential) -> RuntimeError {
         400 | 422 => (
             "analytics segment comparison rejected",
             "validation_failed",
-            "check the exact project, time scope, target, segments, interval, and analysis unit",
+            "check the exact project, time scope, target, segments, property filters, interval, and analysis unit",
         ),
         401 => (
             "authentication required",

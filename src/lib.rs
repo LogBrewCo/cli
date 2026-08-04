@@ -10,6 +10,8 @@ mod analytics;
 mod analytics_funnel;
 mod analytics_lifecycle;
 mod analytics_overview;
+mod analytics_properties;
+mod analytics_property_contract;
 mod analytics_retention;
 mod analytics_segments;
 #[doc(hidden)]
@@ -231,6 +233,13 @@ pub enum Command {
         /// Emit the exact validated server response.
         json: bool,
     },
+    /// Discovers bounded safe property keys and aggregate capture coverage.
+    AnalyticsProperties {
+        /// Normalized privacy-safe property-catalog query.
+        options: AnalyticsPropertyOptions,
+        /// Emit the exact validated server response.
+        json: bool,
+    },
     /// Compares one exact product outcome across named context segments.
     AnalyticsCompare {
         /// Normalized privacy-safe segment-comparison query.
@@ -354,6 +363,8 @@ pub enum HelpTopic {
     Analytics,
     /// Product-analytics project overview command.
     AnalyticsOverview,
+    /// Product-analytics property catalog command.
+    AnalyticsProperties,
     /// Product-analytics segment comparison command.
     AnalyticsCompare,
     /// Product-analytics path exploration command.
@@ -402,6 +413,7 @@ impl HelpTopic {
             Self::Explain => "explain",
             Self::Analytics => "analytics",
             Self::AnalyticsOverview => "analytics_overview",
+            Self::AnalyticsProperties => "analytics_properties",
             Self::AnalyticsCompare => "analytics_compare",
             Self::AnalyticsPaths => "analytics_paths",
             Self::AnalyticsFunnel => "analytics_funnel",
@@ -883,13 +895,41 @@ pub struct AnalyticsOverviewOptions {
     pub top_limit: u8,
 }
 
+/// Exact bounded product-analytics property catalog request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AnalyticsPropertyOptions {
+    /// Account-owned project UUID.
+    pub project_id: String,
+    /// Inclusive compact duration or RFC 3339 lower bound.
+    pub since: String,
+    /// Optional exclusive RFC 3339 upper bound.
+    pub until: Option<String>,
+    /// Optional exact service filter.
+    pub service_name: Option<String>,
+    /// Optional exact release filter.
+    pub release: Option<String>,
+    /// Optional exact environment filter.
+    pub environment: Option<String>,
+    /// Maximum safe property descriptors returned.
+    pub limit: u8,
+}
+
 /// Supported version-1 classified target-event kind used in segment comparisons.
 pub type AnalyticsSegmentEventKind = AnalyticsPathEventKind;
 
 /// Identity boundary used to calculate eligibility and reach in segment comparisons.
 pub type AnalyticsSegmentUnit = AnalyticsFunnelUnit;
 
-/// One named exact service, release, and environment segment.
+/// One exact privacy-safe property predicate inside an analytics segment.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct AnalyticsSegmentPropertyFilter {
+    /// Stable standard-context key or `tag.`-prefixed custom key.
+    pub key: String,
+    /// Exact bounded case-sensitive string value.
+    pub value: String,
+}
+
+/// One named exact deployment and property segment.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AnalyticsSegment {
     /// Stable machine-safe key unique inside the request.
@@ -902,6 +942,8 @@ pub struct AnalyticsSegment {
     pub release: Option<String>,
     /// Optional exact environment filter.
     pub environment: Option<String>,
+    /// Zero through four exact property predicates combined with logical AND.
+    pub property_filters: Vec<AnalyticsSegmentPropertyFilter>,
 }
 
 /// Exact, bounded product-analytics segment-comparison request.
@@ -1291,6 +1333,9 @@ impl Command {
             Self::AnalyticsOverview { options, .. } => {
                 Some(analytics_overview::request_path(options))
             }
+            Self::AnalyticsProperties { options, .. } => {
+                Some(analytics_properties::request_path(options))
+            }
             Self::AnalyticsCompare { .. } => {
                 Some(String::from("/api/telemetry/analytics/segments/compare"))
             }
@@ -1349,6 +1394,7 @@ impl Command {
             | Self::Watch { json, .. }
             | Self::Explain { json, .. }
             | Self::AnalyticsOverview { json, .. }
+            | Self::AnalyticsProperties { json, .. }
             | Self::AnalyticsCompare { json, .. }
             | Self::AnalyticsPaths { json, .. }
             | Self::AnalyticsFunnel { json, .. }
@@ -1389,6 +1435,7 @@ impl Command {
             | Self::Read { .. }
             | Self::Explain { .. }
             | Self::AnalyticsOverview { .. }
+            | Self::AnalyticsProperties { .. }
             | Self::Support { .. } => Some(HttpMethod::Get),
             Self::Help { .. }
             | Self::Login { .. }
@@ -1462,6 +1509,7 @@ impl Command {
             | Self::Watch { .. }
             | Self::Explain { .. }
             | Self::AnalyticsOverview { .. }
+            | Self::AnalyticsProperties { .. }
             | Self::InvestigateIssue { .. }
             | Self::NativeDebugArtifacts { .. }
             | Self::Support { .. } => None,
@@ -1488,6 +1536,7 @@ impl Command {
             | Self::Watch { .. }
             | Self::Explain { .. }
             | Self::AnalyticsOverview { .. }
+            | Self::AnalyticsProperties { .. }
             | Self::AnalyticsCompare { .. }
             | Self::AnalyticsPaths { .. }
             | Self::AnalyticsFunnel { .. }
@@ -1628,6 +1677,9 @@ pub async fn execute_command<W: std::io::Write>(
         Command::Explain { target, json } => explain::execute(env, target, *json, output).await,
         Command::AnalyticsOverview { options, json } => {
             analytics_overview::execute(env, options, *json, output).await
+        }
+        Command::AnalyticsProperties { options, json } => {
+            analytics_properties::execute(env, options, *json, output).await
         }
         Command::AnalyticsCompare { options, json } => {
             analytics_segments::execute(env, options, *json, output).await

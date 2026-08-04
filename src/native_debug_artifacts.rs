@@ -432,6 +432,7 @@ const fn upload_error_is_retryable(error: &RuntimeError) -> bool {
         | RuntimeError::InvestigationResponseInvalid
         | RuntimeError::ExplainResponseInvalid
         | RuntimeError::AnalyticsOverviewResponseInvalid
+        | RuntimeError::AnalyticsPropertiesResponseInvalid
         | RuntimeError::AnalyticsResponseInvalid
         | RuntimeError::AnalyticsFunnelResponseInvalid
         | RuntimeError::AnalyticsRetentionResponseInvalid
