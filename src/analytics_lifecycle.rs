@@ -588,7 +588,7 @@ fn expected_next_action(response: &LifecycleResponse) -> (&'static str, &'static
         );
     }
     if usable_observed_events(coverage) == Some(0) {
-        return ("identify_product_users", "context.subject.id");
+        return ("identify_product_users", "context.subject.kind=user");
     }
     if coverage.usable_selected_events == 0 && coverage.usable_history_selected_events > 0 {
         return (
@@ -940,7 +940,9 @@ fn render_coverage(response: &LifecycleResponse, output: &mut String) {
         );
     }
     output.push_str(
-        "Interpretation: new means new only inside bounded observed history; states use one exact event; missing identities are excluded; raw subject IDs are not returned.\n",
+        "Interpretation: new means new only inside bounded observed history; states use one exact \
+         event; anonymous, legacy-untyped, historical-unindexed, and missing subjects are \
+         excluded; raw subject IDs are not returned.\n",
     );
 }
 
@@ -954,7 +956,8 @@ fn next_step(code: &str) -> &'static str {
             "choose one exact captured event from Product Analytics overview"
         }
         "identify_product_users" => {
-            "attach one stable opaque context.subject.id to the selected event"
+            "attach one stable opaque context.subject.id and set context.subject.kind=user on the \
+             selected event"
         }
         "investigate_lifecycle_inactivity" => {
             "inspect bounded paths around the selected event before treating inactivity as churn"
@@ -1258,5 +1261,16 @@ mod tests {
             !valid_next_action(&invalid_action),
             "next action must match the validated lifecycle state"
         );
+    }
+
+    #[test]
+    fn accepts_typed_user_capture_target_for_lifecycle_gap() {
+        let mut response = response();
+        response.coverage.usable_selected_events = 0;
+        response.coverage.usable_history_selected_events = 0;
+        response.next_action.code = "identify_product_users".to_owned();
+        response.next_action.target = "context.subject.kind=user".to_owned();
+
+        assert!(valid_next_action(&response));
     }
 }

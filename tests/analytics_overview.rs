@@ -35,6 +35,7 @@ fn public_grammar_help_and_get_model_stay_aligned() -> Result<(), Box<dyn std::e
         "interval=5m",
         "environment=production",
         "top_limit=2",
+        "response_version=2",
     ] {
         assert!(path.contains(expected), "missing request scope: {expected}");
     }
@@ -42,6 +43,8 @@ fn public_grammar_help_and_get_model_stay_aligned() -> Result<(), Box<dyn std::e
     let text = help::help_text(HelpTopic::AnalyticsOverview);
     for expected in [
         "active identified users",
+        "typed anonymous subjects",
+        "subject-kind coverage",
         "exact event names",
         "Capture-quality counts disclose",
         "without user or session identifiers",
@@ -67,6 +70,7 @@ async fn built_binary_gets_exact_scope_and_preserves_validated_json()
         .and(query_param("interval", "5m"))
         .and(query_param("environment", "production"))
         .and(query_param("top_limit", "2"))
+        .and(query_param("response_version", "2"))
         .respond_with(
             ResponseTemplate::new(200).set_body_raw(response_body.clone(), "application/json"),
         )
@@ -108,21 +112,26 @@ async fn built_binary_human_output_explains_activity_coverage_and_next_step()
     for expected in [
         "Product analytics overview",
         "Analysis readiness: identified-user and session analysis",
-        "Actions: 120; active identified users: 18; sessions: 24; distinct names: 3",
+        "Actions: 120; active identified users: 18; active anonymous subjects: 7; sessions: 24; distinct names: 3",
         "Classified events: 110 (page views 50, screen views 20, interactions 40)",
-        "Action capture: identified 100/120; sessionized 90/120; trace-linked 60/120",
-        "Classified capture: surfaced 100/110; named 105/110; identified 90/110; sessionized 80/110; trace-linked 95/110",
+        "Classified subjects: active identified users 17; active anonymous subjects 6; sessions 23",
+        "Action capture: typed-user eligible 100/120; sessionized 90/120; trace-linked 60/120",
+        "Action subject coverage (index v1): user 100; anonymous 8; legacy kind unknown 5; missing 4; historical unindexed 3",
+        "Classified capture: surfaced 100/110; named 105/110; typed-user eligible 90/110; sessionized 80/110; trace-linked 95/110",
+        "Classified subject coverage (index v1): user 90; anonymous 8; legacy kind unknown 5; missing 4; historical unindexed 3",
         "Top actions:",
         "checkout\\u{202e}started — 50 actions (41.7%)",
         "Top surfaces:",
         "page_view /checkout/:step — 40 events (36.4%)",
         "Exact events for paths, funnels, retention, and lifecycle:",
         "interaction signup_started — 30 events (27.3%)",
-        "Capture gap: 20 actions lacked an explicit opaque subject ID.",
+        "Identity gap: 5 actions had an opaque ID without a typed subject kind.",
+        "Identity gap: 4 actions lacked usable subject context.",
+        "History gap: 3 actions predate subject-kind indexing.",
         "Correlation gap: 60 actions could not link to a trace.",
         "Classification gap: 60 actions were absent from version-1 screen-view or interaction breakdowns.",
         "Limit: at least one lower-volume ranking was omitted by --top-limit.",
-        "Accuracy: unique user, session, action-name, surface, and event-name counts are approximate",
+        "Accuracy: unique user, anonymous-subject, session, action-name, surface, and event-name counts are approximate",
         "Next: choose two exact events above and measure their ordered conversion with analytics funnel",
     ] {
         assert!(text.contains(expected), "missing human detail: {expected}");
@@ -161,7 +170,7 @@ async fn built_binary_fails_closed_on_contradictory_coverage()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
     let mut response = overview_response();
-    response["coverage"]["anonymous_actions"] = 19.into();
+    response["coverage"]["subject_coverage"]["legacy_unknown_kind_events"] = 6.into();
     response["next_action"]["reason"] = "contradictory-response-marker".into();
     Mock::given(method("GET"))
         .and(path("/api/telemetry/analytics/overview"))
@@ -177,6 +186,30 @@ async fn built_binary_fails_closed_on_contradictory_coverage()
     let text = String::from_utf8(process.stderr)?;
     assert!(text.contains("product analytics overview response is invalid"));
     assert!(!text.contains("contradictory-response-marker"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn built_binary_fails_closed_on_impossible_anonymous_cardinality()
+-> Result<(), Box<dyn std::error::Error>> {
+    let server = MockServer::start().await;
+    let mut response = overview_response();
+    response["summary"]["active_anonymous_subjects"] = 9.into();
+    response["next_action"]["reason"] = "impossible-cardinality-marker".into();
+    Mock::given(method("GET"))
+        .and(path("/api/telemetry/analytics/overview"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(response))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let process = run_binary(&server, false).await?;
+
+    assert!(!process.status.success());
+    assert!(process.stdout.is_empty());
+    let text = String::from_utf8(process.stderr)?;
+    assert!(text.contains("product analytics overview response is invalid"));
+    assert!(!text.contains("impossible-cardinality-marker"));
     Ok(())
 }
 
@@ -239,10 +272,10 @@ async fn run_binary(
     Ok(process)
 }
 
-/// Stable schema-version-1 fixture matching the private API contract.
+/// Stable schema-version-2 fixture matching the public API contract.
 fn overview_response() -> serde_json::Value {
     serde_json::json!({
-        "schema_version": 1,
+        "schema_version": 2,
         "query": {
             "project_id": PROJECT_ID,
             "since": "2026-08-02T00:00:00Z",
@@ -257,6 +290,7 @@ fn overview_response() -> serde_json::Value {
         "summary": {
             "actions": 120,
             "active_identified_users": 18,
+            "active_anonymous_subjects": 7,
             "sessions": 24,
             "distinct_action_names": 3,
             "actions_per_identified_user": 100.0 / 18.0,
@@ -265,6 +299,14 @@ fn overview_response() -> serde_json::Value {
         "coverage": {
             "identified_actions": 100,
             "anonymous_actions": 20,
+            "subject_coverage": {
+                "index_version": 1,
+                "identified_user_events": 100,
+                "anonymous_subject_events": 8,
+                "legacy_unknown_kind_events": 5,
+                "missing_subject_events": 4,
+                "historical_unindexed_events": 3
+            },
             "sessionized_actions": 90,
             "traced_actions": 60,
             "identification_rate": 100.0 / 120.0,
@@ -330,6 +372,7 @@ fn overview_response() -> serde_json::Value {
                 "distinct_surfaces": 4,
                 "distinct_event_names": 5,
                 "active_identified_users": 17,
+                "active_anonymous_subjects": 6,
                 "sessions": 23
             },
             "coverage": {
@@ -339,6 +382,14 @@ fn overview_response() -> serde_json::Value {
                 "surfaced_events": 100,
                 "named_events": 105,
                 "identified_events": 90,
+                "subject_coverage": {
+                    "index_version": 1,
+                    "identified_user_events": 90,
+                    "anonymous_subject_events": 8,
+                    "legacy_unknown_kind_events": 5,
+                    "missing_subject_events": 4,
+                    "historical_unindexed_events": 3
+                },
                 "sessionized_events": 80,
                 "traced_events": 95,
                 "surface_rate": 100.0 / 110.0,
@@ -354,7 +405,18 @@ fn overview_response() -> serde_json::Value {
                 "top_events_truncated": true,
                 "first_seen_at": "2026-08-02T00:00:20Z",
                 "last_seen_at": "2026-08-02T00:09:40Z",
-                "limitations": ["Only version-1 classified events are included."]
+                "limitations": [
+                    "Versioned classification scope.",
+                    "Unclassified action coverage.",
+                    "Surface coverage.",
+                    "Event-name coverage.",
+                    "Anonymous-subject coverage.",
+                    "Legacy subject-kind coverage.",
+                    "Missing subject coverage.",
+                    "Historical subject-index coverage.",
+                    "Session coverage.",
+                    "Trace coverage."
+                ]
             },
             "series": [
                 {

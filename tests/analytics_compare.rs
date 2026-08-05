@@ -157,6 +157,43 @@ async fn built_binary_human_output_explains_reach_differences_coverage_and_limit
 }
 
 #[tokio::test]
+async fn built_binary_accepts_typed_user_identity_coverage_target()
+-> Result<(), Box<dyn std::error::Error>> {
+    let server = MockServer::start().await;
+    let mut response = comparison_response("Old release");
+    response["query"]["analysis_unit"] = "identified_user".into();
+    response["segments"][0]["coverage"]["unit_identified_events"] = 70.into();
+    response["segments"][0]["coverage"]["excluded_events"] = 30.into();
+    response["segments"][0]["coverage"]["unit_coverage_rate"] = 0.7.into();
+    response["next_action"]["code"] = "improve_identity_coverage".into();
+    response["next_action"]["target"] = "context.subject.kind=user".into();
+    Mock::given(method("POST"))
+        .and(path("/api/telemetry/analytics/segments/compare"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(response.clone()))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let mut args = compare_args(false, "old=Old release");
+    args.extend([
+        "--unit".to_owned(),
+        "identified-user".to_owned(),
+        "--json".to_owned(),
+    ]);
+    let process = run_binary_args(&server, args).await?;
+
+    assert!(
+        process.status.success(),
+        "built binary failed: {}",
+        String::from_utf8_lossy(process.stderr.as_slice())
+    );
+    assert!(process.stderr.is_empty());
+    let actual: serde_json::Value = serde_json::from_slice(process.stdout.as_slice())?;
+    assert_eq!(actual, response);
+    Ok(())
+}
+
+#[tokio::test]
 async fn built_binary_separates_missing_properties_from_nonmatching_values()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;

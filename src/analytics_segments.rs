@@ -989,7 +989,7 @@ fn expected_next_action(response: &ComparisonResponse) -> (&'static str, &'stati
         return match response.query.analysis_unit {
             AnalyticsSegmentUnit::Session => ("sessionize_product_activity", "context.session.id"),
             AnalyticsSegmentUnit::IdentifiedUser => {
-                ("identify_product_users", "context.subject.id")
+                ("identify_product_users", "context.subject.kind=user")
             }
         };
     }
@@ -1013,7 +1013,7 @@ fn expected_next_action(response: &ComparisonResponse) -> (&'static str, &'stati
         return match response.query.analysis_unit {
             AnalyticsSegmentUnit::Session => ("improve_session_coverage", "context.session.id"),
             AnalyticsSegmentUnit::IdentifiedUser => {
-                ("improve_identity_coverage", "context.subject.id")
+                ("improve_identity_coverage", "context.subject.kind=user")
             }
         };
     }
@@ -1466,7 +1466,7 @@ fn filter_label(value: Option<&str>) -> String {
 const fn unit_label(unit: AnalyticsSegmentUnit) -> &'static str {
     match unit {
         AnalyticsSegmentUnit::Session => "session",
-        AnalyticsSegmentUnit::IdentifiedUser => "opaque identified user",
+        AnalyticsSegmentUnit::IdentifiedUser => "typed opaque user",
     }
 }
 
@@ -1474,7 +1474,7 @@ const fn unit_label(unit: AnalyticsSegmentUnit) -> &'static str {
 const fn unit_context(unit: AnalyticsSegmentUnit) -> &'static str {
     match unit {
         AnalyticsSegmentUnit::Session => "context.session.id",
-        AnalyticsSegmentUnit::IdentifiedUser => "context.subject.id",
+        AnalyticsSegmentUnit::IdentifiedUser => "context.subject.id + context.subject.kind=user",
     }
 }
 
@@ -1518,7 +1518,8 @@ fn next_step(code: &str) -> &'static str {
             "attach one opaque context.session.id before comparing session reach"
         }
         "identify_product_users" => {
-            "attach one stable opaque context.subject.id before comparing identified-user reach"
+            "attach one stable opaque context.subject.id and set context.subject.kind=user before \
+             comparing identified-user reach"
         }
         "adjust_segment_filters" => {
             "verify the exact segment contexts or widen the bounded time range"
@@ -1536,7 +1537,8 @@ fn next_step(code: &str) -> &'static str {
             "improve context.session.id coverage in the weaker segment before interpreting reach"
         }
         "improve_identity_coverage" => {
-            "improve context.subject.id coverage in the weaker segment before interpreting reach"
+            "improve context.subject.id plus context.subject.kind=user coverage in the weaker \
+             segment before interpreting reach"
         }
         "investigate_segment_paths" => {
             "inspect paths around the target in the weakest segment, then follow correlated traces"

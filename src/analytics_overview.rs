@@ -6,7 +6,9 @@ use crate::auth::{AuthCredential, send_authenticated_with_refresh};
 use crate::{AnalyticsOverviewOptions, CliEnvironment, RuntimeError};
 
 /// Public response version implemented by this CLI.
-const SCHEMA_VERSION: u8 = 1;
+const SCHEMA_VERSION: u8 = 2;
+/// Subject-kind index required by response schema version 2.
+const SUBJECT_INDEX_VERSION: u8 = 1;
 /// Maximum accepted response body.
 const RESPONSE_LIMIT: usize = 1024 * 1024;
 /// Server-side scan cap also bounds every returned count.
@@ -16,7 +18,7 @@ const BUCKET_LIMIT: u64 = 500;
 /// Hard maximum rows in each ranking.
 const TOP_LIMIT: usize = 20;
 /// Maximum material limitations accepted from either bounded API section.
-const LIMITATION_LIMIT: usize = 8;
+const LIMITATION_LIMIT: usize = 12;
 
 /// Builds the exact public GET path with explicit CLI defaults.
 #[expect(
@@ -36,6 +38,7 @@ pub(super) fn request_path(options: &AnalyticsOverviewOptions) -> String {
             ("release", options.release.as_deref()),
             ("environment", options.environment.as_deref()),
             ("top_limit", Some(top_limit.as_str())),
+            ("response_version", Some("2")),
         ],
     )
 }
@@ -173,6 +176,7 @@ impl AnalysisLevel {
 struct ActionSummary {
     actions: u64,
     active_identified_users: u64,
+    active_anonymous_subjects: u64,
     sessions: u64,
     distinct_action_names: u64,
     actions_per_identified_user: Option<f64>,
@@ -189,6 +193,7 @@ struct ActionSummary {
 struct ActionCoverage {
     identified_actions: u64,
     anonymous_actions: u64,
+    subject_coverage: SubjectCoverage,
     sessionized_actions: u64,
     traced_actions: u64,
     identification_rate: Option<f64>,
@@ -201,6 +206,22 @@ struct ActionCoverage {
     first_seen_at: Option<String>,
     last_seen_at: Option<String>,
     limitations: Vec<String>,
+}
+
+/// Exact exhaustive subject-kind receipt for one retained event population.
+#[expect(
+    clippy::missing_docs_in_private_items,
+    reason = "field names intentionally mirror the validated public JSON contract"
+)]
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SubjectCoverage {
+    index_version: u8,
+    identified_user_events: u64,
+    anonymous_subject_events: u64,
+    legacy_unknown_kind_events: u64,
+    missing_subject_events: u64,
+    historical_unindexed_events: u64,
 }
 
 /// Accuracy contract for approximate unique counts.
@@ -279,6 +300,7 @@ struct ClassifiedSummary {
     distinct_surfaces: u64,
     distinct_event_names: u64,
     active_identified_users: u64,
+    active_anonymous_subjects: u64,
     sessions: u64,
 }
 
@@ -296,6 +318,7 @@ struct ClassifiedCoverage {
     surfaced_events: u64,
     named_events: u64,
     identified_events: u64,
+    subject_coverage: SubjectCoverage,
     sessionized_events: u64,
     traced_events: u64,
     surface_rate: Option<f64>,
@@ -399,7 +422,7 @@ struct NextAction {
     reason: String,
 }
 
-/// Parses and proves the complete schema-version-1 response.
+/// Parses and proves the complete schema-version-2 response.
 fn validated_response(
     options: &AnalyticsOverviewOptions,
     body: &str,
@@ -510,13 +533,20 @@ fn valid_action_activity(response: &OverviewResponse) -> bool {
     if !bounded_counts(&[
         summary.actions,
         summary.active_identified_users,
+        summary.active_anonymous_subjects,
         summary.sessions,
         summary.distinct_action_names,
         coverage.identified_actions,
         coverage.anonymous_actions,
         coverage.sessionized_actions,
         coverage.traced_actions,
-    ]) || coverage.identified_actions > summary.actions
+    ]) || !valid_subject_coverage(&coverage.subject_coverage, summary.actions)
+        || coverage.identified_actions != coverage.subject_coverage.identified_user_events
+        || summary.active_identified_users > coverage.subject_coverage.identified_user_events
+        || summary.active_anonymous_subjects > coverage.subject_coverage.anonymous_subject_events
+        || summary.sessions > coverage.sessionized_actions
+        || summary.distinct_action_names > summary.actions
+        || coverage.identified_actions > summary.actions
         || coverage.sessionized_actions > summary.actions
         || coverage.traced_actions > summary.actions
         || coverage.anonymous_actions != summary.actions - coverage.identified_actions
@@ -568,6 +598,28 @@ fn valid_action_activity(response: &OverviewResponse) -> bool {
         return false;
     }
     valid_action_series(response) && valid_top_actions(response)
+}
+
+/// Proves the current index and exhaustive, overflow-safe subject-state partition.
+fn valid_subject_coverage(coverage: &SubjectCoverage, total_events: u64) -> bool {
+    if coverage.index_version != SUBJECT_INDEX_VERSION
+        || !bounded_counts(&[
+            coverage.identified_user_events,
+            coverage.anonymous_subject_events,
+            coverage.legacy_unknown_kind_events,
+            coverage.missing_subject_events,
+            coverage.historical_unindexed_events,
+        ])
+    {
+        return false;
+    }
+    coverage
+        .identified_user_events
+        .checked_add(coverage.anonymous_subject_events)
+        .and_then(|value| value.checked_add(coverage.legacy_unknown_kind_events))
+        .and_then(|value| value.checked_add(coverage.missing_subject_events))
+        .and_then(|value| value.checked_add(coverage.historical_unindexed_events))
+        == Some(total_events)
 }
 
 /// Proves common bucket and top-ranking response bounds.
@@ -622,6 +674,8 @@ fn valid_action_series(response: &OverviewResponse) -> bool {
             || point.identified_actions > point.actions
             || point.sessionized_actions > point.actions
             || point.traced_actions > point.actions
+            || point.active_identified_users > point.identified_actions
+            || point.sessions > point.sessionized_actions
             || !bounded_timestamp(point.bucket_start.as_str())
             || !bounded_timestamp(point.bucket_end.as_str())
             || point.bucket_start >= point.bucket_end
@@ -667,6 +721,8 @@ fn valid_top_actions(response: &OverviewResponse) -> bool {
                 action.sessions,
             ])
             || action.actions > response.summary.actions
+            || action.active_identified_users > action.actions
+            || action.sessions > action.actions
             || previous.is_some_and(|count| action.actions > count)
             || !ratio_matches(
                 Some(action.share_of_actions),
@@ -718,6 +774,7 @@ fn valid_classified_activity(response: &OverviewResponse) -> bool {
         summary.distinct_surfaces,
         summary.distinct_event_names,
         summary.active_identified_users,
+        summary.active_anonymous_subjects,
         summary.sessions,
         coverage.classified_actions,
         coverage.unclassified_actions,
@@ -726,7 +783,14 @@ fn valid_classified_activity(response: &OverviewResponse) -> bool {
         coverage.identified_events,
         coverage.sessionized_events,
         coverage.traced_events,
-    ]) || kind_total != summary.events
+    ]) || !valid_subject_coverage(&coverage.subject_coverage, summary.events)
+        || coverage.identified_events != coverage.subject_coverage.identified_user_events
+        || summary.active_identified_users > coverage.subject_coverage.identified_user_events
+        || summary.active_anonymous_subjects > coverage.subject_coverage.anonymous_subject_events
+        || summary.sessions > coverage.sessionized_events
+        || summary.distinct_surfaces > summary.events
+        || summary.distinct_event_names > summary.events
+        || kind_total != summary.events
         || coverage.classified_actions != classified_actions
         || coverage.unclassified_actions != response.summary.actions - classified_actions
         || coverage.surfaced_events > summary.events
@@ -875,6 +939,8 @@ fn valid_top_surfaces(response: &OverviewResponse) -> bool {
                 surface.sessions,
             ])
             || surface.events > activity.summary.events
+            || surface.active_identified_users > surface.events
+            || surface.sessions > surface.events
             || previous.is_some_and(|count| surface.events > count)
             || !ratio_matches(
                 Some(surface.share_of_classified_events),
@@ -906,6 +972,8 @@ fn valid_top_events(response: &OverviewResponse) -> bool {
             || event.events == 0
             || !bounded_counts(&[event.events, event.active_identified_users, event.sessions])
             || event.events > activity.summary.events
+            || event.active_identified_users > event.events
+            || event.sessions > event.events
             || previous.is_some_and(|count| event.events > count)
             || !ratio_matches(
                 Some(event.share_of_classified_events),
@@ -973,7 +1041,7 @@ fn valid_next_action(response: &OverviewResponse) -> bool {
     } else if response.summary.active_identified_users == 0
         && classified.active_identified_users == 0
     {
-        ("identify_product_users", "context.subject.id")
+        ("identify_product_users", "context.subject.kind=user")
     } else if response.summary.sessions == 0 && classified.sessions == 0 {
         ("sessionize_product_activity", "context.session.id")
     } else if classified.distinct_event_names >= 2 {
@@ -1048,9 +1116,11 @@ fn render_response(response: &OverviewResponse) -> String {
     );
     output.push_str(
         format!(
-            "Actions: {}; active identified users: {}; sessions: {}; distinct names: {}\n",
+            "Actions: {}; active identified users: {}; active anonymous subjects: {}; sessions: \
+             {}; distinct names: {}\n",
             response.summary.actions,
             response.summary.active_identified_users,
+            response.summary.active_anonymous_subjects,
             response.summary.sessions,
             response.summary.distinct_action_names,
         )
@@ -1070,7 +1140,35 @@ fn render_response(response: &OverviewResponse) -> String {
     );
     output.push_str(
         format!(
-            "Action capture: identified {}/{}; sessionized {}/{}; trace-linked {}/{}\n",
+            "Classified subjects: active identified users {}; active anonymous subjects {}; \
+             sessions {}\n",
+            classified.summary.active_identified_users,
+            classified.summary.active_anonymous_subjects,
+            classified.summary.sessions,
+        )
+        .as_str(),
+    );
+    render_capture_receipts(response, &mut output);
+    render_top_actions(response, &mut output);
+    render_top_surfaces(response, &mut output);
+    render_top_events(response, &mut output);
+    render_capture_gaps(response, &mut output);
+    output.push_str(
+        "Accuracy: unique user, anonymous-subject, session, action-name, surface, and event-name \
+         counts are approximate; event and coverage totals are exact.\n",
+    );
+    output.push_str("Next: ");
+    output.push_str(next_step(response.next_action.code.as_str()));
+    output.push('\n');
+    output
+}
+
+/// Adds exact capture, subject, and bounded-series receipts.
+fn render_capture_receipts(response: &OverviewResponse, output: &mut String) {
+    let classified = &response.classified_activity;
+    output.push_str(
+        format!(
+            "Action capture: typed-user eligible {}/{}; sessionized {}/{}; trace-linked {}/{}\n",
             response.coverage.identified_actions,
             response.summary.actions,
             response.coverage.sessionized_actions,
@@ -1080,9 +1178,14 @@ fn render_response(response: &OverviewResponse) -> String {
         )
         .as_str(),
     );
+    render_subject_coverage(
+        "Action subject coverage",
+        &response.coverage.subject_coverage,
+        output,
+    );
     output.push_str(
         format!(
-            "Classified capture: surfaced {}/{}; named {}/{}; identified {}/{}; sessionized {}/{}; trace-linked {}/{}\n",
+            "Classified capture: surfaced {}/{}; named {}/{}; typed-user eligible {}/{}; sessionized {}/{}; trace-linked {}/{}\n",
             classified.coverage.surfaced_events,
             classified.summary.events,
             classified.coverage.named_events,
@@ -1096,6 +1199,11 @@ fn render_response(response: &OverviewResponse) -> String {
         )
         .as_str(),
     );
+    render_subject_coverage(
+        "Classified subject coverage",
+        &classified.coverage.subject_coverage,
+        output,
+    );
     output.push_str(
         format!(
             "Series coverage: action buckets {}/{}; classified buckets {}/{}\n",
@@ -1106,17 +1214,23 @@ fn render_response(response: &OverviewResponse) -> String {
         )
         .as_str(),
     );
-    render_top_actions(response, &mut output);
-    render_top_surfaces(response, &mut output);
-    render_top_events(response, &mut output);
-    render_capture_gaps(response, &mut output);
+}
+
+/// Adds one exact subject-state receipt without returning opaque identifiers.
+fn render_subject_coverage(label: &str, coverage: &SubjectCoverage, output: &mut String) {
     output.push_str(
-        "Accuracy: unique user, session, action-name, surface, and event-name counts are approximate; event and coverage totals are exact.\n",
+        format!(
+            "{label} (index v{}): user {}; anonymous {}; legacy kind unknown {}; missing {}; \
+             historical unindexed {}\n",
+            coverage.index_version,
+            coverage.identified_user_events,
+            coverage.anonymous_subject_events,
+            coverage.legacy_unknown_kind_events,
+            coverage.missing_subject_events,
+            coverage.historical_unindexed_events,
+        )
+        .as_str(),
     );
-    output.push_str("Next: ");
-    output.push_str(next_step(response.next_action.code.as_str()));
-    output.push('\n');
-    output
 }
 
 /// Adds bounded top action names to human output.
@@ -1190,15 +1304,12 @@ fn render_top_events(response: &OverviewResponse, output: &mut String) {
 /// Discloses material capture and truncation gaps from validated counts only.
 fn render_capture_gaps(response: &OverviewResponse, output: &mut String) {
     let classified = &response.classified_activity;
-    if response.coverage.anonymous_actions > 0 {
-        output.push_str(
-            format!(
-                "Capture gap: {} actions lacked an explicit opaque subject ID.\n",
-                response.coverage.anonymous_actions
-            )
-            .as_str(),
-        );
-    }
+    render_subject_gaps("actions", &response.coverage.subject_coverage, output);
+    render_subject_gaps(
+        "classified events",
+        &classified.coverage.subject_coverage,
+        output,
+    );
     if response.coverage.sessionized_actions < response.summary.actions {
         output.push_str(
             format!(
@@ -1252,6 +1363,37 @@ fn render_capture_gaps(response: &OverviewResponse, output: &mut String) {
     }
 }
 
+/// Discloses legacy, missing, and pre-index subject populations without identities.
+fn render_subject_gaps(label: &str, coverage: &SubjectCoverage, output: &mut String) {
+    if coverage.legacy_unknown_kind_events > 0 {
+        output.push_str(
+            format!(
+                "Identity gap: {} {label} had an opaque ID without a typed subject kind.\n",
+                coverage.legacy_unknown_kind_events
+            )
+            .as_str(),
+        );
+    }
+    if coverage.missing_subject_events > 0 {
+        output.push_str(
+            format!(
+                "Identity gap: {} {label} lacked usable subject context.\n",
+                coverage.missing_subject_events
+            )
+            .as_str(),
+        );
+    }
+    if coverage.historical_unindexed_events > 0 {
+        output.push_str(
+            format!(
+                "History gap: {} {label} predate subject-kind indexing.\n",
+                coverage.historical_unindexed_events
+            )
+            .as_str(),
+        );
+    }
+}
+
 /// Maps validated stable action codes to local, value-free human guidance.
 fn next_step(code: &str) -> &'static str {
     match code {
@@ -1262,7 +1404,8 @@ fn next_step(code: &str) -> &'static str {
             "use version-1 page-view, screen-view, or product-action SDK helpers, then retry"
         }
         "identify_product_users" => {
-            "attach a stable opaque context.subject.id to product events, then retry"
+            "attach a stable opaque context.subject.id and set context.subject.kind=user, then \
+             retry"
         }
         "sessionize_product_activity" => {
             "attach an opaque context.session.id to product events, then retry"
