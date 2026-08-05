@@ -1,8 +1,8 @@
 //! CLI real-user shortcut tests.
 
 use logbrew_cli::{
-    CliError, Command, ExplainTarget, ReadOptions, ReadTarget, SetTarget, WatchOptions,
-    WatchTarget, parse_command,
+    CliError, Command, ExplainTarget, IssueOccurrenceSelection, ReadOptions, ReadTarget, SetTarget,
+    WatchOptions, WatchTarget, parse_command,
 };
 
 #[test]
@@ -1371,13 +1371,16 @@ fn parses_pasted_explain_ids_without_resource_word() {
     assert_eq!(
         issue,
         Command::Explain {
-            target: ExplainTarget::Issue("issue_123".to_owned()),
+            target: ExplainTarget::Issue {
+                id: "issue_123".to_owned(),
+                occurrence: IssueOccurrenceSelection::Recommended,
+            },
             json: true,
         }
     );
     assert_eq!(
         issue.http_path().expect("inferred issue has endpoint"),
-        "/api/telemetry/issues/issue_123/investigation"
+        "/api/telemetry/issues/issue_123/investigation?response_version=2&selection=recommended"
     );
 
     let uuid_issue = parse_command([
@@ -1390,7 +1393,10 @@ fn parses_pasted_explain_ids_without_resource_word() {
     assert_eq!(
         uuid_issue,
         Command::Explain {
-            target: ExplainTarget::Issue("123e4567-e89b-12d3-a456-426614174000".to_owned()),
+            target: ExplainTarget::Issue {
+                id: "123e4567-e89b-12d3-a456-426614174000".to_owned(),
+                occurrence: IssueOccurrenceSelection::Recommended,
+            },
             json: true,
         }
     );
@@ -1420,7 +1426,10 @@ fn parses_pasted_explain_ids_without_resource_word() {
     assert_eq!(
         issue_suffix,
         Command::Explain {
-            target: ExplainTarget::Issue("issue_123".to_owned()),
+            target: ExplainTarget::Issue {
+                id: "issue_123".to_owned(),
+                occurrence: IssueOccurrenceSelection::Recommended,
+            },
             json: true,
         }
     );
@@ -1448,7 +1457,10 @@ fn parses_resource_detail_explain_suffixes() {
     assert_eq!(
         issue,
         Command::Explain {
-            target: ExplainTarget::Issue("issue_123".to_owned()),
+            target: ExplainTarget::Issue {
+                id: "issue_123".to_owned(),
+                occurrence: IssueOccurrenceSelection::Recommended,
+            },
             json: true,
         }
     );

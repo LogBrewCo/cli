@@ -1802,7 +1802,10 @@ fn parses_json_before_explain_resource_and_id() {
     assert_eq!(
         inferred,
         Command::Explain {
-            target: logbrew_cli::ExplainTarget::Issue("issue_123".to_owned()),
+            target: logbrew_cli::ExplainTarget::Issue {
+                id: "issue_123".to_owned(),
+                occurrence: logbrew_cli::IssueOccurrenceSelection::Recommended,
+            },
             json: true,
         }
     );

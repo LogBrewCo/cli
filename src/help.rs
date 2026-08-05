@@ -100,9 +100,9 @@ Usage:
   logbrew read trace <trace_id> [--release <release>] [--environment production] [--json]
   logbrew trace <trace_id> [--release <release>] [--environment production] [--json]
   logbrew issue <issue_id> [--json]
-  logbrew issue <issue_id> explain [--json]
+  logbrew issue <issue_id> explain [--occurrence <recommended|first|latest|occurrence_id>] [--json]
   logbrew trace <trace_id> explain [--json]
-  logbrew explain issue <issue_id> [--json]
+  logbrew explain issue <issue_id> [--occurrence <recommended|first|latest|occurrence_id>] [--json]
   logbrew explain trace <trace_id> [--json]
   logbrew explain <issue_id_or_trace_id> [--json]
   logbrew analytics overview --project <project_id> --since 24h [--json]
@@ -120,7 +120,8 @@ Usage:
                          --return-event dashboard_opened [--json]
   logbrew analytics lifecycle --project <project_id> --since 30d --event-kind interaction \
                          --event dashboard_opened [--json]
-  logbrew investigate issue <issue_id> [--json]
+  logbrew investigate issue <issue_id> [--occurrence <recommended|first|latest|occurrence_id>] \
+                         [--json]
   logbrew debug-artifacts upload <path> --project <project_id> --release <release> --environment \
                          <environment> --service <service> [--expect-image-uuid <uuid>]... \
                          [--dry-run] [--json]
@@ -516,7 +517,7 @@ Server-side live filters are not sent yet; severity filtering is applied client-
 /// Explain command help text.
 const EXPLAIN_HELP: &str = "\
 Usage:
-  logbrew explain issue <issue_id> [--json]
+  logbrew explain issue <issue_id> [--occurrence <recommended|first|latest|occurrence_id>] [--json]
   logbrew explain log <log_id> [--json]
   logbrew explain trace <trace_id> [--json]
   logbrew explain release <release> --project <project_id> --environment <environment> --service \
@@ -527,12 +528,17 @@ Usage:
                             [--service <service_name>] [--release <release>] \
                             [--environment <environment>] [--series-limit <1-20>] [--json]
   logbrew explain <issue_id_or_trace_id> [--json]
-  logbrew issue <issue_id> explain [--json]
+  logbrew issue <issue_id> explain [--occurrence <recommended|first|latest|occurrence_id>] [--json]
   logbrew trace <trace_id> explain [--json]
   logbrew <issue_id_or_trace_id> explain [--json]
 
 Fetches bounded failure, correlation, timeline, evidence, or metric-series context for humans and \
                             AI agents.
+Issue explanations use the backend-recommended context-rich retained occurrence by default. Use \
+                            --occurrence first, latest, recommended, or a retained occurrence UUID \
+                            from a previous occurrence receipt to inspect another exact event. JSON emits the exact validated \
+                            schema-version-2 issue response with explicit selection and candidate \
+                            coverage.
 Metric explanations preserve gauge, delta-counter, histogram, and cumulative-stream semantics; \
                             they never invent reset-unsafe rates.
 Release investigation requires the exact project, environment, and service identity returned by \
@@ -789,15 +795,19 @@ Next: choose one exact captured page, screen, or interaction name from Product A
 /// Server-directed issue investigation help text.
 const INVESTIGATE_HELP: &str = "\
 Usage:
-  logbrew investigate issue <issue_id> [--json]
+  logbrew investigate issue <issue_id> [--occurrence <recommended|first|latest|occurrence_id>] \
+                         [--json]
 
-Reads one versioned, bounded issue investigation with the selected occurrence, exception, frames, \
-breadcrumbs, typed runtime context, honest cause and fix assessments, approximate affected-user \
+Reads one schema-version-2 bounded issue investigation with explicit selected, first, latest, and \
+recommended occurrence receipts; exception, frames, breadcrumbs, typed runtime context, honest \
+cause and fix assessments, approximate affected-user \
 coverage and limitations, trace, related logs, actions, metric exemplars, release scope, evidence \
 completeness, and prioritized next actions.
+The default is the bounded context-rich recommendation. --occurrence accepts first, latest, \
+recommended, or an exact retained occurrence UUID copied from a previous occurrence receipt.
 The command is read-only and uses the same contract as logbrew explain issue.
 Human output is bounded and marks application telemetry as untrusted evidence. JSON emits the exact \
-validated schema-version-1 response for AI agents.";
+validated schema-version-2 response for AI agents.";
 
 /// Apple native debug-artifact command help text.
 const NATIVE_DEBUG_ARTIFACTS_HELP: &str = "\

@@ -1,13 +1,16 @@
 //! Local CLI identifier shape helpers.
 
-use crate::ExplainTarget;
+use crate::{ExplainTarget, IssueOccurrenceSelection};
 
 /// Infers an explain target from obvious pasted IDs.
 pub(crate) fn infer_explain_target(value: &str) -> Option<ExplainTarget> {
     if is_trace_id(value) {
         Some(ExplainTarget::Trace(value.to_owned()))
     } else if is_issue_id(value) {
-        Some(ExplainTarget::Issue(value.to_owned()))
+        Some(ExplainTarget::Issue {
+            id: value.to_owned(),
+            occurrence: IssueOccurrenceSelection::Recommended,
+        })
     } else {
         None
     }

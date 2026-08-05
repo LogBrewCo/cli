@@ -279,6 +279,8 @@ pub enum Command {
     InvestigateIssue {
         /// Grouped issue identifier.
         issue_id: String,
+        /// Retained occurrence selected for detailed evidence.
+        occurrence: IssueOccurrenceSelection,
         /// Emit machine-readable JSON.
         json: bool,
     },
@@ -825,7 +827,12 @@ pub struct SupportTicketListOptions {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExplainTarget {
     /// One issue by ID.
-    Issue(String),
+    Issue {
+        /// Grouped issue identifier.
+        id: String,
+        /// Retained occurrence selected for detailed evidence.
+        occurrence: IssueOccurrenceSelection,
+    },
     /// One structured log by ID.
     Log(String),
     /// One trace by ID.
@@ -834,6 +841,19 @@ pub enum ExplainTarget {
     Release(ExplainReleaseTarget),
     /// One bounded metric time series.
     Metric(ExplainMetricTarget),
+}
+
+/// Retained issue occurrence selected for investigation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum IssueOccurrenceSelection {
+    /// Backend-recommended context-rich recent occurrence.
+    Recommended,
+    /// Earliest retained occurrence.
+    First,
+    /// Latest retained occurrence.
+    Latest,
+    /// One exact retained occurrence UUID.
+    Exact(String),
 }
 
 /// Exact identity required by a release investigation.
@@ -1676,9 +1696,11 @@ pub async fn execute_command<W: std::io::Write>(
         Command::Projects { json } => projects::execute(env, *json, output).await,
         Command::Usage { json } => usage::execute(env, *json, output).await,
         Command::Version { json } => execute_version(*json, output),
-        Command::InvestigateIssue { issue_id, json } => {
-            investigate::execute(env, issue_id.as_str(), *json, output).await
-        }
+        Command::InvestigateIssue {
+            issue_id,
+            occurrence,
+            json,
+        } => investigate::execute(env, issue_id.as_str(), occurrence, *json, output).await,
         Command::Explain { target, json } => explain::execute(env, target, *json, output).await,
         Command::AnalyticsOverview { options, json } => {
             analytics_overview::execute(env, options, *json, output).await
@@ -2260,12 +2282,7 @@ fn read_path(target: &ReadTarget, filters: &ReadPathFilters<'_>) -> String {
 /// Builds an explain endpoint path.
 fn explain_path(target: &ExplainTarget) -> String {
     match target {
-        ExplainTarget::Issue(id) => {
-            format!(
-                "/api/telemetry/issues/{}/investigation",
-                encode_component(id)
-            )
-        }
+        ExplainTarget::Issue { id, occurrence } => issue_explain_path(id, occurrence),
         ExplainTarget::Log(id) => {
             format!("/api/logs/{}/investigation", encode_component(id))
         }
@@ -2286,6 +2303,44 @@ fn explain_path(target: &ExplainTarget) -> String {
             ],
         ),
         ExplainTarget::Metric(metric) => metric_explain_path(metric),
+    }
+}
+
+/// Builds one explicit version-2 issue investigation path.
+fn issue_explain_path(id: &str, occurrence: &IssueOccurrenceSelection) -> String {
+    let base = format!(
+        "/api/telemetry/issues/{}/investigation",
+        encode_component(id)
+    );
+    match occurrence {
+        IssueOccurrenceSelection::Recommended => path_with_query(
+            base.as_str(),
+            &[
+                ("response_version", Some("2")),
+                ("selection", Some("recommended")),
+            ],
+        ),
+        IssueOccurrenceSelection::First => path_with_query(
+            base.as_str(),
+            &[
+                ("response_version", Some("2")),
+                ("selection", Some("first")),
+            ],
+        ),
+        IssueOccurrenceSelection::Latest => path_with_query(
+            base.as_str(),
+            &[
+                ("response_version", Some("2")),
+                ("selection", Some("latest")),
+            ],
+        ),
+        IssueOccurrenceSelection::Exact(occurrence_id) => path_with_query(
+            base.as_str(),
+            &[
+                ("response_version", Some("2")),
+                ("occurrence_id", Some(occurrence_id.as_str())),
+            ],
+        ),
     }
 }
 

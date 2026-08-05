@@ -31,8 +31,9 @@ use crate::flags::{
 use crate::ids::{infer_explain_target, is_issue_id, is_pasted_detail_id, is_trace_id, is_uuid};
 use crate::{
     CliError, Command, ExplainMetricTarget, ExplainReleaseTarget, ExplainTarget, HelpTopic,
-    ISSUE_STATUS_ARGUMENT_NEXT_STEP, ProjectCreateOptions, ProjectIngestKeyCreateOptions,
-    ProjectSetupSeenOptions, ReadOptions, ReadTarget, SetTarget, auth_namespace,
+    ISSUE_STATUS_ARGUMENT_NEXT_STEP, IssueOccurrenceSelection, ProjectCreateOptions,
+    ProjectIngestKeyCreateOptions, ProjectSetupSeenOptions, ReadOptions, ReadTarget, SetTarget,
+    auth_namespace,
 };
 
 /// Standard next step for malformed help invocations.
@@ -458,24 +459,70 @@ fn is_canonical_lower_uuid(value: &str) -> bool {
 /// Parses the closed, read-only issue investigation grammar.
 fn parse_investigate(args: &[String]) -> Result<Command, CliError> {
     let normalized = move_leading_json_to_tail(args);
-    match normalized.as_slice() {
-        [resource, issue_id]
-            if resource == "issue" && is_safe_investigation_issue_id(issue_id.as_str()) =>
-        {
-            Ok(Command::InvestigateIssue {
-                issue_id: issue_id.clone(),
-                json: false,
-            })
+    let [resource, issue_id, tail @ ..] = normalized.as_slice() else {
+        return Err(CliError::InvalidInvestigationCommand);
+    };
+    if resource != "issue" || !is_safe_investigation_issue_id(issue_id.as_str()) {
+        return Err(CliError::InvalidInvestigationCommand);
+    }
+    let (occurrence, json) = parse_issue_investigation_flags(tail)?;
+    Ok(Command::InvestigateIssue {
+        issue_id: issue_id.clone(),
+        occurrence,
+        json,
+    })
+}
+
+/// Parses the closed issue-only occurrence selector and JSON output flags.
+fn parse_issue_investigation_flags(
+    args: &[String],
+) -> Result<(IssueOccurrenceSelection, bool), CliError> {
+    let mut occurrence = IssueOccurrenceSelection::Recommended;
+    let mut occurrence_seen = false;
+    let mut json = false;
+    let mut index = 0;
+    while let Some(argument) = args.get(index) {
+        if argument == "--json" {
+            if json {
+                return Err(CliError::DuplicateFlag {
+                    flag: "--json",
+                    next: "use --json once",
+                });
+            }
+            json = true;
+        } else {
+            let (flag, inline_value) = argument
+                .split_once('=')
+                .map_or((argument.as_str(), None), |(flag, value)| {
+                    (flag, Some(value))
+                });
+            if flag != "--occurrence" || occurrence_seen {
+                return Err(CliError::InvalidInvestigationCommand);
+            }
+            let value = if let Some(value) = inline_value {
+                value
+            } else {
+                index = index.saturating_add(1);
+                args.get(index)
+                    .map(String::as_str)
+                    .ok_or(CliError::InvalidInvestigationCommand)?
+            };
+            occurrence = parse_issue_occurrence(value)?;
+            occurrence_seen = true;
         }
-        [resource, issue_id, json]
-            if resource == "issue"
-                && is_safe_investigation_issue_id(issue_id.as_str())
-                && json == "--json" =>
-        {
-            Ok(Command::InvestigateIssue {
-                issue_id: issue_id.clone(),
-                json: true,
-            })
+        index = index.saturating_add(1);
+    }
+    Ok((occurrence, json))
+}
+
+/// Validates one named or exact retained occurrence selector without reflecting invalid input.
+fn parse_issue_occurrence(value: &str) -> Result<IssueOccurrenceSelection, CliError> {
+    match value {
+        "recommended" => Ok(IssueOccurrenceSelection::Recommended),
+        "first" => Ok(IssueOccurrenceSelection::First),
+        "latest" => Ok(IssueOccurrenceSelection::Latest),
+        _ if is_canonical_lower_uuid(value) => {
+            Ok(IssueOccurrenceSelection::Exact(value.to_owned()))
         }
         _ => Err(CliError::InvalidInvestigationCommand),
     }
@@ -1600,9 +1647,13 @@ fn parse_issue_detail_or_status(args: &[String]) -> Result<Command, CliError> {
     if has_issue_status_action(tail.as_slice()) {
         return parse_issue_first_status_shortcut(id, tail.as_slice());
     }
-    if let Some(command) =
-        parse_detail_explain_suffix(ExplainTarget::Issue(id.clone()), tail.as_slice())?
-    {
+    if let Some(command) = parse_detail_explain_suffix(
+        ExplainTarget::Issue {
+            id: id.clone(),
+            occurrence: IssueOccurrenceSelection::Recommended,
+        },
+        tail.as_slice(),
+    )? {
         return Ok(command);
     }
     let target = ReadTarget::Issue(id);
@@ -1803,10 +1854,22 @@ fn parse_detail_explain_suffix(
     if normalized.first().is_none_or(|arg| arg != "explain") {
         return Ok(None);
     }
-    Ok(Some(Command::Explain {
+    Ok(Some(parse_explain_target_flags(target, &normalized[1..])?))
+}
+
+/// Parses target-specific explanation flags while keeping trace/log behavior unchanged.
+fn parse_explain_target_flags(target: ExplainTarget, args: &[String]) -> Result<Command, CliError> {
+    if let ExplainTarget::Issue { id, .. } = target {
+        let (occurrence, json) = parse_issue_investigation_flags(args)?;
+        return Ok(Command::Explain {
+            target: ExplainTarget::Issue { id, occurrence },
+            json,
+        });
+    }
+    Ok(Command::Explain {
         target,
-        json: parse_flags(&normalized[1..], FlagScope::Explain)?.is_json(),
-    }))
+        json: parse_flags(args, FlagScope::Explain)?.is_json(),
+    })
 }
 
 /// Parses detail read filters after rejecting list-only filters.
@@ -1828,10 +1891,7 @@ fn parse_pasted_detail_id(id: &str, args: &[String]) -> Result<Command, CliError
     let explain_args = move_leading_json_to_tail(args);
     if explain_args.first().is_some_and(|arg| arg == "explain") {
         let target = infer_explain_target(id).ok_or_else(|| unknown_command(id))?;
-        return Ok(Command::Explain {
-            target,
-            json: parse_flags(&explain_args[1..], FlagScope::Explain)?.is_json(),
-        });
+        return parse_explain_target_flags(target, &explain_args[1..]);
     }
     let (target, flags) = if is_trace_id(id) {
         (
@@ -1945,7 +2005,10 @@ fn parse_explain(args: &[String]) -> Result<Command, CliError> {
             let (id, tail) =
                 take_required_position(rest.as_slice(), "issue_id", "provide an issue id")?;
             (
-                ExplainTarget::Issue(validate_explain_id(id.as_str(), ExplainIdKind::Issue)?),
+                ExplainTarget::Issue {
+                    id: validate_explain_id(id.as_str(), ExplainIdKind::Issue)?,
+                    occurrence: IssueOccurrenceSelection::Recommended,
+                },
                 tail,
             )
         }
@@ -1972,11 +2035,7 @@ fn parse_explain(args: &[String]) -> Result<Command, CliError> {
             }
         }
     };
-    let flags = parse_flags(tail.as_slice(), FlagScope::Explain)?;
-    Ok(Command::Explain {
-        target,
-        json: flags.is_json(),
-    })
+    parse_explain_target_flags(target, tail.as_slice())
 }
 
 /// Explicit identifier vocabulary for explanation detail reads.
