@@ -835,6 +835,8 @@ pub enum ExplainTarget {
     },
     /// One structured log by ID.
     Log(String),
+    /// One product action by ID.
+    Action(String),
     /// One trace by ID.
     Trace(String),
     /// One exact service release.
@@ -2285,6 +2287,12 @@ fn explain_path(target: &ExplainTarget) -> String {
         ExplainTarget::Issue { id, occurrence } => issue_explain_path(id, occurrence),
         ExplainTarget::Log(id) => {
             format!("/api/logs/{}/investigation", encode_component(id))
+        }
+        ExplainTarget::Action(id) => {
+            format!(
+                "/api/telemetry/actions/{}/investigation",
+                encode_component(id)
+            )
         }
         ExplainTarget::Trace(id) => {
             format!(

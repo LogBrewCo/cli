@@ -72,7 +72,7 @@ const PROJECT_SETUP_SOURCE_NEXT_STEP: &str = "use --source api, cli, or sdk";
 /// Valid resources for live watch.
 const WATCH_RESOURCE_NEXT_STEP: &str = "choose logs, issues, actions, or omit a resource";
 /// Valid resources for explain.
-const EXPLAIN_RESOURCE_NEXT_STEP: &str = "choose issue, log, trace, release, or metric";
+const EXPLAIN_RESOURCE_NEXT_STEP: &str = "choose issue, log, action, trace, release, or metric";
 /// Exact required identity for release investigation.
 const EXPLAIN_RELEASE_NEXT_STEP: &str = "use logbrew explain release <release> --project \
                                          <project_id> --environment <environment> --service \
@@ -2019,6 +2019,14 @@ fn parse_explain(args: &[String]) -> Result<Command, CliError> {
                 tail,
             )
         }
+        "action" => {
+            let (id, tail) =
+                take_required_position(rest.as_slice(), "action_id", "provide an action UUID")?;
+            (
+                ExplainTarget::Action(validate_explain_id(id.as_str(), ExplainIdKind::Action)?),
+                tail,
+            )
+        }
         "trace" => {
             let (id, tail) =
                 take_required_position(rest.as_slice(), "trace_id", "provide a trace id")?;
@@ -2045,6 +2053,8 @@ enum ExplainIdKind {
     Issue,
     /// Stored log UUID.
     Log,
+    /// Stored product-action UUID.
+    Action,
     /// W3C or public-prefixed trace identifier.
     Trace,
 }
@@ -2061,7 +2071,7 @@ fn validate_explain_id(value: &str, kind: ExplainIdKind) -> Result<String, CliEr
     };
     let valid_shape = match kind {
         ExplainIdKind::Issue => is_uuid(value) || prefixed_value_is_nonempty(&["issue_", "issue-"]),
-        ExplainIdKind::Log => is_uuid(value),
+        ExplainIdKind::Log | ExplainIdKind::Action => is_uuid(value),
         ExplainIdKind::Trace => {
             (value.len() == 32 && value.bytes().all(|byte| byte.is_ascii_hexdigit()))
                 || prefixed_value_is_nonempty(&["trace_", "trace-"])
@@ -2071,6 +2081,11 @@ fn validate_explain_id(value: &str, kind: ExplainIdKind) -> Result<String, CliEr
         let (argument, command, next) = match kind {
             ExplainIdKind::Issue => ("invalid issue id", "explain issue", "provide an issue id"),
             ExplainIdKind::Log => ("invalid log id", "explain log", "provide a log UUID"),
+            ExplainIdKind::Action => (
+                "invalid action id",
+                "explain action",
+                "provide an action UUID",
+            ),
             ExplainIdKind::Trace => ("invalid trace id", "explain trace", "provide a trace id"),
         };
         return Err(CliError::UnexpectedArgument {

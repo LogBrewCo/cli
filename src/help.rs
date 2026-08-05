@@ -519,6 +519,7 @@ const EXPLAIN_HELP: &str = "\
 Usage:
   logbrew explain issue <issue_id> [--occurrence <recommended|first|latest|occurrence_id>] [--json]
   logbrew explain log <log_id> [--json]
+  logbrew explain action <action_id> [--json]
   logbrew explain trace <trace_id> [--json]
   logbrew explain release <release> --project <project_id> --environment <environment> --service \
                             <service_name> [--json]
@@ -532,8 +533,10 @@ Usage:
   logbrew trace <trace_id> explain [--json]
   logbrew <issue_id_or_trace_id> explain [--json]
 
-Fetches bounded failure, correlation, timeline, evidence, or metric-series context for humans and \
+Fetches bounded failure, product-action status, correlation, timeline, evidence, or metric-series context for humans and \
                             AI agents.
+Action explanations preserve privacy-safe subject classification and session-presence evidence, \
+                            connect exact trace/span and nearby signals, and never return raw actor or session identifiers.
 Issue explanations use the backend-recommended context-rich retained occurrence by default. Use \
                             --occurrence first, latest, recommended, or a retained occurrence UUID \
                             from a previous occurrence receipt to inspect another exact event. JSON emits the exact validated \
