@@ -141,7 +141,7 @@ fn grammar_failures_are_fixed_and_value_safe() -> Result<(), Box<dyn std::error:
 fn help_describes_the_complete_versioned_bundle() {
     let command = parse_command(["logbrew", "investigate", "issue", "--help"])
         .expect("investigation help parses");
-    let logbrew_cli::Command::Help { topic, .. } = command else {
+    let Command::Help { topic, .. } = command else {
         panic!("investigation help should return help");
     };
     let text = logbrew_cli::help::help_text(topic);
