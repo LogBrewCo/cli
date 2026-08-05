@@ -146,7 +146,7 @@ fn help_describes_the_complete_versioned_bundle() {
     };
     let text = logbrew_cli::help::help_text(topic);
 
-    assert!(text.contains("selected occurrence, exception, frames"));
+    assert!(text.contains("occurrence receipts; exception, frames"));
     assert!(text.contains("approximate affected-user coverage and limitations"));
     assert!(text.contains("trace, related logs, actions, metric exemplars"));
     assert!(text.contains("same contract as logbrew explain issue"));
