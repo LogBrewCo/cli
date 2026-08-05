@@ -536,7 +536,9 @@ Fetches bounded failure, correlation, timeline, evidence, or metric-series conte
 Metric explanations preserve gauge, delta-counter, histogram, and cumulative-stream semantics; \
                             they never invent reset-unsafe rates.
 Release investigation requires the exact project, environment, and service identity returned by \
-                            logbrew read releases.
+                            logbrew read releases. Release actions separate approximate typed-user, \
+                            anonymous-subject, and session cardinalities from exact subject-kind \
+                            capture coverage; legacy, missing, and historical events remain visible.
 Pasted UUID/issue_* values are treated as issues; 32-hex/trace_* values are treated as traces.";
 
 /// Product-analytics command overview.

@@ -2282,6 +2282,7 @@ fn explain_path(target: &ExplainTarget) -> String {
                 ("release", Some(release.release.as_str())),
                 ("environment", Some(release.environment.as_str())),
                 ("service_name", Some(release.service_name.as_str())),
+                ("response_version", Some("2")),
             ],
         ),
         ExplainTarget::Metric(metric) => metric_explain_path(metric),

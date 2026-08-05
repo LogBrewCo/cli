@@ -1752,7 +1752,7 @@ fn parses_log_release_and_metric_explanations() {
         release
             .http_path()
             .expect("release explanation has endpoint"),
-        "/api/telemetry/releases/investigation?project_id=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa&release=checkout%401.2.3&environment=production&service_name=checkout-api"
+        "/api/telemetry/releases/investigation?project_id=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa&release=checkout%401.2.3&environment=production&service_name=checkout-api&response_version=2"
     );
 
     let metric = parse_command([

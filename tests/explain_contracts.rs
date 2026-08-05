@@ -60,21 +60,11 @@ async fn human_release_explanation_connects_health_sdk_and_every_signal()
         .and(query_param("release", "checkout@1.2.3"))
         .and(query_param("environment", "production"))
         .and(query_param("service_name", "checkout-api"))
+        .and(query_param("response_version", "2"))
         .respond_with(ResponseTemplate::new(200).set_body_json(release_response()))
         .mount(&server)
         .await;
-    let command = parse_command([
-        "logbrew",
-        "explain",
-        "release",
-        "checkout@1.2.3",
-        "--project",
-        PROJECT_ID,
-        "--environment",
-        "production",
-        "--service",
-        "checkout-api",
-    ])?;
+    let command = release_command(false)?;
     let mut output = Vec::new();
 
     execute_command(&command, &authenticated_env(&server), &mut output).await?;
@@ -88,7 +78,10 @@ async fn human_release_explanation_connects_health_sdk_and_every_signal()
         "Release issues: status=available count=1",
         "High-severity logs: status=available count=1",
         "Log: message=processor rejected charge level=error",
-        "Action: name=checkout.submit events=4 users=3 sessions=3",
+        "Action cardinality: unique_counts_approximate=true method=approximate_uniq_combined64",
+        "Action: name=checkout.submit events=4 known_users=~2 anonymous_subjects=~1 sessions=~3",
+        "Action subject coverage: index_version=1 typed_user_events=2 anonymous_events=1 \
+         legacy_unknown_events=0 missing_events=1 historical_unindexed_events=0",
         "Metric: name=checkout.duration kind=histogram temporality=delta latest=240 min=120 max=300 average=220 events=3",
         "Timeline item: at=2026-08-03T11:05:00Z kind=issue summary=Payment failed",
         "Comparison: status=unavailable reason=deployment_boundary_not_captured",
@@ -98,6 +91,104 @@ async fn human_release_explanation_connects_health_sdk_and_every_signal()
             text.contains(expected),
             "missing release detail: {expected}"
         );
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn built_binary_release_preserves_validated_version_2_json()
+-> Result<(), Box<dyn std::error::Error>> {
+    let server = MockServer::start().await;
+    let response = release_response();
+    Mock::given(method("GET"))
+        .and(path("/api/telemetry/releases/investigation"))
+        .and(query_param("response_version", "2"))
+        .and(header("authorization", "Bearer test-token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(response.clone()))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let base_url = server.uri();
+    let process = tokio::task::spawn_blocking(move || {
+        std::process::Command::new(env!("CARGO_BIN_EXE_logbrew"))
+            .env_clear()
+            .env("HOME", std::env::temp_dir())
+            .env("LOGBREW_API_URL", base_url)
+            .env("LOGBREW_TOKEN", "test-token")
+            .args([
+                "explain",
+                "release",
+                "checkout@1.2.3",
+                "--project",
+                PROJECT_ID,
+                "--environment",
+                "production",
+                "--service",
+                "checkout-api",
+                "--json",
+            ])
+            .output()
+    })
+    .await??;
+
+    assert!(
+        process.status.success(),
+        "built binary failed: {}",
+        String::from_utf8_lossy(process.stderr.as_slice())
+    );
+    assert!(process.stderr.is_empty());
+    let actual: serde_json::Value = serde_json::from_slice(process.stdout.as_slice())?;
+    assert_eq!(actual, response);
+    Ok(())
+}
+
+#[tokio::test]
+async fn release_explanation_rejects_contradictory_or_unversioned_subject_receipts()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut contradictory_partition = release_response();
+    contradictory_partition["signals"]["actions"]["items"][0]["subject_coverage"]["missing_subject_events"] =
+        serde_json::json!(2);
+    let mut impossible_cardinality = release_response();
+    impossible_cardinality["signals"]["actions"]["items"][0]["identified_user_count"] =
+        serde_json::json!(3);
+    let mut unlabelled_estimate = release_response();
+    unlabelled_estimate["signals"]["actions"]["estimation"]["unique_counts_are_approximate"] =
+        serde_json::json!(false);
+    let mut legacy_schema = release_response();
+    legacy_schema["schema_version"] = serde_json::json!(1);
+    let mut unsafe_count = release_response();
+    unsafe_count["signals"]["actions"]["items"][0]["event_count"] =
+        serde_json::json!(9_007_199_254_740_992_u64);
+    let mut missing_evidence_receipt = release_response();
+    missing_evidence_receipt["evidence"]["captured_fields"] =
+        serde_json::json!(["release.issues", "release.traces"]);
+
+    for response in [
+        contradictory_partition,
+        impossible_cardinality,
+        unlabelled_estimate,
+        legacy_schema,
+        unsafe_count,
+        missing_evidence_receipt,
+    ] {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/telemetry/releases/investigation"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(response))
+            .mount(&server)
+            .await;
+        let command = release_command(true)?;
+        let mut output = Vec::new();
+
+        let error = execute_command(&command, &authenticated_env(&server), &mut output)
+            .await
+            .expect_err("contradictory release subject contract fails closed");
+
+        assert!(matches!(
+            error,
+            logbrew_cli::RuntimeError::ExplainResponseInvalid
+        ));
+        assert!(output.is_empty());
     }
     Ok(())
 }
@@ -359,6 +450,25 @@ fn metric_command(json: bool) -> Result<logbrew_cli::Command, logbrew_cli::CliEr
         "production",
         "--series-limit",
         "12",
+    ];
+    if json {
+        args.push("--json");
+    }
+    parse_command(args)
+}
+
+fn release_command(json: bool) -> Result<logbrew_cli::Command, logbrew_cli::CliError> {
+    let mut args = vec![
+        "logbrew",
+        "explain",
+        "release",
+        "checkout@1.2.3",
+        "--project",
+        PROJECT_ID,
+        "--environment",
+        "production",
+        "--service",
+        "checkout-api",
     ];
     if json {
         args.push("--json");
@@ -671,7 +781,7 @@ fn issue_response() -> serde_json::Value {
 
 fn release_response() -> serde_json::Value {
     serde_json::json!({
-        "schema_version": 1,
+        "schema_version": 2,
         "subject": {
             "kind": "release",
             "project_id": PROJECT_ID,
@@ -749,10 +859,23 @@ fn release_response() -> serde_json::Value {
             },
             "actions": {
                 "status": "available",
+                "estimation": {
+                    "unique_counts_are_approximate": true,
+                    "method": "approximate_uniq_combined64"
+                },
                 "items": [{
                     "name": "checkout.submit",
                     "event_count": 4,
-                    "identified_user_count": 3,
+                    "identified_user_count": 2,
+                    "anonymous_subject_count": 1,
+                    "subject_coverage": {
+                        "index_version": 1,
+                        "identified_user_events": 2,
+                        "anonymous_subject_events": 1,
+                        "legacy_unknown_kind_events": 0,
+                        "missing_subject_events": 1,
+                        "historical_unindexed_events": 0
+                    },
                     "session_count": 3,
                     "first_seen_at": "2026-08-03T10:30:00Z",
                     "last_seen_at": "2026-08-03T11:04:57Z",
@@ -794,7 +917,11 @@ fn release_response() -> serde_json::Value {
         },
         "evidence": {
             "status": "partial",
-            "captured_fields": ["release.issues", "release.traces"],
+            "captured_fields": [
+                "release.actions.subject_coverage",
+                "release.issues",
+                "release.traces"
+            ],
             "missing_fields": ["deployment.boundary"],
             "redacted_fields": [],
             "truncated_fields": []

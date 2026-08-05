@@ -29,6 +29,8 @@ const JSON_STRING_LIMIT: usize = 16_384;
 const NEXT_ACTION_LIMIT: usize = 16;
 /// Maximum related evidence items expanded in human output.
 const RELATED_PREVIEW_LIMIT: usize = 3;
+/// Maximum action aggregates returned by one release investigation.
+const RELEASE_ACTION_LIMIT: usize = 20;
 /// Maximum metric series returned by the public API.
 const METRIC_SERIES_LIMIT: usize = 20;
 /// Maximum points returned for one metric series.
@@ -644,7 +646,7 @@ fn validate_release_response(
             "next_actions",
         ],
     )?;
-    validate_schema_version(response)?;
+    validate_schema_version_value(response, 2)?;
     let subject = required_object(response, "subject")?;
     require_string_equals(subject, "kind", "release")?;
     require_string_equals(subject, "project_id", expected.project_id.as_str())?;
@@ -655,11 +657,11 @@ fn validate_release_response(
         "issue_count",
         "log_count",
         "trace_span_count",
-        "action_count",
         "metric_count",
     ] {
-        require_nonnegative_integer(subject, name)?;
+        let _count = require_safe_u64(subject, name)?;
     }
+    let action_count = require_safe_u64(subject, "action_count")?;
     let _first_seen = require_timestamp(subject, "first_seen_at")?;
     let _last_seen = require_timestamp(subject, "last_seen_at")?;
     validate_availability(subject, "trace_health_status")?;
@@ -678,15 +680,140 @@ fn validate_release_response(
     validate_items_collection(required_object(response, "sdk_coverage")?, true)?;
 
     let signals = required_object(response, "signals")?;
-    for name in ["issues", "traces", "logs", "actions", "metrics"] {
+    for name in ["issues", "traces", "logs", "metrics"] {
         validate_items_collection(required_object(signals, name)?, true)?;
     }
+    let actions = required_object(signals, "actions")?;
+    validate_release_actions(actions, action_count)?;
     validate_timeline(required_object(response, "timeline")?)?;
     let comparison = required_object(response, "comparison")?;
     validate_availability(comparison, "status")?;
     let _comparison_reason = require_string(comparison, "reason")?;
-    validate_evidence(required_object(response, "evidence")?)?;
+    let evidence = required_object(response, "evidence")?;
+    validate_evidence(evidence)?;
+    validate_release_action_evidence(evidence, require_string(actions, "status")?, action_count)?;
     validate_next_actions(response.get("next_actions"))
+}
+
+/// Validates version-2 release action estimates and their exhaustive event partition.
+fn validate_release_actions(
+    value: &Map<String, Value>,
+    release_action_count: u64,
+) -> Result<(), RuntimeError> {
+    validate_items_collection(value, true)?;
+    let status = require_string(value, "status")?;
+    let items = value
+        .get("items")
+        .and_then(Value::as_array)
+        .ok_or_else(invalid_response)?;
+    let truncated = require_bool(value, "truncated")?;
+    if items.len() > RELEASE_ACTION_LIMIT
+        || (status == "available") == items.is_empty()
+        || (status != "available" && truncated)
+        || (truncated && items.len() != RELEASE_ACTION_LIMIT)
+    {
+        return Err(invalid_response());
+    }
+
+    let estimation = required_object(value, "estimation")?;
+    if !require_bool(estimation, "unique_counts_are_approximate")?
+        || require_string(estimation, "method")? != "approximate_uniq_combined64"
+    {
+        return Err(invalid_response());
+    }
+
+    let mut names = BTreeSet::new();
+    let mut represented_events = 0_u64;
+    for item in items {
+        let (name, event_count) =
+            validate_release_action(item.as_object().ok_or_else(invalid_response)?)?;
+        if !names.insert(name) {
+            return Err(invalid_response());
+        }
+        represented_events = represented_events
+            .checked_add(event_count)
+            .ok_or_else(invalid_response)?;
+    }
+    if represented_events > release_action_count
+        || (status == "available"
+            && if truncated {
+                represented_events >= release_action_count
+            } else {
+                represented_events != release_action_count
+            })
+    {
+        return Err(invalid_response());
+    }
+    Ok(())
+}
+
+/// Validates one release action without trusting approximate values or partial coverage.
+fn validate_release_action(action: &Map<String, Value>) -> Result<(&str, u64), RuntimeError> {
+    let name = require_string(action, "name")?;
+    let event_count = require_safe_positive_u64(action, "event_count")?;
+    let identified_users = require_safe_u64(action, "identified_user_count")?;
+    let anonymous_subjects = require_safe_u64(action, "anonymous_subject_count")?;
+    let sessions = require_safe_u64(action, "session_count")?;
+    let _first_seen = require_timestamp(action, "first_seen_at")?;
+    let _last_seen = require_timestamp(action, "last_seen_at")?;
+    if optional_string(action, "trace_id")?.is_some_and(|trace_id| !is_trace_id(trace_id)) {
+        return Err(invalid_response());
+    }
+
+    let coverage = required_object(action, "subject_coverage")?;
+    if require_u64(coverage, "index_version")? != 1 {
+        return Err(invalid_response());
+    }
+    let identified_events = require_safe_u64(coverage, "identified_user_events")?;
+    let anonymous_events = require_safe_u64(coverage, "anonymous_subject_events")?;
+    let legacy_events = require_safe_u64(coverage, "legacy_unknown_kind_events")?;
+    let missing_events = require_safe_u64(coverage, "missing_subject_events")?;
+    let historical_events = require_safe_u64(coverage, "historical_unindexed_events")?;
+    let classified_events = identified_events
+        .checked_add(anonymous_events)
+        .and_then(|count| count.checked_add(legacy_events))
+        .and_then(|count| count.checked_add(missing_events))
+        .and_then(|count| count.checked_add(historical_events))
+        .ok_or_else(invalid_response)?;
+    if classified_events != event_count
+        || identified_users > identified_events
+        || anonymous_subjects > anonymous_events
+        || sessions > event_count
+    {
+        return Err(invalid_response());
+    }
+    Ok((name, event_count))
+}
+
+/// Requires the version-2 coverage field in exactly one evidence receipt partition.
+fn validate_release_action_evidence(
+    evidence: &Map<String, Value>,
+    action_status: &str,
+    release_action_count: u64,
+) -> Result<(), RuntimeError> {
+    let field = "release.actions.subject_coverage";
+    let captured = evidence
+        .get("captured_fields")
+        .and_then(Value::as_array)
+        .ok_or_else(invalid_response)?;
+    let missing = evidence
+        .get("missing_fields")
+        .and_then(Value::as_array)
+        .ok_or_else(invalid_response)?;
+    let captured_count = captured
+        .iter()
+        .filter(|value| value.as_str() == Some(field))
+        .count();
+    let missing_count = missing
+        .iter()
+        .filter(|value| value.as_str() == Some(field))
+        .count();
+    let should_be_captured =
+        action_status == "available" || (action_status == "not_found" && release_action_count == 0);
+    if (captured_count, missing_count) != if should_be_captured { (1, 0) } else { (0, 1) } {
+        return Err(invalid_response());
+    }
+    Ok(())
 }
 
 /// Validates one UUID string field.
@@ -1206,7 +1333,15 @@ fn response_object<'a>(
 
 /// Requires the current version of a versioned explanation response.
 fn validate_schema_version(value: &Map<String, Value>) -> Result<(), RuntimeError> {
-    if value.get("schema_version").and_then(Value::as_u64) == Some(1) {
+    validate_schema_version_value(value, 1)
+}
+
+/// Requires one exact schema version selected by the request contract.
+fn validate_schema_version_value(
+    value: &Map<String, Value>,
+    expected: u64,
+) -> Result<(), RuntimeError> {
+    if value.get("schema_version").and_then(Value::as_u64) == Some(expected) {
         Ok(())
     } else {
         Err(invalid_response())
@@ -2014,7 +2149,7 @@ fn append_release_signals(output: &mut String, signals: Option<&Value>) {
                 }
             }
             "logs" => append_log_previews(output, items),
-            "actions" => append_action_previews(output, items),
+            "actions" => append_release_action_previews(output, collection, items),
             "metrics" => append_metric_previews(output, items),
             _ => {}
         }
@@ -2260,6 +2395,72 @@ fn append_action_previews(output: &mut String, items: Option<&[Value]>) {
     }
 }
 
+/// Appends versioned release action estimates and exact subject-capture coverage.
+fn append_release_action_previews(
+    output: &mut String,
+    collection: &Value,
+    items: Option<&[Value]>,
+) {
+    if let Some(estimation) = collection.get("estimation") {
+        output.push_str("Action cardinality:");
+        append_labeled_bool(
+            output,
+            "unique_counts_approximate",
+            estimation,
+            "unique_counts_are_approximate",
+        );
+        append_labeled_text(output, "method", estimation, "method", 80);
+        output.push('\n');
+    }
+    for action in items.into_iter().flatten().take(RELATED_PREVIEW_LIMIT) {
+        output.push_str("Action:");
+        append_labeled_text(output, "name", action, "name", 180);
+        append_labeled_integer(output, "events", action, "event_count");
+        append_labeled_approximate_integer(output, "known_users", action, "identified_user_count");
+        append_labeled_approximate_integer(
+            output,
+            "anonymous_subjects",
+            action,
+            "anonymous_subject_count",
+        );
+        append_labeled_approximate_integer(output, "sessions", action, "session_count");
+        append_labeled_text(output, "first", action, "first_seen_at", 64);
+        append_labeled_text(output, "last", action, "last_seen_at", 64);
+        append_labeled_text(output, "trace", action, "trace_id", 80);
+        output.push('\n');
+        if let Some(coverage) = action.get("subject_coverage") {
+            output.push_str("Action subject coverage:");
+            append_labeled_integer(output, "index_version", coverage, "index_version");
+            append_labeled_integer(
+                output,
+                "typed_user_events",
+                coverage,
+                "identified_user_events",
+            );
+            append_labeled_integer(
+                output,
+                "anonymous_events",
+                coverage,
+                "anonymous_subject_events",
+            );
+            append_labeled_integer(
+                output,
+                "legacy_unknown_events",
+                coverage,
+                "legacy_unknown_kind_events",
+            );
+            append_labeled_integer(output, "missing_events", coverage, "missing_subject_events");
+            append_labeled_integer(
+                output,
+                "historical_unindexed_events",
+                coverage,
+                "historical_unindexed_events",
+            );
+            output.push('\n');
+        }
+    }
+}
+
 /// Appends metric exemplar or release metric evidence without anomaly claims.
 fn append_metric_previews(output: &mut String, items: Option<&[Value]>) {
     for metric in items.into_iter().flatten().take(RELATED_PREVIEW_LIMIT) {
@@ -2415,6 +2616,17 @@ fn append_labeled_integer(output: &mut String, label: &str, value: &Value, name:
     output.push(' ');
     output.push_str(label);
     output.push('=');
+    output.push_str(value.as_str());
+}
+
+/// Appends one compact approximate integer field with an explicit approximation marker.
+fn append_labeled_approximate_integer(output: &mut String, label: &str, value: &Value, name: &str) {
+    let Some(value) = integer_text(value, name) else {
+        return;
+    };
+    output.push(' ');
+    output.push_str(label);
+    output.push_str("=~");
     output.push_str(value.as_str());
 }
 
