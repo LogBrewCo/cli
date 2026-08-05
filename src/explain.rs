@@ -545,7 +545,7 @@ fn validate_selected_occurrence_event(
         .ok_or_else(invalid_response)?;
     let stack = required_object(selected, "stack")?;
     let breadcrumbs = required_object(selected, "breadcrumbs")?;
-    let context_captured = event.get("context").is_some_and(Value::is_object);
+    let context_captured = validate_selected_event_context(event)?;
     if selected_exception == event_exception
         && require_safe_u64(stack, "frame_count")? == stack_count
         && require_safe_u64(breadcrumbs, "count")? == breadcrumb_count
@@ -556,6 +556,26 @@ fn validate_selected_occurrence_event(
     } else {
         Err(invalid_response())
     }
+}
+
+/// Validates the typed context envelope and returns whether it contains bounded evidence.
+fn validate_selected_event_context(event: &Map<String, Value>) -> Result<bool, RuntimeError> {
+    let context = match event.get("context") {
+        Some(Value::Null) => return Ok(false),
+        Some(Value::Object(context)) => context,
+        _ => return Err(invalid_response()),
+    };
+    validate_schema_version_value(context, 1)?;
+    let mut captured = false;
+    for field in ["resource", "trace", "session", "subject"] {
+        match context.get(field) {
+            Some(Value::Null) => {}
+            Some(Value::Object(_)) => captured = true,
+            _ => return Err(invalid_response()),
+        }
+    }
+    let tags = required_object(context, "tags")?;
+    Ok(captured || !tags.is_empty())
 }
 
 /// Binds any captured resource fields back to the selected occurrence summary.

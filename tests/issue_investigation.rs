@@ -945,6 +945,18 @@ fn invalid_occurrence_selection_bundles() -> Vec<(serde_json::Value, &'static st
         "hostile-service-marker"
     );
     invalid_case!(
+        "/event/context",
+        {
+            "schema_version": 1,
+            "resource": null,
+            "trace": null,
+            "session": null,
+            "subject": null,
+            "tags": {}
+        },
+        "empty-context-marker"
+    );
+    invalid_case!(
         "/event/context/trace/trace_id",
         "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "trace-identity-marker"
