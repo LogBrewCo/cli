@@ -366,7 +366,7 @@ fn read_summary(
 /// Builds a human summary for explain responses.
 fn explain_summary(target: &ExplainTarget, value: &serde_json::Value) -> Option<String> {
     match target {
-        ExplainTarget::Issue(_) => issue_detail_summary(value),
+        ExplainTarget::Issue { .. } => issue_detail_summary(value),
         ExplainTarget::Trace(id) => trace_summary(value, id.as_str()),
         ExplainTarget::Log(_) | ExplainTarget::Release(_) | ExplainTarget::Metric(_) => None,
     }

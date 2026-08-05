@@ -1,6 +1,6 @@
 //! Compatibility entry point for the versioned issue investigation bundle.
 
-use crate::{CliEnvironment, ExplainTarget, RuntimeError};
+use crate::{CliEnvironment, ExplainTarget, IssueOccurrenceSelection, RuntimeError};
 
 /// Executes the rich, read-only issue investigation used by `explain issue`.
 ///
@@ -9,10 +9,14 @@ use crate::{CliEnvironment, ExplainTarget, RuntimeError};
 pub async fn execute<W: std::io::Write>(
     env: &CliEnvironment,
     issue_id: &str,
+    occurrence: &IssueOccurrenceSelection,
     json: bool,
     output: &mut W,
 ) -> Result<(), RuntimeError> {
-    let target = ExplainTarget::Issue(issue_id.to_owned());
+    let target = ExplainTarget::Issue {
+        id: issue_id.to_owned(),
+        occurrence: occurrence.clone(),
+    };
     crate::explain::execute(env, &target, json, output)
         .await
         .map_err(investigation_error)

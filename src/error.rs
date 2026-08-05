@@ -686,7 +686,7 @@ const fn cli_error_next_step(error: &CliError) -> &'static str {
             "use --context with 1 to 4000 characters after trimming whitespace"
         }
         CliError::InvalidInvestigationCommand => {
-            "use logbrew investigate issue <issue_id> with optional --json"
+            "use logbrew investigate issue <issue_id> or logbrew explain issue <issue_id> with optional --occurrence recommended|first|latest|<occurrence_id> and --json"
         }
         CliError::InvalidDoctorCommand => {
             "use logbrew doctor --project <project_id> with optional --json"

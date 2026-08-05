@@ -9,8 +9,8 @@ use serde_json::{Map, Value};
 use crate::auth::{AuthCredential, send_authenticated_with_refresh};
 use crate::ids::{is_trace_id, is_uuid};
 use crate::{
-    CliEnvironment, ExplainMetricTarget, ExplainReleaseTarget, ExplainTarget, RuntimeError,
-    explain_path,
+    CliEnvironment, ExplainMetricTarget, ExplainReleaseTarget, ExplainTarget,
+    IssueOccurrenceSelection, RuntimeError, explain_path,
 };
 
 /// Maximum accepted explanation response body.
@@ -35,6 +35,10 @@ const RELEASE_ACTION_LIMIT: usize = 20;
 const METRIC_SERIES_LIMIT: usize = 20;
 /// Maximum points returned for one metric series.
 const METRIC_POINT_LIMIT: usize = 500;
+/// Fixed backend candidate cap for algorithm-version-1 issue occurrence recommendations.
+const ISSUE_OCCURRENCE_CANDIDATE_LIMIT: u64 = 50;
+/// Maximum structured frames projected into one issue occurrence summary.
+const ISSUE_OCCURRENCE_FRAME_LIMIT: u64 = 32;
 /// Largest integer accepted from JSON-number investigation contracts.
 const MAX_SAFE_JSON_INTEGER: u64 = 9_007_199_254_740_991;
 
@@ -212,7 +216,7 @@ fn validated_response(target: &ExplainTarget, body: &str) -> Result<Value, Runti
         return Err(invalid_response());
     }
     match target {
-        ExplainTarget::Issue(id) => validate_issue_response(&value, id),
+        ExplainTarget::Issue { id, occurrence } => validate_issue_response(&value, id, occurrence),
         ExplainTarget::Log(id) => validate_log_response(&value, id),
         ExplainTarget::Trace(id) => validate_trace_response(&value, id),
         ExplainTarget::Release(release) => validate_release_response(&value, release),
@@ -247,13 +251,18 @@ fn validate_tree(value: &Value, depth: usize, nodes: &mut usize) -> bool {
 }
 
 /// Validates one versioned issue investigation envelope.
-fn validate_issue_response(value: &Value, expected_id: &str) -> Result<(), RuntimeError> {
+fn validate_issue_response(
+    value: &Value,
+    expected_id: &str,
+    expected_occurrence: &IssueOccurrenceSelection,
+) -> Result<(), RuntimeError> {
     let response = response_object(
         value,
         &[
             "schema_version",
             "subject",
             "event",
+            "occurrence_selection",
             "cause",
             "fix",
             "impact",
@@ -262,7 +271,7 @@ fn validate_issue_response(value: &Value, expected_id: &str) -> Result<(), Runti
             "next_actions",
         ],
     )?;
-    validate_schema_version(response)?;
+    validate_schema_version_value(response, 2)?;
     let subject = required_object(response, "subject")?;
     require_string_equals(subject, "kind", "issue")?;
     require_string_equals(subject, "id", expected_id)?;
@@ -276,20 +285,23 @@ fn validate_issue_response(value: &Value, expected_id: &str) -> Result<(), Runti
     let first_seen = require_timestamp(subject, "first_seen_at")?;
     let last_seen = require_timestamp(subject, "last_seen_at")?;
 
-    match response.get("event") {
-        Some(Value::Null) => {}
-        Some(Value::Object(event)) => {
-            require_uuid(event, "id")?;
-            let _occurred_at = require_timestamp(event, "occurred_at")?;
-            validate_name_version(required_object(event, "sdk")?)?;
-            validate_nullable_object(event, "context")?;
-            validate_nullable_object(event, "exception")?;
-            validate_object_array(event, "stack_frames", 256)?;
-            validate_object_array(event, "breadcrumbs", 256)?;
-            let _breadcrumbs_truncated = require_bool(event, "breadcrumbs_truncated")?;
-        }
-        _ => return Err(invalid_response()),
-    }
+    let event = required_object(response, "event")?;
+    require_uuid(event, "id")?;
+    let _occurred_at = require_timestamp(event, "occurred_at")?;
+    validate_name_version(required_object(event, "sdk")?)?;
+    validate_nullable_object(event, "context")?;
+    validate_nullable_object(event, "exception")?;
+    validate_object_array(event, "stack_frames", 256)?;
+    validate_object_array(event, "breadcrumbs", 256)?;
+    let _breadcrumbs_truncated = require_bool(event, "breadcrumbs_truncated")?;
+    let selected_occurrence = validate_issue_occurrence_selection(
+        required_object(response, "occurrence_selection")?,
+        event,
+        expected_occurrence,
+        occurrence_count,
+        first_seen,
+        last_seen,
+    )?;
 
     let cause = required_object(response, "cause")?;
     let _cause_status = require_string(cause, "status")?;
@@ -315,9 +327,342 @@ fn validate_issue_response(value: &Value, expected_id: &str) -> Result<(), Runti
     validate_issue_user_impact(impact, occurrence_count)?;
     validate_nullable_object(impact, "reported")?;
 
-    validate_issue_correlations(required_object(response, "correlations")?)?;
+    let correlations = required_object(response, "correlations")?;
+    validate_issue_correlations(correlations)?;
+    validate_selected_occurrence_correlations(selected_occurrence, event, correlations)?;
     validate_evidence(required_object(response, "evidence")?)?;
     validate_next_actions(response.get("next_actions"))
+}
+
+/// Validated occurrence facts used to bind detailed evidence and correlations.
+#[derive(Clone, Copy)]
+struct IssueOccurrenceFacts<'a> {
+    /// Exact retained occurrence identity.
+    id: &'a str,
+    /// Exact client occurrence time.
+    occurred_at: &'a str,
+    /// Selected deployment environment.
+    environment: &'a str,
+    /// Selected application release.
+    release: &'a str,
+    /// Selected logical service.
+    service_name: &'a str,
+    /// Whether the selected occurrence captured an exact trace identifier.
+    trace_linked: bool,
+    /// Whether the selected occurrence produced typed context.
+    context_captured: bool,
+}
+
+/// Exact summary objects participating in one selector decision.
+#[derive(Clone, Copy)]
+struct IssueOccurrenceViews<'a> {
+    /// Detailed selected occurrence summary.
+    selected: &'a Map<String, Value>,
+    /// Earliest retained occurrence summary.
+    first: &'a Map<String, Value>,
+    /// Latest retained occurrence summary.
+    latest: &'a Map<String, Value>,
+    /// Bounded deterministic recommendation summary.
+    recommended: &'a Map<String, Value>,
+}
+
+/// Validates selector semantics, boundaries, recommendation coverage, and detailed event identity.
+fn validate_issue_occurrence_selection<'a>(
+    value: &'a Map<String, Value>,
+    event: &Map<String, Value>,
+    expected: &IssueOccurrenceSelection,
+    occurrence_count: u64,
+    first_seen: &str,
+    last_seen: &str,
+) -> Result<IssueOccurrenceFacts<'a>, RuntimeError> {
+    let requested = require_string(value, "requested")?;
+    let reason = require_string(value, "reason")?;
+    let selected_value = required_object(value, "selected")?;
+    let first_value = required_object(value, "first")?;
+    let latest_value = required_object(value, "latest")?;
+    let recommended_value = required_object(value, "recommended")?;
+    let selected = validate_issue_occurrence_summary(selected_value)?;
+    let first = validate_issue_occurrence_summary(first_value)?;
+    let latest = validate_issue_occurrence_summary(latest_value)?;
+    let _recommended = validate_issue_occurrence_summary(recommended_value)?;
+    let views = IssueOccurrenceViews {
+        selected: selected_value,
+        first: first_value,
+        latest: latest_value,
+        recommended: recommended_value,
+    };
+
+    if first.occurred_at != first_seen || latest.occurred_at != last_seen {
+        return Err(invalid_response());
+    }
+    validate_issue_occurrence_request(
+        expected,
+        requested,
+        reason,
+        occurrence_count,
+        views,
+        selected.id,
+    )?;
+    validate_issue_occurrence_recommendation(
+        required_object(value, "recommendation")?,
+        occurrence_count,
+    )?;
+    validate_selected_occurrence_event(selected_value, selected, event)?;
+    Ok(selected)
+}
+
+/// Validates one privacy-safe occurrence comparison summary.
+fn validate_issue_occurrence_summary(
+    value: &Map<String, Value>,
+) -> Result<IssueOccurrenceFacts<'_>, RuntimeError> {
+    let id = require_string(value, "id")?;
+    if !is_uuid(id) || !value.contains_key("exception_type") {
+        return Err(invalid_response());
+    }
+    let occurred_at = require_timestamp(value, "occurred_at")?;
+    let _severity = require_string(value, "severity")?;
+    let environment = require_string(value, "environment")?;
+    let release = require_string(value, "release")?;
+    let service_name = require_string(value, "service_name")?;
+    validate_name_version(required_object(value, "sdk")?)?;
+    let _exception_type = optional_string(value, "exception_type")?;
+    let trace_linked = require_bool(value, "trace_linked")?;
+    let stack = required_object(value, "stack")?;
+    let frame_count = require_safe_u64(stack, "frame_count")?;
+    let _stack_truncated = require_bool(stack, "truncated")?;
+    let breadcrumbs = required_object(value, "breadcrumbs")?;
+    let breadcrumb_count = require_safe_u64(breadcrumbs, "count")?;
+    let _breadcrumbs_truncated = require_bool(breadcrumbs, "truncated")?;
+    let context_captured = require_bool(value, "context_captured")?;
+    if frame_count > ISSUE_OCCURRENCE_FRAME_LIMIT || breadcrumb_count > 256 {
+        return Err(invalid_response());
+    }
+    Ok(IssueOccurrenceFacts {
+        id,
+        occurred_at,
+        environment,
+        release,
+        service_name,
+        trace_linked,
+        context_captured,
+    })
+}
+
+/// Validates the requested selector, stable reason, and selected summary identity.
+fn validate_issue_occurrence_request(
+    expected: &IssueOccurrenceSelection,
+    requested: &str,
+    reason: &str,
+    occurrence_count: u64,
+    views: IssueOccurrenceViews<'_>,
+    selected_id: &str,
+) -> Result<(), RuntimeError> {
+    let selector_matches = match expected {
+        IssueOccurrenceSelection::Recommended => requested == "recommended",
+        IssueOccurrenceSelection::First => requested == "first",
+        IssueOccurrenceSelection::Latest => requested == "latest",
+        IssueOccurrenceSelection::Exact(id) => requested == "exact" && selected_id == id,
+    };
+    let selection_matches = match requested {
+        "recommended" => views.selected == views.recommended,
+        "first" => views.selected == views.first,
+        "latest" => views.selected == views.latest,
+        "exact" => matches!(expected, IssueOccurrenceSelection::Exact(_)),
+        _ => false,
+    };
+    let reason_matches = match requested {
+        "recommended" if occurrence_count == 1 => reason == "only_retained_occurrence",
+        "recommended" => {
+            reason == "context_rich_recent_occurrence"
+                || reason == "latest_occurrence_fallback" && views.recommended == views.latest
+        }
+        "first" => reason == "first_occurrence_requested",
+        "latest" => reason == "latest_occurrence_requested",
+        "exact" => reason == "exact_occurrence_requested",
+        _ => false,
+    };
+    let single_occurrence_matches = occurrence_count != 1
+        || views.first == views.latest
+            && views.latest == views.recommended
+            && views.recommended == views.selected;
+    if selector_matches && selection_matches && reason_matches && single_occurrence_matches {
+        Ok(())
+    } else {
+        Err(invalid_response())
+    }
+}
+
+/// Validates deterministic recommendation algorithm and candidate-window arithmetic.
+fn validate_issue_occurrence_recommendation(
+    value: &Map<String, Value>,
+    occurrence_count: u64,
+) -> Result<(), RuntimeError> {
+    let algorithm_version = require_u64(value, "algorithm_version")?;
+    let candidate_count = require_safe_positive_u64(value, "candidate_count")?;
+    let candidate_limit = require_safe_positive_u64(value, "candidate_limit")?;
+    let truncated = require_bool(value, "candidate_window_truncated")?;
+    if algorithm_version == 1
+        && candidate_limit == ISSUE_OCCURRENCE_CANDIDATE_LIMIT
+        && candidate_count == occurrence_count.min(ISSUE_OCCURRENCE_CANDIDATE_LIMIT)
+        && truncated == (occurrence_count > ISSUE_OCCURRENCE_CANDIDATE_LIMIT)
+    {
+        Ok(())
+    } else {
+        Err(invalid_response())
+    }
+}
+
+/// Binds the selected comparison summary to the full detailed event.
+fn validate_selected_occurrence_event(
+    selected: &Map<String, Value>,
+    facts: IssueOccurrenceFacts<'_>,
+    event: &Map<String, Value>,
+) -> Result<(), RuntimeError> {
+    require_string_equals(event, "id", facts.id)?;
+    require_string_equals(event, "occurred_at", facts.occurred_at)?;
+    let selected_sdk = required_object(selected, "sdk")?;
+    let event_sdk = required_object(event, "sdk")?;
+    for field in ["name", "version"] {
+        require_string_equals(event_sdk, field, require_string(selected_sdk, field)?)?;
+    }
+    let selected_exception = optional_string(selected, "exception_type")?;
+    let event_exception = match event.get("exception") {
+        Some(Value::Null) => None,
+        Some(Value::Object(exception)) => Some(require_string(exception, "type")?),
+        _ => return Err(invalid_response()),
+    };
+    let stack_count = event
+        .get("stack_frames")
+        .and_then(Value::as_array)
+        .map(Vec::len)
+        .and_then(|count| u64::try_from(count).ok())
+        .ok_or_else(invalid_response)?;
+    let breadcrumb_count = event
+        .get("breadcrumbs")
+        .and_then(Value::as_array)
+        .map(Vec::len)
+        .and_then(|count| u64::try_from(count).ok())
+        .ok_or_else(invalid_response)?;
+    let stack = required_object(selected, "stack")?;
+    let breadcrumbs = required_object(selected, "breadcrumbs")?;
+    let context_captured = validate_selected_event_context(event)?;
+    if selected_exception == event_exception
+        && require_safe_u64(stack, "frame_count")? == stack_count
+        && require_safe_u64(breadcrumbs, "count")? == breadcrumb_count
+        && require_bool(breadcrumbs, "truncated")? == require_bool(event, "breadcrumbs_truncated")?
+        && facts.context_captured == context_captured
+    {
+        validate_selected_event_resource_scope(facts, event)
+    } else {
+        Err(invalid_response())
+    }
+}
+
+/// Validates the typed context envelope and returns whether it contains bounded evidence.
+fn validate_selected_event_context(event: &Map<String, Value>) -> Result<bool, RuntimeError> {
+    let context = match event.get("context") {
+        Some(Value::Null) => return Ok(false),
+        Some(Value::Object(context)) => context,
+        _ => return Err(invalid_response()),
+    };
+    validate_schema_version_value(context, 1)?;
+    let mut captured = false;
+    for field in ["resource", "trace", "session", "subject"] {
+        match context.get(field) {
+            Some(Value::Null) => {}
+            Some(Value::Object(_)) => captured = true,
+            _ => return Err(invalid_response()),
+        }
+    }
+    let tags = required_object(context, "tags")?;
+    Ok(captured || !tags.is_empty())
+}
+
+/// Binds any captured resource fields back to the selected occurrence summary.
+fn validate_selected_event_resource_scope(
+    selected: IssueOccurrenceFacts<'_>,
+    event: &Map<String, Value>,
+) -> Result<(), RuntimeError> {
+    let Some(context) = event.get("context").and_then(Value::as_object) else {
+        return Ok(());
+    };
+    let Some(resource) = context.get("resource").filter(|value| !value.is_null()) else {
+        return Ok(());
+    };
+    let resource = resource.as_object().ok_or_else(invalid_response)?;
+    if let Some(service) = resource.get("service").filter(|value| !value.is_null()) {
+        require_string_equals(
+            service.as_object().ok_or_else(invalid_response)?,
+            "name",
+            selected.service_name,
+        )?;
+    }
+    if let Some(deployment) = resource.get("deployment").filter(|value| !value.is_null()) {
+        let deployment = deployment.as_object().ok_or_else(invalid_response)?;
+        if optional_string(deployment, "environment")?
+            .is_some_and(|value| value != selected.environment)
+            || optional_string(deployment, "release")?
+                .is_some_and(|value| value != selected.release)
+        {
+            return Err(invalid_response());
+        }
+    }
+    Ok(())
+}
+
+/// Reads the exact selected-event trace identity from typed context.
+fn selected_event_trace_id(event: &Map<String, Value>) -> Result<Option<&str>, RuntimeError> {
+    let Some(context) = event.get("context").and_then(Value::as_object) else {
+        return Ok(None);
+    };
+    let Some(trace) = context.get("trace").filter(|value| !value.is_null()) else {
+        return Ok(None);
+    };
+    let trace = trace.as_object().ok_or_else(invalid_response)?;
+    let trace_id = require_string(trace, "trace_id")?;
+    if is_trace_id(trace_id) {
+        Ok(Some(trace_id))
+    } else {
+        Err(invalid_response())
+    }
+}
+
+/// Binds selected deployment and exact trace facts to every selected-scope correlation query.
+fn validate_selected_occurrence_correlations(
+    selected: IssueOccurrenceFacts<'_>,
+    event: &Map<String, Value>,
+    correlations: &Map<String, Value>,
+) -> Result<(), RuntimeError> {
+    let release = required_object(correlations, "release")?;
+    let trace = required_object(correlations, "trace")?;
+    let event_trace_id = selected_event_trace_id(event)?;
+    let correlated_trace_id = optional_string(trace, "trace_id")?;
+    let trace_status = require_string(trace, "status")?;
+    let trace_status_matches = if selected.trace_linked {
+        trace_status != "not_linked"
+    } else {
+        trace_status == "not_linked"
+    };
+    let summary_matches = match trace.get("summary") {
+        None | Some(Value::Null) => true,
+        Some(Value::Object(summary)) => correlated_trace_id.is_some_and(|trace_id| {
+            summary.get("trace_id").and_then(Value::as_str) == Some(trace_id)
+        }),
+        Some(_) => false,
+    };
+    if require_string(release, "release")? == selected.release
+        && require_string(release, "environment")? == selected.environment
+        && require_string(release, "service_name")? == selected.service_name
+        && correlated_trace_id.is_some() == selected.trace_linked
+        && event_trace_id.is_none_or(|trace_id| correlated_trace_id == Some(trace_id))
+        && event_trace_id.is_none_or(|_| selected.trace_linked)
+        && trace_status_matches
+        && summary_matches
+    {
+        Ok(())
+    } else {
+        Err(invalid_response())
+    }
 }
 
 /// Exact occurrence-level capture receipt used to validate affected-user semantics.
@@ -1462,7 +1807,7 @@ fn require_timestamp<'a>(
 /// Builds one bounded human projection after contract validation.
 fn render_response(target: &ExplainTarget, value: &Value) -> Option<String> {
     match target {
-        ExplainTarget::Issue(_) => render_issue(value),
+        ExplainTarget::Issue { .. } => render_issue(value),
         ExplainTarget::Log(_) => render_log(value),
         ExplainTarget::Trace(_) => render_trace(value),
         ExplainTarget::Release(_) => render_release(value),
@@ -1488,6 +1833,7 @@ fn render_issue(value: &Value) -> Option<String> {
     append_named_integer(&mut output, "Occurrences", subject, "occurrence_count");
     append_named_text(&mut output, "First seen", subject, "first_seen_at", 64);
     append_named_text(&mut output, "Last seen", subject, "last_seen_at", 64);
+    append_issue_occurrence_selection(&mut output, value.get("occurrence_selection"));
 
     if let Some(event) = value.get("event").filter(|event| !event.is_null()) {
         append_named_text(&mut output, "Occurrence", event, "id", 80);
@@ -1509,6 +1855,70 @@ fn render_issue(value: &Value) -> Option<String> {
     append_evidence(&mut output, value.get("evidence"));
     append_actions(&mut output, value.get("next_actions"));
     Some(output)
+}
+
+/// Appends selected, boundary, and recommendation receipts for retained issue occurrences.
+fn append_issue_occurrence_selection(output: &mut String, value: Option<&Value>) {
+    let Some(selection) = value else {
+        return;
+    };
+    output.push_str("Occurrence selection:");
+    append_labeled_text(output, "requested", selection, "requested", 32);
+    append_labeled_text(output, "reason", selection, "reason", 64);
+    if let Some(selected) = selection.get("selected") {
+        append_labeled_text(output, "selected", selected, "id", 80);
+    }
+    output.push('\n');
+    for (label, field) in [
+        ("First occurrence", "first"),
+        ("Latest occurrence", "latest"),
+        ("Recommended occurrence", "recommended"),
+    ] {
+        append_issue_occurrence_summary(output, label, selection.get(field));
+    }
+    if let Some(recommendation) = selection.get("recommendation") {
+        output.push_str("Recommendation coverage:");
+        append_labeled_integer(output, "algorithm", recommendation, "algorithm_version");
+        append_labeled_integer(output, "candidates", recommendation, "candidate_count");
+        append_labeled_integer(output, "limit", recommendation, "candidate_limit");
+        append_labeled_bool(
+            output,
+            "truncated",
+            recommendation,
+            "candidate_window_truncated",
+        );
+        output.push('\n');
+    }
+}
+
+/// Appends one bounded comparison summary without duplicating detailed event context.
+fn append_issue_occurrence_summary(output: &mut String, label: &str, value: Option<&Value>) {
+    let Some(summary) = value else {
+        return;
+    };
+    output.push_str(label);
+    output.push(':');
+    append_labeled_text(output, "id", summary, "id", 80);
+    append_labeled_text(output, "at", summary, "occurred_at", 64);
+    append_labeled_text(output, "severity", summary, "severity", 32);
+    append_labeled_text(output, "release", summary, "release", 200);
+    append_labeled_text(output, "service", summary, "service_name", 160);
+    if let Some(sdk) = summary.get("sdk") {
+        append_labeled_text(output, "sdk", sdk, "name", 160);
+        append_labeled_text(output, "sdk_version", sdk, "version", 80);
+    }
+    append_labeled_text(output, "exception", summary, "exception_type", 200);
+    append_labeled_bool(output, "trace", summary, "trace_linked");
+    if let Some(stack) = summary.get("stack") {
+        append_labeled_integer(output, "frames", stack, "frame_count");
+        append_labeled_bool(output, "stack_truncated", stack, "truncated");
+    }
+    if let Some(breadcrumbs) = summary.get("breadcrumbs") {
+        append_labeled_integer(output, "breadcrumbs", breadcrumbs, "count");
+        append_labeled_bool(output, "breadcrumbs_truncated", breadcrumbs, "truncated");
+    }
+    append_labeled_bool(output, "context", summary, "context_captured");
+    output.push('\n');
 }
 
 /// Appends typed exception mechanism and handled state.
