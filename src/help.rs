@@ -104,6 +104,8 @@ Usage:
   logbrew trace <trace_id> explain [--json]
   logbrew explain issue <issue_id> [--occurrence <recommended|first|latest|occurrence_id>] [--json]
   logbrew explain trace <trace_id> [--json]
+  logbrew explain span <trace_id> <span_id> --project <project_id> --environment <environment> \
+                            --release <release> [--json]
   logbrew explain <issue_id_or_trace_id> [--json]
   logbrew analytics overview --project <project_id> --since 24h [--json]
   logbrew analytics properties --project <project_id> --since 24h [--limit 20] [--json]
@@ -521,6 +523,7 @@ Usage:
   logbrew explain log <log_id> [--json]
   logbrew explain action <action_id> [--json]
   logbrew explain trace <trace_id> [--json]
+  logbrew explain span <trace_id> <span_id> --project <project_id> --environment <environment> --release <release> [--json]
   logbrew explain release <release> --project <project_id> --environment <environment> --service \
                             <service_name> [--json]
   logbrew explain metric <name> --project <project_id> --since <24h|RFC3339> [--until <RFC3339>] \
@@ -537,6 +540,9 @@ Fetches bounded failure, product-action status, correlation, timeline, evidence,
                             AI agents.
 Action explanations preserve privacy-safe subject classification and session-presence evidence, \
                             connect exact trace/span and nearby signals, and never return raw actor or session identifiers.
+Span explanations bind a non-zero trace/span pair to an exact project, environment, and release; \
+                            they include selected-branch topology, a retained same-release peer baseline, \
+                            exact-span logs, same-trace signals, ordered evidence, and explicit limitations without claiming root cause.
 Issue explanations use the backend-recommended context-rich retained occurrence by default. Use \
                             --occurrence first, latest, recommended, or a retained occurrence UUID \
                             from a previous occurrence receipt to inspect another exact event. JSON emits the exact validated \

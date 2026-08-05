@@ -1,0 +1,560 @@
+{
+  "schema_version": 1,
+  "subject": {
+    "kind": "span",
+    "id": "22222222-2222-4222-8222-222222222222",
+    "project_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+    "span_id": "00f067aa0ba902b7",
+    "parent_span_id": "1111111111111111",
+    "name": "SELECT checkout",
+    "operation": "db.query",
+    "status": "error",
+    "started_at": "2026-06-01T12:00:00Z",
+    "duration_ms": 250,
+    "service_name": "checkout-api",
+    "environment": "production",
+    "release": "checkout@1.2.3",
+    "sdk": {
+      "name": "@logbrew/node",
+      "version": "0.2.0"
+    },
+    "content_trust": "untrusted_telemetry"
+  },
+  "context": {
+    "schema_version": 1,
+    "resource": {
+      "service": {
+        "name": "checkout-api",
+        "version": "1.2.3"
+      },
+      "deployment": {
+        "environment": "production",
+        "release": "checkout@1.2.3"
+      },
+      "runtime": {
+        "name": "node",
+        "version": "22.17.0"
+      },
+      "framework": {
+        "name": "fastify",
+        "version": "5.4.0"
+      },
+      "operating_system": null,
+      "device": null,
+      "application": null
+    },
+    "trace": {
+      "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+      "span_id": "00f067aa0ba902b7",
+      "parent_span_id": "1111111111111111",
+      "sampled": true
+    },
+    "session": null,
+    "subject": null,
+    "tags": {
+      "plan": "team",
+      "region": "eu"
+    }
+  },
+  "payload": {
+    "metadata": {
+      "values": {
+        "db.collection": "checkout",
+        "db.system": "clickhouse"
+      },
+      "included_leaf_count": 2,
+      "redacted": true,
+      "truncated": false
+    },
+    "events": [
+      {
+        "name": "db.retry",
+        "timestamp": "2026-06-01T12:00:00.050Z",
+        "offset_ms": 50,
+        "metadata": {
+          "attempt": 2,
+          "retryable": true
+        }
+      }
+    ],
+    "links": [
+      {
+        "trace_id": "11111111111111111111111111111111",
+        "span_id": "2222222222222222",
+        "sampled": true,
+        "metadata": {
+          "relation": "batch_item"
+        }
+      }
+    ],
+    "included_leaf_count": 10,
+    "redacted": true,
+    "truncated": false
+  },
+  "analysis": {
+    "status": "error_evidence",
+    "causality": "evidence_only",
+    "observations": [
+      "subject_error",
+      "child_error",
+      "exact_span_error_log",
+      "related_issue",
+      "subject_at_or_above_peer_p95",
+      "subject_at_or_above_peer_p99"
+    ]
+  },
+  "topology": {
+    "status": "available",
+    "root": {
+      "span_id": "1111111111111111",
+      "parent_span_id": null,
+      "name": "POST /checkout",
+      "operation": "http.server",
+      "status": "ok",
+      "started_at": "2026-06-01T11:59:59.900Z",
+      "duration_ms": 500,
+      "service_name": "gateway"
+    },
+    "parent": {
+      "span_id": "1111111111111111",
+      "parent_span_id": null,
+      "name": "POST /checkout",
+      "operation": "http.server",
+      "status": "ok",
+      "started_at": "2026-06-01T11:59:59.900Z",
+      "duration_ms": 500,
+      "service_name": "gateway"
+    },
+    "ancestors": [
+      {
+        "span_id": "1111111111111111",
+        "parent_span_id": null,
+        "name": "POST /checkout",
+        "operation": "http.server",
+        "status": "ok",
+        "started_at": "2026-06-01T11:59:59.900Z",
+        "duration_ms": 500,
+        "service_name": "gateway"
+      }
+    ],
+    "children": [
+      {
+        "span_id": "3333333333333333",
+        "parent_span_id": "00f067aa0ba902b7",
+        "name": "reserve stock",
+        "operation": "rpc.client",
+        "status": "error",
+        "started_at": "2026-06-01T12:00:00.010Z",
+        "duration_ms": 100,
+        "service_name": "inventory-api"
+      }
+    ],
+    "descendant_count": 1,
+    "cross_service_edges": [
+      {
+        "from_span_id": "00f067aa0ba902b7",
+        "to_span_id": "3333333333333333",
+        "from_service": "checkout-api",
+        "to_service": "inventory-api"
+      },
+      {
+        "from_span_id": "1111111111111111",
+        "to_span_id": "00f067aa0ba902b7",
+        "from_service": "gateway",
+        "to_service": "checkout-api"
+      }
+    ],
+    "parent_chain_status": "complete",
+    "truncated": false
+  },
+  "baseline": {
+    "status": "available",
+    "since": "2026-05-31T12:00:00Z",
+    "until": "2026-06-01T12:00:00Z",
+    "dimensions": {
+      "project_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "environment": "production",
+      "release": "checkout@1.2.3",
+      "service_name": "checkout-api",
+      "operation": "db.query",
+      "name": "SELECT checkout"
+    },
+    "retained_peer_count": 40,
+    "error_peer_count": 2,
+    "error_rate_basis_points": 500,
+    "p50_duration_ms": 80.0,
+    "p95_duration_ms": 200.0,
+    "p99_duration_ms": 240.0,
+    "subject_percentile_basis_points": 9750,
+    "method": "approximate_t_digest",
+    "limitations": [
+      "retained_telemetry_only",
+      "sampling_may_apply",
+      "approximate_percentiles",
+      "same_release_only"
+    ]
+  },
+  "correlations": {
+    "trace": {
+      "status": "available",
+      "summary": {
+        "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+        "span_count": 3,
+        "error_span_count": 2,
+        "service_count": 3,
+        "project_count": 1,
+        "started_at": "2026-06-01T11:59:59.900Z",
+        "duration_ms": 500,
+        "root_span": {
+          "span_id": "1111111111111111",
+          "parent_span_id": null,
+          "name": "POST /checkout",
+          "operation": "http.server",
+          "status": "ok",
+          "started_at": "2026-06-01T11:59:59.900Z",
+          "duration_ms": 500,
+          "service_name": "gateway"
+        },
+        "slowest_child_span": {
+          "span_id": "00f067aa0ba902b7",
+          "parent_span_id": "1111111111111111",
+          "name": "SELECT checkout",
+          "operation": "db.query",
+          "status": "error",
+          "started_at": "2026-06-01T12:00:00Z",
+          "duration_ms": 250,
+          "service_name": "checkout-api"
+        },
+        "slowest_path": [
+          {
+            "span_id": "1111111111111111",
+            "parent_span_id": null,
+            "name": "POST /checkout",
+            "operation": "http.server",
+            "status": "ok",
+            "started_at": "2026-06-01T11:59:59.900Z",
+            "duration_ms": 500,
+            "service_name": "gateway"
+          },
+          {
+            "span_id": "00f067aa0ba902b7",
+            "parent_span_id": "1111111111111111",
+            "name": "SELECT checkout",
+            "operation": "db.query",
+            "status": "error",
+            "started_at": "2026-06-01T12:00:00Z",
+            "duration_ms": 250,
+            "service_name": "checkout-api"
+          }
+        ],
+        "error_spans": [
+          {
+            "span_id": "00f067aa0ba902b7",
+            "parent_span_id": "1111111111111111",
+            "name": "SELECT checkout",
+            "operation": "db.query",
+            "status": "error",
+            "started_at": "2026-06-01T12:00:00Z",
+            "duration_ms": 250,
+            "service_name": "checkout-api"
+          },
+          {
+            "span_id": "3333333333333333",
+            "parent_span_id": "00f067aa0ba902b7",
+            "name": "reserve stock",
+            "operation": "rpc.client",
+            "status": "error",
+            "started_at": "2026-06-01T12:00:00.010Z",
+            "duration_ms": 100,
+            "service_name": "inventory-api"
+          }
+        ],
+        "services": [
+          {
+            "service_name": "checkout-api",
+            "span_count": 1,
+            "error_span_count": 1,
+            "max_duration_ms": 250
+          },
+          {
+            "service_name": "gateway",
+            "span_count": 1,
+            "error_span_count": 0,
+            "max_duration_ms": 500
+          },
+          {
+            "service_name": "inventory-api",
+            "span_count": 1,
+            "error_span_count": 1,
+            "max_duration_ms": 100
+          }
+        ],
+        "releases": [
+          "checkout@1.2.3"
+        ],
+        "environments": [
+          "production"
+        ]
+      },
+      "truncated": false
+    },
+    "issues": {
+      "status": "available",
+      "items": [
+        {
+          "id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+          "issue_id": "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+          "project_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          "severity": "error",
+          "title": "CheckoutDatabaseError",
+          "message": "checkout query failed",
+          "occurred_at": "2026-06-01T12:00:00.100Z",
+          "service_name": "checkout-api",
+          "environment": "production",
+          "release": "checkout@1.2.3"
+        }
+      ],
+      "truncated": false
+    },
+    "logs": {
+      "status": "available",
+      "items": [
+        {
+          "id": "44444444-4444-4444-8444-444444444444",
+          "project_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          "severity": "error",
+          "source": "database",
+          "message": "checkout transaction rolled back",
+          "occurred_at": "2026-06-01T12:00:00.075Z",
+          "service_name": "checkout-api",
+          "span_id": "00f067aa0ba902b7",
+          "environment": "production",
+          "release": "checkout@1.2.3"
+        }
+      ],
+      "truncated": false
+    },
+    "actions": {
+      "status": "available",
+      "items": [
+        {
+          "id": "55555555-5555-4555-8555-555555555555",
+          "project_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          "name": "checkout.submit",
+          "occurred_at": "2026-06-01T11:59:59.950Z",
+          "service_name": "checkout-web",
+          "environment": "production",
+          "release": "checkout@1.2.3"
+        }
+      ],
+      "truncated": false
+    },
+    "metrics": {
+      "status": "available",
+      "items": [
+        {
+          "id": "66666666-6666-4666-8666-666666666666",
+          "project_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          "name": "db.pool.wait",
+          "kind": "histogram",
+          "value": 120.0,
+          "unit": "ms",
+          "temporality": "delta",
+          "occurred_at": "2026-06-01T12:00:00.025Z",
+          "service_name": "checkout-api",
+          "environment": "production",
+          "release": "checkout@1.2.3"
+        }
+      ],
+      "truncated": false
+    },
+    "release": {
+      "project_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "release": "checkout@1.2.3",
+      "environment": "production",
+      "service_name": "checkout-api"
+    }
+  },
+  "timeline": {
+    "items": [
+      {
+        "id": "55555555-5555-4555-8555-555555555555",
+        "kind": "action",
+        "occurred_at": "2026-06-01T11:59:59.950Z",
+        "offset_ms": -50,
+        "name": "checkout.submit",
+        "service_name": "checkout-web",
+        "span_id": null,
+        "severity": null,
+        "status": null,
+        "duration_ms": null
+      },
+      {
+        "id": "00f067aa0ba902b7:start",
+        "kind": "span_start",
+        "occurred_at": "2026-06-01T12:00:00Z",
+        "offset_ms": 0,
+        "name": "SELECT checkout",
+        "service_name": "checkout-api",
+        "span_id": "00f067aa0ba902b7",
+        "severity": null,
+        "status": "error",
+        "duration_ms": 250
+      },
+      {
+        "id": "66666666-6666-4666-8666-666666666666",
+        "kind": "metric",
+        "occurred_at": "2026-06-01T12:00:00.025Z",
+        "offset_ms": 25,
+        "name": "db.pool.wait",
+        "service_name": "checkout-api",
+        "span_id": null,
+        "severity": null,
+        "status": null,
+        "duration_ms": null
+      },
+      {
+        "id": "span-event:0",
+        "kind": "span_event",
+        "occurred_at": "2026-06-01T12:00:00.050Z",
+        "offset_ms": 50,
+        "name": "db.retry",
+        "service_name": "checkout-api",
+        "span_id": "00f067aa0ba902b7",
+        "severity": null,
+        "status": null,
+        "duration_ms": null
+      },
+      {
+        "id": "44444444-4444-4444-8444-444444444444",
+        "kind": "log",
+        "occurred_at": "2026-06-01T12:00:00.075Z",
+        "offset_ms": 75,
+        "name": "database",
+        "service_name": "checkout-api",
+        "span_id": "00f067aa0ba902b7",
+        "severity": "error",
+        "status": null,
+        "duration_ms": null
+      },
+      {
+        "id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+        "kind": "issue",
+        "occurred_at": "2026-06-01T12:00:00.100Z",
+        "offset_ms": 100,
+        "name": "CheckoutDatabaseError",
+        "service_name": "checkout-api",
+        "span_id": null,
+        "severity": "error",
+        "status": null,
+        "duration_ms": null
+      },
+      {
+        "id": "00f067aa0ba902b7:end",
+        "kind": "span_end",
+        "occurred_at": "2026-06-01T12:00:00.250Z",
+        "offset_ms": 250,
+        "name": "SELECT checkout",
+        "service_name": "checkout-api",
+        "span_id": "00f067aa0ba902b7",
+        "severity": null,
+        "status": "error",
+        "duration_ms": 250
+      }
+    ],
+    "truncated": false
+  },
+  "evidence": {
+    "status": "partial",
+    "captured_fields": [
+      "attributes.events.0.metadata.attempt",
+      "attributes.events.0.metadata.retryable",
+      "attributes.events.0.name",
+      "attributes.events.0.timestamp",
+      "attributes.links.0.metadata.relation",
+      "attributes.links.0.sampled",
+      "attributes.links.0.spanId",
+      "attributes.links.0.traceId",
+      "attributes.metadata.db.collection",
+      "attributes.metadata.db.system",
+      "baseline",
+      "context",
+      "correlations.actions",
+      "correlations.issues",
+      "correlations.logs",
+      "correlations.metrics",
+      "correlations.trace",
+      "subject.content_trust",
+      "subject.deployment",
+      "subject.identity",
+      "subject.sdk",
+      "subject.timing",
+      "topology"
+    ],
+    "missing_fields": [],
+    "redacted_fields": [
+      "attributes.metadata.authorization",
+      "attributes.metadata.prompt"
+    ],
+    "truncated_fields": []
+  },
+  "next_actions": [
+    {
+      "priority": 1,
+      "code": "inspect_parent_span",
+      "target": "span_investigation",
+      "reason": "parent_context_available",
+      "span_id": "1111111111111111",
+      "issue_id": null
+    },
+    {
+      "priority": 2,
+      "code": "inspect_error_child",
+      "target": "span_investigation",
+      "reason": "child_error_observed",
+      "span_id": "3333333333333333",
+      "issue_id": null
+    },
+    {
+      "priority": 3,
+      "code": "review_exact_span_logs",
+      "target": "telemetry_logs",
+      "reason": "exact_span_logs_available",
+      "span_id": "00f067aa0ba902b7",
+      "issue_id": null
+    },
+    {
+      "priority": 4,
+      "code": "review_related_issue",
+      "target": "issue_investigation",
+      "reason": "related_issue_available",
+      "span_id": null,
+      "issue_id": "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+    },
+    {
+      "priority": 5,
+      "code": "inspect_trace",
+      "target": "trace_investigation",
+      "reason": "trace_context_available",
+      "span_id": "00f067aa0ba902b7",
+      "issue_id": null
+    },
+    {
+      "priority": 6,
+      "code": "compare_peer_baseline",
+      "target": "peer_baseline",
+      "reason": "subject_latency_elevated",
+      "span_id": "00f067aa0ba902b7",
+      "issue_id": null
+    },
+    {
+      "priority": 7,
+      "code": "compare_release",
+      "target": "release_investigation",
+      "reason": "exact_release_available",
+      "span_id": null,
+      "issue_id": null
+    }
+  ]
+}

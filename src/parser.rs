@@ -30,8 +30,8 @@ use crate::flags::{
 };
 use crate::ids::{infer_explain_target, is_issue_id, is_pasted_detail_id, is_trace_id, is_uuid};
 use crate::{
-    CliError, Command, ExplainMetricTarget, ExplainReleaseTarget, ExplainTarget, HelpTopic,
-    ISSUE_STATUS_ARGUMENT_NEXT_STEP, IssueOccurrenceSelection, ProjectCreateOptions,
+    CliError, Command, ExplainMetricTarget, ExplainReleaseTarget, ExplainSpanTarget, ExplainTarget,
+    HelpTopic, ISSUE_STATUS_ARGUMENT_NEXT_STEP, IssueOccurrenceSelection, ProjectCreateOptions,
     ProjectIngestKeyCreateOptions, ProjectSetupSeenOptions, ReadOptions, ReadTarget, SetTarget,
     auth_namespace,
 };
@@ -72,7 +72,8 @@ const PROJECT_SETUP_SOURCE_NEXT_STEP: &str = "use --source api, cli, or sdk";
 /// Valid resources for live watch.
 const WATCH_RESOURCE_NEXT_STEP: &str = "choose logs, issues, actions, or omit a resource";
 /// Valid resources for explain.
-const EXPLAIN_RESOURCE_NEXT_STEP: &str = "choose issue, log, action, trace, release, or metric";
+const EXPLAIN_RESOURCE_NEXT_STEP: &str =
+    "choose issue, log, action, trace, span, release, or metric";
 /// Exact required identity for release investigation.
 const EXPLAIN_RELEASE_NEXT_STEP: &str = "use logbrew explain release <release> --project \
                                          <project_id> --environment <environment> --service \
@@ -82,6 +83,10 @@ const EXPLAIN_METRIC_NEXT_STEP: &str = "use logbrew explain metric <name> --proj
                                         --since <24h|RFC3339> with optional --until, --interval, \
                                         --group-by, --service, --release, --environment, \
                                         --series-limit, and --json";
+/// Exact required identity and scope for one span investigation.
+const EXPLAIN_SPAN_NEXT_STEP: &str = "use logbrew explain span <trace_id> <span_id> --project \
+                                      <project_id> --environment <environment> --release <release> \
+                                      [--json]";
 /// Valid resources for state mutation.
 const SET_RESOURCE_NEXT_STEP: &str = "choose issue";
 /// Filters trace detail reads cannot apply.
@@ -1994,6 +1999,9 @@ fn validate_read_cursor(
 /// Parses `explain`.
 fn parse_explain(args: &[String]) -> Result<Command, CliError> {
     let (resource, rest) = take_required_position(args, "resource", EXPLAIN_RESOURCE_NEXT_STEP)?;
+    if resource == "span" {
+        return parse_explain_span(rest.as_slice());
+    }
     if resource == "release" {
         return parse_explain_release(rest.as_slice());
     }
@@ -2044,6 +2052,44 @@ fn parse_explain(args: &[String]) -> Result<Command, CliError> {
         }
     };
     parse_explain_target_flags(target, tail.as_slice())
+}
+
+/// Parses one exact span without accepting trace-only or deployment-ambiguous reads.
+fn parse_explain_span(args: &[String]) -> Result<Command, CliError> {
+    let (trace_id, tail) = take_required_position(args, "trace_id", "provide the exact trace id")?;
+    let (span_id, tail) =
+        take_required_position(tail.as_slice(), "span_id", "provide the exact span id")?;
+    let flags = parse_explain_scope_flags(tail.as_slice(), ExplainScopeKind::Span)?;
+    let project_id = required_explain_scope(flags.project_id, "--project", EXPLAIN_SPAN_NEXT_STEP)?;
+    let environment =
+        required_explain_scope(flags.environment, "--environment", EXPLAIN_SPAN_NEXT_STEP)?;
+    let release = required_explain_scope(flags.release, "--release", EXPLAIN_SPAN_NEXT_STEP)?;
+    Ok(Command::Explain {
+        target: ExplainTarget::Span(ExplainSpanTarget {
+            trace_id: normalize_w3c_id(trace_id.as_str(), 32, "invalid trace id")?,
+            span_id: normalize_w3c_id(span_id.as_str(), 16, "invalid span id")?,
+            project_id: normalize_project_id(project_id.as_str(), EXPLAIN_SPAN_NEXT_STEP)?,
+            environment: normalize_explain_text(environment.as_str(), 256, EXPLAIN_SPAN_NEXT_STEP)?,
+            release: normalize_explain_text(release.as_str(), 256, EXPLAIN_SPAN_NEXT_STEP)?,
+        }),
+        json: flags.json,
+    })
+}
+
+/// Normalizes one exact non-zero W3C identifier.
+fn normalize_w3c_id(value: &str, width: usize, argument: &'static str) -> Result<String, CliError> {
+    let value = value.trim();
+    if value.len() != width
+        || !value.bytes().all(|byte| byte.is_ascii_hexdigit())
+        || !value.bytes().any(|byte| byte != b'0')
+    {
+        return Err(CliError::UnexpectedArgument {
+            argument: argument.to_owned(),
+            command: "explain span",
+            next: EXPLAIN_SPAN_NEXT_STEP,
+        });
+    }
+    Ok(value.to_ascii_lowercase())
 }
 
 /// Explicit identifier vocabulary for explanation detail reads.
@@ -2165,6 +2211,8 @@ fn parse_explain_metric(args: &[String]) -> Result<Command, CliError> {
 /// Exact flag vocabulary for release and metric explanations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ExplainScopeKind {
+    /// Exact span deployment scope.
+    Span,
     /// Release identity flags only.
     Release,
     /// Metric query flags.
@@ -2175,6 +2223,7 @@ impl ExplainScopeKind {
     /// Returns the command name shown in fixed parse errors.
     const fn command(self) -> &'static str {
         match self {
+            Self::Span => "explain span",
             Self::Release => "explain release",
             Self::Metric => "explain metric",
         }
@@ -2183,6 +2232,7 @@ impl ExplainScopeKind {
     /// Returns exact recovery guidance for this grammar.
     const fn next(self) -> &'static str {
         match self {
+            Self::Span => EXPLAIN_SPAN_NEXT_STEP,
             Self::Release => EXPLAIN_RELEASE_NEXT_STEP,
             Self::Metric => EXPLAIN_METRIC_NEXT_STEP,
         }
@@ -2242,11 +2292,11 @@ fn parse_explain_scope_flags(
                 let value = explain_scope_flag_value(args, &mut index, flag, inline, kind)?;
                 set_explain_scope_flag(&mut parsed.environment, value, "--environment", kind)?;
             }
-            "--service" | "--service-name" => {
+            "--service" | "--service-name" if kind != ExplainScopeKind::Span => {
                 let value = explain_scope_flag_value(args, &mut index, flag, inline, kind)?;
                 set_explain_scope_flag(&mut parsed.service_name, value, "--service", kind)?;
             }
-            "--release" if kind == ExplainScopeKind::Metric => {
+            "--release" if matches!(kind, ExplainScopeKind::Span | ExplainScopeKind::Metric) => {
                 let value = explain_scope_flag_value(args, &mut index, flag, inline, kind)?;
                 set_explain_scope_flag(&mut parsed.release, value, "--release", kind)?;
             }

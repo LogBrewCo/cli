@@ -4,11 +4,15 @@ use std::collections::BTreeSet;
 
 use serde_json::{Map, Value};
 
+use super::projection::{
+    count_scalar_leaves, sensitive_context_tag_key, sensitive_key, sensitive_string,
+    validate_projection,
+};
 use super::{
     append_actions, append_evidence, append_labeled_bool, append_labeled_integer,
     append_labeled_text, append_log_analysis, append_log_correlations, append_named_pair,
     append_named_text, append_runtime_context, append_timeline, collect_scalar_fields, field_text,
-    invalid_response, optional_string, require_bool, require_finite_number,
+    invalid_response, optional_string, require_bool, require_exact_fields, require_finite_number,
     require_nonnegative_integer, require_safe_positive_u64, require_safe_u64, require_string,
     require_string_equals, require_timestamp, require_u64, require_uuid, required_object,
     response_object, validate_availability, validate_evidence, validate_name_version,
@@ -20,14 +24,6 @@ use crate::ids::is_uuid;
 
 /// Maximum scalar leaves retained by the backend action-property projection.
 const ACTION_PROPERTY_LEAF_LIMIT: u64 = 64;
-/// Maximum nested object or array depth retained by the backend projection.
-const ACTION_PROPERTY_DEPTH_LIMIT: usize = 4;
-/// Maximum elements retained from one projected property array.
-const ACTION_PROPERTY_ARRAY_LIMIT: usize = 16;
-/// Maximum characters retained in one property key.
-const ACTION_PROPERTY_KEY_LIMIT: usize = 64;
-/// Maximum characters retained in one projected property string.
-const ACTION_PROPERTY_STRING_LIMIT: usize = 512;
 /// Maximum low-cardinality tags retained in typed context.
 const ACTION_CONTEXT_TAG_LIMIT: usize = 32;
 /// Maximum characters retained in a typed-context tag key.
@@ -221,7 +217,7 @@ fn validate_action_properties(
         .get("values")
         .and_then(Value::as_object)
         .ok_or_else(invalid_response)?;
-    validate_action_property_projection(&Value::Object(values.clone()))?;
+    validate_projection(&Value::Object(values.clone()))?;
     let included_leaf_count = require_safe_u64(properties, "included_leaf_count")?;
     if included_leaf_count > ACTION_PROPERTY_LEAF_LIMIT
         || included_leaf_count != count_scalar_leaves(&Value::Object(values.clone()))
@@ -313,9 +309,9 @@ fn validate_action_context(
                 .all(|character| character.is_ascii_alphanumeric() || "_.-".contains(character))
             || value.chars().count() > ACTION_CONTEXT_TAG_VALUE_LIMIT
             || value.chars().any(char::is_control)
-            || action_sensitive_key(key)
-            || action_sensitive_context_tag_key(key)
-            || action_sensitive_string(value, key)
+            || sensitive_key(key)
+            || sensitive_context_tag_key(key)
+            || sensitive_string(value, key)
         {
             return Err(invalid_response());
         }
@@ -401,161 +397,6 @@ fn validate_action_trace_context(value: Option<&Value>) -> Result<(), RuntimeErr
         Some(Value::Null | Value::Bool(_)) => Ok(()),
         _ => Err(invalid_response()),
     }
-}
-
-/// Validates the already-scrubbed arbitrary property projection.
-fn validate_action_property_projection(value: &Value) -> Result<(), RuntimeError> {
-    validate_action_property_value(value, "", 0)
-}
-
-/// Recursively validates one projected value while retaining its parent key semantics.
-fn validate_action_property_value(
-    value: &Value,
-    parent_key: &str,
-    depth: usize,
-) -> Result<(), RuntimeError> {
-    match value {
-        Value::Object(object) => {
-            if depth >= ACTION_PROPERTY_DEPTH_LIMIT {
-                return Err(invalid_response());
-            }
-            for (key, child) in object {
-                if key.is_empty()
-                    || key.chars().count() > ACTION_PROPERTY_KEY_LIMIT
-                    || key.chars().any(char::is_control)
-                    || action_sensitive_key(key)
-                {
-                    return Err(invalid_response());
-                }
-                validate_action_property_value(child, key, depth.saturating_add(1))?;
-            }
-            Ok(())
-        }
-        Value::Array(items) => {
-            if depth >= ACTION_PROPERTY_DEPTH_LIMIT || items.len() > ACTION_PROPERTY_ARRAY_LIMIT {
-                return Err(invalid_response());
-            }
-            for item in items {
-                validate_action_property_value(item, parent_key, depth.saturating_add(1))?;
-            }
-            Ok(())
-        }
-        Value::String(text)
-            if text.chars().count() > ACTION_PROPERTY_STRING_LIMIT
-                || action_sensitive_string(text, parent_key) =>
-        {
-            Err(invalid_response())
-        }
-        Value::String(_) | Value::Null | Value::Bool(_) | Value::Number(_) => Ok(()),
-    }
-}
-
-/// Counts retained scalar leaves exactly as the backend projection receipt does.
-fn count_scalar_leaves(value: &Value) -> u64 {
-    match value {
-        Value::Object(object) => object.values().map(count_scalar_leaves).sum(),
-        Value::Array(items) => items.iter().map(count_scalar_leaves).sum(),
-        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => 1,
-    }
-}
-
-/// Mirrors the backend's direct credential, identity, and raw-request key boundary.
-fn action_sensitive_key(key: &str) -> bool {
-    let compact = key
-        .chars()
-        .filter(char::is_ascii_alphanumeric)
-        .flat_map(char::to_lowercase)
-        .collect::<String>();
-    [
-        "apikey",
-        "authorization",
-        "connectionstring",
-        "cookie",
-        "credential",
-        "deviceid",
-        "distinctid",
-        "email",
-        "fullname",
-        "hostid",
-        "hostname",
-        "ipaddress",
-        "macaddress",
-        "password",
-        "passwd",
-        "phone",
-        "privatekey",
-        "requestbody",
-        "responsebody",
-        "secret",
-        "sessionid",
-        "subjectid",
-        "token",
-        "userid",
-        "username",
-        "urlfull",
-    ]
-    .iter()
-    .any(|term| compact.contains(term))
-}
-
-/// Extends property-key screening with the backend's context-tag vocabulary.
-fn action_sensitive_context_tag_key(key: &str) -> bool {
-    let compact = key
-        .chars()
-        .filter(char::is_ascii_alphanumeric)
-        .flat_map(char::to_lowercase)
-        .collect::<String>();
-    ["auth", "dsn"].iter().any(|term| compact.contains(term))
-}
-
-/// Rejects private, credential-like, or instruction-like strings before JSON echo.
-fn action_sensitive_string(value: &str, key: &str) -> bool {
-    let compact = value.trim().to_ascii_lowercase();
-    let safe_route = key.eq_ignore_ascii_case("route")
-        && compact.starts_with('/')
-        && !compact.contains('?')
-        && !compact.contains('#')
-        && !compact.contains("..")
-        && !compact.starts_with("//");
-    let email = compact.split_once('@').is_some_and(|(mailbox, domain)| {
-        !mailbox.is_empty()
-            && domain.rsplit_once('.').is_some_and(|(_, suffix)| {
-                suffix.len() >= 2 && suffix.bytes().all(|byte| byte.is_ascii_alphabetic())
-            })
-            && !compact.chars().any(char::is_whitespace)
-    });
-    let windows_path = compact.as_bytes().windows(3).any(|window| {
-        window[0].is_ascii_alphabetic() && window[1] == b':' && matches!(window[2], b'/' | b'\\')
-    });
-    email
-        || compact.parse::<std::net::IpAddr>().is_ok()
-        || compact.starts_with('/') && !safe_route
-        || windows_path
-        || compact.contains("://") && compact.contains('?')
-        || [
-            "ignore prior instructions",
-            "ignore previous instructions",
-            "developer message",
-            "<|im_start|>",
-            "authorization:",
-            "basic ",
-            "bearer ",
-            "cookie:",
-            "password:",
-            "password=",
-            "secret:",
-            "secret=",
-            "token:",
-            "token=",
-            "akia",
-            "ghp_",
-            "github_pat_",
-            "sk_live_",
-            "sk_test_",
-            "xox",
-        ]
-        .iter()
-        .any(|marker| compact.contains(marker))
 }
 
 /// Validates every action correlation container and exact subject scope.
@@ -1427,15 +1268,6 @@ fn collection_items<'a>(
         .and_then(Value::as_array)
         .map(Vec::as_slice)
         .ok_or_else(invalid_response)
-}
-
-/// Requires one exact object vocabulary so privacy-sensitive contracts fail closed on additions.
-fn require_exact_fields(value: &Map<String, Value>, expected: &[&str]) -> Result<(), RuntimeError> {
-    if value.len() == expected.len() && expected.iter().all(|field| value.contains_key(*field)) {
-        Ok(())
-    } else {
-        Err(invalid_response())
-    }
 }
 
 /// Returns an explicitly nullable object while rejecting omission and wrong types.
