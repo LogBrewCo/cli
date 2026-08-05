@@ -196,12 +196,11 @@ pub(super) fn validate_baseline<'a>(
     let retained = require_safe_u64(baseline, "retained_peer_count")?;
     let errors = require_safe_u64(baseline, "error_peer_count")?;
     let error_rate = require_safe_u64(baseline, "error_rate_basis_points")?;
-    let expected_rate = if retained == 0 {
-        0
-    } else {
-        errors.saturating_mul(10_000) / retained
-    };
-    if errors > retained || error_rate > 10_000 || error_rate != expected_rate {
+    let expected_rate = u128::from(errors)
+        .checked_mul(10_000)
+        .and_then(|scaled| scaled.checked_div(u128::from(retained)))
+        .unwrap_or_default();
+    if errors > retained || error_rate > 10_000 || u128::from(error_rate) != expected_rate {
         return Err(invalid_response());
     }
     let p50 = nullable_nonnegative_number(baseline, "p50_duration_ms")?;

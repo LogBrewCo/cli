@@ -126,6 +126,25 @@ async fn built_binary_preserves_exact_validated_json_and_authenticates()
 }
 
 #[tokio::test]
+async fn baseline_arithmetic_accepts_the_full_safe_integer_range()
+-> Result<(), Box<dyn std::error::Error>> {
+    let server = MockServer::start().await;
+    let mut response = span_response();
+    response["baseline"]["retained_peer_count"] = serde_json::json!(9_000_000_000_000_000_u64);
+    response["baseline"]["error_peer_count"] = serde_json::json!(4_500_000_000_000_000_u64);
+    response["baseline"]["error_rate_basis_points"] = serde_json::json!(5_000);
+    mount_response(&server, response.clone()).await;
+
+    let command = span_command(true)?;
+    let mut output = Vec::new();
+    execute_command(&command, &authenticated_env(&server), &mut output).await?;
+
+    let actual: serde_json::Value = serde_json::from_slice(output.as_slice())?;
+    assert_eq!(actual, response);
+    Ok(())
+}
+
+#[tokio::test]
 async fn human_output_explains_topology_baseline_correlations_and_evidence()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
