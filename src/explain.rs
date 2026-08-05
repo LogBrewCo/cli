@@ -1,6 +1,8 @@
 //! Versioned, bounded telemetry investigation reads.
 
 mod action;
+mod projection;
+mod span;
 
 use std::collections::BTreeSet;
 
@@ -221,6 +223,7 @@ fn validated_response(target: &ExplainTarget, body: &str) -> Result<Value, Runti
         ExplainTarget::Issue { id, occurrence } => validate_issue_response(&value, id, occurrence),
         ExplainTarget::Log(id) => validate_log_response(&value, id),
         ExplainTarget::Action(id) => action::validate_response(&value, id),
+        ExplainTarget::Span(target) => span::validate_response(&value, target),
         ExplainTarget::Trace(id) => validate_trace_response(&value, id),
         ExplainTarget::Release(release) => validate_release_response(&value, release),
         ExplainTarget::Metric(metric) => validate_metric_response(&value, metric),
@@ -1679,6 +1682,15 @@ fn response_object<'a>(
     Ok(object)
 }
 
+/// Requires one exact object vocabulary so privacy-sensitive contracts fail closed on additions.
+fn require_exact_fields(value: &Map<String, Value>, expected: &[&str]) -> Result<(), RuntimeError> {
+    if value.len() == expected.len() && expected.iter().all(|field| value.contains_key(*field)) {
+        Ok(())
+    } else {
+        Err(invalid_response())
+    }
+}
+
 /// Requires the current version of a versioned explanation response.
 fn validate_schema_version(value: &Map<String, Value>) -> Result<(), RuntimeError> {
     validate_schema_version_value(value, 1)
@@ -1813,6 +1825,7 @@ fn render_response(target: &ExplainTarget, value: &Value) -> Option<String> {
         ExplainTarget::Issue { .. } => render_issue(value),
         ExplainTarget::Log(_) => render_log(value),
         ExplainTarget::Action(_) => action::render(value),
+        ExplainTarget::Span(_) => span::render(value),
         ExplainTarget::Trace(_) => render_trace(value),
         ExplainTarget::Release(_) => render_release(value),
         ExplainTarget::Metric(_) => render_metric(value),

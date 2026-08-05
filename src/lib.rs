@@ -839,10 +839,27 @@ pub enum ExplainTarget {
     Action(String),
     /// One trace by ID.
     Trace(String),
+    /// One exact span within an exact trace and deployment scope.
+    Span(ExplainSpanTarget),
     /// One exact service release.
     Release(ExplainReleaseTarget),
     /// One bounded metric time series.
     Metric(ExplainMetricTarget),
+}
+
+/// Exact identity required by an exact-span investigation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExplainSpanTarget {
+    /// Non-zero W3C trace identifier.
+    pub trace_id: String,
+    /// Non-zero W3C span identifier.
+    pub span_id: String,
+    /// Owned project identifier.
+    pub project_id: String,
+    /// Exact deployment environment.
+    pub environment: String,
+    /// Exact application release.
+    pub release: String,
 }
 
 /// Retained issue occurrence selected for investigation.
@@ -2300,6 +2317,18 @@ fn explain_path(target: &ExplainTarget) -> String {
                 encode_component(id)
             )
         }
+        ExplainTarget::Span(span) => path_with_query(
+            &format!(
+                "/api/telemetry/traces/{}/spans/{}/investigation",
+                encode_component(span.trace_id.as_str()),
+                encode_component(span.span_id.as_str())
+            ),
+            &[
+                ("project_id", Some(span.project_id.as_str())),
+                ("environment", Some(span.environment.as_str())),
+                ("release", Some(span.release.as_str())),
+            ],
+        ),
         ExplainTarget::Release(release) => path_with_query(
             "/api/telemetry/releases/investigation",
             &[
