@@ -254,7 +254,10 @@ fn explain_help_explains_pasted_id_inference() {
     let text = help::help_text(HelpTopic::Explain);
 
     assert!(text.contains("logbrew explain <issue_id_or_trace_id> [--json]"));
-    assert!(text.contains("logbrew issue <issue_id> explain [--json]"));
+    assert!(text.contains(
+        "logbrew issue <issue_id> explain [--occurrence \
+         <recommended|first|latest|occurrence_id>] [--json]"
+    ));
     assert!(text.contains("logbrew trace <trace_id> explain [--json]"));
     assert!(text.contains("logbrew <issue_id_or_trace_id> explain [--json]"));
     assert!(text.contains("Pasted UUID/issue_* values are treated as issues"));
