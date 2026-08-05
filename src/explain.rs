@@ -1,6 +1,7 @@
 //! Versioned, bounded telemetry investigation reads.
 
 mod action;
+mod metric;
 mod projection;
 mod span;
 
@@ -13,8 +14,8 @@ use serde_json::{Map, Value};
 use crate::auth::{AuthCredential, send_authenticated_with_refresh};
 use crate::ids::{is_trace_id, is_uuid};
 use crate::{
-    CliEnvironment, ExplainMetricTarget, ExplainReleaseTarget, ExplainTarget,
-    IssueOccurrenceSelection, RuntimeError, explain_path,
+    CliEnvironment, ExplainReleaseTarget, ExplainTarget, IssueOccurrenceSelection, RuntimeError,
+    explain_path,
 };
 
 /// Maximum accepted explanation response body.
@@ -226,7 +227,7 @@ fn validated_response(target: &ExplainTarget, body: &str) -> Result<Value, Runti
         ExplainTarget::Span(target) => span::validate_response(&value, target),
         ExplainTarget::Trace(id) => validate_trace_response(&value, id),
         ExplainTarget::Release(release) => validate_release_response(&value, release),
-        ExplainTarget::Metric(metric) => validate_metric_response(&value, metric),
+        ExplainTarget::Metric(target) => metric::validate_response(&value, target),
     }?;
     Ok(value)
 }
@@ -1371,260 +1372,6 @@ fn validate_timeline(value: &Map<String, Value>) -> Result<(), RuntimeError> {
     Ok(())
 }
 
-/// Validates one versioned semantics-preserving metric response.
-fn validate_metric_response(
-    value: &Value,
-    expected: &ExplainMetricTarget,
-) -> Result<(), RuntimeError> {
-    let response = response_object(
-        value,
-        &[
-            "schema_version",
-            "query",
-            "purpose",
-            "coverage",
-            "series",
-            "next_action",
-        ],
-    )?;
-    validate_schema_version(response)?;
-    let _purpose = require_string(response, "purpose")?;
-    let query = required_object(response, "query")?;
-    require_string_equals(query, "project_id", expected.project_id.as_str())?;
-    require_string_equals(query, "name", expected.name.as_str())?;
-    let _since = require_timestamp(query, "since")?;
-    let _until = require_timestamp(query, "until")?;
-    let interval = require_string(query, "interval")?;
-    if !matches!(interval, "1m" | "5m" | "15m" | "1h" | "6h" | "1d") {
-        return Err(invalid_response());
-    }
-    let interval_seconds = require_u64(query, "interval_seconds")?;
-    let expected_interval_seconds = match interval {
-        "1m" => 60,
-        "5m" => 300,
-        "15m" => 900,
-        "1h" => 3_600,
-        "6h" => 21_600,
-        "1d" => 86_400,
-        _ => return Err(invalid_response()),
-    };
-    if interval_seconds != expected_interval_seconds {
-        return Err(invalid_response());
-    }
-    if expected
-        .interval
-        .as_deref()
-        .is_some_and(|requested| requested != "auto" && requested != interval)
-    {
-        return Err(invalid_response());
-    }
-    let group_by = require_string(query, "group_by")?;
-    if group_by != expected.group_by.as_deref().unwrap_or("none") {
-        return Err(invalid_response());
-    }
-    validate_optional_query_identity(query, "service_name", expected.service_name.as_deref())?;
-    validate_optional_query_identity(query, "release", expected.release.as_deref())?;
-    validate_optional_query_identity(query, "environment", expected.environment.as_deref())?;
-    let query_limit = require_u64(query, "series_limit")?;
-    if query_limit != u64::from(expected.series_limit.unwrap_or(10)) {
-        return Err(invalid_response());
-    }
-
-    let coverage = required_object(response, "coverage")?;
-    let total_series = require_u64(coverage, "series")?;
-    let returned_series = require_u64(coverage, "returned_series")?;
-    let returned_points = require_u64(coverage, "points")?;
-    let total_samples = require_u64(coverage, "samples")?;
-    let expected_buckets = require_u64(coverage, "expected_buckets_per_series")?;
-    let truncated = require_bool(coverage, "truncated")?;
-    if expected_buckets == 0 {
-        return Err(invalid_response());
-    }
-
-    let series = response
-        .get("series")
-        .and_then(Value::as_array)
-        .ok_or_else(invalid_response)?;
-    if series.len() > METRIC_SERIES_LIMIT
-        || series.len() > usize::try_from(query_limit).map_err(|_error| invalid_response())?
-        || returned_series != u64::try_from(series.len()).map_err(|_error| invalid_response())?
-        || total_series < returned_series
-    {
-        return Err(invalid_response());
-    }
-    let mut point_count = 0_u64;
-    let mut represented_samples = 0_u64;
-    for item in series {
-        let (points, samples) = validate_metric_series(item, group_by)?;
-        point_count = point_count.saturating_add(points);
-        represented_samples = represented_samples.saturating_add(samples);
-    }
-    if point_count != returned_points
-        || represented_samples > total_samples
-        || (!truncated && total_series == returned_series && represented_samples != total_samples)
-    {
-        return Err(invalid_response());
-    }
-    validate_metric_next_action(response.get("next_action"))
-}
-
-/// Validates one metric series and returns its point and represented-sample counts.
-fn validate_metric_series(
-    value: &Value,
-    expected_group_by: &str,
-) -> Result<(u64, u64), RuntimeError> {
-    let series = value.as_object().ok_or_else(invalid_response)?;
-    let code = validate_metric_series_identity(series, expected_group_by)?;
-    let sample_count = require_u64(series, "sample_count")?;
-    if sample_count == 0 {
-        return Err(invalid_response());
-    }
-    let points = series
-        .get("points")
-        .and_then(Value::as_array)
-        .ok_or_else(invalid_response)?;
-    if points.is_empty() || points.len() > METRIC_POINT_LIMIT {
-        return Err(invalid_response());
-    }
-    let represented_samples = validate_metric_points(points, code)?;
-    if represented_samples != sample_count {
-        return Err(invalid_response());
-    }
-    Ok((
-        u64::try_from(points.len()).map_err(|_error| invalid_response())?,
-        sample_count,
-    ))
-}
-
-/// Validates one metric identity and its semantics, returning the aggregation code.
-fn validate_metric_series_identity<'a>(
-    series: &'a Map<String, Value>,
-    expected_group_by: &str,
-) -> Result<&'a str, RuntimeError> {
-    let identity = required_object(series, "identity")?;
-    let kind = require_string(identity, "kind")?;
-    let temporality = require_string(identity, "temporality")?;
-    match expected_group_by {
-        "none" => {
-            if optional_string(identity, "group_by")?.is_some()
-                || optional_string(identity, "group_value")?.is_some()
-            {
-                return Err(invalid_response());
-            }
-        }
-        expected => {
-            if optional_string(identity, "group_by")? != Some(expected)
-                || optional_string(identity, "group_value")?.is_none()
-            {
-                return Err(invalid_response());
-            }
-        }
-    }
-    let status = require_string(series, "status")?;
-    let aggregation = required_object(series, "aggregation")?;
-    let code = require_string(aggregation, "code")?;
-    let known_contract = matches!(
-        (kind, temporality),
-        ("gauge", "instant") | ("counter" | "histogram", "delta")
-    );
-    let supported = match (status, code) {
-        ("ready", "gauge_last") => (kind, temporality) == ("gauge", "instant"),
-        ("ready", "delta_sum") => (kind, temporality) == ("counter", "delta"),
-        ("ready", "distribution_p95") => (kind, temporality) == ("histogram", "delta"),
-        ("limited", "raw_cumulative_last") => temporality == "cumulative",
-        ("limited", "raw_last") => temporality != "cumulative" && !known_contract,
-        _ => false,
-    };
-    if !supported {
-        return Err(invalid_response());
-    }
-    let _description = require_string(aggregation, "description")?;
-    if status == "limited" && optional_string(aggregation, "limitation")?.is_none() {
-        return Err(invalid_response());
-    }
-    Ok(code)
-}
-
-/// Validates ordered metric points and returns their represented sample count.
-fn validate_metric_points(points: &[Value], code: &str) -> Result<u64, RuntimeError> {
-    let required_statistics: &[&str] = match code {
-        "gauge_last" => &["last", "min", "max", "average"],
-        "delta_sum" => &["last", "min", "max", "average", "sum", "rate_per_second"],
-        "distribution_p95" => &["min", "max", "average", "sum", "p50", "p95", "p99"],
-        "raw_cumulative_last" | "raw_last" => &["last", "min", "max"],
-        _ => return Err(invalid_response()),
-    };
-    let mut represented_samples = 0_u64;
-    let mut previous_start = None;
-    for point in points {
-        let point = point.as_object().ok_or_else(invalid_response)?;
-        let start = require_timestamp(point, "bucket_start")?;
-        let end = require_timestamp(point, "bucket_end")?;
-        if start >= end || previous_start.is_some_and(|previous| previous >= start) {
-            return Err(invalid_response());
-        }
-        previous_start = Some(start);
-        let point_samples = require_u64(point, "sample_count")?;
-        if point_samples == 0 {
-            return Err(invalid_response());
-        }
-        represented_samples = represented_samples.saturating_add(point_samples);
-        let _value = require_finite_number(point, "value")?;
-        for name in [
-            "last",
-            "min",
-            "max",
-            "average",
-            "sum",
-            "p50",
-            "p95",
-            "p99",
-            "rate_per_second",
-        ] {
-            let _optional_value = optional_finite_number(point, name)?;
-        }
-        for name in required_statistics {
-            let _required_value = require_finite_number(point, name)?;
-        }
-        let exemplars = point
-            .get("trace_exemplars")
-            .and_then(Value::as_array)
-            .ok_or_else(invalid_response)?;
-        if exemplars.len() > 3
-            || exemplars
-                .iter()
-                .any(|trace| trace.as_str().is_none_or(|trace| !is_trace_id(trace)))
-        {
-            return Err(invalid_response());
-        }
-    }
-    Ok(represented_samples)
-}
-
-/// Validates a metric follow-up action.
-fn validate_metric_next_action(value: Option<&Value>) -> Result<(), RuntimeError> {
-    let action = value
-        .and_then(Value::as_object)
-        .ok_or_else(invalid_response)?;
-    let _code = require_string(action, "code")?;
-    let _target = require_string(action, "target")?;
-    let _reason = require_string(action, "reason")?;
-    Ok(())
-}
-
-/// Validates one optional echoed metric scope.
-fn validate_optional_query_identity(
-    query: &Map<String, Value>,
-    name: &str,
-    expected: Option<&str>,
-) -> Result<(), RuntimeError> {
-    match (query.get(name), expected) {
-        (None, None) => Ok(()),
-        (Some(Value::String(actual)), Some(expected)) if actual == expected => Ok(()),
-        _ => Err(invalid_response()),
-    }
-}
-
 /// Validates common evidence coverage.
 fn validate_evidence(evidence: &Map<String, Value>) -> Result<(), RuntimeError> {
     if !matches!(require_string(evidence, "status")?, "complete" | "partial") {
@@ -1688,6 +1435,23 @@ fn require_exact_fields(value: &Map<String, Value>, expected: &[&str]) -> Result
         Ok(())
     } else {
         Err(invalid_response())
+    }
+}
+
+/// Requires every mandatory field and rejects keys outside an explicit optional vocabulary.
+fn require_known_fields(
+    value: &Map<String, Value>,
+    required: &[&str],
+    optional: &[&str],
+) -> Result<(), RuntimeError> {
+    if required.iter().any(|field| !value.contains_key(*field))
+        || value
+            .keys()
+            .any(|field| !required.contains(&field.as_str()) && !optional.contains(&field.as_str()))
+    {
+        Err(invalid_response())
+    } else {
+        Ok(())
     }
 }
 
@@ -1828,7 +1592,7 @@ fn render_response(target: &ExplainTarget, value: &Value) -> Option<String> {
         ExplainTarget::Span(_) => span::render(value),
         ExplainTarget::Trace(_) => render_trace(value),
         ExplainTarget::Release(_) => render_release(value),
-        ExplainTarget::Metric(_) => render_metric(value),
+        ExplainTarget::Metric(_) => metric::render(value),
     }
 }
 
@@ -2588,154 +2352,6 @@ fn append_release_signals(output: &mut String, signals: Option<&Value>) {
             _ => {}
         }
     }
-}
-
-/// Builds a semantics-aware metric time-series investigation.
-fn render_metric(value: &Value) -> Option<String> {
-    let query = value.get("query")?;
-    let coverage = value.get("coverage")?;
-    let series = value.get("series")?.as_array()?;
-    let mut output = String::new();
-    output.push_str("Metric ");
-    output.push_str(field_text(query, "name", 240)?.as_str());
-    append_labeled_text(&mut output, "project", query, "project_id", 80);
-    append_labeled_text(&mut output, "interval", query, "interval", 20);
-    append_labeled_text(&mut output, "group_by", query, "group_by", 40);
-    output.push('\n');
-    append_named_text(&mut output, "Purpose", value, "purpose", 700);
-    output.push_str("Range:");
-    append_labeled_text(&mut output, "since", query, "since", 64);
-    append_labeled_text(&mut output, "until", query, "until", 64);
-    append_labeled_integer(&mut output, "interval_seconds", query, "interval_seconds");
-    append_labeled_integer(&mut output, "series_limit", query, "series_limit");
-    output.push('\n');
-    output.push_str("Scope:");
-    append_labeled_text(&mut output, "service", query, "service_name", 160);
-    append_labeled_text(&mut output, "release", query, "release", 200);
-    append_labeled_text(&mut output, "environment", query, "environment", 120);
-    output.push('\n');
-    output.push_str("Coverage:");
-    append_labeled_integer(&mut output, "samples", coverage, "samples");
-    append_labeled_integer(&mut output, "series", coverage, "series");
-    append_labeled_integer(&mut output, "returned_series", coverage, "returned_series");
-    append_labeled_integer(&mut output, "points", coverage, "points");
-    append_labeled_integer(
-        &mut output,
-        "expected_buckets_per_series",
-        coverage,
-        "expected_buckets_per_series",
-    );
-    append_labeled_bool(&mut output, "truncated", coverage, "truncated");
-    output.push('\n');
-    append_named_text(&mut output, "First sample", coverage, "first_seen_at", 64);
-    append_named_text(&mut output, "Last sample", coverage, "last_seen_at", 64);
-    if series.is_empty() {
-        output.push_str("No metric series matched this exact bounded query.\n");
-    }
-    for (index, item) in series.iter().enumerate() {
-        append_metric_series(&mut output, index.saturating_add(1), item)?;
-    }
-    append_metric_action(&mut output, value.get("next_action"));
-    Some(output)
-}
-
-/// Appends one metric identity, semantic limitation, representative points, and exemplars.
-fn append_metric_series(output: &mut String, index: usize, series: &Value) -> Option<()> {
-    let identity = series.get("identity")?;
-    let aggregation = series.get("aggregation")?;
-    let points = series.get("points")?.as_array()?;
-    output.push_str("Series ");
-    output.push_str(index.to_string().as_str());
-    output.push(':');
-    append_labeled_text(output, "kind", identity, "kind", 80);
-    append_labeled_text(output, "temporality", identity, "temporality", 40);
-    append_labeled_text(output, "unit", identity, "unit", 80);
-    append_labeled_text(output, "group", identity, "group_by", 40);
-    append_labeled_text(output, "value", identity, "group_value", 200);
-    append_labeled_text(output, "status", series, "status", 32);
-    append_labeled_integer(output, "samples", series, "sample_count");
-    output.push_str(" points=");
-    output.push_str(points.len().to_string().as_str());
-    output.push('\n');
-    output.push_str("Aggregation:");
-    append_labeled_text(output, "code", aggregation, "code", 64);
-    append_labeled_text(output, "meaning", aggregation, "description", 500);
-    output.push('\n');
-    append_named_text(output, "Limitation", aggregation, "limitation", 600);
-    let first = points.first()?;
-    let latest = points.last()?;
-    let peak = points.iter().max_by(|left, right| {
-        let left = left
-            .get("value")
-            .and_then(Value::as_f64)
-            .unwrap_or(f64::MIN);
-        let right = right
-            .get("value")
-            .and_then(Value::as_f64)
-            .unwrap_or(f64::MIN);
-        left.total_cmp(&right)
-    })?;
-    append_metric_point(output, "First", first);
-    if latest != first {
-        append_metric_point(output, "Latest", latest);
-    }
-    if peak != first && peak != latest {
-        append_metric_point(output, "Peak", peak);
-    }
-    let mut exemplars = Vec::new();
-    for point in [latest, peak] {
-        if let Some(values) = point.get("trace_exemplars").and_then(Value::as_array) {
-            for trace in values.iter().filter_map(Value::as_str) {
-                if exemplars.len() < 3 && !exemplars.contains(&trace) {
-                    exemplars.push(trace);
-                }
-            }
-        }
-    }
-    for trace in exemplars {
-        output.push_str("Trace exemplar: ");
-        output.push_str(display_text(trace, 80).as_str());
-        output.push_str("; inspect with logbrew explain trace ");
-        output.push_str(display_text(trace, 80).as_str());
-        output.push('\n');
-    }
-    Some(())
-}
-
-/// Appends one representative metric bucket and progressive statistics.
-fn append_metric_point(output: &mut String, label: &str, point: &Value) {
-    output.push_str(label);
-    output.push(':');
-    append_labeled_text(output, "start", point, "bucket_start", 64);
-    append_labeled_text(output, "end", point, "bucket_end", 64);
-    append_labeled_number(output, "value", point, "value");
-    append_labeled_integer(output, "samples", point, "sample_count");
-    for (display, name) in [
-        ("last", "last"),
-        ("min", "min"),
-        ("max", "max"),
-        ("avg", "average"),
-        ("sum", "sum"),
-        ("p50", "p50"),
-        ("p95", "p95"),
-        ("p99", "p99"),
-        ("rate_per_second", "rate_per_second"),
-    ] {
-        append_labeled_number(output, display, point, name);
-    }
-    output.push('\n');
-}
-
-/// Appends the stable metric follow-up action with its reason.
-fn append_metric_action(output: &mut String, action: Option<&Value>) {
-    let Some(action) = action else {
-        return;
-    };
-    output.push_str("Next:");
-    append_labeled_text(output, "code", action, "code", 80);
-    append_labeled_text(output, "target", action, "target", 80);
-    append_labeled_text(output, "reason", action, "reason", 500);
-    output.push('\n');
 }
 
 /// Appends one mixed-signal timeline receipt and representative ordered items.

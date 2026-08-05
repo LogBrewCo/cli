@@ -2381,11 +2381,11 @@ fn issue_explain_path(id: &str, occurrence: &IssueOccurrenceSelection) -> String
     }
 }
 
-/// Builds one bounded metric-series endpoint path.
+/// Builds one bounded metric-investigation endpoint path.
 fn metric_explain_path(metric: &ExplainMetricTarget) -> String {
     let series_limit = metric.series_limit.map(|value| value.to_string());
     path_with_query(
-        "/api/telemetry/metrics/series",
+        "/api/telemetry/metrics/investigation",
         &[
             ("project_id", Some(metric.project_id.as_str())),
             ("name", Some(metric.name.as_str())),

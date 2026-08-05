@@ -536,13 +536,16 @@ Usage:
   logbrew trace <trace_id> explain [--json]
   logbrew <issue_id_or_trace_id> explain [--json]
 
-Fetches bounded failure, product-action status, correlation, timeline, evidence, or metric-series context for humans and \
+Fetches bounded failure, product-action status, correlation, timeline, evidence, or metric-investigation context for humans and \
                             AI agents.
 Action explanations preserve privacy-safe subject classification and session-presence evidence, \
                             connect exact trace/span and nearby signals, and never return raw actor or session identifiers.
 Span explanations bind a non-zero trace/span pair to an exact project, environment, and release; \
                             they include selected-branch topology, a retained same-release peer baseline, \
                             exact-span logs, same-trace signals, ordered evidence, and explicit limitations without claiming root cause.
+Metric explanations preserve gauge/counter/histogram semantics, compare the immediately preceding \
+                            equal window, expose exact trace/span exemplars and nearby completed deployments, \
+                            and never claim that an observed change or deployment proves an anomaly or root cause.
 Issue explanations use the backend-recommended context-rich retained occurrence by default. Use \
                             --occurrence first, latest, recommended, or a retained occurrence UUID \
                             from a previous occurrence receipt to inspect another exact event. JSON emits the exact validated \
