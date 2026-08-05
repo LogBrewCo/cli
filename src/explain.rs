@@ -1,5 +1,7 @@
 //! Versioned, bounded telemetry investigation reads.
 
+mod action;
+
 use std::collections::BTreeSet;
 
 use serde::de::{Error as _, MapAccess, SeqAccess, Visitor};
@@ -218,6 +220,7 @@ fn validated_response(target: &ExplainTarget, body: &str) -> Result<Value, Runti
     match target {
         ExplainTarget::Issue { id, occurrence } => validate_issue_response(&value, id, occurrence),
         ExplainTarget::Log(id) => validate_log_response(&value, id),
+        ExplainTarget::Action(id) => action::validate_response(&value, id),
         ExplainTarget::Trace(id) => validate_trace_response(&value, id),
         ExplainTarget::Release(release) => validate_release_response(&value, release),
         ExplainTarget::Metric(metric) => validate_metric_response(&value, metric),
@@ -1809,6 +1812,7 @@ fn render_response(target: &ExplainTarget, value: &Value) -> Option<String> {
     match target {
         ExplainTarget::Issue { .. } => render_issue(value),
         ExplainTarget::Log(_) => render_log(value),
+        ExplainTarget::Action(_) => action::render(value),
         ExplainTarget::Trace(_) => render_trace(value),
         ExplainTarget::Release(_) => render_release(value),
         ExplainTarget::Metric(_) => render_metric(value),
@@ -2026,7 +2030,14 @@ fn append_runtime_context(output: &mut String, context: Option<&Value>) {
         append_labeled_bool(output, "sampled", trace, "sampled");
         output.push('\n');
     }
-    if let Some(session) = context.get("session").filter(|value| !value.is_null()) {
+    if let Some(session) = context
+        .get("session")
+        .filter(|value| !value.is_null())
+        .filter(|session| {
+            session.get("id").and_then(Value::as_str).is_some()
+                || session.get("previous_id").and_then(Value::as_str).is_some()
+        })
+    {
         output.push_str("Session correlation:");
         append_labeled_text(output, "id", session, "id", 160);
         append_labeled_text(output, "previous", session, "previous_id", 160);

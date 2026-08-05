@@ -1,4 +1,4 @@
-//! Versioned issue, log, trace, release, and metric explanation contracts.
+//! Versioned issue, log, action, trace, release, and metric explanation contracts.
 
 use logbrew_cli::{CliEnvironment, execute_command, parse_command, write_runtime_error};
 use wiremock::matchers::{header, method, path, query_param};

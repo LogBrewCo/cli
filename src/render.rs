@@ -368,7 +368,10 @@ fn explain_summary(target: &ExplainTarget, value: &serde_json::Value) -> Option<
     match target {
         ExplainTarget::Issue { .. } => issue_detail_summary(value),
         ExplainTarget::Trace(id) => trace_summary(value, id.as_str()),
-        ExplainTarget::Log(_) | ExplainTarget::Release(_) | ExplainTarget::Metric(_) => None,
+        ExplainTarget::Log(_)
+        | ExplainTarget::Action(_)
+        | ExplainTarget::Release(_)
+        | ExplainTarget::Metric(_) => None,
     }
 }
 

@@ -1,0 +1,507 @@
+{
+  "schema_version": 1,
+  "subject": {
+    "kind": "action",
+    "id": "14141414-1414-4141-8141-141414141414",
+    "project_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    "name": "checkout.submit",
+    "status": "failure",
+    "content_trust": "untrusted_telemetry",
+    "occurred_at": "2026-08-03T11:05:00Z",
+    "service_name": "checkout-api",
+    "environment": "production",
+    "release": "checkout@1.2.3",
+    "sdk": {
+      "name": "@logbrew/node",
+      "version": "0.2.0"
+    },
+    "subject_classification": "user",
+    "session_captured": true
+  },
+  "context": {
+    "schema_version": 1,
+    "resource": {
+      "service": {
+        "name": "checkout-api",
+        "version": null
+      },
+      "deployment": {
+        "environment": "production",
+        "release": "checkout@1.2.3"
+      },
+      "runtime": {
+        "name": "node",
+        "version": "24.5.0"
+      },
+      "framework": {
+        "name": "nextjs",
+        "version": "15.4.5"
+      },
+      "operating_system": {
+        "name": "linux",
+        "version": "6.8",
+        "build": null
+      },
+      "device": null,
+      "application": {
+        "name": "checkout-web",
+        "version": "1.2.3",
+        "build": "20260803.1"
+      }
+    },
+    "trace": {
+      "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+      "span_id": "00f067aa0ba902b7",
+      "parent_span_id": "1111111111111111",
+      "sampled": true
+    },
+    "session": {
+      "id": null,
+      "previous_id": null
+    },
+    "subject": {
+      "id": null,
+      "kind": "user"
+    },
+    "tags": {
+      "plan": "pro",
+      "region": "eu"
+    }
+  },
+  "properties": {
+    "values": {
+      "attempt": 2,
+      "request": {
+        "method": "POST"
+      }
+    },
+    "included_leaf_count": 2,
+    "redacted": true,
+    "truncated": false
+  },
+  "analysis": {
+    "status": "subject_failure",
+    "causality": "evidence_only",
+    "observations": [
+      "subject_failure",
+      "exact_span_error",
+      "trace_error_span",
+      "related_issue",
+      "related_error_log"
+    ]
+  },
+  "correlations": {
+    "trace": {
+      "status": "available",
+      "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+      "span_id": "00f067aa0ba902b7",
+      "exact_span": {
+        "span_id": "00f067aa0ba902b7",
+        "parent_span_id": "1111111111111111",
+        "name": "charge payment",
+        "operation": "payment.charge",
+        "status": "error",
+        "started_at": "2026-08-03T11:04:59Z",
+        "duration_ms": 250,
+        "service_name": "payments-api"
+      },
+      "summary": {
+        "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+        "span_count": 2,
+        "error_span_count": 1,
+        "service_count": 1,
+        "project_count": 1,
+        "started_at": "2026-08-03T11:04:58Z",
+        "duration_ms": 500,
+        "root_span": {
+          "span_id": "1111111111111111",
+          "parent_span_id": null,
+          "name": "POST /checkout",
+          "operation": "http.server",
+          "status": "ok",
+          "started_at": "2026-08-03T11:04:58Z",
+          "duration_ms": 500,
+          "service_name": "checkout-api"
+        },
+        "slowest_child_span": {
+          "span_id": "00f067aa0ba902b7",
+          "parent_span_id": "1111111111111111",
+          "name": "charge payment",
+          "operation": "payment.charge",
+          "status": "error",
+          "started_at": "2026-08-03T11:04:59Z",
+          "duration_ms": 250,
+          "service_name": "payments-api"
+        },
+        "slowest_path": [
+          {
+            "span_id": "1111111111111111",
+            "parent_span_id": null,
+            "name": "POST /checkout",
+            "operation": "http.server",
+            "status": "ok",
+            "started_at": "2026-08-03T11:04:58Z",
+            "duration_ms": 500,
+            "service_name": "checkout-api"
+          },
+          {
+            "span_id": "00f067aa0ba902b7",
+            "parent_span_id": "1111111111111111",
+            "name": "charge payment",
+            "operation": "payment.charge",
+            "status": "error",
+            "started_at": "2026-08-03T11:04:59Z",
+            "duration_ms": 250,
+            "service_name": "payments-api"
+          }
+        ],
+        "error_spans": [
+          {
+            "span_id": "00f067aa0ba902b7",
+            "parent_span_id": "1111111111111111",
+            "name": "charge payment",
+            "operation": "payment.charge",
+            "status": "error",
+            "started_at": "2026-08-03T11:04:59Z",
+            "duration_ms": 250,
+            "service_name": "payments-api"
+          }
+        ],
+        "services": [
+          {
+            "service_name": "checkout-api",
+            "span_count": 2,
+            "error_span_count": 1,
+            "max_duration_ms": 500
+          }
+        ],
+        "releases": [
+          "checkout@1.2.3"
+        ],
+        "environments": [
+          "production"
+        ]
+      },
+      "truncated": false
+    },
+    "issues": {
+      "status": "available",
+      "items": [
+        {
+          "id": "18181818-1818-4181-8181-181818181818",
+          "issue_id": "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+          "project_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          "severity": "error",
+          "title": "Payment failed",
+          "message": "processor rejected charge",
+          "occurred_at": "2026-08-03T11:05:01Z",
+          "service_name": "payments-api",
+          "environment": "production",
+          "release": "checkout@1.2.3"
+        }
+      ],
+      "truncated": false
+    },
+    "trace_logs": {
+      "status": "available",
+      "items": [
+        {
+          "id": "16161616-1616-4161-8161-161616161616",
+          "project_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          "severity": "error",
+          "source": "payments.processor",
+          "message": "processor rejected charge",
+          "occurred_at": "2026-08-03T11:05:02Z",
+          "service_name": "payments-api",
+          "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+          "span_id": "00f067aa0ba902b7",
+          "environment": "production",
+          "release": "checkout@1.2.3",
+          "relationship": "exact_trace"
+        }
+      ],
+      "truncated": false
+    },
+    "nearby_logs": {
+      "status": "available",
+      "items": [
+        {
+          "id": "17171717-1717-4171-8171-171717171717",
+          "project_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          "severity": "info",
+          "source": "checkout.retry",
+          "message": "retry scheduled",
+          "occurred_at": "2026-08-03T11:05:03Z",
+          "service_name": "checkout-api",
+          "trace_id": null,
+          "span_id": null,
+          "environment": "production",
+          "release": "checkout@1.2.3",
+          "relationship": "nearby_scope"
+        }
+      ],
+      "truncated": false
+    },
+    "actions": {
+      "status": "available",
+      "items": [
+        {
+          "id": "15151515-1515-4151-8151-151515151515",
+          "project_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          "name": "payment.retry",
+          "occurred_at": "2026-08-03T11:05:04Z",
+          "service_name": "payments-api",
+          "environment": "production",
+          "release": "checkout@1.2.3"
+        }
+      ],
+      "truncated": false
+    },
+    "metrics": {
+      "status": "available",
+      "items": [
+        {
+          "id": "21212121-2121-4121-8121-212121212121",
+          "project_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          "name": "payment.latency",
+          "kind": "histogram",
+          "value": 250.0,
+          "unit": "ms",
+          "temporality": "delta",
+          "occurred_at": "2026-08-03T11:05:05Z",
+          "service_name": "payments-api",
+          "environment": "production",
+          "release": "checkout@1.2.3"
+        }
+      ],
+      "truncated": false
+    },
+    "release": {
+      "project_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "release": "checkout@1.2.3",
+      "environment": "production",
+      "service_name": "checkout-api"
+    }
+  },
+  "timeline": {
+    "items": [
+      {
+        "id": "00f067aa0ba902b7",
+        "kind": "span",
+        "relationship": "exact_span",
+        "occurred_at": "2026-08-03T11:04:59Z",
+        "name": "charge payment",
+        "message": null,
+        "service_name": "payments-api",
+        "span_id": "00f067aa0ba902b7",
+        "severity": null,
+        "status": "error",
+        "duration_ms": 250
+      },
+      {
+        "id": "14141414-1414-4141-8141-141414141414",
+        "kind": "action",
+        "relationship": "subject",
+        "occurred_at": "2026-08-03T11:05:00Z",
+        "name": "checkout.submit",
+        "message": null,
+        "service_name": "checkout-api",
+        "span_id": "00f067aa0ba902b7",
+        "severity": null,
+        "status": "failure",
+        "duration_ms": null
+      },
+      {
+        "id": "18181818-1818-4181-8181-181818181818",
+        "kind": "issue",
+        "relationship": "exact_trace",
+        "occurred_at": "2026-08-03T11:05:01Z",
+        "name": "Payment failed",
+        "message": "processor rejected charge",
+        "service_name": "payments-api",
+        "span_id": null,
+        "severity": "error",
+        "status": null,
+        "duration_ms": null
+      },
+      {
+        "id": "16161616-1616-4161-8161-161616161616",
+        "kind": "log",
+        "relationship": "exact_trace",
+        "occurred_at": "2026-08-03T11:05:02Z",
+        "name": "payments.processor",
+        "message": "processor rejected charge",
+        "service_name": "payments-api",
+        "span_id": "00f067aa0ba902b7",
+        "severity": "error",
+        "status": null,
+        "duration_ms": null
+      },
+      {
+        "id": "17171717-1717-4171-8171-171717171717",
+        "kind": "log",
+        "relationship": "nearby_scope",
+        "occurred_at": "2026-08-03T11:05:03Z",
+        "name": "checkout.retry",
+        "message": "retry scheduled",
+        "service_name": "checkout-api",
+        "span_id": null,
+        "severity": "info",
+        "status": null,
+        "duration_ms": null
+      },
+      {
+        "id": "15151515-1515-4151-8151-151515151515",
+        "kind": "action",
+        "relationship": "exact_trace",
+        "occurred_at": "2026-08-03T11:05:04Z",
+        "name": "payment.retry",
+        "message": null,
+        "service_name": "payments-api",
+        "span_id": null,
+        "severity": null,
+        "status": null,
+        "duration_ms": null
+      },
+      {
+        "id": "21212121-2121-4121-8121-212121212121",
+        "kind": "metric",
+        "relationship": "exact_trace",
+        "occurred_at": "2026-08-03T11:05:05Z",
+        "name": "payment.latency",
+        "message": null,
+        "service_name": "payments-api",
+        "span_id": null,
+        "severity": null,
+        "status": null,
+        "duration_ms": null
+      }
+    ],
+    "truncated": false
+  },
+  "evidence": {
+    "status": "partial",
+    "captured_fields": [
+      "context",
+      "correlations.actions",
+      "correlations.issues",
+      "correlations.metrics",
+      "correlations.nearby_logs",
+      "correlations.release",
+      "correlations.trace.exact_span",
+      "correlations.trace.span_id",
+      "correlations.trace.spans",
+      "correlations.trace.trace_id",
+      "correlations.trace_logs",
+      "properties.metadata",
+      "properties.metadata.attempt",
+      "properties.metadata.request.method",
+      "subject.content_trust",
+      "subject.environment",
+      "subject.id",
+      "subject.name",
+      "subject.occurred_at",
+      "subject.project_id",
+      "subject.release",
+      "subject.sdk.name",
+      "subject.sdk.version",
+      "subject.service_name",
+      "subject.session_captured",
+      "subject.status",
+      "subject.subject_classification",
+      "timeline"
+    ],
+    "missing_fields": [],
+    "redacted_fields": [
+      "context.session.identifiers",
+      "context.subject.id",
+      "properties.metadata.contact",
+      "subject.distinct_id",
+      "subject.session_id"
+    ],
+    "truncated_fields": []
+  },
+  "next_actions": [
+    {
+      "priority": 1,
+      "code": "inspect_related_issue",
+      "target": "issue_investigation",
+      "reason": "related_issue_available",
+      "issue_id": "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+      "span_id": null
+    },
+    {
+      "priority": 2,
+      "code": "inspect_exact_span",
+      "target": "trace_investigation",
+      "reason": "exact_span_available",
+      "issue_id": null,
+      "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+      "span_id": "00f067aa0ba902b7"
+    },
+    {
+      "priority": 3,
+      "code": "review_trace_logs",
+      "target": "telemetry_logs",
+      "reason": "trace_logs_available",
+      "issue_id": null,
+      "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+      "span_id": null
+    },
+    {
+      "priority": 4,
+      "code": "review_nearby_logs",
+      "target": "telemetry_logs",
+      "reason": "nearby_logs_available",
+      "issue_id": null,
+      "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+      "span_id": null
+    },
+    {
+      "priority": 5,
+      "code": "review_related_actions",
+      "target": "telemetry_actions",
+      "reason": "related_actions_available",
+      "issue_id": null,
+      "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+      "span_id": null
+    },
+    {
+      "priority": 6,
+      "code": "review_related_metrics",
+      "target": "telemetry_metrics",
+      "reason": "related_metrics_available",
+      "issue_id": null,
+      "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+      "span_id": null
+    },
+    {
+      "priority": 7,
+      "code": "inspect_analytics_paths",
+      "target": "analytics_paths",
+      "reason": "session_captured",
+      "issue_id": null,
+      "trace_id": null,
+      "span_id": null
+    },
+    {
+      "priority": 8,
+      "code": "improve_capture",
+      "target": "sdk_configuration",
+      "reason": "evidence_incomplete",
+      "issue_id": null,
+      "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+      "span_id": "00f067aa0ba902b7"
+    },
+    {
+      "priority": 9,
+      "code": "compare_release",
+      "target": "release_investigation",
+      "reason": "release_identity_available",
+      "issue_id": null,
+      "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+      "span_id": null
+    }
+  ]
+}
