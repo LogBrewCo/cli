@@ -17,6 +17,8 @@ async fn human_issue_explanation_surfaces_fix_context_timeline_and_evidence()
         .and(path(format!(
             "/api/telemetry/issues/{ISSUE_ID}/investigation"
         )))
+        .and(query_param("response_version", "2"))
+        .and(query_param("selection", "recommended"))
         .respond_with(ResponseTemplate::new(200).set_body_json(issue_response()))
         .mount(&server)
         .await;
@@ -28,6 +30,8 @@ async fn human_issue_explanation_surfaces_fix_context_timeline_and_evidence()
     let text = String::from_utf8(output)?;
     for expected in [
         "Issue cccccccc-cccc-4ccc-8ccc-cccccccccccc unresolved severity=error",
+        "Occurrence selection: requested=recommended reason=context_rich_recent_occurrence \
+         selected=dddddddd-dddd-4ddd-8ddd-dddddddddddd",
         "Exception: PaymentError mechanism=unhandled handled=false",
         "Frame: module=checkout function=charge file=payment.rs line=42 column=7 in_app=true",
         "Breadcrumb: at=2026-08-03T11:04:55Z category=ui.click",
@@ -628,8 +632,22 @@ fn log_response() -> serde_json::Value {
 }
 
 fn issue_response() -> serde_json::Value {
+    let selected = serde_json::json!({
+        "id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+        "occurred_at": "2026-08-03T11:05:00Z",
+        "severity": "error",
+        "environment": "production",
+        "release": "checkout@1.2.3",
+        "service_name": "checkout-api",
+        "sdk": {"name": "logbrew-rust", "version": "1.2.3"},
+        "exception_type": "PaymentError",
+        "trace_linked": true,
+        "stack": {"frame_count": 1, "truncated": false},
+        "breadcrumbs": {"count": 1, "truncated": false},
+        "context_captured": true
+    });
     serde_json::json!({
-        "schema_version": 1,
+        "schema_version": 2,
         "subject": {
             "kind": "issue",
             "id": ISSUE_ID,
@@ -691,6 +709,33 @@ fn issue_response() -> serde_json::Value {
                 "data": {"screen": "checkout"}
             }],
             "breadcrumbs_truncated": false
+        },
+        "occurrence_selection": {
+            "requested": "recommended",
+            "reason": "context_rich_recent_occurrence",
+            "selected": selected.clone(),
+            "first": {
+                "id": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+                "occurred_at": "2026-08-03T10:00:00Z",
+                "severity": "error",
+                "environment": "production",
+                "release": "checkout@1.2.1",
+                "service_name": "checkout-api",
+                "sdk": {"name": "logbrew-rust", "version": "1.2.1"},
+                "exception_type": null,
+                "trace_linked": false,
+                "stack": {"frame_count": 0, "truncated": false},
+                "breadcrumbs": {"count": 0, "truncated": false},
+                "context_captured": false
+            },
+            "latest": selected.clone(),
+            "recommended": selected,
+            "recommendation": {
+                "algorithm_version": 1,
+                "candidate_count": 3,
+                "candidate_limit": 50,
+                "candidate_window_truncated": false
+            }
         },
         "cause": {
             "status": "evidence_only",
@@ -765,7 +810,13 @@ fn issue_response() -> serde_json::Value {
         },
         "evidence": {
             "status": "partial",
-            "captured_fields": ["issue.exception", "issue.stack_frames"],
+            "captured_fields": [
+                "issue.exception",
+                "issue.stack_frames",
+                "occurrence.boundaries",
+                "occurrence.recommendation",
+                "occurrence.selection"
+            ],
             "missing_fields": ["issue.attachment"],
             "redacted_fields": [],
             "truncated_fields": []
