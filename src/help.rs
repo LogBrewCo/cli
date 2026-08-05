@@ -559,13 +559,14 @@ exact-property segments, with the first segment as a descriptive baseline.
 Paths shows the most common aggregate journeys around one exact event without returning session \
 or user identifiers.
 Funnels measure exact ordered conversion and drop-off across two through eight product events \
-using explicit session or opaque identified-user boundaries.
-Retention measures whether opaque identified users return after one exact start event, with \
+using explicit session or typed opaque user boundaries.
+Retention measures whether typed opaque users return after one exact start event, with \
 maturity-aware denominators that do not classify unobservable users as churned.
-Lifecycle classifies identified users as new in observed history, returning, resurrected, or \
+Lifecycle classifies typed opaque users as new in observed history, returning, resurrected, or \
 dormant for one exact event, with explicit history and capture bounds.
-All commands return bounded human guidance and an exact validated schema-version-1 JSON contract \
-for AI agents.
+All commands return bounded human guidance and exact validated JSON contracts for AI agents. \
+Overview uses schema version 2 for exhaustive subject-kind coverage; the other commands use \
+schema version 1.
 Next: start with overview, inspect properties before property-based comparisons, then choose compare \
 for context differences, paths for journeys, funnels for conversion, retention for return behavior, \
 or lifecycle for population change.";
@@ -583,14 +584,16 @@ Options:
   --environment <name>   Exact environment context.
   --top-limit <1-20>      Action, surface, and exact-event rows per ranking (default: 10).
 
-Shows bounded action volume, active identified users, explicit sessions, classified page views, \
-screen views and interactions, time coverage, top surfaces, and exact event names.
-Capture-quality counts disclose anonymous, unsessionized, untraced, unnamed, and unclassified \
-activity instead of silently promoting it into user analysis.
-Unique user, session, name, and surface counts are approximate; event and coverage totals are \
-exact within the selected window.
+Shows bounded action volume, active identified users, typed anonymous subjects, explicit sessions, \
+classified page views, screen views and interactions, time coverage, top surfaces, and exact event \
+names.
+Capture-quality counts disclose exhaustive subject-kind coverage: typed users, typed anonymous \
+subjects, legacy-untyped IDs, missing context, historical-unindexed events, unsessionized events, \
+untraced events, unnamed events, and unclassified activity remain separate.
+Unique user, anonymous-subject, session, name, and surface counts are approximate; event and \
+coverage totals are exact within the selected window.
 Human output is terminal-safe and recommends the next useful capture or analysis action.
-JSON emits the exact validated schema-version-1 response without user or session identifiers.
+JSON emits the exact validated schema-version-2 response without user or session identifiers.
 Next: use exact event names from the overview with analytics compare, paths, funnel, retention, or \
 lifecycle.";
 
@@ -643,10 +646,10 @@ Copy keys from analytics properties; property values remain application-known an
 Each segment must have a unique exact service, release, environment, and property-filter \
 combination. Segments are \
 evaluated independently and may overlap, so their totals must not be added as a population split.
-Reach is the fraction of eligible explicit sessions or opaque identified users that performed the \
-exact target. Unique-unit counts are approximate; event and coverage totals are exact within the \
-fully evaluated window. Relative lift is descriptive only: no causal inference or statistical \
-significance test is claimed.
+Reach is the fraction of eligible explicit sessions or opaque subjects explicitly typed as users \
+that performed the exact target. Unique-unit counts are approximate; event and coverage totals are \
+exact within the fully evaluated window. Relative lift is descriptive only: no causal inference or \
+statistical significance test is claimed.
 Human output shows segment reach, baseline differences, missing-key coverage versus nonmatching-value \
 coverage, capture and trace-link coverage, bounded \
 time-series evidence, interpretation limits, and the next useful action. JSON emits the exact \
@@ -702,15 +705,17 @@ Options:
   --unit <session|identified-user>  Counting boundary (default: session).
   --conversion-window <duration>   First-to-final window as seconds, 30m, 1h, or 1d.
 
-Measures where explicit sessions or opaque identified users enter, progress, complete, and drop \
-off across two through eight exact classified events. Repeat --step in the required order. \
+Measures where explicit sessions or opaque subjects explicitly typed as users enter, progress, \
+complete, and drop off across two through eight exact classified events. Repeat --step in the \
+required order. \
 page_view, screen_view, identified_user, page, screen, and user are accepted aliases.
 Every later step must have a strictly greater timestamp than the prior match and the final step \
 must remain inside the conversion window from the first match. One event cannot satisfy multiple \
 steps.
 Session funnels count visits or app sessions, not people. Identified-user funnels require stable \
-application-supplied opaque subject IDs and can connect separate sessions. Raw IDs are never \
-returned; missing IDs are reported as capture gaps.
+application-supplied opaque subject IDs with context.subject.kind=user and can connect separate \
+sessions. Anonymous, legacy-untyped, historical-unindexed, and missing subjects are reported as \
+capture gaps. Raw IDs are never returned.
 Human output shows candidate, entered, and completed units; every step's conversion and drop-off; \
 capture coverage; interpretation limits; and the next useful action. JSON emits the exact \
 validated schema-version-1 response for AI agents.
@@ -736,11 +741,11 @@ Options:
                                      Exact-period or rolling retention (default: return-on).
   --cohort-mode <first-in-range>    First matching start inside the query range (default).
 
-Returns an identified-user retention curve and a query-relative cohort matrix for two exact \
-classified events. page_view, screen_view, exact, rolling, 1h, 1d, 1w, and 30d are accepted \
-aliases.
-Only explicit opaque subject IDs qualify. Raw IDs are never returned, and missing identities are \
-reported as capture coverage gaps.
+Returns a typed-user retention curve and a query-relative cohort matrix for two exact classified \
+events. page_view, screen_view, exact, rolling, 1h, 1d, 1w, and 30d are accepted aliases.
+Only stable opaque subject IDs with context.subject.kind=user qualify. Anonymous, legacy-untyped, \
+historical-unindexed, and missing subjects are reported as capture gaps. Raw IDs are never \
+returned.
 Returns must occur strictly after each subject's start anchor. Maturity-aware denominators exclude \
 subjects whose selected period cannot yet be observed instead of reporting them as churned.
 thirty-day is a fixed 30-day duration, not a calendar month. first-in-range does not prove a \
@@ -764,15 +769,17 @@ Options:
                                      Fixed lifecycle period; the backend chooses by range when omitted.
   --history-periods <2-31>          Complete periods before since (default: 2; max history: 62 days).
 
-Returns lifecycle state for explicit opaque identified users performing one exact classified event.
+Returns lifecycle state for stable opaque subjects explicitly typed as users performing one exact \
+classified event.
 New in observed history means active now with no earlier matching event between history_since and \
 the current bucket; it does not prove a lifetime-new user. Returning means active in the current \
 and immediately previous fixed period. Resurrected means active now after a gap. Dormant means \
 active in the previous period but not the current period.
 States are disjoint, the bounded history window is always visible, and an incomplete final bucket \
 is marked provisional. thirty-day is a fixed 30-day duration, not a calendar month.
-Identity, event-name, session, trace, and history coverage qualify every conclusion. Raw subject IDs \
-are never returned.
+Typed-user identity, event-name, session, trace, and history coverage qualify every conclusion. \
+Anonymous, legacy-untyped, historical-unindexed, and missing subjects remain excluded. Raw subject \
+IDs are never returned.
 Human output shows every lifecycle bucket, population change, capture gaps, partial-period status, \
 and the next useful action. JSON emits the exact validated schema-version-1 response for AI agents.
 Next: choose one exact captured page, screen, or interaction name from Product Analytics overview.";

@@ -655,14 +655,14 @@ const fn expected_next_action(response: &RetentionResponse) -> (&'static str, &'
             "/api/telemetry/analytics/overview",
         )
     } else if response.coverage.usable_start_events == 0 {
-        ("identify_product_users", "context.subject.id")
+        ("identify_product_users", "context.subject.kind=user")
     } else if response.coverage.return_events == 0 {
         (
             "capture_or_choose_retention_return",
             "/api/telemetry/analytics/overview",
         )
     } else if response.coverage.usable_return_events == 0 {
-        ("identify_returning_users", "context.subject.id")
+        ("identify_returning_users", "context.subject.kind=user")
     } else if response.summary.cohort_subjects == 0 {
         (
             "verify_retention_scope",
@@ -1027,7 +1027,9 @@ fn render_coverage(response: &RetentionResponse, output: &mut String) {
         );
     }
     output.push_str(
-        "Interpretation: first_in_range is not lifetime-first; missing identities are excluded; raw subject IDs are not returned.\n",
+        "Interpretation: first_in_range is not lifetime-first; anonymous, legacy-untyped, \
+         historical-unindexed, and missing subjects are excluded; raw subject IDs are not \
+         returned.\n",
     );
 }
 
@@ -1048,12 +1050,16 @@ fn next_step(code: &str) -> &'static str {
         "choose_captured_retention_start" => {
             "choose an exact captured start event from Product Analytics overview"
         }
-        "identify_product_users" => "attach one stable opaque context.subject.id to start events",
+        "identify_product_users" => {
+            "attach one stable opaque context.subject.id and set context.subject.kind=user on \
+             start events"
+        }
         "capture_or_choose_retention_return" => {
             "capture the intended return or choose an exact captured return event"
         }
         "identify_returning_users" => {
-            "attach the same stable opaque context.subject.id to return events"
+            "attach the same stable opaque context.subject.id and set context.subject.kind=user \
+             on return events"
         }
         "verify_retention_scope" => {
             "verify the exact start selector and project, time, and context scope"
@@ -1355,5 +1361,24 @@ mod tests {
         assert!(leap.is_some_and(|leap| next.is_some_and(|next| leap < next)));
         assert!(parse_utc_timestamp("2026-02-29T00:00:00Z").is_none());
         assert!(parse_utc_timestamp("2026-08-01T00:00:00+03:00").is_none());
+    }
+
+    #[test]
+    fn accepts_typed_user_capture_targets_for_retention_gaps() {
+        let mut missing_start = response();
+        missing_start["coverage"]["usable_start_events"] = 0.into();
+        missing_start["next_action"]["code"] = "identify_product_users".into();
+        missing_start["next_action"]["target"] = "context.subject.kind=user".into();
+        let missing_start: RetentionResponse =
+            serde_json::from_value(missing_start).expect("start fixture deserializes");
+        assert!(valid_next_action(&missing_start));
+
+        let mut missing_return = response();
+        missing_return["coverage"]["usable_return_events"] = 0.into();
+        missing_return["next_action"]["code"] = "identify_returning_users".into();
+        missing_return["next_action"]["target"] = "context.subject.kind=user".into();
+        let missing_return: RetentionResponse =
+            serde_json::from_value(missing_return).expect("return fixture deserializes");
+        assert!(valid_next_action(&missing_return));
     }
 }

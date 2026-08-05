@@ -465,7 +465,9 @@ const fn expected_next_action(response: &FunnelResponse) -> (&'static str, &'sta
     if coverage.usable_selected_step_events == 0 {
         return match response.query.analysis_unit {
             AnalyticsFunnelUnit::Session => ("sessionize_product_activity", "context.session.id"),
-            AnalyticsFunnelUnit::IdentifiedUser => ("identify_product_users", "context.subject.id"),
+            AnalyticsFunnelUnit::IdentifiedUser => {
+                ("identify_product_users", "context.subject.kind=user")
+            }
         };
     }
     if response.summary.entered_units == 0 {
@@ -719,7 +721,9 @@ fn render_coverage(response: &FunnelResponse, output: &mut String) {
             "Interpretation: candidates matched at least one selected event; counts are visits or app sessions, not people; steps require strictly increasing timestamps; one event cannot satisfy multiple steps; raw IDs are not returned.\n",
         ),
         AnalyticsFunnelUnit::IdentifiedUser => output.push_str(
-            "Interpretation: candidates matched at least one selected event; counts use explicit application-supplied opaque subjects and can cross sessions; steps require strictly increasing timestamps; raw IDs are not returned.\n",
+            "Interpretation: candidates matched at least one selected event; counts use stable \
+             application-supplied opaque subjects explicitly typed as users and can cross \
+             sessions; steps require strictly increasing timestamps; raw IDs are not returned.\n",
         ),
     }
 }
@@ -745,7 +749,8 @@ fn next_step(code: &str) -> &'static str {
             "attach one opaque context.session.id to each selected product event"
         }
         "identify_product_users" => {
-            "attach one stable opaque context.subject.id to each selected product event"
+            "attach one stable opaque context.subject.id and set context.subject.kind=user on \
+             each selected product event"
         }
         "verify_funnel_entry" => {
             "verify the first exact event and context filters in Product Analytics overview"
@@ -1020,5 +1025,17 @@ mod tests {
         let mut time = response();
         time["query"]["until"] = "2026-08-02T03:00:00+03:00".into();
         assert!(validated_response(&options(), time.to_string().as_str()).is_err());
+    }
+
+    #[test]
+    fn accepts_typed_user_capture_target_for_identified_user_gap() {
+        let mut value = response();
+        value["query"]["analysis_unit"] = "identified_user".into();
+        value["coverage"]["usable_selected_step_events"] = 0.into();
+        value["next_action"]["code"] = "identify_product_users".into();
+        value["next_action"]["target"] = "context.subject.kind=user".into();
+        let response: FunnelResponse = serde_json::from_value(value).expect("fixture deserializes");
+
+        assert!(valid_next_action(&response));
     }
 }

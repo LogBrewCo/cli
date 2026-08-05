@@ -261,7 +261,7 @@ pub enum Command {
         /// Emit the exact validated server response.
         json: bool,
     },
-    /// Measures maturity-aware identified-user retention between two exact product events.
+    /// Measures maturity-aware typed-user retention between two exact product events.
     AnalyticsRetention {
         /// Normalized privacy-safe retention query.
         options: AnalyticsRetentionOptions,
@@ -960,7 +960,7 @@ pub struct AnalyticsSegmentComparisonOptions {
     pub until: Option<String>,
     /// Automatic or fixed comparison-series interval.
     pub interval: String,
-    /// Session or explicit opaque identified-user counting boundary.
+    /// Session or typed opaque user counting boundary.
     pub analysis_unit: AnalyticsSegmentUnit,
     /// Exact classified target kind.
     pub target_kind: AnalyticsSegmentEventKind,
@@ -1094,7 +1094,7 @@ pub struct AnalyticsFunnelOptions {
     pub release: Option<String>,
     /// Optional exact environment filter.
     pub environment: Option<String>,
-    /// Session or explicit opaque identified-user counting boundary.
+    /// Session or typed opaque user counting boundary.
     pub analysis_unit: AnalyticsFunnelUnit,
     /// Optional first-to-final step window in seconds.
     pub conversion_window_seconds: Option<u32>,
