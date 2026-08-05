@@ -1780,7 +1780,7 @@ fn parses_log_release_and_metric_explanations() {
     .expect("metric explanation parses");
     assert_eq!(
         metric.http_path().expect("metric explanation has endpoint"),
-        "/api/telemetry/metrics/series?project_id=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa&name=http.server.duration&since=24h&interval=5m&group_by=service_name&environment=production&series_limit=12"
+        "/api/telemetry/metrics/investigation?project_id=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa&name=http.server.duration&since=24h&interval=5m&group_by=service_name&environment=production&series_limit=12"
     );
 }
 

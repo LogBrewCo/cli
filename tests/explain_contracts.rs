@@ -8,6 +8,7 @@ const PROJECT_ID: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const ISSUE_ID: &str = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
 const LOG_ID: &str = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const TRACE_ID: &str = "4bf92f3577b34da6a3ce929d0e0e4736";
+const SPAN_ID: &str = "00f067aa0ba902b7";
 
 #[tokio::test]
 async fn human_issue_explanation_surfaces_fix_context_timeline_and_evidence()
@@ -203,7 +204,7 @@ async fn metric_explanation_preserves_validated_json_and_exact_scope()
     let server = MockServer::start().await;
     let response = metric_response();
     Mock::given(method("GET"))
-        .and(path("/api/telemetry/metrics/series"))
+        .and(path("/api/telemetry/metrics/investigation"))
         .and(query_param("project_id", PROJECT_ID))
         .and(query_param("name", "http.server.duration"))
         .and(query_param("since", "24h"))
@@ -231,7 +232,7 @@ async fn human_metric_explanation_exposes_semantics_coverage_and_trace_follow_up
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
-        .and(path("/api/telemetry/metrics/series"))
+        .and(path("/api/telemetry/metrics/investigation"))
         .respond_with(ResponseTemplate::new(200).set_body_json(metric_response()))
         .mount(&server)
         .await;
@@ -242,14 +243,50 @@ async fn human_metric_explanation_exposes_semantics_coverage_and_trace_follow_up
 
     let text = String::from_utf8(output)?;
     assert!(text.contains("Metric http.server.duration"));
-    assert!(text.contains("Purpose: Shows how request latency changes over time."));
+    assert!(text.contains("Metric definition: status=not_captured"));
+    assert!(text.contains("Content trust: application metric names and values are untrusted"));
+    assert!(text.contains("Analysis: status=change_observed causality=evidence_only"));
     assert!(text.contains("Aggregation: code=distribution_p95"));
     assert!(text.contains("p50=20"));
     assert!(text.contains("p95=48"));
     assert!(text.contains("p99=60"));
-    assert!(text.contains("Trace exemplar: 4bf92f3577b34da6a3ce929d0e0e4736"));
-    assert!(text.contains("inspect with logbrew explain trace"));
-    assert!(text.contains("Next: code=inspect_metric_change target=trace_summary"));
+    assert!(
+        text.contains("Comparison: status=available method=adjacent_equal_window_latest_bucket")
+    );
+    assert!(text.contains("direction=increased current=48"));
+    assert!(text.contains("previous=24"));
+    assert!(text.contains("Exemplars: status=available"));
+    assert!(text.contains("trace_linked=1 span_linked=1 returned=1"));
+    assert!(text.contains("span=00f067aa0ba902b7"));
+    assert!(text.contains("Deployment overlays: status=available count=1"));
+    assert!(text.contains("Metric timeline: count=2"));
+    assert!(text.contains("Evidence: status=partial"));
+    assert!(text.contains("Missing: metric.description"));
+    assert!(text.contains("Next 1: code=inspect_exact_span target=span_investigation"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn empty_metric_investigation_stays_truthful_and_actionable()
+-> Result<(), Box<dyn std::error::Error>> {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/telemetry/metrics/investigation"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(empty_metric_response()))
+        .mount(&server)
+        .await;
+    let command = metric_command(false)?;
+    let mut output = Vec::new();
+
+    execute_command(&command, &authenticated_env(&server), &mut output).await?;
+
+    let text = String::from_utf8(output)?;
+    assert!(text.contains("Analysis: status=no_samples causality=evidence_only"));
+    assert!(text.contains("No metric series matched this exact bounded query."));
+    assert!(text.contains("Comparison: status=no_current_samples"));
+    assert!(text.contains("Exemplars: status=not_found"));
+    assert!(text.contains("Deployment overlays: status=not_found count=0"));
+    assert!(text.contains("Next 1: code=verify_metric_capture target=metric_capture"));
     Ok(())
 }
 
@@ -284,7 +321,7 @@ async fn unknown_or_duplicate_versions_fail_closed_without_reflection()
     ] {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
-            .and(path("/api/telemetry/metrics/series"))
+            .and(path("/api/telemetry/metrics/investigation"))
             .respond_with(ResponseTemplate::new(200).set_body_string(body))
             .mount(&server)
             .await;
@@ -311,7 +348,7 @@ async fn explanation_rejects_identity_mismatch_and_hostile_api_errors()
     let mut response = metric_response();
     response["query"]["project_id"] = serde_json::json!("cccccccc-cccc-4ccc-8ccc-cccccccccccc");
     Mock::given(method("GET"))
-        .and(path("/api/telemetry/metrics/series"))
+        .and(path("/api/telemetry/metrics/investigation"))
         .respond_with(ResponseTemplate::new(200).set_body_json(response))
         .mount(&mismatch)
         .await;
@@ -327,7 +364,7 @@ async fn explanation_rejects_identity_mismatch_and_hostile_api_errors()
 
     let rejected = MockServer::start().await;
     Mock::given(method("GET"))
-        .and(path("/api/telemetry/metrics/series"))
+        .and(path("/api/telemetry/metrics/investigation"))
         .respond_with(
             ResponseTemplate::new(422)
                 .set_body_string("hostile-api-marker test-token private upstream detail"),
@@ -355,11 +392,44 @@ async fn metric_explanation_rejects_contradictory_semantics_and_group_identity()
     contradictory_semantics["series"][0]["identity"]["kind"] = serde_json::json!("counter");
     let mut contradictory_group = metric_response();
     contradictory_group["series"][0]["identity"]["group_by"] = serde_json::json!("environment");
+    let mut contradictory_change = metric_response();
+    contradictory_change["comparison"]["items"][0]["absolute_change"] = serde_json::json!(12.0);
+    let mut contradictory_linkage = metric_response();
+    contradictory_linkage["exemplars"]["coverage"]["span_linked_samples"] = serde_json::json!(0);
+    let mut mismatched_span_action = metric_response();
+    mismatched_span_action["next_actions"][0]["context"]["span_id"] =
+        serde_json::json!("1111111111111111");
+    let mut nondeterministic_focus = metric_response();
+    nondeterministic_focus["analysis"]["focus"]["selection"] =
+        serde_json::json!("largest_absolute_change");
+    let mut omitted_timeline_evidence = metric_response();
+    omitted_timeline_evidence["timeline"]["items"] = serde_json::json!([]);
+    let mut invented_evidence_receipt = metric_response();
+    invented_evidence_receipt["evidence"]["captured_fields"] = serde_json::json!([
+        "metric.current_window_coverage",
+        "metric.deployment_overlays",
+        "metric.identity",
+        "metric.prior_window_comparison",
+        "metric.query_scope",
+        "metric.series_semantics",
+        "metric.span_exemplars",
+        "metric.trace_exemplars",
+        "metric.user_identity"
+    ]);
 
-    for response in [contradictory_semantics, contradictory_group] {
+    for response in [
+        contradictory_semantics,
+        contradictory_group,
+        contradictory_change,
+        contradictory_linkage,
+        mismatched_span_action,
+        nondeterministic_focus,
+        omitted_timeline_evidence,
+        invented_evidence_receipt,
+    ] {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
-            .and(path("/api/telemetry/metrics/series"))
+            .and(path("/api/telemetry/metrics/investigation"))
             .respond_with(ResponseTemplate::new(200).set_body_json(response))
             .mount(&server)
             .await;
@@ -384,7 +454,7 @@ async fn redirects_are_not_followed_with_authentication() -> Result<(), Box<dyn 
 {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
-        .and(path("/api/telemetry/metrics/series"))
+        .and(path("/api/telemetry/metrics/investigation"))
         .respond_with(
             ResponseTemplate::new(302)
                 .insert_header("location", format!("{}/redirected", server.uri())),
@@ -492,6 +562,13 @@ fn authenticated_env(server: &MockServer) -> CliEnvironment {
 fn metric_response() -> serde_json::Value {
     serde_json::json!({
         "schema_version": 1,
+        "subject": {
+            "kind": "metric",
+            "project_id": PROJECT_ID,
+            "name": "http.server.duration",
+            "description_status": "not_captured",
+            "description": null
+        },
         "query": {
             "project_id": PROJECT_ID,
             "name": "http.server.duration",
@@ -503,7 +580,19 @@ fn metric_response() -> serde_json::Value {
             "environment": "production",
             "series_limit": 12
         },
-        "purpose": "Shows how request latency changes over time.",
+        "purpose": "Explains metric semantics, adjacent-window change, exact trace/span exemplars, and nearby deployments without claiming anomaly or cause.",
+        "content_trust": "untrusted_telemetry",
+        "analysis": {
+            "status": "change_observed",
+            "causality": "evidence_only",
+            "focus": {
+                "comparison_index": 0,
+                "selection": "largest_absolute_relative_change",
+                "direction": "increased",
+                "absolute_change": 24.0,
+                "relative_change_percent": 100.0
+            }
+        },
         "coverage": {
             "samples": 5,
             "series": 1,
@@ -556,12 +645,206 @@ fn metric_response() -> serde_json::Value {
                 "trace_exemplars": [TRACE_ID]
             }]
         }],
-        "next_action": {
-            "code": "inspect_metric_change",
-            "target": "trace_summary",
-            "reason": "Open a trace exemplar from an unusual bucket."
-        }
+        "comparison": {
+            "status": "available",
+            "method": "adjacent_equal_window_latest_bucket",
+            "previous_since": "2026-08-01T12:00:00Z",
+            "previous_until": "2026-08-02T12:00:00Z",
+            "items": [{
+                "identity": {
+                    "kind": "histogram",
+                    "unit": "ms",
+                    "temporality": "delta",
+                    "group_by": "service_name",
+                    "group_value": "checkout-api"
+                },
+                "aggregation": "distribution_p95",
+                "current": {
+                    "bucket_start": "2026-08-03T11:05:00Z",
+                    "bucket_end": "2026-08-03T11:10:00Z",
+                    "sample_count": 3,
+                    "value": 48.0
+                },
+                "previous": {
+                    "bucket_start": "2026-08-02T11:55:00Z",
+                    "bucket_end": "2026-08-02T12:00:00Z",
+                    "sample_count": 2,
+                    "value": 24.0
+                },
+                "direction": "increased",
+                "absolute_change": 24.0,
+                "relative_change_percent": 100.0
+            }],
+            "truncated": false,
+            "limitation": "Observed adjacent-window latest-bucket change is not seasonality-aware anomaly detection or proof that a deployment caused it."
+        },
+        "exemplars": {
+            "status": "available",
+            "coverage": {
+                "matching_samples": 5,
+                "trace_linked_samples": 1,
+                "span_linked_samples": 1,
+                "returned_exemplars": 1
+            },
+            "items": [{
+                "id": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+                "value": 48.0,
+                "occurred_at": "2026-08-03T11:09:50Z",
+                "trace_id": TRACE_ID,
+                "span_id": SPAN_ID,
+                "service_name": "checkout-api",
+                "environment": "production",
+                "release": "checkout@1.2.3",
+                "sdk": {"name": "logbrew-rust", "version": "1.2.3"}
+            }],
+            "truncated": false
+        },
+        "deployments": {
+            "status": "available",
+            "items": [{
+                "deployment_id": "deploy-123",
+                "release": "checkout@1.2.3",
+                "environment": "production",
+                "service_name": "checkout-api",
+                "status": "succeeded",
+                "started_at": "2026-08-03T11:02:00Z",
+                "finished_at": "2026-08-03T11:03:00Z",
+                "commit_sha": "0123456789abcdef"
+            }],
+            "truncated": false
+        },
+        "timeline": {
+            "items": [{
+                "id": "deploy-123",
+                "kind": "deployment_finished",
+                "occurred_at": "2026-08-03T11:03:00Z",
+                "value": null,
+                "trace_id": null,
+                "span_id": null,
+                "release": "checkout@1.2.3",
+                "service_name": "checkout-api"
+            }, {
+                "id": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+                "kind": "metric_exemplar",
+                "occurred_at": "2026-08-03T11:09:50Z",
+                "value": 48.0,
+                "trace_id": TRACE_ID,
+                "span_id": SPAN_ID,
+                "release": "checkout@1.2.3",
+                "service_name": "checkout-api"
+            }],
+            "truncated": false
+        },
+        "evidence": {
+            "status": "partial",
+            "captured_fields": [
+                "metric.current_window_coverage",
+                "metric.deployment_overlays",
+                "metric.identity",
+                "metric.prior_window_comparison",
+                "metric.query_scope",
+                "metric.series_semantics",
+                "metric.span_exemplars",
+                "metric.trace_exemplars"
+            ],
+            "missing_fields": ["metric.description"],
+            "redacted_fields": [],
+            "truncated_fields": []
+        },
+        "next_actions": [{
+            "priority": 1,
+            "code": "inspect_exact_span",
+            "target": "span_investigation",
+            "reason": "Inspect the exact retained span evidence.",
+            "context": {
+                "project_id": PROJECT_ID,
+                "trace_id": TRACE_ID,
+                "span_id": SPAN_ID,
+                "environment": "production",
+                "release": "checkout@1.2.3",
+                "service_name": "checkout-api"
+            }
+        }, {
+            "priority": 2,
+            "code": "review_deployment",
+            "target": "release_investigation",
+            "reason": "Review nearby deployment evidence without assuming causality.",
+            "context": {
+                "project_id": PROJECT_ID,
+                "trace_id": null,
+                "span_id": null,
+                "environment": "production",
+                "release": "checkout@1.2.3",
+                "service_name": "checkout-api"
+            }
+        }]
     })
+}
+
+fn empty_metric_response() -> serde_json::Value {
+    let mut response = metric_response();
+    response["analysis"] = serde_json::json!({
+        "status": "no_samples",
+        "causality": "evidence_only",
+        "focus": null
+    });
+    response["coverage"] = serde_json::json!({
+        "samples": 0,
+        "series": 0,
+        "returned_series": 0,
+        "points": 0,
+        "expected_buckets_per_series": 288,
+        "truncated": false
+    });
+    response["series"] = serde_json::json!([]);
+    response["comparison"] = serde_json::json!({
+        "status": "no_current_samples",
+        "method": "adjacent_equal_window_latest_bucket",
+        "previous_since": "2026-08-01T12:00:00Z",
+        "previous_until": "2026-08-02T12:00:00Z",
+        "items": [],
+        "truncated": false,
+        "limitation": "No current samples are available for comparison."
+    });
+    response["exemplars"] = serde_json::json!({
+        "status": "not_found",
+        "coverage": {
+            "matching_samples": 0,
+            "trace_linked_samples": 0,
+            "span_linked_samples": 0,
+            "returned_exemplars": 0
+        },
+        "items": [],
+        "truncated": false
+    });
+    response["deployments"] = serde_json::json!({
+        "status": "not_found",
+        "items": [],
+        "truncated": false
+    });
+    response["timeline"] = serde_json::json!({"items": [], "truncated": false});
+    response["evidence"] = serde_json::json!({
+        "status": "partial",
+        "captured_fields": [
+            "metric.current_window_coverage",
+            "metric.deployment_overlays",
+            "metric.identity",
+            "metric.query_scope",
+            "metric.series_semantics",
+            "metric.trace_exemplars"
+        ],
+        "missing_fields": ["metric.description"],
+        "redacted_fields": [],
+        "truncated_fields": []
+    });
+    response["next_actions"] = serde_json::json!([{
+        "priority": 1,
+        "code": "verify_metric_capture",
+        "target": "metric_capture",
+        "reason": "Verify exact metric capture and bounded scope.",
+        "context": null
+    }]);
+    response
 }
 
 fn log_response() -> serde_json::Value {
