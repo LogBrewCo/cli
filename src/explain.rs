@@ -611,9 +611,7 @@ fn validate_selected_event_resource_scope(
 }
 
 /// Reads the exact selected-event trace identity from typed context.
-fn selected_event_trace_id<'a>(
-    event: &'a Map<String, Value>,
-) -> Result<Option<&'a str>, RuntimeError> {
+fn selected_event_trace_id(event: &Map<String, Value>) -> Result<Option<&str>, RuntimeError> {
     let Some(context) = event.get("context").and_then(Value::as_object) else {
         return Ok(None);
     };
