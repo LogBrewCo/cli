@@ -167,6 +167,16 @@ async fn release_explanation_rejects_contradictory_or_unversioned_subject_receip
     let mut missing_evidence_receipt = release_response();
     missing_evidence_receipt["evidence"]["captured_fields"] =
         serde_json::json!(["release.issues", "release.traces"]);
+    let mut legacy_priority = release_response();
+    legacy_priority["next_actions"][0]["priority"] = serde_json::json!(1);
+    let mut mismatched_release_action = release_response();
+    mismatched_release_action["next_actions"][0]["issue_id"] =
+        serde_json::json!("dddddddd-dddd-4ddd-8ddd-dddddddddddd");
+    let mut missing_boundary_action = release_response();
+    missing_boundary_action["next_actions"]
+        .as_array_mut()
+        .ok_or("next-actions fixture")?
+        .retain(|action| action["code"] != "capture_deployment_boundary");
 
     for response in [
         contradictory_partition,
@@ -175,6 +185,9 @@ async fn release_explanation_rejects_contradictory_or_unversioned_subject_receip
         legacy_schema,
         unsafe_count,
         missing_evidence_receipt,
+        legacy_priority,
+        mismatched_release_action,
+        missing_boundary_action,
     ] {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
@@ -246,6 +259,8 @@ async fn human_metric_explanation_exposes_semantics_coverage_and_trace_follow_up
     assert!(text.contains("Metric definition: status=not_captured"));
     assert!(text.contains("Content trust: application metric names and values are untrusted"));
     assert!(text.contains("Analysis: status=change_observed causality=evidence_only"));
+    assert!(text.contains("Latest raw sample: status=available"));
+    assert!(text.contains("Raw sample: kind=histogram value=48 unit=ms temporality=delta"));
     assert!(text.contains("Aggregation: code=distribution_p95"));
     assert!(text.contains("p50=20"));
     assert!(text.contains("p95=48"));
@@ -263,6 +278,88 @@ async fn human_metric_explanation_exposes_semantics_coverage_and_trace_follow_up
     assert!(text.contains("Evidence: status=partial"));
     assert!(text.contains("Missing: metric.description"));
     assert!(text.contains("Next 1: code=inspect_exact_span target=span_investigation"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn metric_latest_sample_preserves_rich_context_and_redaction_receipts()
+-> Result<(), Box<dyn std::error::Error>> {
+    let server = MockServer::start().await;
+    let mut response = metric_response();
+    response["latest_sample"]["sample"]["context"] = serde_json::json!({
+        "schema_version": 1,
+        "resource": {
+            "service": {"name": "checkout-api", "version": "1.2.3"},
+            "deployment": {"environment": "production", "release": "checkout@1.2.3"},
+            "runtime": {"name": "rust", "version": "1.88"},
+            "framework": {"name": "axum", "version": "0.8"},
+            "operating_system": {"name": "linux", "version": "6.8", "build": null},
+            "device": {"family": "server", "model": null, "architecture": "arm64"},
+            "application": {"name": "checkout", "version": "1.2.3", "build": "42"}
+        },
+        "trace": {
+            "trace_id": TRACE_ID,
+            "span_id": SPAN_ID,
+            "parent_span_id": null,
+            "sampled": true
+        },
+        "session": {"id": "session-proof-1", "previous_id": null},
+        "subject": {"id": "subject-proof-1", "kind": "anonymous"},
+        "tags": {"journey": "checkout", "proof.channel": "hosted"}
+    });
+    response["latest_sample"]["sample"]["metadata"] = serde_json::json!({
+        "values": {"result": "accepted", "retry_count": 0},
+        "included_leaf_count": 2,
+        "redacted": true,
+        "truncated": false
+    });
+    let captured = response["evidence"]["captured_fields"]
+        .as_array_mut()
+        .ok_or("captured fixture")?;
+    captured.extend(
+        [
+            "metric.latest_sample.context",
+            "metric.latest_sample.context.resource",
+            "metric.latest_sample.context.session",
+            "metric.latest_sample.context.subject",
+            "metric.latest_sample.context.tags",
+            "metric.latest_sample.context.trace",
+            "metric.latest_sample.metadata",
+            "metric.latest_sample.metadata.result",
+            "metric.latest_sample.metadata.retry_count",
+        ]
+        .into_iter()
+        .map(|value| serde_json::json!(value)),
+    );
+    captured.sort_by(|left, right| left.as_str().cmp(&right.as_str()));
+    response["evidence"]["missing_fields"]
+        .as_array_mut()
+        .ok_or("missing fixture")?
+        .retain(|field| {
+            !matches!(
+                field.as_str(),
+                Some("metric.latest_sample.context" | "metric.latest_sample.metadata")
+            )
+        });
+    response["evidence"]["redacted_fields"] =
+        serde_json::json!(["metric.latest_sample.metadata.authorization"]);
+    Mock::given(method("GET"))
+        .and(path("/api/telemetry/metrics/investigation"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(response))
+        .mount(&server)
+        .await;
+    let command = metric_command(false)?;
+    let mut output = Vec::new();
+
+    execute_command(&command, &authenticated_env(&server), &mut output).await?;
+
+    let text = String::from_utf8(output)?;
+    assert!(text.contains("Runtime: service=checkout-api@1.2.3 runtime=rust@1.88"));
+    assert!(text.contains("Captured correlation: trace=4bf92f3577b34da6a3ce929d0e0e4736"));
+    assert!(text.contains("Tag: proof.channel=hosted"));
+    assert!(text.contains("Raw sample metadata: fields=2 redacted=true truncated=false"));
+    assert!(text.contains("Raw sample field: result=accepted"));
+    assert!(!text.contains("authorization="));
     Ok(())
 }
 
@@ -416,6 +513,29 @@ async fn metric_explanation_rejects_contradictory_semantics_and_group_identity()
         "metric.trace_exemplars",
         "metric.user_identity"
     ]);
+    let mut missing_latest_sample = metric_response();
+    missing_latest_sample["latest_sample"]["sample"] = serde_json::Value::Null;
+    let mut mismatched_latest_trace = metric_response();
+    mismatched_latest_trace["latest_sample"]["sample"]["context"] = serde_json::json!({
+        "schema_version": 1,
+        "resource": null,
+        "trace": {
+            "trace_id": "11111111111111111111111111111111",
+            "span_id": SPAN_ID,
+            "parent_span_id": null,
+            "sampled": true
+        },
+        "session": null,
+        "subject": null,
+        "tags": {}
+    });
+    let mut incorrect_latest_leaf_receipt = metric_response();
+    incorrect_latest_leaf_receipt["latest_sample"]["sample"]["metadata"] = serde_json::json!({
+        "values": {"result": "accepted"},
+        "included_leaf_count": 2,
+        "redacted": false,
+        "truncated": false
+    });
 
     for response in [
         contradictory_semantics,
@@ -426,6 +546,9 @@ async fn metric_explanation_rejects_contradictory_semantics_and_group_identity()
         nondeterministic_focus,
         omitted_timeline_evidence,
         invented_evidence_receipt,
+        missing_latest_sample,
+        mismatched_latest_trace,
+        incorrect_latest_leaf_receipt,
     ] {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
@@ -678,6 +801,30 @@ fn metric_response() -> serde_json::Value {
             "truncated": false,
             "limitation": "Observed adjacent-window latest-bucket change is not seasonality-aware anomaly detection or proof that a deployment caused it."
         },
+        "latest_sample": {
+            "status": "available",
+            "sample": {
+                "id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+                "kind": "histogram",
+                "value": 48.0,
+                "unit": "ms",
+                "temporality": "delta",
+                "occurred_at": "2026-08-03T11:09:50Z",
+                "service_name": "checkout-api",
+                "environment": "production",
+                "release": "checkout@1.2.3",
+                "trace_id": TRACE_ID,
+                "span_id": SPAN_ID,
+                "sdk": {"name": "logbrew-rust", "version": "1.2.3"},
+                "context": null,
+                "metadata": {
+                    "values": {},
+                    "included_leaf_count": 0,
+                    "redacted": false,
+                    "truncated": false
+                }
+            }
+        },
         "exemplars": {
             "status": "available",
             "coverage": {
@@ -741,13 +888,26 @@ fn metric_response() -> serde_json::Value {
                 "metric.current_window_coverage",
                 "metric.deployment_overlays",
                 "metric.identity",
+                "metric.latest_sample",
+                "metric.latest_sample.kind",
+                "metric.latest_sample.occurred_at",
+                "metric.latest_sample.scope",
+                "metric.latest_sample.sdk.name",
+                "metric.latest_sample.sdk.version",
+                "metric.latest_sample.span_id",
+                "metric.latest_sample.trace_id",
+                "metric.latest_sample.value",
                 "metric.prior_window_comparison",
                 "metric.query_scope",
                 "metric.series_semantics",
                 "metric.span_exemplars",
                 "metric.trace_exemplars"
             ],
-            "missing_fields": ["metric.description"],
+            "missing_fields": [
+                "metric.description",
+                "metric.latest_sample.context",
+                "metric.latest_sample.metadata"
+            ],
             "redacted_fields": [],
             "truncated_fields": []
         },
@@ -806,6 +966,7 @@ fn empty_metric_response() -> serde_json::Value {
         "truncated": false,
         "limitation": "No current samples are available for comparison."
     });
+    response["latest_sample"] = serde_json::json!({"status": "not_found", "sample": null});
     response["exemplars"] = serde_json::json!({
         "status": "not_found",
         "coverage": {
@@ -829,6 +990,7 @@ fn empty_metric_response() -> serde_json::Value {
             "metric.current_window_coverage",
             "metric.deployment_overlays",
             "metric.identity",
+            "metric.latest_sample",
             "metric.query_scope",
             "metric.series_semantics",
             "metric.trace_exemplars"
@@ -1261,11 +1423,40 @@ fn release_response() -> serde_json::Value {
             "truncated_fields": []
         },
         "next_actions": [{
-            "priority": 1,
             "code": "inspect_release_issue",
             "target": "issue_investigation",
-            "reason": "open the highest-frequency issue",
+            "reason": "issue_observed",
             "issue_id": ISSUE_ID,
+            "trace_id": TRACE_ID
+        }, {
+            "code": "inspect_release_trace",
+            "target": "trace_investigation",
+            "reason": "trace_observed",
+            "issue_id": null,
+            "trace_id": TRACE_ID
+        }, {
+            "code": "review_release_logs",
+            "target": "telemetry_logs",
+            "reason": "high_severity_logs_observed",
+            "issue_id": null,
+            "trace_id": null
+        }, {
+            "code": "review_release_actions",
+            "target": "telemetry_actions",
+            "reason": "product_usage_observed",
+            "issue_id": null,
+            "trace_id": null
+        }, {
+            "code": "review_release_metrics",
+            "target": "telemetry_metrics",
+            "reason": "metric_evidence_observed",
+            "issue_id": null,
+            "trace_id": null
+        }, {
+            "code": "capture_deployment_boundary",
+            "target": "release_instrumentation",
+            "reason": "comparison_unavailable",
+            "issue_id": null,
             "trace_id": null
         }]
     })

@@ -1044,7 +1044,197 @@ fn validate_release_response(
     let evidence = required_object(response, "evidence")?;
     validate_evidence(evidence)?;
     validate_release_action_evidence(evidence, require_string(actions, "status")?, action_count)?;
-    validate_next_actions(response.get("next_actions"))
+    validate_release_next_actions(response)
+}
+
+/// One exact deterministic release follow-up derived from bounded signal evidence.
+#[derive(Debug, Clone, Copy)]
+struct ReleaseNextActionExpectation<'a> {
+    /// Stable action code.
+    code: &'static str,
+    /// Stable destination type.
+    target: &'static str,
+    /// Stable evidence-derived reason.
+    reason: &'static str,
+    /// Exact grouped issue target when applicable.
+    issue_id: Option<&'a str>,
+    /// Exact distributed trace target when applicable.
+    trace_id: Option<&'a str>,
+}
+
+/// Validates the version-2 priority-by-order release action contract and source bindings.
+fn validate_release_next_actions(response: &Map<String, Value>) -> Result<(), RuntimeError> {
+    let expected = expected_release_next_actions(response)?;
+    let actions = response
+        .get("next_actions")
+        .and_then(Value::as_array)
+        .ok_or_else(invalid_response)?;
+    if actions.len() != expected.len() || actions.is_empty() || actions.len() > NEXT_ACTION_LIMIT {
+        return Err(invalid_response());
+    }
+    for (action, expected) in actions.iter().zip(expected) {
+        let action = action.as_object().ok_or_else(invalid_response)?;
+        require_exact_fields(
+            action,
+            &["code", "target", "reason", "issue_id", "trace_id"],
+        )?;
+        if require_string(action, "code")? != expected.code
+            || require_string(action, "target")? != expected.target
+            || require_string(action, "reason")? != expected.reason
+            || nullable_uuid(action, "issue_id")? != expected.issue_id
+            || nullable_trace_id(action, "trace_id")? != expected.trace_id
+        {
+            return Err(invalid_response());
+        }
+    }
+    Ok(())
+}
+
+/// Recomputes the backend's deterministic release follow-up order from returned evidence.
+fn expected_release_next_actions(
+    response: &Map<String, Value>,
+) -> Result<Vec<ReleaseNextActionExpectation<'_>>, RuntimeError> {
+    let signals = required_object(response, "signals")?;
+    let mut expected = Vec::new();
+    if let Some(issue) = release_signal_items(signals, "issues")?.first() {
+        let issue = issue.as_object().ok_or_else(invalid_response)?;
+        expected.push(ReleaseNextActionExpectation {
+            code: "inspect_release_issue",
+            target: "issue_investigation",
+            reason: "issue_observed",
+            issue_id: Some(required_uuid_text(issue, "issue_id")?),
+            trace_id: nullable_trace_id(issue, "trace_id")?,
+        });
+    }
+    if let Some(trace) = release_signal_items(signals, "traces")?.first() {
+        let trace = trace.as_object().ok_or_else(invalid_response)?;
+        expected.push(ReleaseNextActionExpectation {
+            code: "inspect_release_trace",
+            target: "trace_investigation",
+            reason: "trace_observed",
+            issue_id: None,
+            trace_id: Some(required_trace_id(trace, "trace_id")?),
+        });
+    }
+    for (signal, code, target, reason) in [
+        (
+            "logs",
+            "review_release_logs",
+            "telemetry_logs",
+            "high_severity_logs_observed",
+        ),
+        (
+            "actions",
+            "review_release_actions",
+            "telemetry_actions",
+            "product_usage_observed",
+        ),
+        (
+            "metrics",
+            "review_release_metrics",
+            "telemetry_metrics",
+            "metric_evidence_observed",
+        ),
+    ] {
+        if !release_signal_items(signals, signal)?.is_empty() {
+            expected.push(ReleaseNextActionExpectation {
+                code,
+                target,
+                reason,
+                issue_id: None,
+                trace_id: None,
+            });
+        }
+    }
+    let unavailable = require_string(required_object(response, "subject")?, "trace_health_status")?
+        == "unavailable"
+        || require_string(required_object(response, "sdk_coverage")?, "status")? == "unavailable"
+        || ["issues", "traces", "logs", "actions", "metrics"]
+            .iter()
+            .any(|name| {
+                required_object(signals, name)
+                    .and_then(|signal| require_string(signal, "status"))
+                    .is_ok_and(|status| status == "unavailable")
+            });
+    if unavailable {
+        expected.push(ReleaseNextActionExpectation {
+            code: "retry_unavailable_evidence",
+            target: "release_investigation",
+            reason: "related_evidence_unavailable",
+            issue_id: None,
+            trace_id: None,
+        });
+    }
+    expected.push(ReleaseNextActionExpectation {
+        code: "capture_deployment_boundary",
+        target: "release_instrumentation",
+        reason: "comparison_unavailable",
+        issue_id: None,
+        trace_id: None,
+    });
+    Ok(expected)
+}
+
+/// Returns one already-bounded release signal collection.
+fn release_signal_items<'a>(
+    signals: &'a Map<String, Value>,
+    name: &str,
+) -> Result<&'a [Value], RuntimeError> {
+    required_object(signals, name)?
+        .get("items")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .ok_or_else(invalid_response)
+}
+
+/// Returns one required UUID without reflecting invalid server content.
+fn required_uuid_text<'a>(
+    value: &'a Map<String, Value>,
+    name: &str,
+) -> Result<&'a str, RuntimeError> {
+    let id = require_string(value, name)?;
+    if is_uuid(id) {
+        Ok(id)
+    } else {
+        Err(invalid_response())
+    }
+}
+
+/// Returns one exact nullable UUID field.
+fn nullable_uuid<'a>(
+    value: &'a Map<String, Value>,
+    name: &str,
+) -> Result<Option<&'a str>, RuntimeError> {
+    match value.get(name) {
+        Some(Value::Null) => Ok(None),
+        Some(Value::String(id)) if is_uuid(id) => Ok(Some(id.as_str())),
+        _ => Err(invalid_response()),
+    }
+}
+
+/// Returns one required distributed-trace identifier.
+fn required_trace_id<'a>(
+    value: &'a Map<String, Value>,
+    name: &str,
+) -> Result<&'a str, RuntimeError> {
+    let id = require_string(value, name)?;
+    if is_trace_id(id) {
+        Ok(id)
+    } else {
+        Err(invalid_response())
+    }
+}
+
+/// Returns one exact nullable distributed-trace identifier.
+fn nullable_trace_id<'a>(
+    value: &'a Map<String, Value>,
+    name: &str,
+) -> Result<Option<&'a str>, RuntimeError> {
+    match value.get(name) {
+        Some(Value::Null) => Ok(None),
+        Some(Value::String(id)) if is_trace_id(id) => Ok(Some(id.as_str())),
+        _ => Err(invalid_response()),
+    }
 }
 
 /// Validates version-2 release action estimates and their exhaustive event partition.
@@ -2564,12 +2754,14 @@ fn append_actions(output: &mut String, actions: Option<&Value>) {
     let Some(actions) = actions.and_then(Value::as_array) else {
         return;
     };
-    for action in actions.iter().take(NEXT_ACTION_LIMIT) {
+    for (index, action) in actions.iter().take(NEXT_ACTION_LIMIT).enumerate() {
         output.push_str("Next");
-        if let Some(priority) = integer_text(action, "priority") {
-            output.push(' ');
-            output.push_str(priority.as_str());
-        }
+        output.push(' ');
+        output.push_str(
+            integer_text(action, "priority")
+                .unwrap_or_else(|| index.saturating_add(1).to_string())
+                .as_str(),
+        );
         output.push(':');
         append_labeled_text(output, "code", action, "code", 100);
         append_labeled_text(output, "target", action, "target", 100);

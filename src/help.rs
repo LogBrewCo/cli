@@ -544,7 +544,8 @@ Span explanations bind a non-zero trace/span pair to an exact project, environme
                             they include selected-branch topology, a retained same-release peer baseline, \
                             exact-span logs, same-trace signals, ordered evidence, and explicit limitations without claiming root cause.
 Metric explanations preserve gauge/counter/histogram semantics, compare the immediately preceding \
-                            equal window, expose exact trace/span exemplars and nearby completed deployments, \
+                            equal window, expose the latest privacy-bounded raw sample with SDK, runtime context, \
+                            structured metadata, exact trace/span links when captured, and nearby completed deployments, \
                             and never claim that an observed change or deployment proves an anomaly or root cause.
 Issue explanations use the backend-recommended context-rich retained occurrence by default. Use \
                             --occurrence first, latest, recommended, or a retained occurrence UUID \

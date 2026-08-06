@@ -145,6 +145,41 @@ async fn baseline_arithmetic_accepts_the_full_safe_integer_range()
 }
 
 #[tokio::test]
+async fn available_topology_accepts_an_unretained_immediate_parent()
+-> Result<(), Box<dyn std::error::Error>> {
+    let server = MockServer::start().await;
+    let mut response = span_response();
+    response["topology"]["root"] = serde_json::Value::Null;
+    response["topology"]["parent"] = serde_json::Value::Null;
+    response["topology"]["ancestors"] = serde_json::json!([]);
+    response["topology"]["cross_service_edges"] = serde_json::json!([
+        {
+            "from_span_id": SPAN_ID,
+            "to_span_id": "3333333333333333",
+            "from_service": "checkout-api",
+            "to_service": "inventory-api"
+        }
+    ]);
+    response["topology"]["parent_chain_status"] = serde_json::json!("missing");
+    let actions = response["next_actions"]
+        .as_array_mut()
+        .ok_or("next-actions fixture")?;
+    actions.retain(|action| action["code"] != "inspect_parent_span");
+    for (index, action) in actions.iter_mut().enumerate() {
+        action["priority"] = serde_json::json!(index + 1);
+    }
+    mount_response(&server, response.clone()).await;
+
+    let command = span_command(true)?;
+    let mut output = Vec::new();
+    execute_command(&command, &authenticated_env(&server), &mut output).await?;
+
+    let actual: serde_json::Value = serde_json::from_slice(output.as_slice())?;
+    assert_eq!(actual, response);
+    Ok(())
+}
+
+#[tokio::test]
 async fn human_output_explains_topology_baseline_correlations_and_evidence()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
