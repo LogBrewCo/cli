@@ -100,7 +100,9 @@ pub(super) fn validate_topology<'a>(
         .map(validate_span_summary_value)
         .collect::<Result<Vec<_>, _>>()?;
     validate_unique_topology_ids(&ancestors, &children, subject.span_id)?;
-    if status == "available" {
+    let immediate_parent_missing =
+        status == "available" && chain_status == "missing" && ancestors.is_empty();
+    if status == "available" && !immediate_parent_missing {
         validate_ancestor_chain(&ancestors, parent_facts, subject.parent_span_id)?;
     }
     if children
@@ -400,6 +402,17 @@ fn validate_topology_state(
                         .is_some_and(|span| span.parent_span_id.is_some())
                     || root != ancestor_object(ancestors.first(), root)
                     || parent_facts.is_none()
+                {
+                    return Err(invalid_response());
+                }
+            }
+            "missing" if ancestors.is_empty() => {
+                if subject.parent_span_id.is_none()
+                    || root.is_some()
+                    || root_facts.is_some()
+                    || parent.is_some()
+                    || parent_facts.is_some()
+                    || truncated
                 {
                     return Err(invalid_response());
                 }

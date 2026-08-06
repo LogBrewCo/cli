@@ -4,14 +4,18 @@ use std::collections::BTreeSet;
 
 use serde_json::{Map, Value};
 
+use super::projection::{
+    count_scalar_leaves, sensitive_context_tag_key, sensitive_key, sensitive_string,
+    validate_projection,
+};
 use super::{
     METRIC_POINT_LIMIT, METRIC_SERIES_LIMIT, NEXT_ACTION_LIMIT, append_actions, append_evidence,
     append_labeled_bool, append_labeled_integer, append_labeled_number, append_labeled_text,
-    append_named_text, display_text, field_text, invalid_response, optional_finite_number,
-    optional_string, require_bool, require_exact_fields, require_finite_number,
-    require_known_fields, require_safe_positive_u64, require_safe_u64, require_string,
-    require_string_equals, require_timestamp, require_u64, required_object, response_object,
-    validate_evidence, validate_name_version, validate_schema_version,
+    append_named_text, append_runtime_context, collect_scalar_fields, display_text, field_text,
+    invalid_response, optional_finite_number, optional_string, require_bool, require_exact_fields,
+    require_finite_number, require_known_fields, require_safe_positive_u64, require_safe_u64,
+    require_string, require_string_equals, require_timestamp, require_u64, required_object,
+    response_object, validate_evidence, validate_name_version, validate_schema_version,
 };
 use crate::ids::{is_trace_id, is_uuid};
 use crate::{ExplainMetricTarget, RuntimeError};
@@ -27,6 +31,7 @@ const METRIC_RESPONSE_FIELDS: &[&str] = &[
     "coverage",
     "series",
     "comparison",
+    "latest_sample",
     "exemplars",
     "deployments",
     "timeline",
@@ -66,11 +71,419 @@ pub(super) fn validate_response(
     let page = validate_metric_page(response, &query)?;
     validate_metric_comparison(response, query.value, page.items)?;
     validate_metric_analysis(response, page.items)?;
+    validate_metric_latest_sample(response, &query, page.samples)?;
     validate_metric_exemplars(response, page.samples)?;
     validate_metric_deployments(response)?;
     validate_metric_timeline(response)?;
     validate_metric_evidence(response)?;
     validate_metric_next_actions(response)
+}
+
+/// Validates one optional latest raw sample independently of trace-exemplar availability.
+fn validate_metric_latest_sample(
+    response: &Map<String, Value>,
+    query: &MetricQueryFacts<'_>,
+    total_samples: u64,
+) -> Result<(), RuntimeError> {
+    let latest = required_object(response, "latest_sample")?;
+    require_exact_fields(latest, &["status", "sample"])?;
+    let status = require_string(latest, "status")?;
+    match (status, latest.get("sample")) {
+        ("available", Some(Value::Object(sample))) if total_samples > 0 => {
+            validate_metric_sample(sample, query)
+        }
+        ("not_found" | "unavailable", Some(Value::Null)) => Ok(()),
+        _ => Err(invalid_response()),
+    }
+}
+
+/// Validates exact scope, privacy-bounded context, and metadata for one raw metric sample.
+fn validate_metric_sample(
+    sample: &Map<String, Value>,
+    query: &MetricQueryFacts<'_>,
+) -> Result<(), RuntimeError> {
+    require_exact_fields(
+        sample,
+        &[
+            "id",
+            "kind",
+            "value",
+            "unit",
+            "temporality",
+            "occurred_at",
+            "service_name",
+            "environment",
+            "release",
+            "trace_id",
+            "span_id",
+            "sdk",
+            "context",
+            "metadata",
+        ],
+    )?;
+    if !is_uuid(require_string(sample, "id")?) {
+        return Err(invalid_response());
+    }
+    let _kind = require_string(sample, "kind")?;
+    let _value = require_finite_number(sample, "value")?;
+    let _unit = optional_string(sample, "unit")?;
+    let _temporality = optional_string(sample, "temporality")?;
+    let occurred_at = require_timestamp(sample, "occurred_at")?;
+    if occurred_at < query.since || occurred_at >= query.until {
+        return Err(invalid_response());
+    }
+    let service = require_string(sample, "service_name")?;
+    let environment = require_string(sample, "environment")?;
+    let release = require_string(sample, "release")?;
+    for (field, actual) in [
+        ("service_name", service),
+        ("environment", environment),
+        ("release", release),
+    ] {
+        if query
+            .value
+            .get(field)
+            .and_then(Value::as_str)
+            .is_some_and(|expected| expected != actual)
+        {
+            return Err(invalid_response());
+        }
+    }
+
+    let trace_id = nullable_metric_w3c_id(sample, "trace_id", 32)?;
+    let span_id = nullable_metric_w3c_id(sample, "span_id", 16)?;
+    if span_id.is_some() && trace_id.is_none() {
+        return Err(invalid_response());
+    }
+    let sdk = required_object(sample, "sdk")?;
+    require_exact_fields(sdk, &["name", "version"])?;
+    for field in ["name", "version"] {
+        let value = sdk
+            .get(field)
+            .and_then(Value::as_str)
+            .ok_or_else(invalid_response)?;
+        if value.chars().count() > 256 || value.chars().any(char::is_control) {
+            return Err(invalid_response());
+        }
+    }
+    validate_metric_sample_context(
+        sample.get("context"),
+        service,
+        environment,
+        release,
+        trace_id,
+        span_id,
+    )?;
+    validate_metric_sample_metadata(required_object(sample, "metadata")?)
+}
+
+/// Validates one explicitly nullable, typed shared telemetry context.
+fn validate_metric_sample_context(
+    value: Option<&Value>,
+    service: &str,
+    environment: &str,
+    release: &str,
+    trace_id: Option<&str>,
+    span_id: Option<&str>,
+) -> Result<(), RuntimeError> {
+    let Some(context) = nullable_metric_object(value)? else {
+        return Ok(());
+    };
+    require_exact_fields(
+        context,
+        &[
+            "schema_version",
+            "resource",
+            "trace",
+            "session",
+            "subject",
+            "tags",
+        ],
+    )?;
+    if require_u64(context, "schema_version")? != 1 {
+        return Err(invalid_response());
+    }
+    let resource_present =
+        validate_metric_resource_context(context.get("resource"), service, environment, release)?;
+    let trace_present = validate_metric_trace_context(context.get("trace"), trace_id, span_id)?;
+    let session_present = validate_metric_session_context(context.get("session"))?;
+    let subject_present = validate_metric_subject_context(context.get("subject"))?;
+    let tags = required_object(context, "tags")?;
+    validate_metric_context_tags(tags)?;
+    if !resource_present
+        && !trace_present
+        && !session_present
+        && !subject_present
+        && tags.is_empty()
+    {
+        return Err(invalid_response());
+    }
+    Ok(())
+}
+
+/// Validates optional typed runtime and deployment identity against the sample envelope.
+fn validate_metric_resource_context(
+    value: Option<&Value>,
+    service: &str,
+    environment: &str,
+    release: &str,
+) -> Result<bool, RuntimeError> {
+    let Some(resource) = nullable_metric_object(value)? else {
+        return Ok(false);
+    };
+    require_exact_fields(
+        resource,
+        &[
+            "service",
+            "deployment",
+            "runtime",
+            "framework",
+            "operating_system",
+            "device",
+            "application",
+        ],
+    )?;
+    for name in ["service", "runtime", "framework"] {
+        if let Some(identity) = nullable_metric_object(resource.get(name))? {
+            require_exact_fields(identity, &["name", "version"])?;
+            let identity_name = require_string(identity, "name")?;
+            validate_metric_context_text(identity_name)?;
+            if name == "service" && identity_name != service {
+                return Err(invalid_response());
+            }
+            if let Some(version) = nullable_metric_context_text(identity, "version")? {
+                validate_metric_context_text(version)?;
+            }
+        }
+    }
+    if let Some(deployment) = nullable_metric_object(resource.get("deployment"))? {
+        require_exact_fields(deployment, &["environment", "release"])?;
+        let captured_environment = nullable_metric_context_text(deployment, "environment")?;
+        let captured_release = nullable_metric_context_text(deployment, "release")?;
+        if captured_environment.is_none() && captured_release.is_none()
+            || captured_environment.is_some_and(|value| value != environment)
+            || captured_release.is_some_and(|value| value != release)
+        {
+            return Err(invalid_response());
+        }
+    }
+    if let Some(os) = nullable_metric_object(resource.get("operating_system"))? {
+        require_exact_fields(os, &["name", "version", "build"])?;
+        validate_metric_context_text(require_string(os, "name")?)?;
+        let _version = nullable_metric_context_text(os, "version")?;
+        let _build = nullable_metric_context_text(os, "build")?;
+    }
+    if let Some(device) = nullable_metric_object(resource.get("device"))? {
+        require_exact_fields(device, &["family", "model", "architecture"])?;
+        let values = [
+            nullable_metric_context_text(device, "family")?,
+            nullable_metric_context_text(device, "model")?,
+            nullable_metric_context_text(device, "architecture")?,
+        ];
+        if values.iter().all(Option::is_none) {
+            return Err(invalid_response());
+        }
+    }
+    if let Some(application) = nullable_metric_object(resource.get("application"))? {
+        require_exact_fields(application, &["name", "version", "build"])?;
+        let values = [
+            nullable_metric_context_text(application, "name")?,
+            nullable_metric_context_text(application, "version")?,
+            nullable_metric_context_text(application, "build")?,
+        ];
+        if values.iter().all(Option::is_none) {
+            return Err(invalid_response());
+        }
+    }
+    Ok(true)
+}
+
+/// Validates optional W3C context and binds it to the raw sample identifiers.
+fn validate_metric_trace_context(
+    value: Option<&Value>,
+    expected_trace: Option<&str>,
+    expected_span: Option<&str>,
+) -> Result<bool, RuntimeError> {
+    let Some(trace) = nullable_metric_object(value)? else {
+        return Ok(false);
+    };
+    require_exact_fields(trace, &["trace_id", "span_id", "parent_span_id", "sampled"])?;
+    let trace_id = require_string(trace, "trace_id")?;
+    if !is_metric_w3c_id(trace_id, 32) || Some(trace_id) != expected_trace {
+        return Err(invalid_response());
+    }
+    let span_id = nullable_metric_w3c_id(trace, "span_id", 16)?;
+    let _parent = nullable_metric_w3c_id(trace, "parent_span_id", 16)?;
+    if span_id.is_some_and(|span| Some(span) != expected_span)
+        || !matches!(trace.get("sampled"), Some(Value::Null | Value::Bool(_)))
+    {
+        return Err(invalid_response());
+    }
+    Ok(true)
+}
+
+/// Validates optional privacy-bounded session identity without rendering it as authority.
+fn validate_metric_session_context(value: Option<&Value>) -> Result<bool, RuntimeError> {
+    let Some(session) = nullable_metric_object(value)? else {
+        return Ok(false);
+    };
+    require_exact_fields(session, &["id", "previous_id"])?;
+    let id = nullable_metric_context_id(session, "id")?;
+    let previous = nullable_metric_context_id(session, "previous_id")?;
+    if id.is_some() && id == previous {
+        return Err(invalid_response());
+    }
+    Ok(true)
+}
+
+/// Validates optional privacy-bounded subject classification.
+fn validate_metric_subject_context(value: Option<&Value>) -> Result<bool, RuntimeError> {
+    let Some(subject) = nullable_metric_object(value)? else {
+        return Ok(false);
+    };
+    require_exact_fields(subject, &["id", "kind"])?;
+    let _id = nullable_metric_context_id(subject, "id")?;
+    if !matches!(require_string(subject, "kind")?, "anonymous" | "user") {
+        return Err(invalid_response());
+    }
+    Ok(true)
+}
+
+/// Validates deterministic low-cardinality context tags and their privacy boundary.
+fn validate_metric_context_tags(tags: &Map<String, Value>) -> Result<(), RuntimeError> {
+    if tags.len() > 32 {
+        return Err(invalid_response());
+    }
+    let mut previous = None;
+    for (key, value) in tags {
+        if previous.is_some_and(|previous: &str| previous >= key.as_str()) {
+            return Err(invalid_response());
+        }
+        previous = Some(key.as_str());
+        let mut characters = key.chars();
+        let text = value
+            .as_str()
+            .filter(|value| !value.is_empty())
+            .ok_or_else(invalid_response)?;
+        if !characters
+            .next()
+            .is_some_and(|character| character.is_ascii_alphabetic())
+            || key.chars().count() > 64
+            || !characters
+                .all(|character| character.is_ascii_alphanumeric() || "_.-".contains(character))
+            || sensitive_key(key)
+            || sensitive_context_tag_key(key)
+            || validate_metric_context_text(text).is_err()
+        {
+            return Err(invalid_response());
+        }
+    }
+    Ok(())
+}
+
+/// Validates one bounded arbitrary metadata projection and its exact leaf receipt.
+fn validate_metric_sample_metadata(metadata: &Map<String, Value>) -> Result<(), RuntimeError> {
+    require_exact_fields(
+        metadata,
+        &["values", "included_leaf_count", "redacted", "truncated"],
+    )?;
+    let values = metadata.get("values").ok_or_else(invalid_response)?;
+    if !values.is_object() {
+        return Err(invalid_response());
+    }
+    validate_projection(values)?;
+    let leaves = require_safe_u64(metadata, "included_leaf_count")?;
+    if leaves != count_scalar_leaves(values) || leaves > 64 {
+        return Err(invalid_response());
+    }
+    let _redacted = require_bool(metadata, "redacted")?;
+    let _truncated = require_bool(metadata, "truncated")?;
+    Ok(())
+}
+
+/// Returns one explicitly nullable object.
+const fn nullable_metric_object(
+    value: Option<&Value>,
+) -> Result<Option<&Map<String, Value>>, RuntimeError> {
+    match value {
+        Some(Value::Null) => Ok(None),
+        Some(Value::Object(value)) => Ok(Some(value)),
+        _ => Err(invalid_response()),
+    }
+}
+
+/// Returns one explicitly nullable canonical W3C identifier.
+fn nullable_metric_w3c_id<'a>(
+    value: &'a Map<String, Value>,
+    name: &str,
+    width: usize,
+) -> Result<Option<&'a str>, RuntimeError> {
+    match value.get(name) {
+        Some(Value::Null) => Ok(None),
+        Some(Value::String(id)) if is_metric_w3c_id(id, width) => Ok(Some(id.as_str())),
+        _ => Err(invalid_response()),
+    }
+}
+
+/// Returns whether one identifier is canonical, non-zero, lower-case W3C hexadecimal.
+fn is_metric_w3c_id(value: &str, width: usize) -> bool {
+    value.len() == width
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        && value.bytes().any(|byte| byte != b'0')
+}
+
+/// Returns one explicitly nullable bounded shared-context string.
+fn nullable_metric_context_text<'a>(
+    value: &'a Map<String, Value>,
+    name: &str,
+) -> Result<Option<&'a str>, RuntimeError> {
+    match value.get(name) {
+        Some(Value::Null) => Ok(None),
+        Some(Value::String(text)) => {
+            validate_metric_context_text(text)?;
+            Ok(Some(text.as_str()))
+        }
+        _ => Err(invalid_response()),
+    }
+}
+
+/// Validates one bounded context value without private location or credential shapes.
+fn validate_metric_context_text(value: &str) -> Result<(), RuntimeError> {
+    if value.is_empty()
+        || value.chars().count() > 256
+        || value.chars().any(char::is_control)
+        || sensitive_string(value, "context_value")
+    {
+        Err(invalid_response())
+    } else {
+        Ok(())
+    }
+}
+
+/// Returns one explicitly nullable machine-like opaque context identifier.
+fn nullable_metric_context_id<'a>(
+    value: &'a Map<String, Value>,
+    name: &str,
+) -> Result<Option<&'a str>, RuntimeError> {
+    match value.get(name) {
+        Some(Value::Null) => Ok(None),
+        Some(Value::String(id))
+            if id.chars().count() <= 200
+                && id
+                    .chars()
+                    .next()
+                    .is_some_and(|character| character.is_ascii_alphanumeric())
+                && id.chars().all(|character| {
+                    character.is_ascii_alphanumeric() || "._:-".contains(character)
+                })
+                && !sensitive_string(id, "context_id") =>
+        {
+            Ok(Some(id.as_str()))
+        }
+        _ => Err(invalid_response()),
+    }
 }
 
 /// Validates top-level version, trust boundary, and exact metric identity.
@@ -804,9 +1217,7 @@ fn validate_metric_exemplars(
 
 /// Returns whether a value is a non-zero W3C span identifier.
 fn is_metric_span_id(value: &str) -> bool {
-    value.len() == 16
-        && value.bytes().all(|byte| byte.is_ascii_hexdigit())
-        && value.bytes().any(|byte| byte != b'0')
+    is_metric_w3c_id(value, 16)
 }
 
 /// Validates bounded completed deployment overlays.
@@ -989,19 +1400,29 @@ fn validate_metric_next_actions(response: &Map<String, Value>) -> Result<(), Run
         let valid = match (code, target, context) {
             ("inspect_exact_span", "span_investigation", Some(context)) => {
                 validate_metric_action_context(context, project_id, true, true, false)?;
-                let source = metric_exemplar_items(response)?
+                if let Some(source) = metric_exemplar_items(response)?
                     .iter()
                     .find(|item| item.get("span_id").and_then(Value::as_str).is_some())
-                    .ok_or_else(invalid_response)?;
-                validate_metric_exemplar_action_context(context, source)?;
+                {
+                    validate_metric_exemplar_action_context(context, source)?;
+                } else {
+                    let sample = metric_latest_sample_object(response)?
+                        .filter(|sample| sample.get("span_id").and_then(Value::as_str).is_some())
+                        .ok_or_else(invalid_response)?;
+                    validate_metric_sample_action_context(context, sample)?;
+                }
                 true
             }
             ("inspect_trace", "trace_investigation", Some(context)) => {
                 validate_metric_action_context(context, project_id, true, false, false)?;
-                let source = metric_exemplar_items(response)?
-                    .first()
-                    .ok_or_else(invalid_response)?;
-                validate_metric_exemplar_action_context(context, source)?;
+                if let Some(source) = metric_exemplar_items(response)?.first() {
+                    validate_metric_exemplar_action_context(context, source)?;
+                } else {
+                    let sample = metric_latest_sample_object(response)?
+                        .filter(|sample| sample.get("trace_id").and_then(Value::as_str).is_some())
+                        .ok_or_else(invalid_response)?;
+                    validate_metric_sample_action_context(context, sample)?;
+                }
                 true
             }
             ("review_deployment", "release_investigation", Some(context)) => {
@@ -1041,6 +1462,14 @@ fn expected_metric_action_codes(
     {
         expected.push("inspect_exact_span");
     } else if !exemplars.is_empty() {
+        expected.push("inspect_trace");
+    } else if metric_latest_sample_object(response)?
+        .is_some_and(|sample| sample.get("span_id").and_then(Value::as_str).is_some())
+    {
+        expected.push("inspect_exact_span");
+    } else if metric_latest_sample_object(response)?
+        .is_some_and(|sample| sample.get("trace_id").and_then(Value::as_str).is_some())
+    {
         expected.push("inspect_trace");
     }
     if !deployments.is_empty() {
@@ -1084,6 +1513,17 @@ fn metric_deployment_items(response: &Map<String, Value>) -> Result<&[Value], Ru
         .ok_or_else(invalid_response)
 }
 
+/// Returns the validated latest raw sample when the source is available.
+fn metric_latest_sample_object(
+    response: &Map<String, Value>,
+) -> Result<Option<&Map<String, Value>>, RuntimeError> {
+    match required_object(response, "latest_sample")?.get("sample") {
+        Some(Value::Null) => Ok(None),
+        Some(Value::Object(sample)) => Ok(Some(sample)),
+        _ => Err(invalid_response()),
+    }
+}
+
 /// Requires an exemplar drill-down to carry the exact retained identifiers and scope.
 fn validate_metric_exemplar_action_context(
     context: &Map<String, Value>,
@@ -1097,6 +1537,25 @@ fn validate_metric_exemplar_action_context(
         "service_name",
     ] {
         if context.get(field) != source.get(field) {
+            return Err(invalid_response());
+        }
+    }
+    Ok(())
+}
+
+/// Requires a latest-sample drill-down to carry the exact retained identifiers and scope.
+fn validate_metric_sample_action_context(
+    context: &Map<String, Value>,
+    sample: &Map<String, Value>,
+) -> Result<(), RuntimeError> {
+    for field in [
+        "trace_id",
+        "span_id",
+        "environment",
+        "release",
+        "service_name",
+    ] {
+        if context.get(field) != sample.get(field) {
             return Err(invalid_response());
         }
     }
@@ -1187,30 +1646,58 @@ fn validate_metric_evidence(response: &Map<String, Value>) -> Result<(), Runtime
     let missing = metric_evidence_field_set(evidence, "missing_fields")?;
     let redacted = metric_evidence_field_set(evidence, "redacted_fields")?;
     let truncated = metric_evidence_field_set(evidence, "truncated_fields")?;
-    let mut expected_captured = BTreeSet::from([
-        "metric.identity",
-        "metric.query_scope",
-        "metric.series_semantics",
-        "metric.current_window_coverage",
+    let mut expected = metric_base_evidence_expectations(response)?;
+    let latest_flags =
+        add_metric_latest_sample_evidence(response, &mut expected.captured, &mut expected.missing)?;
+    validate_metric_latest_omissions(&redacted, &truncated, &mut expected.truncated, latest_flags)?;
+    if captured != expected.captured
+        || missing != expected.missing
+        || truncated != expected.truncated
+    {
+        return Err(invalid_response());
+    }
+    Ok(())
+}
+
+/// Recomputed non-sample evidence partitions for one metric investigation.
+#[derive(Debug, Default)]
+struct MetricEvidenceExpectations {
+    /// Evidence fields proven present.
+    captured: BTreeSet<String>,
+    /// Evidence fields proven unavailable or uncaptured.
+    missing: BTreeSet<String>,
+    /// Evidence fields clipped by a response boundary.
+    truncated: BTreeSet<String>,
+}
+
+/// Recomputes every fixed metric evidence receipt outside the latest raw sample.
+fn metric_base_evidence_expectations(
+    response: &Map<String, Value>,
+) -> Result<MetricEvidenceExpectations, RuntimeError> {
+    let mut captured = BTreeSet::from([
+        String::from("metric.identity"),
+        String::from("metric.query_scope"),
+        String::from("metric.series_semantics"),
+        String::from("metric.current_window_coverage"),
     ]);
-    let mut expected_missing = BTreeSet::from(["metric.description"]);
+    let mut missing = BTreeSet::from([String::from("metric.description")]);
 
     match require_string(required_object(response, "comparison")?, "status")? {
         "available" | "partial" => {
-            let _inserted = expected_captured.insert("metric.prior_window_comparison");
+            let _inserted = captured.insert(String::from("metric.prior_window_comparison"));
         }
         "not_found" | "unavailable" => {
-            let _inserted = expected_missing.insert("metric.prior_window_comparison");
+            let _inserted = missing.insert(String::from("metric.prior_window_comparison"));
         }
         "no_current_samples" => {}
         _ => return Err(invalid_response()),
     }
     match require_string(required_object(response, "exemplars")?, "status")? {
         "available" | "not_found" => {
-            let _inserted = expected_captured.insert("metric.trace_exemplars");
+            let _inserted = captured.insert(String::from("metric.trace_exemplars"));
         }
         "not_linked" | "unavailable" => {
-            let _inserted = expected_missing.insert("metric.trace_exemplars");
+            let _inserted = missing.insert(String::from("metric.trace_exemplars"));
         }
         _ => return Err(invalid_response()),
     }
@@ -1218,20 +1705,20 @@ fn validate_metric_evidence(response: &Map<String, Value>) -> Result<(), Runtime
     let matching = require_safe_u64(exemplar_coverage, "matching_samples")?;
     let spanned = require_safe_u64(exemplar_coverage, "span_linked_samples")?;
     if spanned > 0 {
-        let _inserted = expected_captured.insert("metric.span_exemplars");
+        let _inserted = captured.insert(String::from("metric.span_exemplars"));
     } else if matching > 0 {
-        let _inserted = expected_missing.insert("metric.span_exemplars");
+        let _inserted = missing.insert(String::from("metric.span_exemplars"));
     }
     match require_string(required_object(response, "deployments")?, "status")? {
         "available" | "not_found" => {
-            let _inserted = expected_captured.insert("metric.deployment_overlays");
+            let _inserted = captured.insert(String::from("metric.deployment_overlays"));
         }
         "not_linked" | "unavailable" => {
-            let _inserted = expected_missing.insert("metric.deployment_overlays");
+            let _inserted = missing.insert(String::from("metric.deployment_overlays"));
         }
         _ => return Err(invalid_response()),
     }
-    let mut expected_truncated = BTreeSet::new();
+    let mut truncated = BTreeSet::new();
     for (field, is_truncated) in [
         (
             "metric.current_series",
@@ -1255,24 +1742,238 @@ fn validate_metric_evidence(response: &Map<String, Value>) -> Result<(), Runtime
         ),
     ] {
         if is_truncated {
-            let _inserted = expected_truncated.insert(field);
+            let _inserted = truncated.insert(String::from(field));
         }
     }
-    if captured != expected_captured
-        || missing != expected_missing
-        || !redacted.is_empty()
-        || truncated != expected_truncated
-    {
+    Ok(MetricEvidenceExpectations {
+        captured,
+        missing,
+        truncated,
+    })
+}
+
+/// Validates dynamic latest-sample redaction and truncation receipt namespaces.
+fn validate_metric_latest_omissions(
+    redacted: &BTreeSet<String>,
+    truncated: &BTreeSet<String>,
+    expected_truncated: &mut BTreeSet<String>,
+    latest_flags: MetricLatestEvidenceFlags,
+) -> Result<(), RuntimeError> {
+    let extra_redacted = redacted
+        .iter()
+        .filter(|field| valid_metric_latest_omission(field))
+        .count();
+    let metadata_redacted = redacted.iter().any(|field| {
+        field.starts_with("metric.latest_sample.metadata")
+            || field == "metric.latest_sample.unsupported_fields"
+    });
+    let invalid_redacted = redacted.len() != extra_redacted
+        || !latest_flags.available && !redacted.is_empty()
+        || metadata_redacted != latest_flags.metadata_redacted;
+
+    let latest_truncated = truncated
+        .iter()
+        .filter(|field| !expected_truncated.contains(*field))
+        .collect::<Vec<_>>();
+    let metadata_truncated = latest_truncated
+        .iter()
+        .any(|field| field.starts_with("metric.latest_sample.metadata"));
+    let invalid_latest_truncation = latest_truncated
+        .iter()
+        .any(|field| !valid_metric_latest_omission(field))
+        || !latest_flags.available && !latest_truncated.is_empty()
+        || metadata_truncated != latest_flags.metadata_truncated;
+    expected_truncated.extend(latest_truncated.into_iter().cloned());
+    if invalid_redacted || invalid_latest_truncation {
         return Err(invalid_response());
     }
     Ok(())
 }
 
+/// Latest-sample omission flags that must match the response-level evidence receipt.
+#[derive(Debug, Clone, Copy, Default)]
+struct MetricLatestEvidenceFlags {
+    /// Whether a latest sample was returned.
+    available: bool,
+    /// Whether raw sample metadata reported a defensive omission.
+    metadata_redacted: bool,
+    /// Whether raw sample metadata reported a response-boundary omission.
+    metadata_truncated: bool,
+}
+
+/// Recomputes all latest-sample captured and missing evidence fields.
+fn add_metric_latest_sample_evidence(
+    response: &Map<String, Value>,
+    captured: &mut BTreeSet<String>,
+    missing: &mut BTreeSet<String>,
+) -> Result<MetricLatestEvidenceFlags, RuntimeError> {
+    let latest = required_object(response, "latest_sample")?;
+    let status = require_string(latest, "status")?;
+    let total_samples = require_safe_u64(required_object(response, "coverage")?, "samples")?;
+    match status {
+        "available" => add_available_metric_latest_sample_evidence(latest, captured, missing),
+        "not_found" => {
+            if total_samples == 0 {
+                let _inserted = captured.insert(String::from("metric.latest_sample"));
+            } else {
+                let _inserted = missing.insert(String::from("metric.latest_sample"));
+            }
+            Ok(MetricLatestEvidenceFlags::default())
+        }
+        "unavailable" => {
+            let _inserted = missing.insert(String::from("metric.latest_sample"));
+            Ok(MetricLatestEvidenceFlags::default())
+        }
+        _ => Err(invalid_response()),
+    }
+}
+
+/// Adds exact evidence receipts for one available latest raw sample.
+fn add_available_metric_latest_sample_evidence(
+    latest: &Map<String, Value>,
+    captured: &mut BTreeSet<String>,
+    missing: &mut BTreeSet<String>,
+) -> Result<MetricLatestEvidenceFlags, RuntimeError> {
+    let sample = latest
+        .get("sample")
+        .and_then(Value::as_object)
+        .ok_or_else(invalid_response)?;
+    for field in [
+        "metric.latest_sample",
+        "metric.latest_sample.kind",
+        "metric.latest_sample.value",
+        "metric.latest_sample.occurred_at",
+        "metric.latest_sample.scope",
+    ] {
+        let _inserted = captured.insert(String::from(field));
+    }
+    let sdk = required_object(sample, "sdk")?;
+    for (field, receipt) in [
+        ("name", "metric.latest_sample.sdk.name"),
+        ("version", "metric.latest_sample.sdk.version"),
+    ] {
+        if sdk
+            .get(field)
+            .and_then(Value::as_str)
+            .is_some_and(|value| !value.trim().is_empty())
+        {
+            let _inserted = captured.insert(String::from(receipt));
+        } else {
+            let _inserted = missing.insert(String::from(receipt));
+        }
+    }
+    if sample.get("trace_id").is_some_and(|value| !value.is_null()) {
+        let _inserted = captured.insert(String::from("metric.latest_sample.trace_id"));
+    }
+    if sample.get("span_id").is_some_and(|value| !value.is_null()) {
+        let _inserted = captured.insert(String::from("metric.latest_sample.span_id"));
+    }
+    add_metric_latest_context_evidence(sample, captured, missing)?;
+    let metadata = required_object(sample, "metadata")?;
+    let leaves = require_safe_u64(metadata, "included_leaf_count")?;
+    if leaves == 0 {
+        let _inserted = missing.insert(String::from("metric.latest_sample.metadata"));
+    } else {
+        let _inserted = captured.insert(String::from("metric.latest_sample.metadata"));
+        add_metric_projection_receipts(
+            metadata.get("values").ok_or_else(invalid_response)?,
+            "metric.latest_sample.metadata",
+            captured,
+        );
+    }
+    Ok(MetricLatestEvidenceFlags {
+        available: true,
+        metadata_redacted: require_bool(metadata, "redacted")?,
+        metadata_truncated: require_bool(metadata, "truncated")?,
+    })
+}
+
+/// Adds section-level shared-context evidence receipts for one available sample.
+fn add_metric_latest_context_evidence(
+    sample: &Map<String, Value>,
+    captured: &mut BTreeSet<String>,
+    missing: &mut BTreeSet<String>,
+) -> Result<(), RuntimeError> {
+    match sample.get("context") {
+        Some(Value::Object(context)) => {
+            let _inserted = captured.insert(String::from("metric.latest_sample.context"));
+            for (field, present) in [
+                (
+                    "resource",
+                    context
+                        .get("resource")
+                        .is_some_and(|value| !value.is_null()),
+                ),
+                (
+                    "trace",
+                    context.get("trace").is_some_and(|value| !value.is_null()),
+                ),
+                (
+                    "session",
+                    context.get("session").is_some_and(|value| !value.is_null()),
+                ),
+                (
+                    "subject",
+                    context.get("subject").is_some_and(|value| !value.is_null()),
+                ),
+                (
+                    "tags",
+                    context
+                        .get("tags")
+                        .and_then(Value::as_object)
+                        .is_some_and(|tags| !tags.is_empty()),
+                ),
+            ] {
+                if present {
+                    let _inserted =
+                        captured.insert(format!("metric.latest_sample.context.{field}"));
+                }
+            }
+            Ok(())
+        }
+        Some(Value::Null) => {
+            let _inserted = missing.insert(String::from("metric.latest_sample.context"));
+            Ok(())
+        }
+        _ => Err(invalid_response()),
+    }
+}
+
+/// Adds exact scalar-leaf receipt paths for one already-validated metadata projection.
+fn add_metric_projection_receipts(value: &Value, path: &str, fields: &mut BTreeSet<String>) {
+    match value {
+        Value::Object(object) => {
+            for (key, child) in object {
+                add_metric_projection_receipts(child, format!("{path}.{key}").as_str(), fields);
+            }
+        }
+        Value::Array(items) => {
+            for (index, child) in items.iter().enumerate() {
+                add_metric_projection_receipts(child, format!("{path}[{index}]").as_str(), fields);
+            }
+        }
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {
+            let _inserted = fields.insert(path.to_owned());
+        }
+    }
+}
+
+/// Restricts dynamic omission receipts to the backend's latest-sample namespaces.
+fn valid_metric_latest_omission(field: &str) -> bool {
+    field.chars().count() <= 512
+        && !field.chars().any(char::is_control)
+        && (field == "metric.latest_sample.unsupported_fields"
+            || field == "metric.latest_sample.context"
+            || field.starts_with("metric.latest_sample.context.")
+            || field == "metric.latest_sample.metadata"
+            || field.starts_with("metric.latest_sample.metadata."))
+}
+
 /// Returns a strictly sorted, duplicate-free evidence field set.
-fn metric_evidence_field_set<'a>(
-    evidence: &'a Map<String, Value>,
+fn metric_evidence_field_set(
+    evidence: &Map<String, Value>,
     name: &str,
-) -> Result<BTreeSet<&'a str>, RuntimeError> {
+) -> Result<BTreeSet<String>, RuntimeError> {
     let fields = evidence
         .get(name)
         .and_then(Value::as_array)
@@ -1284,7 +1985,7 @@ fn metric_evidence_field_set<'a>(
             .as_str()
             .filter(|field| !field.is_empty())
             .ok_or_else(invalid_response)?;
-        if previous.is_some_and(|previous| previous >= field) || !set.insert(field) {
+        if previous.is_some_and(|previous| previous >= field) || !set.insert(field.to_owned()) {
             return Err(invalid_response());
         }
         previous = Some(field);
@@ -1362,6 +2063,7 @@ pub(super) fn render(value: &Value) -> Option<String> {
         append_metric_series(&mut output, index.saturating_add(1), item)?;
     }
     append_metric_comparison(&mut output, value.get("comparison"));
+    append_metric_latest_sample(&mut output, value.get("latest_sample"));
     append_metric_exemplars(
         &mut output,
         value.get("exemplars"),
@@ -1372,6 +2074,58 @@ pub(super) fn render(value: &Value) -> Option<String> {
     append_evidence(&mut output, value.get("evidence"));
     append_actions(&mut output, value.get("next_actions"));
     Some(output)
+}
+
+/// Appends the latest retained raw sample as bounded evidence without anomaly claims.
+fn append_metric_latest_sample(output: &mut String, latest: Option<&Value>) {
+    let Some(latest) = latest else {
+        return;
+    };
+    output.push_str("Latest raw sample:");
+    append_labeled_text(output, "status", latest, "status", 40);
+    output.push('\n');
+    let Some(sample) = latest.get("sample").filter(|sample| !sample.is_null()) else {
+        return;
+    };
+    output.push_str("Raw sample:");
+    append_labeled_text(output, "kind", sample, "kind", 80);
+    append_labeled_number(output, "value", sample, "value");
+    append_labeled_text(output, "unit", sample, "unit", 80);
+    append_labeled_text(output, "temporality", sample, "temporality", 40);
+    append_labeled_text(output, "id", sample, "id", 80);
+    append_labeled_text(output, "at", sample, "occurred_at", 64);
+    output.push('\n');
+    output.push_str("Raw sample scope:");
+    append_labeled_text(output, "service", sample, "service_name", 160);
+    append_labeled_text(output, "environment", sample, "environment", 120);
+    append_labeled_text(output, "release", sample, "release", 200);
+    append_labeled_text(output, "trace", sample, "trace_id", 80);
+    append_labeled_text(output, "span", sample, "span_id", 40);
+    if let Some(sdk) = sample.get("sdk") {
+        append_labeled_text(output, "sdk", sdk, "name", 120);
+        append_labeled_text(output, "sdk_version", sdk, "version", 120);
+    }
+    output.push('\n');
+    append_runtime_context(output, sample.get("context"));
+    let Some(metadata) = sample.get("metadata") else {
+        return;
+    };
+    output.push_str("Raw sample metadata:");
+    append_labeled_integer(output, "fields", metadata, "included_leaf_count");
+    append_labeled_bool(output, "redacted", metadata, "redacted");
+    append_labeled_bool(output, "truncated", metadata, "truncated");
+    output.push('\n');
+    let mut fields = Vec::new();
+    if let Some(values) = metadata.get("values") {
+        collect_scalar_fields(values, "", &mut fields);
+    }
+    for (path, value) in fields.into_iter().take(8) {
+        output.push_str("Raw sample field: ");
+        output.push_str(path.as_str());
+        output.push('=');
+        output.push_str(value.as_str());
+        output.push('\n');
+    }
 }
 
 /// Appends adjacent equal-window comparison coverage and representative series changes.
