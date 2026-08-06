@@ -338,6 +338,33 @@ async fn regression_evidence_is_strictly_validated_and_visible_in_both_output_mo
 }
 
 #[tokio::test]
+async fn unavailable_lifecycle_reads_keep_the_primary_issue_and_exact_receipts()
+-> Result<(), Box<dyn std::error::Error>> {
+    for (bundle, expected) in [
+        (
+            status_history_unavailable_bundle(),
+            "Regression: status=unavailable reason=status_history_unavailable",
+        ),
+        (
+            recurrence_unavailable_bundle(),
+            "Regression: status=unavailable reason=recurrence_read_unavailable",
+        ),
+    ] {
+        let server = MockServer::start().await;
+        mount_bundle(&server, bundle.clone(), 2).await;
+
+        let json = run(&server, true, "investigate").await?;
+        let parsed: serde_json::Value = serde_json::from_str(json.as_str())?;
+        assert_eq!(parsed, bundle);
+
+        let human = run(&server, false, "investigate").await?;
+        assert!(human.contains("Issue 11111111-1111-4111-8111-111111111111"));
+        assert!(human.contains(expected));
+    }
+    Ok(())
+}
+
+#[tokio::test]
 async fn investigate_and_explain_issue_share_one_output_contract()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
@@ -1028,6 +1055,62 @@ fn regressed_investigation_bundle() -> serde_json::Value {
     });
     bundle["next_actions"][5]["reason"] = serde_json::json!("regression_detected");
     bundle
+}
+
+fn status_history_unavailable_bundle() -> serde_json::Value {
+    let mut bundle = rich_investigation_bundle();
+    bundle["lifecycle"] = serde_json::json!({
+        "persisted_status": "unresolved",
+        "effective_status": null,
+        "activity": {"status": "unavailable", "changes": [], "truncated": false},
+        "regression": {
+            "status": "unavailable",
+            "reason": "status_history_unavailable",
+            "resolution_changed_at": null,
+            "first_reappeared_occurrence": null
+        }
+    });
+    move_evidence_field_to_missing(&mut bundle, "lifecycle.status_history");
+    move_evidence_field_to_missing(&mut bundle, "lifecycle.regression");
+    bundle
+}
+
+fn recurrence_unavailable_bundle() -> serde_json::Value {
+    let mut bundle = rich_investigation_bundle();
+    bundle["subject"]["status"] = serde_json::json!("resolved");
+    bundle["lifecycle"] = serde_json::json!({
+        "persisted_status": "resolved",
+        "effective_status": null,
+        "activity": {
+            "status": "available",
+            "changes": [{
+                "id": "66666666-6666-4666-8666-666666666666",
+                "status": "resolved",
+                "changed_at": "2026-08-04T07:45:00Z"
+            }],
+            "truncated": false
+        },
+        "regression": {
+            "status": "unavailable",
+            "reason": "recurrence_read_unavailable",
+            "resolution_changed_at": "2026-08-04T07:45:00Z",
+            "first_reappeared_occurrence": null
+        }
+    });
+    move_evidence_field_to_missing(&mut bundle, "lifecycle.regression");
+    bundle
+}
+
+fn move_evidence_field_to_missing(bundle: &mut serde_json::Value, field: &str) {
+    bundle["evidence"]["captured_fields"]
+        .as_array_mut()
+        .expect("captured fields are an array")
+        .retain(|value| value != field);
+    let missing = bundle["evidence"]["missing_fields"]
+        .as_array_mut()
+        .expect("missing fields are an array");
+    missing.push(serde_json::json!(field));
+    missing.sort_by(|left, right| left.as_str().cmp(&right.as_str()));
 }
 
 fn projected_stack_investigation_bundle() -> serde_json::Value {
