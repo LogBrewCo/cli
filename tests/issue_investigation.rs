@@ -213,6 +213,25 @@ async fn selected_trace_link_remains_valid_when_typed_trace_context_is_absent()
 }
 
 #[tokio::test]
+async fn captured_native_frame_count_accepts_a_receipted_safe_projection()
+-> Result<(), Box<dyn std::error::Error>> {
+    let server = MockServer::start().await;
+    let bundle = projected_stack_investigation_bundle();
+    mount_bundle(&server, bundle.clone(), 2).await;
+
+    let json = run(&server, true, "investigate").await?;
+    let parsed: serde_json::Value = serde_json::from_str(json.as_str())?;
+    assert_eq!(parsed, bundle);
+
+    let human = run(&server, false, "investigate").await?;
+    assert!(human.contains("Recommended occurrence:"));
+    assert!(human.contains("frames=17 stack_truncated=false"));
+    assert!(human.contains("Stack frames: 1"));
+    assert!(human.contains("Truncated: stack_frames"));
+    Ok(())
+}
+
+#[tokio::test]
 async fn complete_and_unavailable_user_impact_states_preserve_exact_json()
 -> Result<(), Box<dyn std::error::Error>> {
     for (bundle, status) in [
@@ -897,6 +916,14 @@ fn exact_occurrence_bundle() -> serde_json::Value {
     bundle
 }
 
+fn projected_stack_investigation_bundle() -> serde_json::Value {
+    let mut bundle = rich_investigation_bundle();
+    bundle["occurrence_selection"]["selected"]["stack"]["frame_count"] = serde_json::json!(17);
+    bundle["occurrence_selection"]["recommended"]["stack"]["frame_count"] = serde_json::json!(17);
+    bundle["evidence"]["truncated_fields"] = serde_json::json!(["stack_frames"]);
+    bundle
+}
+
 fn invalid_occurrence_selection_bundles() -> Vec<(serde_json::Value, &'static str)> {
     let mut cases = Vec::new();
     macro_rules! invalid_case {
@@ -966,6 +993,40 @@ fn invalid_occurrence_selection_bundles() -> Vec<(serde_json::Value, &'static st
         "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "trace-summary-marker"
     );
+
+    let mut missing_projection_receipt = projected_stack_investigation_bundle();
+    missing_projection_receipt["evidence"]["truncated_fields"] = serde_json::json!([]);
+    missing_projection_receipt["marker"] = serde_json::json!("missing-projection-receipt-marker");
+    cases.push((
+        missing_projection_receipt,
+        "missing-projection-receipt-marker",
+    ));
+
+    let mut projection_exceeds_capture = rich_investigation_bundle();
+    let extra_frame = projection_exceeds_capture["event"]["stack_frames"][0].clone();
+    projection_exceeds_capture["event"]["stack_frames"]
+        .as_array_mut()
+        .expect("fixture stack is an array")
+        .push(extra_frame);
+    projection_exceeds_capture["evidence"]["truncated_fields"] =
+        serde_json::json!(["stack_frames"]);
+    projection_exceeds_capture["marker"] = serde_json::json!("projection-exceeds-capture-marker");
+    cases.push((
+        projection_exceeds_capture,
+        "projection-exceeds-capture-marker",
+    ));
+
+    let mut unreceipted_capture_truncation = rich_investigation_bundle();
+    unreceipted_capture_truncation["occurrence_selection"]["selected"]["stack"]["truncated"] =
+        serde_json::json!(true);
+    unreceipted_capture_truncation["occurrence_selection"]["recommended"]["stack"]["truncated"] =
+        serde_json::json!(true);
+    unreceipted_capture_truncation["marker"] =
+        serde_json::json!("unreceipted-capture-truncation-marker");
+    cases.push((
+        unreceipted_capture_truncation,
+        "unreceipted-capture-truncation-marker",
+    ));
     cases
 }
 

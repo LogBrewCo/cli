@@ -301,6 +301,10 @@ fn validate_issue_response(
     validate_object_array(event, "stack_frames", 256)?;
     validate_object_array(event, "breadcrumbs", 256)?;
     let _breadcrumbs_truncated = require_bool(event, "breadcrumbs_truncated")?;
+    let evidence = required_object(response, "evidence")?;
+    validate_evidence(evidence)?;
+    let stack_projection_receipted =
+        evidence_has_field(evidence, "truncated_fields", "stack_frames")?;
     let selected_occurrence = validate_issue_occurrence_selection(
         required_object(response, "occurrence_selection")?,
         event,
@@ -308,6 +312,7 @@ fn validate_issue_response(
         occurrence_count,
         first_seen,
         last_seen,
+        stack_projection_receipted,
     )?;
 
     let cause = required_object(response, "cause")?;
@@ -337,7 +342,6 @@ fn validate_issue_response(
     let correlations = required_object(response, "correlations")?;
     validate_issue_correlations(correlations)?;
     validate_selected_occurrence_correlations(selected_occurrence, event, correlations)?;
-    validate_evidence(required_object(response, "evidence")?)?;
     validate_next_actions(response.get("next_actions"))
 }
 
@@ -381,6 +385,7 @@ fn validate_issue_occurrence_selection<'a>(
     occurrence_count: u64,
     first_seen: &str,
     last_seen: &str,
+    stack_projection_receipted: bool,
 ) -> Result<IssueOccurrenceFacts<'a>, RuntimeError> {
     let requested = require_string(value, "requested")?;
     let reason = require_string(value, "reason")?;
@@ -414,7 +419,12 @@ fn validate_issue_occurrence_selection<'a>(
         required_object(value, "recommendation")?,
         occurrence_count,
     )?;
-    validate_selected_occurrence_event(selected_value, selected, event)?;
+    validate_selected_occurrence_event(
+        selected_value,
+        selected,
+        event,
+        stack_projection_receipted,
+    )?;
     Ok(selected)
 }
 
@@ -524,6 +534,7 @@ fn validate_selected_occurrence_event(
     selected: &Map<String, Value>,
     facts: IssueOccurrenceFacts<'_>,
     event: &Map<String, Value>,
+    stack_projection_receipted: bool,
 ) -> Result<(), RuntimeError> {
     require_string_equals(event, "id", facts.id)?;
     require_string_equals(event, "occurred_at", facts.occurred_at)?;
@@ -553,8 +564,14 @@ fn validate_selected_occurrence_event(
     let stack = required_object(selected, "stack")?;
     let breadcrumbs = required_object(selected, "breadcrumbs")?;
     let context_captured = validate_selected_event_context(event)?;
+    let captured_frame_count = require_safe_u64(stack, "frame_count")?;
+    let captured_stack_truncated = require_bool(stack, "truncated")?;
+    let projected_frames_fit_capture = stack_count <= captured_frame_count;
+    let projection_is_complete = stack_count == captured_frame_count && !captured_stack_truncated;
+    let stack_projection_matches =
+        projected_frames_fit_capture && (projection_is_complete || stack_projection_receipted);
     if selected_exception == event_exception
-        && require_safe_u64(stack, "frame_count")? == stack_count
+        && stack_projection_matches
         && require_safe_u64(breadcrumbs, "count")? == breadcrumb_count
         && require_bool(breadcrumbs, "truncated")? == require_bool(event, "breadcrumbs_truncated")?
         && facts.context_captured == context_captured
@@ -1582,6 +1599,19 @@ fn validate_evidence(evidence: &Map<String, Value>) -> Result<(), RuntimeError> 
         }
     }
     Ok(())
+}
+
+/// Returns whether one validated evidence array contains an exact field receipt.
+fn evidence_has_field(
+    evidence: &Map<String, Value>,
+    category: &str,
+    field: &str,
+) -> Result<bool, RuntimeError> {
+    let fields = evidence
+        .get(category)
+        .and_then(Value::as_array)
+        .ok_or_else(invalid_response)?;
+    Ok(fields.iter().any(|value| value.as_str() == Some(field)))
 }
 
 /// Validates prioritized backend-generated actions.
