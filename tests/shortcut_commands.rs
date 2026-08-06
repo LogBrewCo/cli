@@ -1380,7 +1380,7 @@ fn parses_pasted_explain_ids_without_resource_word() {
     );
     assert_eq!(
         issue.http_path().expect("inferred issue has endpoint"),
-        "/api/telemetry/issues/issue_123/investigation?response_version=2&selection=recommended"
+        "/api/telemetry/issues/issue_123/investigation?response_version=3&selection=recommended"
     );
 
     let uuid_issue = parse_command([

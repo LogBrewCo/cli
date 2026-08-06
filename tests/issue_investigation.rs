@@ -55,7 +55,7 @@ fn parses_named_and_exact_occurrence_selection_for_both_issue_commands() {
         exact.http_path().as_deref(),
         Some(
             "/api/telemetry/issues/11111111-1111-4111-8111-111111111111/investigation?\
-             response_version=2&occurrence_id=22222222-2222-4222-8222-222222222222"
+             response_version=3&occurrence_id=22222222-2222-4222-8222-222222222222"
         )
     );
     assert!(exact.wants_json());
@@ -72,7 +72,7 @@ fn parses_named_and_exact_occurrence_selection_for_both_issue_commands() {
         latest.http_path().as_deref(),
         Some(
             "/api/telemetry/issues/11111111-1111-4111-8111-111111111111/investigation?\
-             response_version=2&selection=latest"
+             response_version=3&selection=latest"
         )
     );
 }
@@ -150,8 +150,9 @@ fn help_describes_the_complete_versioned_bundle() {
     assert!(text.contains("approximate affected-user coverage and limitations"));
     assert!(text.contains("trace, related logs, actions, metric exemplars"));
     assert!(text.contains("same contract as logbrew explain issue"));
-    assert!(text.contains("exact validated schema-version-2 response"));
+    assert!(text.contains("exact validated schema-version-3 response"));
     assert!(text.contains("explicit selected, first, latest, and recommended occurrence"));
+    assert!(text.contains("status activity and server-observed regression evidence"));
 }
 
 #[tokio::test]
@@ -270,6 +271,9 @@ async fn human_output_surfaces_failure_fix_timeline_correlations_and_limits()
         "Recommended occurrence: id=22222222-2222-4222-8222-222222222222 \
          at=2026-08-04T07:59:59Z",
         "Recommendation coverage: algorithm=1 candidates=3 limit=50 truncated=false",
+        "Lifecycle: persisted=unresolved effective=unresolved",
+        "Status activity: status=available count=0 truncated=false",
+        "Regression: status=not_detected reason=no_resolution_recorded",
         "Exception: PaymentProviderError mechanism=javascript.promise handled=false",
         "Frame: module=checkout function=capturePayment file=payment_gateway.ts line=87",
         "Breadcrumb: at=2026-08-04T07:59:58Z category=checkout.submit",
@@ -296,6 +300,38 @@ async fn human_output_surfaces_failure_fix_timeline_correlations_and_limits()
         assert!(
             text.contains(expected),
             "missing investigation detail: {expected}"
+        );
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn regression_evidence_is_strictly_validated_and_visible_in_both_output_modes()
+-> Result<(), Box<dyn std::error::Error>> {
+    let server = MockServer::start().await;
+    let bundle = regressed_investigation_bundle();
+    mount_bundle(&server, bundle.clone(), 2).await;
+
+    let json = run(&server, true, "investigate").await?;
+    let parsed: serde_json::Value = serde_json::from_str(json.as_str())?;
+    assert_eq!(parsed, bundle);
+
+    let human = run(&server, false, "investigate").await?;
+    for expected in [
+        "Issue 11111111-1111-4111-8111-111111111111 resolved severity=error",
+        "Lifecycle: persisted=resolved effective=regressed",
+        "Status activity: status=available count=2 truncated=false",
+        "Status change: status=resolved at=2026-08-04T07:45:00Z",
+        "Regression: status=detected reason=occurrence_ingested_after_resolution",
+        "Resolution: 2026-08-04T07:45:00Z",
+        "First reappeared: id=22222222-2222-4222-8222-222222222222 \
+         occurred=2026-08-04T07:59:59Z ingested=2026-08-04T08:00:01Z",
+        "release=checkout@1.2.3 service=checkout-api trace=4bf92f3577b34da6a3ce929d0e0e4736",
+        "Next 6: code=compare_release target=release_summary reason=regression_detected",
+    ] {
+        assert!(
+            human.contains(expected),
+            "missing lifecycle detail: {expected}"
         );
     }
     Ok(())
@@ -405,6 +441,25 @@ async fn contradictory_occurrence_receipts_fail_closed_without_reflection()
 
         assert_eq!(response["error"], "investigation_response_invalid");
         assert!(!text.contains(marker));
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn contradictory_lifecycle_bundles_fail_closed() -> Result<(), Box<dyn std::error::Error>> {
+    for bundle in invalid_lifecycle_bundles() {
+        let server = MockServer::start().await;
+        mount_bundle(&server, bundle, 1).await;
+        let command = parse_command(["logbrew", "investigate", "issue", ISSUE_ID, "--json"])?;
+        let mut output = Vec::new();
+
+        let error = execute_command(&command, &authenticated_env(&server), &mut output)
+            .await
+            .expect_err("contradictory lifecycle evidence fails closed");
+        write_runtime_error(&error, true, &mut output)?;
+        let response: serde_json::Value = serde_json::from_slice(output.as_slice())?;
+
+        assert_eq!(response["error"], "investigation_response_invalid");
     }
     Ok(())
 }
@@ -537,7 +592,7 @@ async fn mount_bundle(server: &MockServer, bundle: serde_json::Value, expected_r
         .and(path(format!(
             "/api/telemetry/issues/{ISSUE_ID}/investigation"
         )))
-        .and(query_param("response_version", "2"))
+        .and(query_param("response_version", "3"))
         .and(query_param("selection", "recommended"))
         .and(header("authorization", "Bearer test-token"))
         .respond_with(ResponseTemplate::new(200).set_body_json(bundle))
@@ -555,7 +610,7 @@ async fn mount_exact_bundle(
         .and(path(format!(
             "/api/telemetry/issues/{ISSUE_ID}/investigation"
         )))
-        .and(query_param("response_version", "2"))
+        .and(query_param("response_version", "3"))
         .and(query_param("occurrence_id", OCCURRENCE_ID))
         .and(header("authorization", "Bearer test-token"))
         .respond_with(ResponseTemplate::new(200).set_body_json(bundle))
@@ -593,7 +648,7 @@ fn rich_investigation_bundle() -> serde_json::Value {
     let first = first_occurrence_summary();
     let latest = latest_occurrence_summary();
     serde_json::json!({
-        "schema_version": 2,
+        "schema_version": 3,
         "subject": {
             "kind": "issue",
             "id": ISSUE_ID,
@@ -668,6 +723,21 @@ fn rich_investigation_bundle() -> serde_json::Value {
                 "candidate_count": 3,
                 "candidate_limit": 50,
                 "candidate_window_truncated": false
+            }
+        },
+        "lifecycle": {
+            "persisted_status": "unresolved",
+            "effective_status": "unresolved",
+            "activity": {
+                "status": "available",
+                "changes": [],
+                "truncated": false
+            },
+            "regression": {
+                "status": "not_detected",
+                "reason": "no_resolution_recorded",
+                "resolution_changed_at": null,
+                "first_reappeared_occurrence": null
             }
         },
         "cause": {
@@ -799,6 +869,8 @@ fn rich_investigation_bundle() -> serde_json::Value {
                 "exception",
                 "logs",
                 "metrics",
+                "lifecycle.regression",
+                "lifecycle.status_history",
                 "occurrence.boundaries",
                 "occurrence.recommendation",
                 "occurrence.selection",
@@ -916,6 +988,48 @@ fn exact_occurrence_bundle() -> serde_json::Value {
     bundle
 }
 
+fn regressed_investigation_bundle() -> serde_json::Value {
+    let mut bundle = rich_investigation_bundle();
+    bundle["subject"]["status"] = serde_json::json!("resolved");
+    bundle["lifecycle"] = serde_json::json!({
+        "persisted_status": "resolved",
+        "effective_status": "regressed",
+        "activity": {
+            "status": "available",
+            "changes": [
+                {
+                    "id": "66666666-6666-4666-8666-666666666666",
+                    "status": "resolved",
+                    "changed_at": "2026-08-04T07:45:00Z"
+                },
+                {
+                    "id": "77777777-7777-4777-8777-777777777777",
+                    "status": "unresolved",
+                    "changed_at": "2026-08-04T07:30:00Z"
+                }
+            ],
+            "truncated": false
+        },
+        "regression": {
+            "status": "detected",
+            "reason": "occurrence_ingested_after_resolution",
+            "resolution_changed_at": "2026-08-04T07:45:00Z",
+            "first_reappeared_occurrence": {
+                "id": OCCURRENCE_ID,
+                "occurred_at": "2026-08-04T07:59:59Z",
+                "ingested_at": "2026-08-04T08:00:01Z",
+                "environment": "production",
+                "release": "checkout@1.2.3",
+                "service_name": "checkout-api",
+                "trace_id": TRACE_ID,
+                "sdk": {"name": "@logbrew/node", "version": "0.1.4"}
+            }
+        }
+    });
+    bundle["next_actions"][5]["reason"] = serde_json::json!("regression_detected");
+    bundle
+}
+
 fn projected_stack_investigation_bundle() -> serde_json::Value {
     let mut bundle = rich_investigation_bundle();
     bundle["occurrence_selection"]["selected"]["stack"]["frame_count"] = serde_json::json!(17);
@@ -1027,6 +1141,58 @@ fn invalid_occurrence_selection_bundles() -> Vec<(serde_json::Value, &'static st
         unreceipted_capture_truncation,
         "unreceipted-capture-truncation-marker",
     ));
+    cases
+}
+
+fn invalid_lifecycle_bundles() -> Vec<serde_json::Value> {
+    let mut cases = Vec::new();
+
+    let mut persisted_mismatch = rich_investigation_bundle();
+    persisted_mismatch["lifecycle"]["persisted_status"] = serde_json::json!("ignored");
+    cases.push(persisted_mismatch);
+
+    let mut impossible_effective = rich_investigation_bundle();
+    impossible_effective["lifecycle"]["effective_status"] = serde_json::json!("regressed");
+    cases.push(impossible_effective);
+
+    let mut unavailable_with_result = rich_investigation_bundle();
+    unavailable_with_result["lifecycle"]["activity"]["status"] = serde_json::json!("unavailable");
+    cases.push(unavailable_with_result);
+
+    let mut duplicate_activity = regressed_investigation_bundle();
+    let duplicate = duplicate_activity["lifecycle"]["activity"]["changes"][0].clone();
+    duplicate_activity["lifecycle"]["activity"]["changes"]
+        .as_array_mut()
+        .expect("activity is an array")[1] = duplicate;
+    cases.push(duplicate_activity);
+
+    let mut out_of_order = regressed_investigation_bundle();
+    out_of_order["lifecycle"]["activity"]["changes"][1]["changed_at"] =
+        serde_json::json!("2026-08-04T07:46:00Z");
+    cases.push(out_of_order);
+
+    let mut missing_recurrence = regressed_investigation_bundle();
+    missing_recurrence["lifecycle"]["regression"]["first_reappeared_occurrence"] =
+        serde_json::Value::Null;
+    cases.push(missing_recurrence);
+
+    let mut pre_resolution_ingest = regressed_investigation_bundle();
+    pre_resolution_ingest["lifecycle"]["regression"]["first_reappeared_occurrence"]["ingested_at"] =
+        serde_json::json!("2026-08-04T07:44:59Z");
+    cases.push(pre_resolution_ingest);
+
+    let mut missing_evidence_receipt = rich_investigation_bundle();
+    missing_evidence_receipt["evidence"]["captured_fields"]
+        .as_array_mut()
+        .expect("captured fields are an array")
+        .retain(|field| field != "lifecycle.regression");
+    cases.push(missing_evidence_receipt);
+
+    let mut wrong_next_action = regressed_investigation_bundle();
+    wrong_next_action["next_actions"][5]["reason"] =
+        serde_json::json!("release_identity_available");
+    cases.push(wrong_next_action);
+
     cases
 }
 

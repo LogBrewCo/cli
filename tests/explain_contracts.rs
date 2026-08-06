@@ -18,7 +18,7 @@ async fn human_issue_explanation_surfaces_fix_context_timeline_and_evidence()
         .and(path(format!(
             "/api/telemetry/issues/{ISSUE_ID}/investigation"
         )))
-        .and(query_param("response_version", "2"))
+        .and(query_param("response_version", "3"))
         .and(query_param("selection", "recommended"))
         .respond_with(ResponseTemplate::new(200).set_body_json(issue_response()))
         .mount(&server)
@@ -33,6 +33,8 @@ async fn human_issue_explanation_surfaces_fix_context_timeline_and_evidence()
         "Issue cccccccc-cccc-4ccc-8ccc-cccccccccccc unresolved severity=error",
         "Occurrence selection: requested=recommended reason=context_rich_recent_occurrence \
          selected=dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+        "Lifecycle: persisted=unresolved effective=unresolved",
+        "Regression: status=not_detected reason=no_resolution_recorded",
         "Exception: PaymentError mechanism=unhandled handled=false",
         "Frame: module=checkout function=charge file=payment.rs line=42 column=7 in_app=true",
         "Breadcrumb: at=2026-08-03T11:04:55Z category=ui.click",
@@ -1198,7 +1200,7 @@ fn issue_response() -> serde_json::Value {
         "context_captured": true
     });
     serde_json::json!({
-        "schema_version": 2,
+        "schema_version": 3,
         "subject": {
             "kind": "issue",
             "id": ISSUE_ID,
@@ -1288,6 +1290,21 @@ fn issue_response() -> serde_json::Value {
                 "candidate_window_truncated": false
             }
         },
+        "lifecycle": {
+            "persisted_status": "unresolved",
+            "effective_status": "unresolved",
+            "activity": {
+                "status": "available",
+                "changes": [],
+                "truncated": false
+            },
+            "regression": {
+                "status": "not_detected",
+                "reason": "no_resolution_recorded",
+                "resolution_changed_at": null,
+                "first_reappeared_occurrence": null
+            }
+        },
         "cause": {
             "status": "evidence_only",
             "summary": null,
@@ -1364,6 +1381,8 @@ fn issue_response() -> serde_json::Value {
             "captured_fields": [
                 "issue.exception",
                 "issue.stack_frames",
+                "lifecycle.regression",
+                "lifecycle.status_history",
                 "occurrence.boundaries",
                 "occurrence.recommendation",
                 "occurrence.selection"

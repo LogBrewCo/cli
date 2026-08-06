@@ -1,6 +1,7 @@
 //! Versioned, bounded telemetry investigation reads.
 
 mod action;
+mod issue_lifecycle;
 mod metric;
 mod projection;
 mod span;
@@ -46,6 +47,20 @@ const ISSUE_OCCURRENCE_CANDIDATE_LIMIT: u64 = 50;
 const ISSUE_OCCURRENCE_FRAME_LIMIT: u64 = 32;
 /// Largest integer accepted from JSON-number investigation contracts.
 const MAX_SAFE_JSON_INTEGER: u64 = 9_007_199_254_740_991;
+/// Exact top-level vocabulary for the schema-version-3 issue response.
+const ISSUE_RESPONSE_FIELDS: &[&str] = &[
+    "schema_version",
+    "subject",
+    "event",
+    "occurrence_selection",
+    "lifecycle",
+    "cause",
+    "fix",
+    "impact",
+    "correlations",
+    "evidence",
+    "next_actions",
+];
 
 /// Duplicate-aware JSON value.
 #[derive(Debug)]
@@ -263,28 +278,18 @@ fn validate_issue_response(
     expected_id: &str,
     expected_occurrence: &IssueOccurrenceSelection,
 ) -> Result<(), RuntimeError> {
-    let response = response_object(
-        value,
-        &[
-            "schema_version",
-            "subject",
-            "event",
-            "occurrence_selection",
-            "cause",
-            "fix",
-            "impact",
-            "correlations",
-            "evidence",
-            "next_actions",
-        ],
-    )?;
-    validate_schema_version_value(response, 2)?;
+    let response = response_object(value, ISSUE_RESPONSE_FIELDS)?;
+    require_exact_fields(response, ISSUE_RESPONSE_FIELDS)?;
+    validate_schema_version_value(response, 3)?;
     let subject = required_object(response, "subject")?;
     require_string_equals(subject, "kind", "issue")?;
     require_string_equals(subject, "id", expected_id)?;
     require_uuid(subject, "project_id")?;
     let _fingerprint = require_string(subject, "fingerprint")?;
-    let _status = require_string(subject, "status")?;
+    let subject_status = require_string(subject, "status")?;
+    if !issue_lifecycle::is_persisted_status(subject_status) {
+        return Err(invalid_response());
+    }
     let _severity = require_string(subject, "severity")?;
     let _title = require_string(subject, "title")?;
     let _message = require_string(subject, "message")?;
@@ -314,6 +319,13 @@ fn validate_issue_response(
         last_seen,
         stack_projection_receipted,
     )?;
+    let regression_detected = issue_lifecycle::validate(
+        required_object(response, "lifecycle")?,
+        subject_status,
+        first_seen,
+        last_seen,
+        evidence,
+    )?;
 
     let cause = required_object(response, "cause")?;
     let _cause_status = require_string(cause, "status")?;
@@ -342,7 +354,8 @@ fn validate_issue_response(
     let correlations = required_object(response, "correlations")?;
     validate_issue_correlations(correlations)?;
     validate_selected_occurrence_correlations(selected_occurrence, event, correlations)?;
-    validate_next_actions(response.get("next_actions"))
+    validate_next_actions(response.get("next_actions"))?;
+    issue_lifecycle::validate_next_action(response.get("next_actions"), regression_detected)
 }
 
 /// Validated occurrence facts used to bind detailed evidence and correlations.
@@ -1835,6 +1848,7 @@ fn render_issue(value: &Value) -> Option<String> {
     append_named_text(&mut output, "First seen", subject, "first_seen_at", 64);
     append_named_text(&mut output, "Last seen", subject, "last_seen_at", 64);
     append_issue_occurrence_selection(&mut output, value.get("occurrence_selection"));
+    issue_lifecycle::render(&mut output, value.get("lifecycle"));
 
     if let Some(event) = value.get("event").filter(|event| !event.is_null()) {
         append_named_text(&mut output, "Occurrence", event, "id", 80);
