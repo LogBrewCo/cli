@@ -18,7 +18,7 @@ async fn human_issue_explanation_surfaces_fix_context_timeline_and_evidence()
         .and(path(format!(
             "/api/telemetry/issues/{ISSUE_ID}/investigation"
         )))
-        .and(query_param("response_version", "3"))
+        .and(query_param("response_version", "4"))
         .and(query_param("selection", "recommended"))
         .respond_with(ResponseTemplate::new(200).set_body_json(issue_response()))
         .mount(&server)
@@ -35,6 +35,7 @@ async fn human_issue_explanation_surfaces_fix_context_timeline_and_evidence()
          selected=dddddddd-dddd-4ddd-8ddd-dddddddddddd",
         "Lifecycle: persisted=unresolved effective=unresolved",
         "Regression: status=not_detected reason=no_resolution_recorded",
+        "Occurrence analysis: status=complete retained=3 trend=3 distributions=4/4",
         "Exception: PaymentError mechanism=unhandled handled=false",
         "Frame: module=checkout function=charge file=payment.rs line=42 column=7 in_app=true",
         "Breadcrumb: at=2026-08-03T11:04:55Z category=ui.click",
@@ -1200,7 +1201,7 @@ fn issue_response() -> serde_json::Value {
         "context_captured": true
     });
     serde_json::json!({
-        "schema_version": 3,
+        "schema_version": 4,
         "subject": {
             "kind": "issue",
             "id": ISSUE_ID,
@@ -1305,6 +1306,7 @@ fn issue_response() -> serde_json::Value {
                 "first_reappeared_occurrence": null
             }
         },
+        "occurrence_analysis": issue_occurrence_analysis(),
         "cause": {
             "status": "evidence_only",
             "summary": null,
@@ -1384,8 +1386,13 @@ fn issue_response() -> serde_json::Value {
                 "lifecycle.regression",
                 "lifecycle.status_history",
                 "occurrence.boundaries",
+                "occurrence.distribution.environment",
+                "occurrence.distribution.release",
+                "occurrence.distribution.sdk",
+                "occurrence.distribution.service",
                 "occurrence.recommendation",
-                "occurrence.selection"
+                "occurrence.selection",
+                "occurrence.trend"
             ],
             "missing_fields": ["issue.attachment"],
             "redacted_fields": [],
@@ -1397,6 +1404,88 @@ fn issue_response() -> serde_json::Value {
             "target": "source_code",
             "reason": "likely_fix_location_available"
         }]
+    })
+}
+
+fn issue_occurrence_analysis() -> serde_json::Value {
+    let boundaries = [
+        "2026-08-03T10:00:00Z",
+        "2026-08-03T10:05:00Z",
+        "2026-08-03T10:10:00Z",
+        "2026-08-03T10:15:00Z",
+        "2026-08-03T10:20:00Z",
+        "2026-08-03T10:25:00Z",
+        "2026-08-03T10:30:00Z",
+        "2026-08-03T10:35:00Z",
+        "2026-08-03T10:40:00Z",
+        "2026-08-03T10:45:00Z",
+        "2026-08-03T10:50:00Z",
+        "2026-08-03T10:55:00Z",
+        "2026-08-03T11:00:00Z",
+        "2026-08-03T11:05:00Z",
+        "2026-08-03T11:10:00Z",
+    ];
+    let counts = [1_u64, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2];
+    let buckets = counts
+        .iter()
+        .enumerate()
+        .map(|(index, count)| {
+            serde_json::json!({
+                "bucket_start": boundaries[index],
+                "bucket_end": boundaries[index + 1],
+                "occurrence_count": count
+            })
+        })
+        .collect::<Vec<_>>();
+    serde_json::json!({
+        "status": "complete",
+        "coverage": {
+            "retained_occurrences": 3,
+            "trend_occurrences": 3,
+            "available_distribution_count": 4,
+            "expected_distribution_count": 4,
+            "max_buckets": 30,
+            "max_values_per_dimension": 10
+        },
+        "trend": {
+            "scope_start": "2026-08-03T10:00:00Z",
+            "scope_end": "2026-08-03T11:05:00Z",
+            "interval_seconds": 300,
+            "buckets": buckets
+        },
+        "distributions": [
+            {
+                "dimension": "release",
+                "distinct_value_count": 2,
+                "values": [
+                    {"value": "checkout@1.2.3", "version": null, "occurrence_count": 2, "share_basis_points": 6666},
+                    {"value": "checkout@1.2.1", "version": null, "occurrence_count": 1, "share_basis_points": 3333}
+                ],
+                "other_occurrence_count": 0
+            },
+            {
+                "dimension": "environment",
+                "distinct_value_count": 1,
+                "values": [{"value": "production", "version": null, "occurrence_count": 3, "share_basis_points": 10000}],
+                "other_occurrence_count": 0
+            },
+            {
+                "dimension": "service",
+                "distinct_value_count": 1,
+                "values": [{"value": "checkout-api", "version": null, "occurrence_count": 3, "share_basis_points": 10000}],
+                "other_occurrence_count": 0
+            },
+            {
+                "dimension": "sdk",
+                "distinct_value_count": 2,
+                "values": [
+                    {"value": "logbrew-rust", "version": "1.2.3", "occurrence_count": 2, "share_basis_points": 6666},
+                    {"value": "logbrew-rust", "version": "1.2.1", "occurrence_count": 1, "share_basis_points": 3333}
+                ],
+                "other_occurrence_count": 0
+            }
+        ],
+        "limitations": []
     })
 }
 

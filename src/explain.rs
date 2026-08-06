@@ -2,6 +2,7 @@
 
 mod action;
 mod issue_lifecycle;
+mod issue_occurrence_analysis;
 mod metric;
 mod projection;
 mod span;
@@ -47,13 +48,14 @@ const ISSUE_OCCURRENCE_CANDIDATE_LIMIT: u64 = 50;
 const ISSUE_OCCURRENCE_FRAME_LIMIT: u64 = 32;
 /// Largest integer accepted from JSON-number investigation contracts.
 const MAX_SAFE_JSON_INTEGER: u64 = 9_007_199_254_740_991;
-/// Exact top-level vocabulary for the schema-version-3 issue response.
+/// Exact top-level vocabulary for the schema-version-4 issue response.
 const ISSUE_RESPONSE_FIELDS: &[&str] = &[
     "schema_version",
     "subject",
     "event",
     "occurrence_selection",
     "lifecycle",
+    "occurrence_analysis",
     "cause",
     "fix",
     "impact",
@@ -280,7 +282,7 @@ fn validate_issue_response(
 ) -> Result<(), RuntimeError> {
     let response = response_object(value, ISSUE_RESPONSE_FIELDS)?;
     require_exact_fields(response, ISSUE_RESPONSE_FIELDS)?;
-    validate_schema_version_value(response, 3)?;
+    validate_schema_version_value(response, 4)?;
     let subject = required_object(response, "subject")?;
     require_string_equals(subject, "kind", "issue")?;
     require_string_equals(subject, "id", expected_id)?;
@@ -322,6 +324,13 @@ fn validate_issue_response(
     let regression_detected = issue_lifecycle::validate(
         required_object(response, "lifecycle")?,
         subject_status,
+        first_seen,
+        last_seen,
+        evidence,
+    )?;
+    issue_occurrence_analysis::validate(
+        required_object(response, "occurrence_analysis")?,
+        occurrence_count,
         first_seen,
         last_seen,
         evidence,
@@ -1849,6 +1858,7 @@ fn render_issue(value: &Value) -> Option<String> {
     append_named_text(&mut output, "Last seen", subject, "last_seen_at", 64);
     append_issue_occurrence_selection(&mut output, value.get("occurrence_selection"));
     issue_lifecycle::render(&mut output, value.get("lifecycle"));
+    issue_occurrence_analysis::render(&mut output, value.get("occurrence_analysis"));
 
     if let Some(event) = value.get("event").filter(|event| !event.is_null()) {
         append_named_text(&mut output, "Occurrence", event, "id", 80);
