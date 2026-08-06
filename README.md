@@ -86,6 +86,7 @@ logbrew logout
 logbrew logs --release checkout@1 --environment production
 logbrew issues open --json
 logbrew explain issue issue_123
+logbrew explain release checkout@1 --project <project_id> --environment production --service checkout-api
 logbrew watch --json
 logbrew watch --severity error,critical --json
 ```

@@ -74,6 +74,19 @@ fn root_help_surfaces_release_environment_pairing() {
 }
 
 #[test]
+fn explain_help_documents_deployment_aligned_release_comparison_limits() {
+    let text = help::help_text(HelpTopic::Explain);
+
+    assert!(text.contains("newest exact deployment boundary"));
+    assert!(text.contains("prior successful distinct release"));
+    assert!(text.contains("raw signal-count deltas"));
+    assert!(text.contains("trace error-rate direction"));
+    assert!(text.contains("explicit capture/retry guidance"));
+    assert!(text.contains("not traffic-normalized"));
+    assert!(text.contains("never claim deployment causality"));
+}
+
+#[test]
 fn project_and_usage_help_are_honest_about_supported_behavior() {
     let projects = help::help_text(HelpTopic::Projects);
     let usage = help::help_text(HelpTopic::Usage);

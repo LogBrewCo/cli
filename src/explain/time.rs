@@ -1,4 +1,4 @@
-//! Exact UTC millisecond parsing for fixed issue occurrence buckets.
+//! Exact UTC millisecond parsing shared by strict investigation contracts.
 
 /// Milliseconds in one second.
 const MILLIS_PER_SECOND: i128 = 1_000;

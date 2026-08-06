@@ -558,7 +558,11 @@ Metric explanations preserve gauge, delta-counter, histogram, and cumulative-str
 Release investigation requires the exact project, environment, and service identity returned by \
                             logbrew read releases. Release actions separate approximate typed-user, \
                             anonymous-subject, and session cardinalities from exact subject-kind \
-                            capture coverage; legacy, missing, and historical events remain visible.
+                            capture coverage; legacy, missing, and historical events remain visible. \
+                            The newest exact deployment boundary is aligned to the prior successful \
+                            distinct release when captured, with raw signal-count deltas, trace error-rate \
+                            direction, observation windows, and explicit capture/retry guidance. These \
+                            observations are not traffic-normalized and never claim deployment causality.
 Pasted UUID/issue_* values are treated as issues; 32-hex/trace_* values are treated as traces.";
 
 /// Product-analytics command overview.

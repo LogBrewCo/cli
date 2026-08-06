@@ -5,7 +5,9 @@ mod issue_lifecycle;
 mod issue_occurrence_analysis;
 mod metric;
 mod projection;
+mod release;
 mod span;
+mod time;
 
 use std::collections::BTreeSet;
 
@@ -1037,7 +1039,7 @@ fn validate_release_response(
             "next_actions",
         ],
     )?;
-    validate_schema_version_value(response, 2)?;
+    validate_schema_version_value(response, 3)?;
     let subject = required_object(response, "subject")?;
     require_string_equals(subject, "kind", "release")?;
     require_string_equals(subject, "project_id", expected.project_id.as_str())?;
@@ -1083,6 +1085,7 @@ fn validate_release_response(
     let evidence = required_object(response, "evidence")?;
     validate_evidence(evidence)?;
     validate_release_action_evidence(evidence, require_string(actions, "status")?, action_count)?;
+    release::validate_response(response, expected)?;
     validate_release_next_actions(response)
 }
 
@@ -1101,14 +1104,14 @@ struct ReleaseNextActionExpectation<'a> {
     trace_id: Option<&'a str>,
 }
 
-/// Validates the version-2 priority-by-order release action contract and source bindings.
+/// Validates the version-3 priority-by-order release action contract and source bindings.
 fn validate_release_next_actions(response: &Map<String, Value>) -> Result<(), RuntimeError> {
     let expected = expected_release_next_actions(response)?;
     let actions = response
         .get("next_actions")
         .and_then(Value::as_array)
         .ok_or_else(invalid_response)?;
-    if actions.len() != expected.len() || actions.is_empty() || actions.len() > NEXT_ACTION_LIMIT {
+    if actions.len() != expected.len() || actions.len() > NEXT_ACTION_LIMIT {
         return Err(invalid_response());
     }
     for (action, expected) in actions.iter().zip(expected) {
@@ -1185,17 +1188,30 @@ fn expected_release_next_actions(
             });
         }
     }
-    let unavailable = require_string(required_object(response, "subject")?, "trace_health_status")?
-        == "unavailable"
-        || require_string(required_object(response, "sdk_coverage")?, "status")? == "unavailable"
-        || ["issues", "traces", "logs", "actions", "metrics"]
-            .iter()
-            .any(|name| {
-                required_object(signals, name)
-                    .and_then(|signal| require_string(signal, "status"))
-                    .is_ok_and(|status| status == "unavailable")
-            });
-    if unavailable {
+    let signal_unavailable =
+        require_string(required_object(response, "subject")?, "trace_health_status")?
+            == "unavailable"
+            || require_string(required_object(response, "sdk_coverage")?, "status")?
+                == "unavailable"
+            || ["issues", "traces", "logs", "actions", "metrics"]
+                .iter()
+                .any(|name| {
+                    required_object(signals, name)
+                        .and_then(|signal| require_string(signal, "status"))
+                        .is_ok_and(|status| status == "unavailable")
+                });
+    let comparison = required_object(response, "comparison")?;
+    let comparison_status = require_string(comparison, "status")?;
+    let comparison_reason = require_string(comparison, "reason")?;
+    let previous_trace_unavailable = comparison
+        .get("details")
+        .and_then(Value::as_object)
+        .and_then(|details| details.get("previous_release"))
+        .and_then(Value::as_object)
+        .and_then(|previous| previous.get("trace_health_status"))
+        .and_then(Value::as_str)
+        == Some("unavailable");
+    if signal_unavailable || comparison_status == "unavailable" || previous_trace_unavailable {
         expected.push(ReleaseNextActionExpectation {
             code: "retry_unavailable_evidence",
             target: "release_investigation",
@@ -1204,13 +1220,20 @@ fn expected_release_next_actions(
             trace_id: None,
         });
     }
-    expected.push(ReleaseNextActionExpectation {
-        code: "capture_deployment_boundary",
-        target: "release_instrumentation",
-        reason: "comparison_unavailable",
-        issue_id: None,
-        trace_id: None,
-    });
+    if matches!(
+        comparison_reason,
+        "deployment_boundary_not_captured"
+            | "subject_deployment_not_found"
+            | "previous_successful_deployment_not_found"
+    ) {
+        expected.push(ReleaseNextActionExpectation {
+            code: "capture_deployment_boundary",
+            target: "release_instrumentation",
+            reason: "comparison_unavailable",
+            issue_id: None,
+            trace_id: None,
+        });
+    }
     Ok(expected)
 }
 
@@ -2550,12 +2573,7 @@ fn render_release(value: &Value) -> Option<String> {
     }
     append_release_signals(&mut output, value.get("signals"));
     append_timeline(&mut output, value.get("timeline"));
-    if let Some(comparison) = value.get("comparison") {
-        output.push_str("Comparison:");
-        append_labeled_text(&mut output, "status", comparison, "status", 64);
-        append_labeled_text(&mut output, "reason", comparison, "reason", 200);
-        output.push('\n');
-    }
+    release::render_comparison(&mut output, value.get("comparison"));
     append_evidence(&mut output, value.get("evidence"));
     append_actions(&mut output, value.get("next_actions"));
     Some(output)
