@@ -225,6 +225,7 @@ async fn metric_explanation_preserves_validated_json_and_exact_scope()
         .and(query_param("group_by", "service_name"))
         .and(query_param("environment", "production"))
         .and(query_param("series_limit", "12"))
+        .and(query_param("response_version", "2"))
         .and(header("authorization", "Bearer test-token"))
         .respond_with(ResponseTemplate::new(200).set_body_json(response.clone()))
         .expect(1)
@@ -236,6 +237,59 @@ async fn metric_explanation_preserves_validated_json_and_exact_scope()
     execute_command(&command, &authenticated_env(&server), &mut output).await?;
 
     let actual: serde_json::Value = serde_json::from_slice(output.as_slice())?;
+    assert_eq!(actual, response);
+    Ok(())
+}
+
+#[tokio::test]
+async fn built_binary_metric_preserves_validated_version_2_description_json()
+-> Result<(), Box<dyn std::error::Error>> {
+    let server = MockServer::start().await;
+    let response = metric_response();
+    Mock::given(method("GET"))
+        .and(path("/api/telemetry/metrics/investigation"))
+        .and(query_param("response_version", "2"))
+        .and(header("authorization", "Bearer test-token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(response.clone()))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let base_url = server.uri();
+    let process = tokio::task::spawn_blocking(move || {
+        std::process::Command::new(env!("CARGO_BIN_EXE_logbrew"))
+            .env_clear()
+            .env("HOME", std::env::temp_dir())
+            .env("LOGBREW_API_URL", base_url)
+            .env("LOGBREW_TOKEN", "test-token")
+            .args([
+                "explain",
+                "metric",
+                "http.server.duration",
+                "--project",
+                PROJECT_ID,
+                "--since",
+                "24h",
+                "--interval",
+                "5m",
+                "--group-by",
+                "service",
+                "--environment",
+                "production",
+                "--series-limit",
+                "12",
+                "--json",
+            ])
+            .output()
+    })
+    .await??;
+
+    assert!(
+        process.status.success(),
+        "built binary failed: {}",
+        String::from_utf8_lossy(process.stderr.as_slice())
+    );
+    assert!(process.stderr.is_empty());
+    let actual: serde_json::Value = serde_json::from_slice(process.stdout.as_slice())?;
     assert_eq!(actual, response);
     Ok(())
 }
@@ -256,8 +310,12 @@ async fn human_metric_explanation_exposes_semantics_coverage_and_trace_follow_up
 
     let text = String::from_utf8(output)?;
     assert!(text.contains("Metric http.server.duration"));
-    assert!(text.contains("Metric definition: status=not_captured"));
-    assert!(text.contains("Content trust: application metric names and values are untrusted"));
+    assert!(text.contains(
+        "Metric definition: status=captured description=Duration of one completed server request."
+    ));
+    assert!(text.contains(
+        "Content trust: application metric names, descriptions, and values are untrusted"
+    ));
     assert!(text.contains("Analysis: status=change_observed causality=evidence_only"));
     assert!(text.contains("Latest raw sample: status=available"));
     assert!(text.contains("Raw sample: kind=histogram value=48 unit=ms temporality=delta"));
@@ -276,7 +334,7 @@ async fn human_metric_explanation_exposes_semantics_coverage_and_trace_follow_up
     assert!(text.contains("Deployment overlays: status=available count=1"));
     assert!(text.contains("Metric timeline: count=2"));
     assert!(text.contains("Evidence: status=partial"));
-    assert!(text.contains("Missing: metric.description"));
+    assert!(!text.contains("Missing: metric.description"));
     assert!(text.contains("Next 1: code=inspect_exact_span target=span_investigation"));
     Ok(())
 }
@@ -388,12 +446,44 @@ async fn empty_metric_investigation_stays_truthful_and_actionable()
 }
 
 #[tokio::test]
+async fn unavailable_metric_description_stays_explicit_and_valid()
+-> Result<(), Box<dyn std::error::Error>> {
+    let server = MockServer::start().await;
+    let mut response = metric_response();
+    response["subject"]["description_status"] = serde_json::json!("unavailable");
+    response["subject"]["description"] = serde_json::Value::Null;
+    response["evidence"]["captured_fields"]
+        .as_array_mut()
+        .ok_or("captured fixture")?
+        .retain(|field| field != "metric.description");
+    let missing = response["evidence"]["missing_fields"]
+        .as_array_mut()
+        .ok_or("missing fixture")?;
+    missing.push(serde_json::json!("metric.description"));
+    missing.sort_by(|left, right| left.as_str().cmp(&right.as_str()));
+    Mock::given(method("GET"))
+        .and(path("/api/telemetry/metrics/investigation"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(response))
+        .mount(&server)
+        .await;
+    let command = metric_command(false)?;
+    let mut output = Vec::new();
+
+    execute_command(&command, &authenticated_env(&server), &mut output).await?;
+
+    let text = String::from_utf8(output)?;
+    assert!(text.contains("Metric definition: status=unavailable"));
+    assert!(text.contains("Missing: metric.description"));
+    Ok(())
+}
+
+#[tokio::test]
 async fn unknown_or_duplicate_versions_fail_closed_without_reflection()
 -> Result<(), Box<dyn std::error::Error>> {
     for (body, marker) in [
         (
             serde_json::json!({
-                "schema_version": 2,
+                "schema_version": 3,
                 "query": {},
                 "purpose": "hostile-version-marker",
                 "coverage": {},
@@ -405,13 +495,13 @@ async fn unknown_or_duplicate_versions_fail_closed_without_reflection()
         ),
         (
             String::from(
-                "{\"schema_version\":1,\"schema_version\":2,\"query\":{},\"purpose\":\"hostile-duplicate-marker\",\"coverage\":{},\"series\":[],\"next_action\":{}}",
+                "{\"schema_version\":2,\"schema_version\":3,\"query\":{},\"purpose\":\"hostile-duplicate-marker\",\"coverage\":{},\"series\":[],\"next_action\":{}}",
             ),
             "hostile-duplicate-marker",
         ),
         (
             String::from(
-                "{\"schema_version\":1,\"query\":{\"project_id\":\"hostile-nested-marker\",\"project_id\":\"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\"},\"purpose\":\"nested duplicate\",\"coverage\":{},\"series\":[],\"next_action\":{}}",
+                "{\"schema_version\":2,\"query\":{\"project_id\":\"hostile-nested-marker\",\"project_id\":\"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\"},\"purpose\":\"nested duplicate\",\"coverage\":{},\"series\":[],\"next_action\":{}}",
             ),
             "hostile-nested-marker",
         ),
@@ -536,6 +626,16 @@ async fn metric_explanation_rejects_contradictory_semantics_and_group_identity()
         "redacted": false,
         "truncated": false
     });
+    let mut captured_without_description = metric_response();
+    captured_without_description["subject"]["description"] = serde_json::Value::Null;
+    let mut uncaptured_with_description = metric_response();
+    uncaptured_with_description["subject"]["description_status"] =
+        serde_json::json!("not_captured");
+    let mut oversized_description = metric_response();
+    oversized_description["subject"]["description"] = serde_json::json!("M".repeat(1025));
+    let mut line_separator_description = metric_response();
+    line_separator_description["subject"]["description"] =
+        serde_json::json!("Duration of one\u{2028}server request.");
 
     for response in [
         contradictory_semantics,
@@ -549,6 +649,10 @@ async fn metric_explanation_rejects_contradictory_semantics_and_group_identity()
         missing_latest_sample,
         mismatched_latest_trace,
         incorrect_latest_leaf_receipt,
+        captured_without_description,
+        uncaptured_with_description,
+        oversized_description,
+        line_separator_description,
     ] {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
@@ -684,13 +788,13 @@ fn authenticated_env(server: &MockServer) -> CliEnvironment {
 
 fn metric_response() -> serde_json::Value {
     serde_json::json!({
-        "schema_version": 1,
+        "schema_version": 2,
         "subject": {
             "kind": "metric",
             "project_id": PROJECT_ID,
             "name": "http.server.duration",
-            "description_status": "not_captured",
-            "description": null
+            "description_status": "captured",
+            "description": "Duration of one completed server request."
         },
         "query": {
             "project_id": PROJECT_ID,
@@ -887,6 +991,7 @@ fn metric_response() -> serde_json::Value {
             "captured_fields": [
                 "metric.current_window_coverage",
                 "metric.deployment_overlays",
+                "metric.description",
                 "metric.identity",
                 "metric.latest_sample",
                 "metric.latest_sample.kind",
@@ -904,7 +1009,6 @@ fn metric_response() -> serde_json::Value {
                 "metric.trace_exemplars"
             ],
             "missing_fields": [
-                "metric.description",
                 "metric.latest_sample.context",
                 "metric.latest_sample.metadata"
             ],
@@ -943,6 +1047,8 @@ fn metric_response() -> serde_json::Value {
 
 fn empty_metric_response() -> serde_json::Value {
     let mut response = metric_response();
+    response["subject"]["description_status"] = serde_json::json!("not_captured");
+    response["subject"]["description"] = serde_json::Value::Null;
     response["analysis"] = serde_json::json!({
         "status": "no_samples",
         "causality": "evidence_only",

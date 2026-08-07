@@ -2397,6 +2397,7 @@ fn metric_explain_path(metric: &ExplainMetricTarget) -> String {
             ("release", metric.release.as_deref()),
             ("environment", metric.environment.as_deref()),
             ("series_limit", series_limit.as_deref()),
+            ("response_version", Some("2")),
         ],
     )
 }
