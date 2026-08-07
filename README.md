@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="https://raw.githubusercontent.com/LogBrewCo/sdk/895b55798587a9eca5cabf8ebc2bbe8b4d55bd12/assets/brand/logbrew-logo-transparent-512.png" alt="LogBrew" width="128">
+</p>
+
 # LogBrew CLI
 
 Public command-line interface for LogBrew.
