@@ -550,14 +550,19 @@ Metric explanations preserve gauge/counter/histogram semantics, compare the imme
 Issue explanations use the backend-recommended context-rich retained occurrence by default. Use \
                             --occurrence first, latest, recommended, or a retained occurrence UUID \
                             from a previous occurrence receipt to inspect another exact event. JSON emits the exact validated \
-                            schema-version-2 issue response with explicit selection and candidate \
-                            coverage.
+                            schema-version-4 issue response with explicit selection, candidate \
+                            coverage, status activity, server-observed regression evidence, a \
+                            zero-filled occurrence trend, and bounded release, environment, service, and SDK distributions.
 Metric explanations preserve gauge, delta-counter, histogram, and cumulative-stream semantics; \
                             they never invent reset-unsafe rates.
 Release investigation requires the exact project, environment, and service identity returned by \
                             logbrew read releases. Release actions separate approximate typed-user, \
                             anonymous-subject, and session cardinalities from exact subject-kind \
-                            capture coverage; legacy, missing, and historical events remain visible.
+                            capture coverage; legacy, missing, and historical events remain visible. \
+                            The newest exact deployment boundary is aligned to the prior successful \
+                            distinct release when captured, with raw signal-count deltas, trace error-rate \
+                            direction, observation windows, and explicit capture/retry guidance. These \
+                            observations are not traffic-normalized and never claim deployment causality.
 Pasted UUID/issue_* values are treated as issues; 32-hex/trace_* values are treated as traces.";
 
 /// Product-analytics command overview.
@@ -811,16 +816,18 @@ Usage:
   logbrew investigate issue <issue_id> [--occurrence <recommended|first|latest|occurrence_id>] \
                          [--json]
 
-Reads one schema-version-2 bounded issue investigation with explicit selected, first, latest, and \
+Reads one schema-version-4 bounded issue investigation with explicit selected, first, latest, and \
 recommended occurrence receipts; exception, frames, breadcrumbs, typed runtime context, honest \
 cause and fix assessments, approximate affected-user \
 coverage and limitations, trace, related logs, actions, metric exemplars, release scope, evidence \
-completeness, and prioritized next actions.
+completeness, bounded status activity and server-observed regression evidence, and prioritized next \
+actions. It also returns an exact zero-filled occurrence trend and bounded release, environment, \
+service, and SDK distributions with explicit availability and truncation receipts.
 The default is the bounded context-rich recommendation. --occurrence accepts first, latest, \
 recommended, or an exact retained occurrence UUID copied from a previous occurrence receipt.
 The command is read-only and uses the same contract as logbrew explain issue.
 Human output is bounded and marks application telemetry as untrusted evidence. JSON emits the exact \
-validated schema-version-2 response for AI agents.";
+validated schema-version-4 response for AI agents.";
 
 /// Apple native debug-artifact command help text.
 const NATIVE_DEBUG_ARTIFACTS_HELP: &str = "\

@@ -18,7 +18,7 @@ async fn human_issue_explanation_surfaces_fix_context_timeline_and_evidence()
         .and(path(format!(
             "/api/telemetry/issues/{ISSUE_ID}/investigation"
         )))
-        .and(query_param("response_version", "2"))
+        .and(query_param("response_version", "4"))
         .and(query_param("selection", "recommended"))
         .respond_with(ResponseTemplate::new(200).set_body_json(issue_response()))
         .mount(&server)
@@ -33,6 +33,9 @@ async fn human_issue_explanation_surfaces_fix_context_timeline_and_evidence()
         "Issue cccccccc-cccc-4ccc-8ccc-cccccccccccc unresolved severity=error",
         "Occurrence selection: requested=recommended reason=context_rich_recent_occurrence \
          selected=dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+        "Lifecycle: persisted=unresolved effective=unresolved",
+        "Regression: status=not_detected reason=no_resolution_recorded",
+        "Occurrence analysis: status=complete retained=3 trend=3 distributions=4/4",
         "Exception: PaymentError mechanism=unhandled handled=false",
         "Frame: module=checkout function=charge file=payment.rs line=42 column=7 in_app=true",
         "Breadcrumb: at=2026-08-03T11:04:55Z category=ui.click",
@@ -65,7 +68,7 @@ async fn human_release_explanation_connects_health_sdk_and_every_signal()
         .and(query_param("release", "checkout@1.2.3"))
         .and(query_param("environment", "production"))
         .and(query_param("service_name", "checkout-api"))
-        .and(query_param("response_version", "2"))
+        .and(query_param("response_version", "3"))
         .respond_with(ResponseTemplate::new(200).set_body_json(release_response()))
         .mount(&server)
         .await;
@@ -88,8 +91,14 @@ async fn human_release_explanation_connects_health_sdk_and_every_signal()
         "Action subject coverage: index_version=1 typed_user_events=2 anonymous_events=1 \
          legacy_unknown_events=0 missing_events=1 historical_unindexed_events=0",
         "Metric: name=checkout.duration kind=histogram temporality=delta latest=240 min=120 max=300 average=220 events=3",
-        "Timeline item: at=2026-08-03T11:05:00Z kind=issue summary=Payment failed",
-        "Comparison: status=unavailable reason=deployment_boundary_not_captured",
+        "Timeline item: at=2026-08-03T09:59:00Z kind=subject_deployment_finished summary=subject deployment finished",
+        "Comparison: status=available reason=deployment_comparison_available assessment=regressed",
+        "Subject deployment: id=deploy-123 status=succeeded",
+        "Previous deployment: id=deploy-122 release=checkout@1.2.2 status=succeeded",
+        "Previous release: checkout@1.2.2 issues=0 logs=2 spans=4 actions=6 metrics=2",
+        "Observed count change (current - previous): issues=+1 logs=-1 spans=-2 actions=-2 metrics=+1",
+        "Trace error-rate change: current_bps=10000 previous_bps=0 delta_bps=+10000 assessment=regressed",
+        "Comparison limits: raw_counts_not_rate_normalized observation_windows_differ deployment_correlation_not_causation",
         "Next 1: code=inspect_release_issue target=issue_investigation",
     ] {
         assert!(
@@ -101,13 +110,13 @@ async fn human_release_explanation_connects_health_sdk_and_every_signal()
 }
 
 #[tokio::test]
-async fn built_binary_release_preserves_validated_version_2_json()
+async fn built_binary_release_preserves_validated_version_3_json()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
     let response = release_response();
     Mock::given(method("GET"))
         .and(path("/api/telemetry/releases/investigation"))
-        .and(query_param("response_version", "2"))
+        .and(query_param("response_version", "3"))
         .and(header("authorization", "Bearer test-token"))
         .respond_with(ResponseTemplate::new(200).set_body_json(response.clone()))
         .expect(1)
@@ -176,7 +185,43 @@ async fn release_explanation_rejects_contradictory_or_unversioned_subject_receip
     missing_boundary_action["next_actions"]
         .as_array_mut()
         .ok_or("next-actions fixture")?
-        .retain(|action| action["code"] != "capture_deployment_boundary");
+        .push(serde_json::json!({
+            "code": "capture_deployment_boundary",
+            "target": "release_instrumentation",
+            "reason": "comparison_unavailable",
+            "issue_id": null,
+            "trace_id": null
+        }));
+    let mut wrong_deployment_project = release_response();
+    wrong_deployment_project["comparison"]["details"]["subject_deployment"]["project_id"] =
+        serde_json::json!("dddddddd-dddd-4ddd-8ddd-dddddddddddd");
+    let mut same_previous_release = release_response();
+    same_previous_release["comparison"]["details"]["previous_deployment"]["release"] =
+        serde_json::json!("checkout@1.2.3");
+    let mut overlapping_deployments = release_response();
+    overlapping_deployments["comparison"]["details"]["previous_deployment"]["finished_at"] =
+        serde_json::json!("2026-08-03T10:01:00Z");
+    let mut wrong_count_delta = release_response();
+    wrong_count_delta["comparison"]["details"]["changes"]["observed_log_count_delta"] =
+        serde_json::json!(0);
+    let mut wrong_trace_rate = release_response();
+    wrong_trace_rate["comparison"]["details"]["previous_release"]["trace_health"]["error_rate_basis_points"] =
+        serde_json::json!(1);
+    let mut wrong_assessment = release_response();
+    wrong_assessment["comparison"]["details"]["assessment"] = serde_json::json!("improved");
+    let mut duplicate_limitation = release_response();
+    duplicate_limitation["comparison"]["details"]["limitations"]
+        .as_array_mut()
+        .ok_or("limitations fixture")?
+        .push(serde_json::json!("deployment_correlation_not_causation"));
+    let mut unknown_limitation = release_response();
+    unknown_limitation["comparison"]["details"]["limitations"][0] =
+        serde_json::json!("traffic_normalized");
+    let mut wrong_boundary_timeline = release_response();
+    wrong_boundary_timeline["timeline"]["items"][2]["occurred_at"] =
+        serde_json::json!("2026-08-03T10:00:01Z");
+    let mut unknown_comparison_field = release_response();
+    unknown_comparison_field["comparison"]["confidence"] = serde_json::json!("high");
 
     for response in [
         contradictory_partition,
@@ -188,6 +233,16 @@ async fn release_explanation_rejects_contradictory_or_unversioned_subject_receip
         legacy_priority,
         mismatched_release_action,
         missing_boundary_action,
+        wrong_deployment_project,
+        same_previous_release,
+        overlapping_deployments,
+        wrong_count_delta,
+        wrong_trace_rate,
+        wrong_assessment,
+        duplicate_limitation,
+        unknown_limitation,
+        wrong_boundary_timeline,
+        unknown_comparison_field,
     ] {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
@@ -207,6 +262,32 @@ async fn release_explanation_rejects_contradictory_or_unversioned_subject_receip
             logbrew_cli::RuntimeError::ExplainResponseInvalid
         ));
         assert!(output.is_empty());
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn release_v3_accepts_exact_capture_retry_and_partial_trace_recovery_states()
+-> Result<(), Box<dyn std::error::Error>> {
+    for response in [
+        release_without_subject_deployment(),
+        release_with_deployment_read_unavailable(),
+        release_with_previous_trace_unavailable(),
+    ] {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/telemetry/releases/investigation"))
+            .and(query_param("response_version", "3"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(response.clone()))
+            .mount(&server)
+            .await;
+        let command = release_command(true)?;
+        let mut output = Vec::new();
+
+        execute_command(&command, &authenticated_env(&server), &mut output).await?;
+
+        let actual: serde_json::Value = serde_json::from_slice(output.as_slice())?;
+        assert_eq!(actual, response);
     }
     Ok(())
 }
@@ -1198,7 +1279,7 @@ fn issue_response() -> serde_json::Value {
         "context_captured": true
     });
     serde_json::json!({
-        "schema_version": 2,
+        "schema_version": 4,
         "subject": {
             "kind": "issue",
             "id": ISSUE_ID,
@@ -1288,6 +1369,22 @@ fn issue_response() -> serde_json::Value {
                 "candidate_window_truncated": false
             }
         },
+        "lifecycle": {
+            "persisted_status": "unresolved",
+            "effective_status": "unresolved",
+            "activity": {
+                "status": "available",
+                "changes": [],
+                "truncated": false
+            },
+            "regression": {
+                "status": "not_detected",
+                "reason": "no_resolution_recorded",
+                "resolution_changed_at": null,
+                "first_reappeared_occurrence": null
+            }
+        },
+        "occurrence_analysis": issue_occurrence_analysis(),
         "cause": {
             "status": "evidence_only",
             "summary": null,
@@ -1364,9 +1461,16 @@ fn issue_response() -> serde_json::Value {
             "captured_fields": [
                 "issue.exception",
                 "issue.stack_frames",
+                "lifecycle.regression",
+                "lifecycle.status_history",
                 "occurrence.boundaries",
+                "occurrence.distribution.environment",
+                "occurrence.distribution.release",
+                "occurrence.distribution.sdk",
+                "occurrence.distribution.service",
                 "occurrence.recommendation",
-                "occurrence.selection"
+                "occurrence.selection",
+                "occurrence.trend"
             ],
             "missing_fields": ["issue.attachment"],
             "redacted_fields": [],
@@ -1381,9 +1485,91 @@ fn issue_response() -> serde_json::Value {
     })
 }
 
+fn issue_occurrence_analysis() -> serde_json::Value {
+    let boundaries = [
+        "2026-08-03T10:00:00Z",
+        "2026-08-03T10:05:00Z",
+        "2026-08-03T10:10:00Z",
+        "2026-08-03T10:15:00Z",
+        "2026-08-03T10:20:00Z",
+        "2026-08-03T10:25:00Z",
+        "2026-08-03T10:30:00Z",
+        "2026-08-03T10:35:00Z",
+        "2026-08-03T10:40:00Z",
+        "2026-08-03T10:45:00Z",
+        "2026-08-03T10:50:00Z",
+        "2026-08-03T10:55:00Z",
+        "2026-08-03T11:00:00Z",
+        "2026-08-03T11:05:00Z",
+        "2026-08-03T11:10:00Z",
+    ];
+    let counts = [1_u64, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2];
+    let buckets = counts
+        .iter()
+        .enumerate()
+        .map(|(index, count)| {
+            serde_json::json!({
+                "bucket_start": boundaries[index],
+                "bucket_end": boundaries[index + 1],
+                "occurrence_count": count
+            })
+        })
+        .collect::<Vec<_>>();
+    serde_json::json!({
+        "status": "complete",
+        "coverage": {
+            "retained_occurrences": 3,
+            "trend_occurrences": 3,
+            "available_distribution_count": 4,
+            "expected_distribution_count": 4,
+            "max_buckets": 30,
+            "max_values_per_dimension": 10
+        },
+        "trend": {
+            "scope_start": "2026-08-03T10:00:00Z",
+            "scope_end": "2026-08-03T11:05:00Z",
+            "interval_seconds": 300,
+            "buckets": buckets
+        },
+        "distributions": [
+            {
+                "dimension": "release",
+                "distinct_value_count": 2,
+                "values": [
+                    {"value": "checkout@1.2.3", "version": null, "occurrence_count": 2, "share_basis_points": 6666},
+                    {"value": "checkout@1.2.1", "version": null, "occurrence_count": 1, "share_basis_points": 3333}
+                ],
+                "other_occurrence_count": 0
+            },
+            {
+                "dimension": "environment",
+                "distinct_value_count": 1,
+                "values": [{"value": "production", "version": null, "occurrence_count": 3, "share_basis_points": 10000}],
+                "other_occurrence_count": 0
+            },
+            {
+                "dimension": "service",
+                "distinct_value_count": 1,
+                "values": [{"value": "checkout-api", "version": null, "occurrence_count": 3, "share_basis_points": 10000}],
+                "other_occurrence_count": 0
+            },
+            {
+                "dimension": "sdk",
+                "distinct_value_count": 2,
+                "values": [
+                    {"value": "logbrew-rust", "version": "1.2.3", "occurrence_count": 2, "share_basis_points": 6666},
+                    {"value": "logbrew-rust", "version": "1.2.1", "occurrence_count": 1, "share_basis_points": 3333}
+                ],
+                "other_occurrence_count": 0
+            }
+        ],
+        "limitations": []
+    })
+}
+
 fn release_response() -> serde_json::Value {
     serde_json::json!({
-        "schema_version": 2,
+        "schema_version": 3,
         "subject": {
             "kind": "release",
             "project_id": PROJECT_ID,
@@ -1399,7 +1585,7 @@ fn release_response() -> serde_json::Value {
             "last_seen_at": "2026-08-03T11:10:00Z",
             "trace_health_status": "available",
             "trace_health": {
-                "status": "failures_observed",
+                "status": "errors_observed",
                 "trace_count": 1,
                 "error_trace_count": 1,
                 "error_rate_basis_points": 10000
@@ -1505,27 +1691,162 @@ fn release_response() -> serde_json::Value {
         },
         "timeline": {
             "items": [{
+                "kind": "previous_deployment_finished",
+                "occurred_at": "2026-08-01T08:57:00Z",
+                "summary": "previous successful deployment finished",
+                "issue_id": null,
+                "trace_id": null
+            }, {
+                "kind": "subject_deployment_started",
+                "occurred_at": "2026-08-03T09:58:00Z",
+                "summary": "subject deployment started",
+                "issue_id": null,
+                "trace_id": null
+            }, {
+                "kind": "subject_deployment_finished",
+                "occurred_at": "2026-08-03T09:59:00Z",
+                "summary": "subject deployment finished",
+                "issue_id": null,
+                "trace_id": null
+            }, {
+                "kind": "release_first_seen",
+                "occurred_at": "2026-08-03T10:00:00Z",
+                "summary": "release telemetry first observed",
+                "issue_id": null,
+                "trace_id": null
+            }, {
+                "kind": "action",
+                "occurred_at": "2026-08-03T11:04:57Z",
+                "summary": "checkout.submit",
+                "issue_id": null,
+                "trace_id": TRACE_ID
+            }, {
+                "kind": "trace",
+                "occurred_at": "2026-08-03T11:04:58Z",
+                "summary": "POST /checkout",
+                "issue_id": null,
+                "trace_id": TRACE_ID
+            }, {
+                "kind": "log",
+                "occurred_at": "2026-08-03T11:04:59Z",
+                "summary": "processor rejected charge",
+                "issue_id": null,
+                "trace_id": TRACE_ID
+            }, {
                 "kind": "issue",
                 "occurred_at": "2026-08-03T11:05:00Z",
                 "summary": "Payment failed",
                 "issue_id": ISSUE_ID,
                 "trace_id": TRACE_ID
+            }, {
+                "kind": "metric",
+                "occurred_at": "2026-08-03T11:05:01Z",
+                "summary": "checkout.duration",
+                "issue_id": null,
+                "trace_id": TRACE_ID
+            }, {
+                "kind": "release_last_seen",
+                "occurred_at": "2026-08-03T11:10:00Z",
+                "summary": "release telemetry last observed",
+                "issue_id": null,
+                "trace_id": null
             }],
             "truncated": false
         },
         "comparison": {
-            "status": "unavailable",
-            "reason": "deployment_boundary_not_captured"
+            "status": "available",
+            "reason": "deployment_comparison_available",
+            "details": {
+                "subject_deployment": {
+                    "id": "11111111-1111-4111-8111-111111111111",
+                    "deployment_id": "deploy-123",
+                    "project_id": PROJECT_ID,
+                    "release": "checkout@1.2.3",
+                    "environment": "production",
+                    "service_name": "checkout-api",
+                    "status": "succeeded",
+                    "started_at": "2026-08-03T09:58:00Z",
+                    "finished_at": "2026-08-03T09:59:00Z",
+                    "commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                },
+                "previous_deployment": {
+                    "id": "22222222-2222-4222-8222-222222222222",
+                    "deployment_id": "deploy-122",
+                    "project_id": PROJECT_ID,
+                    "release": "checkout@1.2.2",
+                    "environment": "production",
+                    "service_name": "checkout-api",
+                    "status": "succeeded",
+                    "started_at": "2026-08-01T08:55:00Z",
+                    "finished_at": "2026-08-01T08:57:00Z",
+                    "commit_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                },
+                "previous_release": {
+                    "release": "checkout@1.2.2",
+                    "environment": "production",
+                    "service_name": "checkout-api",
+                    "issue_count": 0,
+                    "log_count": 2,
+                    "trace_span_count": 4,
+                    "action_count": 6,
+                    "metric_count": 2,
+                    "first_seen_at": "2026-08-01T08:57:00Z",
+                    "last_seen_at": "2026-08-03T09:57:00Z",
+                    "trace_health_status": "available",
+                    "trace_health": {
+                        "status": "no_errors_observed",
+                        "trace_count": 2,
+                        "error_trace_count": 0,
+                        "error_rate_basis_points": 0
+                    }
+                },
+                "changes": {
+                    "observed_issue_count_delta": 1,
+                    "observed_log_count_delta": -1,
+                    "observed_trace_span_count_delta": -2,
+                    "observed_action_count_delta": -2,
+                    "observed_metric_count_delta": 1,
+                    "current_trace_error_rate_basis_points": 10000,
+                    "previous_trace_error_rate_basis_points": 0,
+                    "trace_error_rate_delta_basis_points": 10000
+                },
+                "assessment": "regressed",
+                "limitations": [
+                    "raw_counts_not_rate_normalized",
+                    "observation_windows_differ",
+                    "deployment_correlation_not_causation"
+                ]
+            }
         },
         "evidence": {
             "status": "partial",
             "captured_fields": [
+                "release.actions",
                 "release.actions.subject_coverage",
+                "release.deployment_comparison",
+                "release.deployment_comparison.previous_trace_health",
+                "release.identity",
                 "release.issues",
+                "release.logs",
+                "release.metrics",
+                "release.observed_window",
+                "release.sdk_coverage",
+                "release.signal_counts",
+                "release.timeline",
+                "release.trace_health",
                 "release.traces"
             ],
-            "missing_fields": ["deployment.boundary"],
-            "redacted_fields": [],
+            "missing_fields": [],
+            "redacted_fields": [
+                "release.actions.distinct_id",
+                "release.actions.properties",
+                "release.actions.session_id",
+                "release.issues.attributes",
+                "release.issues.stack_trace",
+                "release.logs.attributes",
+                "release.metrics.attributes",
+                "release.traces.attributes"
+            ],
             "truncated_fields": []
         },
         "next_actions": [{
@@ -1558,12 +1879,134 @@ fn release_response() -> serde_json::Value {
             "reason": "metric_evidence_observed",
             "issue_id": null,
             "trace_id": null
-        }, {
-            "code": "capture_deployment_boundary",
-            "target": "release_instrumentation",
-            "reason": "comparison_unavailable",
-            "issue_id": null,
-            "trace_id": null
         }]
     })
+}
+
+fn release_without_subject_deployment() -> serde_json::Value {
+    let mut response = release_response();
+    response["comparison"] = serde_json::json!({
+        "status": "not_found",
+        "reason": "subject_deployment_not_found",
+        "details": {
+            "subject_deployment": null,
+            "previous_deployment": null,
+            "previous_release": null,
+            "changes": null,
+            "assessment": "not_determined",
+            "limitations": [
+                "raw_counts_not_rate_normalized",
+                "observation_windows_differ",
+                "deployment_correlation_not_causation"
+            ]
+        }
+    });
+    remove_deployment_timeline_items(&mut response);
+    set_missing_comparison_receipts(&mut response);
+    push_release_action(
+        &mut response,
+        "capture_deployment_boundary",
+        "release_instrumentation",
+        "comparison_unavailable",
+    );
+    response
+}
+
+fn release_with_deployment_read_unavailable() -> serde_json::Value {
+    let mut response = release_without_subject_deployment();
+    response["comparison"]["status"] = serde_json::json!("unavailable");
+    response["comparison"]["reason"] = serde_json::json!("deployment_read_unavailable");
+    let actions = response["next_actions"]
+        .as_array_mut()
+        .expect("next actions fixture");
+    let _capture = actions.pop();
+    push_release_action(
+        &mut response,
+        "retry_unavailable_evidence",
+        "release_investigation",
+        "related_evidence_unavailable",
+    );
+    response
+}
+
+fn release_with_previous_trace_unavailable() -> serde_json::Value {
+    let mut response = release_response();
+    response["comparison"]["details"]["previous_release"]["trace_health_status"] =
+        serde_json::json!("unavailable");
+    response["comparison"]["details"]["previous_release"]["trace_health"] = serde_json::json!({
+        "status": "unknown",
+        "trace_count": 0,
+        "error_trace_count": 0,
+        "error_rate_basis_points": 0
+    });
+    response["comparison"]["details"]["changes"]["previous_trace_error_rate_basis_points"] =
+        serde_json::Value::Null;
+    response["comparison"]["details"]["changes"]["trace_error_rate_delta_basis_points"] =
+        serde_json::Value::Null;
+    response["comparison"]["details"]["assessment"] = serde_json::json!("not_determined");
+    response["comparison"]["details"]["limitations"]
+        .as_array_mut()
+        .expect("limitations fixture")
+        .push(serde_json::json!("previous_trace_population_unavailable"));
+    let captured = response["evidence"]["captured_fields"]
+        .as_array_mut()
+        .expect("captured fixture");
+    captured.retain(|field| field != "release.deployment_comparison.previous_trace_health");
+    response["evidence"]["missing_fields"] =
+        serde_json::json!(["release.deployment_comparison.previous_trace_health"]);
+    push_release_action(
+        &mut response,
+        "retry_unavailable_evidence",
+        "release_investigation",
+        "related_evidence_unavailable",
+    );
+    response
+}
+
+fn remove_deployment_timeline_items(response: &mut serde_json::Value) {
+    response["timeline"]["items"]
+        .as_array_mut()
+        .expect("timeline fixture")
+        .retain(|item| {
+            !matches!(
+                item["kind"].as_str(),
+                Some(
+                    "previous_deployment_finished"
+                        | "subject_deployment_started"
+                        | "subject_deployment_finished"
+                )
+            )
+        });
+}
+
+fn set_missing_comparison_receipts(response: &mut serde_json::Value) {
+    response["evidence"]["captured_fields"]
+        .as_array_mut()
+        .expect("captured fixture")
+        .retain(|field| {
+            !matches!(
+                field.as_str(),
+                Some(
+                    "release.deployment_comparison"
+                        | "release.deployment_comparison.previous_trace_health"
+                )
+            )
+        });
+    response["evidence"]["missing_fields"] = serde_json::json!([
+        "release.deployment_comparison",
+        "release.deployment_comparison.previous_trace_health"
+    ]);
+}
+
+fn push_release_action(response: &mut serde_json::Value, code: &str, target: &str, reason: &str) {
+    response["next_actions"]
+        .as_array_mut()
+        .expect("next actions fixture")
+        .push(serde_json::json!({
+            "code": code,
+            "target": target,
+            "reason": reason,
+            "issue_id": null,
+            "trace_id": null
+        }));
 }
