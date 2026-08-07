@@ -27,6 +27,8 @@ require_command python3
 require_command ruby
 
 bash scripts/confidentiality-check.sh
+python3 scripts/brand_assets.py --check
+python3 scripts/test-brand-assets.py
 python3 scripts/check-github-hosted-runners.py
 if [[ "${LOGBREW_CHECK_ALL_SELF_TEST:-1}" != "0" ]]; then
   bash scripts/test-check-all.sh

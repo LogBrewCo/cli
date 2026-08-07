@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "canonicalSource": {
+    "repository": "https://github.com/LogBrewCo/sdk",
+    "revision": "895b55798587a9eca5cabf8ebc2bbe8b4d55bd12",
+    "appIcon": {
+      "path": "assets/brand/app-icon-256.png",
+      "sha256": "4547f1d32a87f90177bd430b70b4471e2aa5aceb99181c039e8233acbc561152",
+      "width": 256,
+      "height": 256,
+      "colorType": "rgb",
+      "presentation": "espresso_app_icon"
+    },
+    "inlineLogo": {
+      "path": "assets/brand/logbrew-logo-transparent-512.png",
+      "sha256": "a98dd05599862a0ba52c065c83fc60d386d04fa8b1efe46d11b0b6d4b5c4c8bc",
+      "width": 512,
+      "height": 512,
+      "colorType": "rgba",
+      "presentation": "transparent_inline"
+    }
+  },
+  "outputs": [
+    {
+      "path": "wix/Product.ico",
+      "sha256": "3c63001066bcf544ad102a6dcf47b56c027147039a2850b5b5eaed4f3b3f372b",
+      "kind": "ico_png",
+      "width": 256,
+      "height": 256,
+      "presentation": "espresso_app_icon"
+    }
+  ]
+}
