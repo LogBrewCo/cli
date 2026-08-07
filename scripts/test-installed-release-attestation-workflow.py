@@ -51,10 +51,10 @@ class InstalledReleaseAttestationWorkflowTests(unittest.TestCase):
     def test_dispatch_inputs_bind_the_exact_release(self) -> None:
         workflow = self.workflow()
         for name, value in [
-            ("tag", "v0.1.34"),
-            ("version", "0.1.34"),
-            ("source_commit", "f85d427df4d682e4fd3b55580d0ee7fb8e05d458"),
-            ("release_run", "31174598511"),
+            ("tag", "v0.1.35"),
+            ("version", "0.1.35"),
+            ("source_commit", "619e944868215382af119938e729e1b490b02a27"),
+            ("release_run", "31191732277"),
         ]:
             with self.subTest(name=name):
                 self.assertRegex(
@@ -215,7 +215,7 @@ class InstalledReleaseAttestationWorkflowTests(unittest.TestCase):
             workflow.count("actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"),
             2,
         )
-        self.assertIn("ref: f85d427df4d682e4fd3b55580d0ee7fb8e05d458", workflow)
+        self.assertIn("ref: 619e944868215382af119938e729e1b490b02a27", workflow)
         self.assertIn("path: released-source", workflow)
         self.assertEqual(workflow.count("persist-credentials: false"), 2)
         self.assertIn(
