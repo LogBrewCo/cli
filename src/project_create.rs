@@ -1623,7 +1623,7 @@ fn normalized_origin(base_url: &str) -> Result<String, RuntimeError> {
     Ok(url.as_str().trim_end_matches('/').to_owned())
 }
 
-/// Rejects symlinks while walking the user-owned path portion.
+/// Rejects symlinks before the first non-caller-owned ancestor.
 fn reject_symlink_ancestors(
     path: &std::path::Path,
     expected_owner: u64,
@@ -1631,11 +1631,11 @@ fn reject_symlink_ancestors(
     for ancestor in path.ancestors() {
         let metadata =
             std::fs::symlink_metadata(ancestor).map_err(|_| invalid_key_destination())?;
-        if metadata.file_type().is_symlink() {
-            return Err(invalid_key_destination());
-        }
         if owner_id(&metadata) != expected_owner {
             break;
+        }
+        if metadata.file_type().is_symlink() {
+            return Err(invalid_key_destination());
         }
     }
     Ok(())
