@@ -218,6 +218,60 @@ async fn project_create_posts_exact_request_then_persists_before_safe_json()
     Ok(())
 }
 
+#[cfg(target_os = "macos")]
+#[tokio::test(flavor = "multi_thread")]
+async fn built_binary_accepts_private_destination_below_system_tmp_symlink()
+-> Result<(), Box<dyn std::error::Error>> {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/projects"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(success_response()))
+        .mount(&server)
+        .await;
+    let fixture = Fixture::new_below(std::path::Path::new("/tmp"), "system-tmp-symlink")?;
+
+    let process = std::process::Command::new(env!("CARGO_BIN_EXE_logbrew"))
+        .env_clear()
+        .env("HOME", fixture.home.as_path())
+        .env("LOGBREW_API_URL", server.uri())
+        .env("LOGBREW_TOKEN", "account-token")
+        .current_dir(fixture.root.as_path())
+        .args([
+            "projects",
+            "create",
+            "Checkout API",
+            "--runtime",
+            "rust",
+            "--environment",
+            "production",
+            "--ingest-key-file",
+            fixture.key_file.to_string_lossy().as_ref(),
+            "--json",
+        ])
+        .output()?;
+
+    assert!(
+        process.status.success(),
+        "built binary failed: {}",
+        String::from_utf8_lossy(process.stderr.as_slice())
+    );
+    assert!(process.stderr.is_empty());
+    let text = String::from_utf8(process.stdout)?;
+    let body: serde_json::Value = serde_json::from_str(text.as_str())?;
+    assert_eq!(body["status"], "created");
+    assert!(!text.contains(ONE_TIME_TOKEN));
+    assert!(!text.contains(fixture.key_file.to_string_lossy().as_ref()));
+    assert!(!text.contains(server.uri().as_str()));
+    assert_eq!(
+        std::fs::read_to_string(fixture.key_file.as_path())?,
+        ONE_TIME_TOKEN
+    );
+    assert_private_file(fixture.key_file.as_path())?;
+    assert_eq!(received_requests(&server).await?.len(), 1);
+    std::fs::remove_dir_all(fixture.root.as_path())?;
+    Ok(())
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn exact_retry_reuses_persisted_body_and_idempotency_key()
@@ -821,10 +875,14 @@ struct Fixture {
 
 impl Fixture {
     fn new(label: &str) -> Result<Self, Box<dyn std::error::Error>> {
+        Self::new_below(std::env::temp_dir().as_path(), label)
+    }
+
+    fn new_below(base: &std::path::Path, label: &str) -> Result<Self, Box<dyn std::error::Error>> {
         let nonce = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)?
             .as_nanos();
-        let root = std::env::temp_dir().join(format!(
+        let root = base.join(format!(
             "logbrew-project-create-{label}-{}-{nonce}",
             std::process::id()
         ));
