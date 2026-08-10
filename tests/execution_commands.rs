@@ -10,6 +10,7 @@ use logbrew_cli::{
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_tungstenite::accept_hdr_async;
 use tokio_tungstenite::tungstenite::Message;
+type TestResult = Result<(), Box<dyn std::error::Error>>;
 
 #[tokio::test]
 async fn authenticated_reads_without_token_explain_login_step() {
@@ -101,26 +102,15 @@ async fn login_no_open_human_prints_browser_state_and_next_step() {
 }
 
 #[tokio::test]
-async fn setup_json_detects_node_project_without_claiming_install()
--> Result<(), Box<dyn std::error::Error>> {
+async fn setup_json_detects_node_project_without_claiming_install() -> TestResult {
     let project_dir = setup_fixture("setup-node")?;
     fs::write(project_dir.join("package.json"), "{}")?;
-    let env = CliEnvironment {
-        base_url: "https://example.test".to_owned(),
-        token: None,
-        home: Some(std::env::temp_dir().join("logbrew-setup-node-home")),
-        cwd: Some(project_dir),
-    };
 
     for args in [
         &["logbrew", "setup", "--auto", "--yes", "--json"][..],
         &["logbrew", "--json", "setup", "--auto", "--yes"][..],
     ] {
-        let command = parse_command(args.iter().copied())?;
-        let mut output = Vec::new();
-
-        execute_command(&command, &env, &mut output).await?;
-
+        let output = setup_output(args, project_dir.as_path()).await?;
         let body: serde_json::Value = serde_json::from_slice(output.as_slice())?;
         assert_eq!(body["ok"], true);
         assert_eq!(body["auto"], true);
@@ -139,23 +129,12 @@ async fn setup_json_detects_node_project_without_claiming_install()
 }
 
 #[tokio::test]
-async fn setup_json_detects_parent_project_when_run_from_subdirectory()
--> Result<(), Box<dyn std::error::Error>> {
+async fn setup_json_detects_parent_project_when_run_from_subdirectory() -> TestResult {
     let project_dir = setup_fixture("setup-parent-node")?;
     fs::write(project_dir.join("package.json"), "{}")?;
     let source_dir = project_dir.join("src");
     fs::create_dir_all(source_dir.as_path())?;
-    let command = parse_command(["logbrew", "setup", "--json"])?;
-    let env = CliEnvironment {
-        base_url: "https://example.test".to_owned(),
-        token: None,
-        home: Some(std::env::temp_dir().join("logbrew-setup-parent-node-home")),
-        cwd: Some(source_dir),
-    };
-    let mut output = Vec::new();
-
-    execute_command(&command, &env, &mut output).await?;
-
+    let output = setup_output(&["logbrew", "setup", "--json"], source_dir.as_path()).await?;
     let body: serde_json::Value = serde_json::from_slice(output.as_slice())?;
     assert_eq!(body["ok"], true);
     assert_eq!(body["install_ready"], false);
@@ -166,20 +145,10 @@ async fn setup_json_detects_parent_project_when_run_from_subdirectory()
 }
 
 #[tokio::test]
-async fn setup_json_detects_xcodegen_ios_project() -> Result<(), Box<dyn std::error::Error>> {
+async fn setup_json_detects_xcodegen_ios_project() -> TestResult {
     let project_dir = setup_fixture("setup-xcodegen-ios")?;
     fs::write(project_dir.join("project.yml"), "name: Checkout\n")?;
-    let command = parse_command(["logbrew", "setup", "--json"])?;
-    let env = CliEnvironment {
-        base_url: "https://example.test".to_owned(),
-        token: None,
-        home: Some(std::env::temp_dir().join("logbrew-setup-xcodegen-ios-home")),
-        cwd: Some(project_dir),
-    };
-    let mut output = Vec::new();
-
-    execute_command(&command, &env, &mut output).await?;
-
+    let output = setup_output(&["logbrew", "setup", "--json"], project_dir.as_path()).await?;
     let body: serde_json::Value = serde_json::from_slice(output.as_slice())?;
     assert_eq!(body["ok"], true);
     assert_eq!(body["install_ready"], true);
@@ -208,46 +177,25 @@ async fn setup_json_detects_xcodegen_ios_project() -> Result<(), Box<dyn std::er
 }
 
 #[tokio::test]
-async fn setup_human_explains_empty_project_next_step() -> Result<(), Box<dyn std::error::Error>> {
+async fn setup_human_explains_empty_project_next_step() -> TestResult {
     let project_dir = setup_fixture("setup-empty")?;
-    let command = parse_command(["logbrew", "setup"])?;
-    let env = CliEnvironment {
-        base_url: "https://example.test".to_owned(),
-        token: None,
-        home: Some(std::env::temp_dir().join("logbrew-setup-empty-home")),
-        cwd: Some(project_dir),
-    };
-    let mut output = Vec::new();
-
-    execute_command(&command, &env, &mut output).await?;
-
+    let output = setup_output(&["logbrew", "setup"], project_dir.as_path()).await?;
     let text = String::from_utf8(output)?;
     assert_eq!(
         text,
         "LogBrew setup plan\nMode: non-mutating plan\nNo files changed.\nInstall: not ready\nNo \
          supported project manifest found.\nNext: run logbrew setup from a project containing \
          package.json, pyproject.toml, Pipfile, Cargo.toml, Package.swift, project.yml, \
-         project.yaml, .xcodeproj, .xcworkspace, go.mod, or composer.json.\n"
+         project.yaml, .xcodeproj, .xcworkspace, CMakeLists.txt, go.mod, or composer.json.\n"
     );
     Ok(())
 }
 
 #[tokio::test]
-async fn setup_human_detects_project_without_claiming_install()
--> Result<(), Box<dyn std::error::Error>> {
+async fn setup_human_detects_project_without_claiming_install() -> TestResult {
     let project_dir = setup_fixture("setup-rust-human")?;
     fs::write(project_dir.join("Cargo.toml"), "")?;
-    let command = parse_command(["logbrew", "setup"])?;
-    let env = CliEnvironment {
-        base_url: "https://example.test".to_owned(),
-        token: None,
-        home: Some(std::env::temp_dir().join("logbrew-setup-rust-human-home")),
-        cwd: Some(project_dir),
-    };
-    let mut output = Vec::new();
-
-    execute_command(&command, &env, &mut output).await?;
-
+    let output = setup_output(&["logbrew", "setup"], project_dir.as_path()).await?;
     let text = String::from_utf8(output)?;
     assert_eq!(
         text,
@@ -260,20 +208,14 @@ async fn setup_human_detects_project_without_claiming_install()
 }
 
 #[tokio::test]
-async fn setup_human_echoes_non_mutating_preferences() -> Result<(), Box<dyn std::error::Error>> {
+async fn setup_human_echoes_non_mutating_preferences() -> TestResult {
     let project_dir = setup_fixture("setup-rust-human-prefs")?;
     fs::write(project_dir.join("Cargo.toml"), "")?;
-    let command = parse_command(["logbrew", "setup", "--auto", "--yes"])?;
-    let env = CliEnvironment {
-        base_url: "https://example.test".to_owned(),
-        token: None,
-        home: Some(std::env::temp_dir().join("logbrew-setup-rust-human-prefs-home")),
-        cwd: Some(project_dir),
-    };
-    let mut output = Vec::new();
-
-    execute_command(&command, &env, &mut output).await?;
-
+    let output = setup_output(
+        &["logbrew", "setup", "--auto", "--yes"],
+        project_dir.as_path(),
+    )
+    .await?;
     let text = String::from_utf8(output)?;
     assert!(text.contains("Mode: non-mutating plan\n"));
     assert!(text.contains("Preferences: auto=true, yes=true\n"));
@@ -342,8 +284,7 @@ async fn watch_json_streams_websocket_events_without_leaking_ticket() {
 }
 
 #[tokio::test]
-async fn watch_json_refreshes_local_auth_before_requesting_a_ticket()
--> Result<(), Box<dyn std::error::Error>> {
+async fn watch_json_refreshes_local_auth_before_requesting_a_ticket() -> TestResult {
     let (base_url, server) = spawn_refreshing_feed_server().await;
     let home = setup_fixture("watch-refresh")?;
     let auth_dir = home.join(".logbrew");
@@ -810,6 +751,22 @@ fn setup_fixture(name: &str) -> Result<std::path::PathBuf, std::io::Error> {
     remove_dir_if_exists(dir.as_path())?;
     fs::create_dir_all(&dir)?;
     Ok(dir)
+}
+
+async fn setup_output(
+    args: &[&str],
+    cwd: &std::path::Path,
+) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    let command = parse_command(args.iter().copied())?;
+    let env = CliEnvironment {
+        base_url: "https://example.test".to_owned(),
+        token: None,
+        home: Some(cwd.with_extension("home")),
+        cwd: Some(cwd.to_path_buf()),
+    };
+    let mut output = Vec::new();
+    execute_command(&command, &env, &mut output).await?;
+    Ok(output)
 }
 
 fn remove_dir_if_exists(path: &std::path::Path) -> Result<(), std::io::Error> {
