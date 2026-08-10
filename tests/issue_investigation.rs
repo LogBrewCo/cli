@@ -55,7 +55,7 @@ fn parses_named_and_exact_occurrence_selection_for_both_issue_commands() {
         exact.http_path().as_deref(),
         Some(
             "/api/telemetry/issues/11111111-1111-4111-8111-111111111111/investigation?\
-             response_version=4&occurrence_id=22222222-2222-4222-8222-222222222222"
+             response_version=5&occurrence_id=22222222-2222-4222-8222-222222222222"
         )
     );
     assert!(exact.wants_json());
@@ -72,7 +72,7 @@ fn parses_named_and_exact_occurrence_selection_for_both_issue_commands() {
         latest.http_path().as_deref(),
         Some(
             "/api/telemetry/issues/11111111-1111-4111-8111-111111111111/investigation?\
-             response_version=4&selection=latest"
+             response_version=5&selection=latest"
         )
     );
 }
@@ -146,11 +146,12 @@ fn help_describes_the_complete_versioned_bundle() {
     };
     let text = logbrew_cli::help::help_text(topic);
 
-    assert!(text.contains("occurrence receipts; exception, frames"));
+    assert!(text.contains("parent-first runtime exception evidence"));
+    assert!(text.contains("per-node message and stack capture states"));
     assert!(text.contains("approximate affected-user coverage and limitations"));
     assert!(text.contains("trace, related logs, actions, metric exemplars"));
     assert!(text.contains("same contract as logbrew explain issue"));
-    assert!(text.contains("exact validated schema-version-4 response"));
+    assert!(text.contains("exact validated schema-version-5 response"));
     assert!(text.contains("explicit selected, first, latest, and recommended occurrence"));
     assert!(text.contains("status activity and server-observed regression evidence"));
     assert!(text.contains("zero-filled occurrence trend"));
@@ -230,7 +231,7 @@ async fn captured_native_frame_count_accepts_a_receipted_safe_projection()
     assert!(human.contains("Recommended occurrence:"));
     assert!(human.contains("frames=17 stack_truncated=false"));
     assert!(human.contains("Stack frames: 1"));
-    assert!(human.contains("Truncated: stack_frames"));
+    assert!(human.contains("exception_chain.stack_frames, stack_frames"));
     Ok(())
 }
 
@@ -282,6 +283,14 @@ async fn human_output_surfaces_failure_fix_timeline_correlations_and_limits()
         "Occurrence distribution: dimension=sdk distinct=2 shown=2 other=0",
         "Distribution value: value=@logbrew/node version=0.1.4 occurrences=2 share=66.66%",
         "Exception: PaymentProviderError mechanism=javascript.promise handled=false",
+        "Exception chain: status=captured entries=2 truncated=true",
+        "Exception node id=0 relationship=reported type=PaymentProviderError \
+         module=checkout.payment message_state=captured message=Payment capture failed",
+        "Exception node id=1 parent=0 relationship=cause type=UpstreamTimeoutError \
+         module=checkout.provider message_state=redacted mechanism=javascript.cause handled=true",
+        "Exception stack node=1 state=truncated frames=1",
+        "Exception frame node=1 index=0 module=checkout.provider function=requestPayment \
+         file=provider_client.ts line=142 column=9 in_app=true",
         "Frame: module=checkout function=capturePayment file=payment_gateway.ts line=87",
         "Breadcrumb: at=2026-08-04T07:59:58Z category=checkout.submit",
         "Runtime: service=checkout-api@1.2.3 runtime=node@24",
@@ -309,6 +318,49 @@ async fn human_output_surfaces_failure_fix_timeline_correlations_and_limits()
             "missing investigation detail: {expected}"
         );
     }
+    Ok(())
+}
+
+#[tokio::test]
+async fn exception_chain_absence_and_invalid_storage_are_explicit_in_both_output_modes()
+-> Result<(), Box<dyn std::error::Error>> {
+    for (bundle, expected_status) in [
+        (not_captured_exception_chain_bundle(), "not_captured"),
+        (invalid_exception_chain_bundle(), "invalid"),
+    ] {
+        let server = MockServer::start().await;
+        mount_bundle(&server, bundle.clone(), 2).await;
+
+        let json = run(&server, true, "investigate").await?;
+        let parsed: serde_json::Value = serde_json::from_str(json.as_str())?;
+        assert_eq!(parsed, bundle);
+
+        let human = run(&server, false, "investigate").await?;
+        assert!(
+            human.contains(format!("Exception chain: status={expected_status} entries=0").as_str())
+        );
+        assert!(!human.contains("runtime_exception_chain"));
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn underlying_exception_fix_is_bound_to_its_exact_node_and_frame()
+-> Result<(), Box<dyn std::error::Error>> {
+    let server = MockServer::start().await;
+    let bundle = underlying_exception_fix_bundle();
+    mount_bundle(&server, bundle.clone(), 2).await;
+
+    let json = run(&server, true, "investigate").await?;
+    let parsed: serde_json::Value = serde_json::from_str(json.as_str())?;
+    assert_eq!(parsed, bundle);
+
+    let human = run(&server, false, "investigate").await?;
+    assert!(human.contains(
+        "Fix area: status=observed_underlying_exception_frame provenance=backend_observed \
+         module=checkout.provider function=requestPayment file=provider_client.ts line=142 \
+         column=9 in_app=true source_exception=1"
+    ));
     Ok(())
 }
 
@@ -533,6 +585,28 @@ async fn contradictory_occurrence_receipts_fail_closed_without_reflection()
 }
 
 #[tokio::test]
+async fn contradictory_exception_chains_fail_closed_without_reflection()
+-> Result<(), Box<dyn std::error::Error>> {
+    for (bundle, marker) in invalid_exception_chain_bundles() {
+        let server = MockServer::start().await;
+        mount_bundle(&server, bundle, 1).await;
+        let command = parse_command(["logbrew", "investigate", "issue", ISSUE_ID, "--json"])?;
+        let mut output = Vec::new();
+
+        let error = execute_command(&command, &authenticated_env(&server), &mut output)
+            .await
+            .expect_err("contradictory exception chain fails closed");
+        write_runtime_error(&error, true, &mut output)?;
+        let text = String::from_utf8(output)?;
+        let response: serde_json::Value = serde_json::from_str(text.as_str())?;
+
+        assert_eq!(response["error"], "investigation_response_invalid");
+        assert!(!text.contains(marker));
+    }
+    Ok(())
+}
+
+#[tokio::test]
 async fn contradictory_lifecycle_bundles_fail_closed() -> Result<(), Box<dyn std::error::Error>> {
     for bundle in invalid_lifecycle_bundles() {
         let server = MockServer::start().await;
@@ -679,7 +753,7 @@ async fn mount_bundle(server: &MockServer, bundle: serde_json::Value, expected_r
         .and(path(format!(
             "/api/telemetry/issues/{ISSUE_ID}/investigation"
         )))
-        .and(query_param("response_version", "4"))
+        .and(query_param("response_version", "5"))
         .and(query_param("selection", "recommended"))
         .and(header("authorization", "Bearer test-token"))
         .respond_with(ResponseTemplate::new(200).set_body_json(bundle))
@@ -697,7 +771,7 @@ async fn mount_exact_bundle(
         .and(path(format!(
             "/api/telemetry/issues/{ISSUE_ID}/investigation"
         )))
-        .and(query_param("response_version", "4"))
+        .and(query_param("response_version", "5"))
         .and(query_param("occurrence_id", OCCURRENCE_ID))
         .and(header("authorization", "Bearer test-token"))
         .respond_with(ResponseTemplate::new(200).set_body_json(bundle))
@@ -735,7 +809,7 @@ fn rich_investigation_bundle() -> serde_json::Value {
     let first = first_occurrence_summary();
     let latest = latest_occurrence_summary();
     serde_json::json!({
-        "schema_version": 4,
+        "schema_version": 5,
         "subject": {
             "kind": "issue",
             "id": ISSUE_ID,
@@ -777,6 +851,54 @@ fn rich_investigation_bundle() -> serde_json::Value {
             "exception": {
                 "type": "PaymentProviderError",
                 "mechanism": {"type": "javascript.promise", "handled": false}
+            },
+            "exception_chain": {
+                "status": "captured",
+                "entries": [
+                    {
+                        "id": 0,
+                        "parent_id": null,
+                        "relationship": "reported",
+                        "type": "PaymentProviderError",
+                        "message": "Payment capture failed",
+                        "message_state": "captured",
+                        "module": "checkout.payment",
+                        "mechanism": {"type": "javascript.promise", "handled": false},
+                        "stack_frames": [{
+                            "index": 0,
+                            "module": "checkout",
+                            "function": "capturePayment",
+                            "file": "payment_gateway.ts",
+                            "line": 87,
+                            "column": 12,
+                            "in_app": true,
+                            "source": "captured"
+                        }],
+                        "stack_frames_state": "captured"
+                    },
+                    {
+                        "id": 1,
+                        "parent_id": 0,
+                        "relationship": "cause",
+                        "type": "UpstreamTimeoutError",
+                        "message": null,
+                        "message_state": "redacted",
+                        "module": "checkout.provider",
+                        "mechanism": {"type": "javascript.cause", "handled": true},
+                        "stack_frames": [{
+                            "index": 0,
+                            "module": "checkout.provider",
+                            "function": "requestPayment",
+                            "file": "provider_client.ts",
+                            "line": 142,
+                            "column": 9,
+                            "in_app": true,
+                            "source": "captured"
+                        }],
+                        "stack_frames_state": "truncated"
+                    }
+                ],
+                "truncated": true
             },
             "stack_frames": [{
                 "index": 0,
@@ -835,6 +957,7 @@ fn rich_investigation_bundle() -> serde_json::Value {
             "signals": [
                 "reported_root_cause",
                 "unhandled_exception",
+                "runtime_exception_chain",
                 "error_trace_span",
                 "error_log"
             ]
@@ -955,6 +1078,9 @@ fn rich_investigation_bundle() -> serde_json::Value {
                 "actions",
                 "breadcrumbs",
                 "exception",
+                "exception_chain",
+                "exception_chain.messages",
+                "exception_chain.stack_frames",
                 "logs",
                 "metrics",
                 "lifecycle.regression",
@@ -973,8 +1099,11 @@ fn rich_investigation_bundle() -> serde_json::Value {
                 "affected_users.known"
             ],
             "missing_fields": ["affected_users.complete_coverage"],
-            "redacted_fields": [],
-            "truncated_fields": []
+            "redacted_fields": ["exception_chain.messages"],
+            "truncated_fields": [
+                "exception_chain.entries",
+                "exception_chain.stack_frames"
+            ]
         },
         "next_actions": [
             {
@@ -1285,8 +1414,133 @@ fn projected_stack_investigation_bundle() -> serde_json::Value {
     let mut bundle = rich_investigation_bundle();
     bundle["occurrence_selection"]["selected"]["stack"]["frame_count"] = serde_json::json!(17);
     bundle["occurrence_selection"]["recommended"]["stack"]["frame_count"] = serde_json::json!(17);
-    bundle["evidence"]["truncated_fields"] = serde_json::json!(["stack_frames"]);
+    let truncated = bundle["evidence"]["truncated_fields"]
+        .as_array_mut()
+        .expect("truncated fields are an array");
+    truncated.push(serde_json::json!("stack_frames"));
+    truncated.sort_by(|left, right| left.as_str().cmp(&right.as_str()));
     bundle
+}
+
+fn not_captured_exception_chain_bundle() -> serde_json::Value {
+    let mut bundle = rich_investigation_bundle();
+    bundle["event"]["exception_chain"] = serde_json::json!({
+        "status": "not_captured",
+        "entries": [],
+        "truncated": false
+    });
+    remove_cause_signal(&mut bundle, "runtime_exception_chain");
+    remove_evidence_fields(
+        &mut bundle,
+        &[
+            "exception_chain",
+            "exception_chain.messages",
+            "exception_chain.stack_frames",
+            "exception_chain.entries",
+        ],
+    );
+    add_evidence_field(&mut bundle, "missing_fields", "exception_chain");
+    bundle
+}
+
+fn invalid_exception_chain_bundle() -> serde_json::Value {
+    let mut bundle = not_captured_exception_chain_bundle();
+    bundle["event"]["exception_chain"] = serde_json::json!({
+        "status": "invalid",
+        "entries": [],
+        "truncated": true
+    });
+    add_evidence_field(&mut bundle, "truncated_fields", "exception_chain");
+    bundle
+}
+
+fn underlying_exception_fix_bundle() -> serde_json::Value {
+    let mut bundle = rich_investigation_bundle();
+    bundle["fix"] = serde_json::json!({
+        "status": "observed_underlying_exception_frame",
+        "location": {
+            "component": null,
+            "module": "checkout.provider",
+            "function": "requestPayment",
+            "file": "provider_client.ts",
+            "line": 142,
+            "column": 9,
+            "in_app": true,
+            "source_exception_id": 1
+        },
+        "provenance": "backend_observed"
+    });
+    bundle
+}
+
+fn remove_cause_signal(bundle: &mut serde_json::Value, signal: &str) {
+    bundle["cause"]["signals"]
+        .as_array_mut()
+        .expect("cause signals are an array")
+        .retain(|value| value != signal);
+}
+
+fn remove_evidence_fields(bundle: &mut serde_json::Value, fields: &[&str]) {
+    for category in [
+        "captured_fields",
+        "missing_fields",
+        "redacted_fields",
+        "truncated_fields",
+    ] {
+        bundle["evidence"][category]
+            .as_array_mut()
+            .expect("evidence category is an array")
+            .retain(|value| value.as_str().is_none_or(|value| !fields.contains(&value)));
+    }
+}
+
+fn add_evidence_field(bundle: &mut serde_json::Value, category: &str, field: &str) {
+    let fields = bundle["evidence"][category]
+        .as_array_mut()
+        .expect("evidence category is an array");
+    fields.push(serde_json::json!(field));
+    fields.sort_by(|left, right| left.as_str().cmp(&right.as_str()));
+}
+
+fn invalid_exception_chain_bundles() -> Vec<(serde_json::Value, &'static str)> {
+    let mut cases = Vec::new();
+
+    let mut forward_parent = rich_investigation_bundle();
+    forward_parent["event"]["exception_chain"]["entries"][1]["parent_id"] = serde_json::json!(7);
+    forward_parent["event"]["exception_chain"]["entries"][1]["type"] =
+        serde_json::json!("hostile-forward-parent-marker");
+    cases.push((forward_parent, "hostile-forward-parent-marker"));
+
+    let mut legacy_mismatch = rich_investigation_bundle();
+    legacy_mismatch["event"]["exception_chain"]["entries"][0]["type"] =
+        serde_json::json!("hostile-legacy-mismatch-marker");
+    cases.push((legacy_mismatch, "hostile-legacy-mismatch-marker"));
+
+    let mut redacted_message = rich_investigation_bundle();
+    redacted_message["event"]["exception_chain"]["entries"][1]["message"] =
+        serde_json::json!("hostile-redacted-message-marker");
+    cases.push((redacted_message, "hostile-redacted-message-marker"));
+
+    let mut missing_receipt = rich_investigation_bundle();
+    missing_receipt["event"]["exception_chain"]["entries"][0]["message"] =
+        serde_json::json!("hostile-receipt-marker");
+    missing_receipt["evidence"]["captured_fields"]
+        .as_array_mut()
+        .expect("captured fields are an array")
+        .retain(|value| value != "exception_chain");
+    cases.push((missing_receipt, "hostile-receipt-marker"));
+
+    let mut forged_fix = underlying_exception_fix_bundle();
+    forged_fix["fix"]["location"]["file"] = serde_json::json!("hostile-fix-marker.rs");
+    cases.push((forged_fix, "hostile-fix-marker.rs"));
+
+    let mut missing_signal = rich_investigation_bundle();
+    missing_signal["event"]["exception_chain"]["entries"][0]["message"] =
+        serde_json::json!("hostile-signal-marker");
+    remove_cause_signal(&mut missing_signal, "runtime_exception_chain");
+    cases.push((missing_signal, "hostile-signal-marker"));
+
+    cases
 }
 
 fn invalid_occurrence_selection_bundles() -> Vec<(serde_json::Value, &'static str)> {

@@ -18,7 +18,7 @@ async fn human_issue_explanation_surfaces_fix_context_timeline_and_evidence()
         .and(path(format!(
             "/api/telemetry/issues/{ISSUE_ID}/investigation"
         )))
-        .and(query_param("response_version", "4"))
+        .and(query_param("response_version", "5"))
         .and(query_param("selection", "recommended"))
         .respond_with(ResponseTemplate::new(200).set_body_json(issue_response()))
         .mount(&server)
@@ -1279,7 +1279,7 @@ fn issue_response() -> serde_json::Value {
         "context_captured": true
     });
     serde_json::json!({
-        "schema_version": 4,
+        "schema_version": 5,
         "subject": {
             "kind": "issue",
             "id": ISSUE_ID,
@@ -1321,6 +1321,31 @@ fn issue_response() -> serde_json::Value {
             "exception": {
                 "type": "PaymentError",
                 "mechanism": {"type": "unhandled", "handled": false}
+            },
+            "exception_chain": {
+                "status": "captured",
+                "entries": [{
+                    "id": 0,
+                    "parent_id": null,
+                    "relationship": "reported",
+                    "type": "PaymentError",
+                    "message": "processor rejected the charge",
+                    "message_state": "captured",
+                    "module": "checkout",
+                    "mechanism": {"type": "unhandled", "handled": false},
+                    "stack_frames": [{
+                        "index": 0,
+                        "module": "checkout",
+                        "function": "charge",
+                        "file": "payment.rs",
+                        "line": 42,
+                        "column": 7,
+                        "in_app": true,
+                        "source": "captured"
+                    }],
+                    "stack_frames_state": "captured"
+                }],
+                "truncated": false
             },
             "stack_frames": [{
                 "index": 0,
@@ -1459,6 +1484,9 @@ fn issue_response() -> serde_json::Value {
         "evidence": {
             "status": "partial",
             "captured_fields": [
+                "exception_chain",
+                "exception_chain.messages",
+                "exception_chain.stack_frames",
                 "issue.exception",
                 "issue.stack_frames",
                 "lifecycle.regression",

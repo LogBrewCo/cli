@@ -1,6 +1,7 @@
 //! Versioned, bounded telemetry investigation reads.
 
 mod action;
+mod issue_exception_chain;
 mod issue_lifecycle;
 mod issue_occurrence_analysis;
 mod metric;
@@ -50,7 +51,7 @@ const ISSUE_OCCURRENCE_CANDIDATE_LIMIT: u64 = 50;
 const ISSUE_OCCURRENCE_FRAME_LIMIT: u64 = 32;
 /// Largest integer accepted from JSON-number investigation contracts.
 const MAX_SAFE_JSON_INTEGER: u64 = 9_007_199_254_740_991;
-/// Exact top-level vocabulary for the schema-version-4 issue response.
+/// Exact top-level vocabulary for the schema-version-5 issue response.
 const ISSUE_RESPONSE_FIELDS: &[&str] = &[
     "schema_version",
     "subject",
@@ -284,7 +285,7 @@ fn validate_issue_response(
 ) -> Result<(), RuntimeError> {
     let response = response_object(value, ISSUE_RESPONSE_FIELDS)?;
     require_exact_fields(response, ISSUE_RESPONSE_FIELDS)?;
-    validate_schema_version_value(response, 4)?;
+    validate_schema_version_value(response, 5)?;
     let subject = required_object(response, "subject")?;
     require_string_equals(subject, "kind", "issue")?;
     require_string_equals(subject, "id", expected_id)?;
@@ -348,6 +349,7 @@ fn validate_issue_response(
     let _fix_status = require_string(fix, "status")?;
     validate_nullable_object(fix, "location")?;
     let _fix_provenance = optional_string(fix, "provenance")?;
+    issue_exception_chain::validate(event, evidence, cause, fix)?;
 
     let impact = required_object(response, "impact")?;
     let impact_occurrence_count = require_safe_positive_u64(impact, "occurrence_count")?;
@@ -1890,6 +1892,7 @@ fn render_issue(value: &Value) -> Option<String> {
             append_named_pair(&mut output, "SDK", sdk, "name", "version", "@");
         }
         append_issue_exception(&mut output, event.get("exception"));
+        issue_exception_chain::render(&mut output, event.get("exception_chain"));
         append_issue_frames(&mut output, event.get("stack_frames"));
         append_issue_breadcrumbs(&mut output, event);
         append_runtime_context(&mut output, event.get("context"));
@@ -2162,6 +2165,7 @@ fn append_issue_fix(output: &mut String, fix: Option<&Value>) {
         append_labeled_integer(output, "line", location, "line");
         append_labeled_integer(output, "column", location, "column");
         append_labeled_bool(output, "in_app", location, "in_app");
+        append_labeled_integer(output, "source_exception", location, "source_exception_id");
     }
     output.push('\n');
 }
