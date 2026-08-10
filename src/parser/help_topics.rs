@@ -137,6 +137,9 @@ pub(super) fn help_topic(head: &str, tail: &[String]) -> Result<HelpTopic, CliEr
             &["issue", "log", "trace", "release", "metric", "metrics"],
             EXPLAIN_RESOURCE_NEXT_STEP,
         ),
+        "deploy" => {
+            single_optional_positional_help_topic(positionals.as_slice(), HelpTopic::Deploy)
+        }
         "set" => subresource_help_topic(
             HelpTopic::Set,
             positionals.as_slice(),
@@ -172,6 +175,9 @@ pub(super) fn command_shaped_help_topic(head: &str, tail: &[String]) -> Option<H
             action_alias_command_shaped_help_topic(positionals.as_slice())
         }
         "explain" => explain_command_shaped_help_topic(positionals.as_slice()),
+        "deploy" => {
+            single_optional_positional_command_help_topic(positionals.as_slice(), HelpTopic::Deploy)
+        }
         "set" => set_command_shaped_help_topic(positionals.as_slice()),
         "support" => Some(HelpTopic::Support),
         "investigate" => Some(HelpTopic::Investigate),
@@ -564,6 +570,7 @@ fn explicit_help_topic(args: &[&str]) -> Result<HelpTopic, CliError> {
             WATCH_RESOURCE_NEXT_STEP,
         ),
         ["explain", tail @ ..] => explain_help_topic(tail),
+        ["deploy", tail @ ..] => help_topic_without_positionals(HelpTopic::Deploy, tail),
         ["set", tail @ ..] => {
             subresource_help_topic(HelpTopic::Set, tail, &["issue"], SET_RESOURCE_NEXT_STEP)
         }

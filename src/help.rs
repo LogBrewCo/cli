@@ -27,6 +27,7 @@ pub const fn help_text(topic: HelpTopic) -> &'static str {
         HelpTopic::ReadIssue => READ_ISSUE_HELP,
         HelpTopic::Watch => WATCH_HELP,
         HelpTopic::Explain => EXPLAIN_HELP,
+        HelpTopic::Deploy => DEPLOY_HELP,
         HelpTopic::Analytics => ANALYTICS_HELP,
         HelpTopic::AnalyticsOverview => ANALYTICS_OVERVIEW_HELP,
         HelpTopic::AnalyticsProperties => ANALYTICS_PROPERTIES_HELP,
@@ -106,6 +107,10 @@ Usage:
   logbrew explain trace <trace_id> [--json]
   logbrew explain span <trace_id> <span_id> --project <project_id> --environment <environment> \
                             --release <release> [--json]
+  logbrew deploy <deployment_id> --project <project_id> --release <release> --environment \
+                            <environment> --service <service_name> --status <succeeded|failed> \
+                            --started-at <rfc3339> --finished-at <rfc3339> \
+                            [--commit-sha <sha>] [--json]
   logbrew explain <issue_id_or_trace_id> [--json]
   logbrew analytics overview --project <project_id> --since 24h [--json]
   logbrew analytics properties --project <project_id> --since 24h [--limit 20] [--json]
@@ -294,6 +299,14 @@ Agent JSON:
   logbrew --json status
   logbrew logs checkout failed --json
   logbrew explain trace <trace_id> --json
+
+Release comparison:
+  logbrew deploy ci-run-42 --project <project_id> --release checkout@1 --environment production \
+                           --service checkout-api --status succeeded \
+                           --started-at 2026-08-10T12:00:00Z \
+                           --finished-at 2026-08-10T12:02:00Z --json
+  logbrew explain release checkout@1 --project <project_id> --environment production \
+                           --service checkout-api --json
 
 More help:
   logbrew help logs
@@ -564,6 +577,22 @@ Release investigation requires the exact project, environment, and service ident
                             direction, observation windows, and explicit capture/retry guidance. These \
                             observations are not traffic-normalized and never claim deployment causality.
 Pasted UUID/issue_* values are treated as issues; 32-hex/trace_* values are treated as traces.";
+
+/// Completed deployment capture help text.
+const DEPLOY_HELP: &str = "\
+Usage:
+  logbrew deploy <deployment_id> --project <project_id> --release <release> --environment \
+                           <environment> --service <service_name> --status <succeeded|failed> \
+                           --started-at <rfc3339> --finished-at <rfc3339> [--commit-sha <sha>] \
+                           [--json]
+
+Records one completed deployment boundary for release timelines and before/after comparisons.
+Use the exact project, release, environment, and service values sent by runtime telemetry.
+deployment_id is caller-owned and idempotent: retry the exact same record safely; use a new id \
+                           for different content.
+The command requires account authentication, never accepts a project ingest key, and validates \
+                           the complete versioned receipt before printing it.
+Run this from release automation after the deployment attempt reaches succeeded or failed.";
 
 /// Product-analytics command overview.
 const ANALYTICS_HELP: &str = "\
