@@ -1,6 +1,7 @@
 //! Local non-HTTP command tests.
 
 use logbrew_cli::{CliEnvironment, Command, HelpTopic, execute_command, help, parse_command};
+type TestResult = Result<(), Box<dyn std::error::Error>>;
 
 #[test]
 fn parses_version_command_for_humans() {
@@ -78,9 +79,14 @@ fn logout_help_is_discoverable() {
     );
     assert!(help::help_text(HelpTopic::Root).contains("logbrew logout [--json]"));
     let logout_help = help::help_text(HelpTopic::Logout);
-    assert!(logout_help.contains("Attempts to revoke the stored server session"));
-    assert!(logout_help.contains("always removes both local CLI credentials"));
-    assert!(logout_help.contains("LOGBREW_TOKEN"));
+    assert_contains_all(
+        logout_help,
+        &[
+            "Attempts to revoke the stored server session",
+            "always removes both local CLI credentials",
+            "LOGBREW_TOKEN",
+        ],
+    );
 }
 
 #[test]
@@ -95,40 +101,32 @@ fn setup_help_is_honest_about_install_readiness() {
             json: false
         }
     );
-    assert!(setup_help.contains("No files are changed."));
-    assert!(
-        setup_help.contains(
-            "logbrew projects create <name> --ingest-key-file <path> [--runtime <runtime>]"
-        )
+    assert_contains_all(
+        setup_help,
+        &[
+            "No files are changed.",
+            "logbrew projects create <name> --ingest-key-file <path> [--runtime <runtime>]",
+            "Authenticated project creation (no dashboard sign-in):",
+            "logbrew setup --create-project shows secure project-creation help and does not create a project.",
+            "compatible releases from 0.1.6",
+            "https://github.com/LogBrewCo/sdk.git",
+            "Product: LogBrew",
+            r#".package(url: "https://github.com/LogBrewCo/sdk.git", from: "0.1.6")"#,
+            "Python planning detects Django, Flask, and FastAPI",
+            "CMake planning pins the released C++ SDK tag cpp/logbrew-cpp/v0.2.3",
+            "LogBrew::LogBrew",
+            "LogBrew::HttpTransport",
+            "without editing CMakeLists.txt",
+            "Python packages: logbrew-sdk, logbrew-django, logbrew-flask,",
+            "Other detected runtimes use released SDK guidance until a structured CLI install plan is enabled.",
+            "Supported manifests: package.json, pyproject.toml, Pipfile,",
+            "Cargo.toml, Package.swift, project.yml, project.yaml, .xcodeproj, .xcworkspace,",
+            "CMakeLists.txt",
+            "go.mod, composer.json.",
+            "Package managers: npm, pnpm, yarn, bun, pip, uv, poetry, pipenv, cargo, SwiftPM, XcodeGen, Go, Composer, CMake.",
+        ],
     );
-    assert!(setup_help.contains("Authenticated project creation (no dashboard sign-in):"));
-    assert!(setup_help.contains(
-        "logbrew setup --create-project shows secure project-creation help and does not create a \
-         project."
-    ));
-    assert!(setup_help.contains("compatible releases from 0.1.6"));
-    assert!(setup_help.contains("https://github.com/LogBrewCo/sdk.git"));
-    assert!(setup_help.contains("Product: LogBrew"));
-    assert!(
-        setup_help
-            .contains(r#".package(url: "https://github.com/LogBrewCo/sdk.git", from: "0.1.6")"#)
-    );
-    assert!(setup_help.contains("Python planning detects Django, Flask, and FastAPI"));
-    assert!(setup_help.contains("Python packages: logbrew-sdk, logbrew-django, logbrew-flask,"));
-    assert!(setup_help.contains(
-        "Other detected runtimes use released SDK guidance until a structured CLI install plan is \
-         enabled."
-    ));
     assert!(!setup_help.contains("until their public package is ready"));
-    assert!(setup_help.contains("Supported manifests: package.json, pyproject.toml, Pipfile,"));
-    assert!(setup_help.contains(
-        "Cargo.toml, Package.swift, project.yml, project.yaml, .xcodeproj, .xcworkspace,"
-    ));
-    assert!(setup_help.contains("go.mod, composer.json."));
-    assert!(setup_help.contains(
-        "Package managers: npm, pnpm, yarn, bun, pip, uv, poetry, pipenv, cargo, SwiftPM, \
-         XcodeGen, Go, Composer."
-    ));
 }
 
 #[test]
@@ -159,26 +157,27 @@ fn project_catalog_executes_while_explicit_setup_help_remains_non_mutating() {
     }
 
     let projects = help::help_text(HelpTopic::Projects);
-    assert!(projects.contains("backend-owned"));
-    assert!(projects.contains("stores the one-time ingest key in a new owner-only file"));
-    assert!(projects.contains(
-        "An authenticated CLI can create a project without dashboard sign-in or additional browser \
-         auth."
-    ));
-    assert!(
-        projects.contains(
-            "logbrew setup --create-project shows this help and never creates a project."
-        )
+    assert_contains_all(
+        projects,
+        &[
+            "backend-owned",
+            "stores the one-time ingest key in a new owner-only file",
+            "An authenticated CLI can create a project without dashboard sign-in or additional browser auth.",
+            "logbrew setup --create-project shows this help and never creates a project.",
+            "No local install, quota, or usage state is created.",
+            "POST /api/projects/{project_id}/setup/seen",
+            "Never use an account bearer token as SDK or ingest configuration.",
+        ],
     );
-    assert!(projects.contains("No local install, quota, or usage state is created."));
-    assert!(projects.contains("POST /api/projects/{project_id}/setup/seen"));
-    assert!(projects.contains("Never use an account bearer token as SDK or ingest configuration."));
 
     let usage = help::help_text(HelpTopic::Usage);
-    assert!(usage.contains("Reads authenticated account usage"));
-    assert!(usage.contains("without mutating account or billing state"));
-    assert!(
-        usage.contains("The CLI does not calculate or persist usage/quota state from local files.")
+    assert_contains_all(
+        usage,
+        &[
+            "Reads authenticated account usage",
+            "without mutating account or billing state",
+            "The CLI does not calculate or persist usage/quota state from local files.",
+        ],
     );
 }
 
@@ -221,7 +220,7 @@ fn setup_aliases_are_non_mutating_setup() {
 }
 
 #[tokio::test]
-async fn version_human_output_is_short() -> Result<(), Box<dyn std::error::Error>> {
+async fn version_human_output_is_short() -> TestResult {
     let command = parse_command(["logbrew", "version"])?;
     let env = CliEnvironment {
         base_url: "https://example.test".to_owned(),
@@ -239,7 +238,7 @@ async fn version_human_output_is_short() -> Result<(), Box<dyn std::error::Error
 }
 
 #[tokio::test]
-async fn version_json_output_is_stable() -> Result<(), Box<dyn std::error::Error>> {
+async fn version_json_output_is_stable() -> TestResult {
     let command = parse_command(["logbrew", "version", "--json"])?;
     let env = CliEnvironment {
         base_url: "https://example.test".to_owned(),
@@ -262,8 +261,7 @@ async fn version_json_output_is_stable() -> Result<(), Box<dyn std::error::Error
 }
 
 #[tokio::test]
-async fn logout_json_removes_legacy_local_credentials_without_leaking_them()
--> Result<(), Box<dyn std::error::Error>> {
+async fn logout_json_removes_legacy_local_credentials_without_leaking_them() -> TestResult {
     for (args, home_name) in [
         (&["logbrew", "logout", "--json"][..], "logout-json"),
         (&["logbrew", "--json", "logout"][..], "logout-global-json"),
@@ -309,8 +307,7 @@ async fn logout_json_removes_legacy_local_credentials_without_leaking_them()
 }
 
 #[tokio::test]
-async fn logout_human_is_idempotent_without_local_token() -> Result<(), Box<dyn std::error::Error>>
-{
+async fn logout_human_is_idempotent_without_local_token() -> TestResult {
     let home = local_command_home("logout-empty")?;
     let command = parse_command(["logbrew", "logout"])?;
     let env = CliEnvironment {
@@ -332,8 +329,7 @@ async fn logout_human_is_idempotent_without_local_token() -> Result<(), Box<dyn 
 }
 
 #[tokio::test]
-async fn logout_warns_when_env_token_still_authenticates() -> Result<(), Box<dyn std::error::Error>>
-{
+async fn logout_warns_when_env_token_still_authenticates() -> TestResult {
     let home = local_command_home("logout-env")?;
     let token_path = home.join(".logbrew").join("token");
     std::fs::create_dir_all(token_path.parent().expect("token path has parent"))?;
@@ -370,4 +366,10 @@ fn local_command_home(name: &str) -> Result<std::path::PathBuf, std::io::Error> 
     }
     std::fs::create_dir_all(dir.as_path())?;
     Ok(dir)
+}
+
+fn assert_contains_all(text: &str, expected: &[&str]) {
+    for value in expected {
+        assert!(text.contains(value), "missing {value:?}");
+    }
 }

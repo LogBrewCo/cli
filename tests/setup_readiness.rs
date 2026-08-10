@@ -3,23 +3,17 @@
 use logbrew_cli::{CliEnvironment, execute_command, parse_command};
 
 const SWIFT_PACKAGE_URL: &str = "https://github.com/LogBrewCo/sdk.git";
+type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
 #[tokio::test]
-async fn swiftpm_and_xcodegen_emit_exact_non_mutating_install_plan()
--> Result<(), Box<dyn std::error::Error>> {
+async fn swiftpm_and_xcodegen_emit_exact_non_mutating_install_plan() -> TestResult {
     let root = fixture_root("swift-ready")?;
     std::fs::write(
         root.join("Package.swift"),
         "// deterministic public Swift package fixture\n",
     )?;
     std::fs::write(root.join("project.yml"), "name: Fixture\n")?;
-    let command = parse_command(["logbrew", "setup", "--json"])?;
-    let mut output = Vec::new();
-
-    execute_command(&command, &environment(root.as_path()), &mut output).await?;
-
-    let text = String::from_utf8(output)?;
-    let body: serde_json::Value = serde_json::from_str(text.as_str())?;
+    let (body, text) = setup_json(root.as_path(), &["logbrew", "setup", "--json"]).await?;
     assert_eq!(body["install_ready"], true);
     assert_eq!(
         body["install_plan"],
@@ -71,8 +65,71 @@ async fn swiftpm_and_xcodegen_emit_exact_non_mutating_install_plan()
 }
 
 #[tokio::test]
-async fn setup_aliases_and_json_order_share_the_swift_install_plan()
--> Result<(), Box<dyn std::error::Error>> {
+async fn cmake_emits_exact_pinned_cpp_install_plan() -> TestResult {
+    let root = fixture_root("cmake-ready")?;
+    std::fs::write(
+        root.join("CMakeLists.txt"),
+        "cmake_minimum_required(VERSION 3.16)\nproject(Fixture LANGUAGES CXX)\n",
+    )?;
+
+    let (body, text) = setup_json(root.as_path(), &["logbrew", "setup", "--json"]).await?;
+
+    assert_eq!(body["install_ready"], true);
+    assert_eq!(
+        body["install_plan"],
+        serde_json::json!({
+            "mode": "non_mutating",
+            "ecosystem": "cmake",
+            "package_url": SWIFT_PACKAGE_URL,
+            "release_tag": "cpp/logbrew-cpp/v0.2.3",
+            "version": "0.2.3",
+            "source_subdirectory": "cpp/logbrew-cpp",
+            "targets": {
+                "core": "LogBrew::LogBrew",
+                "http_transport": "LogBrew::HttpTransport"
+            },
+            "http_transport": {
+                "cmake_option": "LOGBREW_BUILD_HTTP_TRANSPORT",
+                "default_enabled": false,
+                "requires": "libcurl"
+            },
+            "dependency_declaration": "include(FetchContent)\nFetchContent_Declare(\n  logbrew\n  GIT_REPOSITORY https://github.com/LogBrewCo/sdk.git\n  GIT_TAG cpp/logbrew-cpp/v0.2.3\n  GIT_SHALLOW TRUE\n  SOURCE_SUBDIR cpp/logbrew-cpp\n)\nFetchContent_MakeAvailable(logbrew)",
+            "next_action": {
+                "code": "add_cmake_fetch_content",
+                "target": "CMakeLists.txt"
+            }
+        })
+    );
+    assert_eq!(
+        body["detected"],
+        serde_json::json!([{
+            "runtime": "cpp",
+            "package_manager": "cmake",
+            "manifest": "CMakeLists.txt"
+        }])
+    );
+    assert_eq!(
+        body["next"],
+        "add the pinned LogBrew C++ FetchContent block and link the required target; no files were changed"
+    );
+    assert!(!text.contains(root.to_string_lossy().as_ref()));
+    let human = setup_text(root.as_path(), &["logbrew", "setup"]).await?;
+    for expected in [
+        "Release tag: cpp/logbrew-cpp/v0.2.3",
+        "Source subdirectory: cpp/logbrew-cpp",
+        "Core target: LogBrew::LogBrew",
+        "HTTP target: LogBrew::HttpTransport (optional; requires libcurl)",
+        "GIT_SHALLOW TRUE",
+        "No files changed.",
+    ] {
+        assert!(human.contains(expected));
+    }
+    assert!(!human.contains(root.to_string_lossy().as_ref()));
+    Ok(())
+}
+
+#[tokio::test]
+async fn setup_aliases_and_json_order_share_the_swift_install_plan() -> TestResult {
     let root = fixture_root("aliases")?;
     std::fs::write(root.join("Package.swift"), "// swift fixture\n")?;
     let cases = [
@@ -86,26 +143,8 @@ async fn setup_aliases_and_json_order_share_the_swift_install_plan()
     let mut expected = None;
 
     for args in cases {
-        let command = parse_command(args.iter().copied())?;
-        let mut output = Vec::new();
-        execute_command(&command, &environment(root.as_path()), &mut output).await?;
-        let body: serde_json::Value = serde_json::from_slice(output.as_slice())?;
+        let (body, _) = setup_json(root.as_path(), args).await?;
 
-        assert_eq!(body["install_ready"], true);
-        assert_eq!(body["install_plan"]["version"], "0.1.6");
-        assert_eq!(
-            body["install_plan"]["version_requirement"]["kind"],
-            "up_to_next_major"
-        );
-        assert_eq!(
-            body["install_plan"]["version_requirement"]["minimum_version"],
-            "0.1.6"
-        );
-        assert_eq!(
-            body["install_plan"]["dependency_declaration"],
-            r#".package(url: "https://github.com/LogBrewCo/sdk.git", from: "0.1.6")"#
-        );
-        assert_eq!(body["install_plan"]["package_url"], SWIFT_PACKAGE_URL);
         if let Some(expected) = expected.as_ref() {
             assert_eq!(&body, expected);
         } else {
@@ -116,8 +155,7 @@ async fn setup_aliases_and_json_order_share_the_swift_install_plan()
 }
 
 #[tokio::test]
-async fn django_pyproject_emits_exact_public_python_install_plan()
--> Result<(), Box<dyn std::error::Error>> {
+async fn django_pyproject_emits_exact_public_python_install_plan() -> TestResult {
     let root = fixture_root("django-ready")?;
     std::fs::write(
         root.join("pyproject.toml"),
@@ -128,47 +166,17 @@ classifiers = ["Framework :: Django", "Programming Language :: Python :: 3.10"]
 "#,
     )?;
     std::fs::write(root.join("requirements.txt"), "Django>=4.2,<6\n")?;
-    let command = parse_command(["logbrew", "setup", "--json"])?;
-    let mut output = Vec::new();
-
-    execute_command(&command, &environment(root.as_path()), &mut output).await?;
-
-    let body: serde_json::Value = serde_json::from_slice(output.as_slice())?;
+    let (body, _) = setup_json(root.as_path(), &["logbrew", "setup", "--json"]).await?;
     assert_eq!(body["install_ready"], true);
     assert_eq!(
         body["install_plan"],
-        serde_json::json!({
-            "mode": "non_mutating",
-            "ecosystem": "pypi",
-            "package_manager": "pip",
-            "integration": "django",
-            "packages": [
-                {
-                    "name": "logbrew-sdk",
-                    "role": "core",
-                    "version_requirement": {
-                        "kind": "latest_compatible"
-                    }
-                },
-                {
-                    "name": "logbrew-django",
-                    "role": "framework",
-                    "version_requirement": {
-                        "kind": "latest_compatible"
-                    }
-                }
-            ],
-            "compatibility": {
-                "status": "review_required",
-                "requires_python": ">=3.10",
-                "requires_framework": "Django>=4.2.30,<6"
-            },
-            "install_command": "python3 -m pip install --upgrade logbrew-sdk logbrew-django",
-            "next_action": {
-                "code": "review_compatibility_and_install",
-                "target": "project_environment"
-            }
-        })
+        python_plan(
+            "pip",
+            "django",
+            Some("logbrew-django"),
+            Some("Django>=4.2.30,<6"),
+            "python3 -m pip install --upgrade logbrew-sdk logbrew-django",
+        )
     );
     assert_eq!(
         body["next"],
@@ -188,8 +196,7 @@ classifiers = ["Framework :: Django", "Programming Language :: Python :: 3.10"]
 }
 
 #[tokio::test]
-async fn released_python_frameworks_use_the_detected_package_manager()
--> Result<(), Box<dyn std::error::Error>> {
+async fn released_python_frameworks_use_the_detected_package_manager() -> TestResult {
     for (
         label,
         dependency,
@@ -227,12 +234,7 @@ async fn released_python_frameworks_use_the_detected_package_manager()
             format!("[project]\nname = \"fixture\"\ndependencies = [\"{dependency}\"]\n"),
         )?;
         std::fs::write(root.join(lockfile), "")?;
-        let command = parse_command(["logbrew", "setup", "--json"])?;
-        let mut output = Vec::new();
-
-        execute_command(&command, &environment(root.as_path()), &mut output).await?;
-
-        let body: serde_json::Value = serde_json::from_slice(output.as_slice())?;
+        let (body, _) = setup_json(root.as_path(), &["logbrew", "setup", "--json"]).await?;
         assert_eq!(body["install_ready"], true);
         assert_eq!(body["install_plan"]["package_manager"], package_manager);
         assert_eq!(body["install_plan"]["integration"], integration);
@@ -255,63 +257,30 @@ async fn released_python_frameworks_use_the_detected_package_manager()
 }
 
 #[tokio::test]
-async fn framework_neutral_pipenv_project_gets_the_core_python_plan()
--> Result<(), Box<dyn std::error::Error>> {
+async fn framework_neutral_pipenv_project_gets_the_core_python_plan() -> TestResult {
     let root = fixture_root("python-core-pipenv")?;
     std::fs::write(
         root.join("pyproject.toml"),
         "[project]\nname = \"fixture\"\ndependencies = [\"requests\"]\n",
     )?;
     std::fs::write(root.join("Pipfile.lock"), "{}")?;
-    let command = parse_command(["logbrew", "setup", "--json"])?;
-    let mut output = Vec::new();
-
-    execute_command(&command, &environment(root.as_path()), &mut output).await?;
-
-    let body: serde_json::Value = serde_json::from_slice(output.as_slice())?;
+    let (body, _) = setup_json(root.as_path(), &["logbrew", "setup", "--json"]).await?;
     assert_eq!(body["install_ready"], true);
-    assert_eq!(body["install_plan"]["package_manager"], "pipenv");
-    assert_eq!(body["install_plan"]["integration"], "python");
     assert_eq!(
-        body["install_plan"]["packages"],
-        serde_json::json!([
-            {
-                "name": "logbrew-sdk",
-                "role": "core",
-                "version_requirement": {
-                    "kind": "latest_compatible"
-                }
-            }
-        ])
-    );
-    assert_eq!(
-        body["install_plan"]["compatibility"]["requires_framework"],
-        serde_json::Value::Null
-    );
-    assert_eq!(
-        body["install_plan"]["compatibility"]["requires_python"],
-        ">=3.10"
-    );
-    assert_eq!(
-        body["install_plan"]["install_command"],
-        "pipenv install logbrew-sdk"
+        body["install_plan"],
+        python_plan("pipenv", "python", None, None, "pipenv install logbrew-sdk",)
     );
     Ok(())
 }
 
 #[tokio::test]
-async fn django_human_plan_is_explicit_and_path_free() -> Result<(), Box<dyn std::error::Error>> {
+async fn django_human_plan_is_explicit_and_path_free() -> TestResult {
     let root = fixture_root("django-human")?;
     std::fs::write(
         root.join("pyproject.toml"),
         "[project]\nname = \"fixture\"\ndependencies = [\"Django==4.2.30\"]\n",
     )?;
-    let command = parse_command(["logbrew", "setup"])?;
-    let mut output = Vec::new();
-
-    execute_command(&command, &environment(root.as_path()), &mut output).await?;
-
-    let text = String::from_utf8(output)?;
+    let text = setup_text(root.as_path(), &["logbrew", "setup"]).await?;
     assert!(text.contains("Install: ready\n"));
     assert!(text.contains("Package manager: pip\n"));
     assert!(text.contains("Integration: Django\n"));
@@ -329,16 +298,10 @@ async fn django_human_plan_is_explicit_and_path_free() -> Result<(), Box<dyn std
 }
 
 #[tokio::test]
-async fn runtimes_without_structured_plans_get_truthful_recovery()
--> Result<(), Box<dyn std::error::Error>> {
+async fn runtimes_without_structured_plans_get_truthful_recovery() -> TestResult {
     let root = fixture_root("rust-not-ready")?;
     std::fs::write(root.join("Cargo.toml"), "[package]\nname = \"fixture\"\n")?;
-    let command = parse_command(["logbrew", "setup", "--json"])?;
-    let mut output = Vec::new();
-
-    execute_command(&command, &environment(root.as_path()), &mut output).await?;
-
-    let body: serde_json::Value = serde_json::from_slice(output.as_slice())?;
+    let (body, _) = setup_json(root.as_path(), &["logbrew", "setup", "--json"]).await?;
     assert_eq!(body["install_ready"], false);
     assert_eq!(body["install_plan"], serde_json::Value::Null);
     assert_eq!(
@@ -349,15 +312,10 @@ async fn runtimes_without_structured_plans_get_truthful_recovery()
 }
 
 #[tokio::test]
-async fn swift_human_plan_is_truthful_and_path_free() -> Result<(), Box<dyn std::error::Error>> {
+async fn swift_human_plan_is_truthful_and_path_free() -> TestResult {
     let root = fixture_root("human")?;
     std::fs::write(root.join("project.yml"), "name: Fixture\n")?;
-    let command = parse_command(["logbrew", "setup"])?;
-    let mut output = Vec::new();
-
-    execute_command(&command, &environment(root.as_path()), &mut output).await?;
-
-    let text = String::from_utf8(output)?;
+    let text = setup_text(root.as_path(), &["logbrew", "setup"]).await?;
     assert!(text.contains("Install: ready"));
     assert!(text.contains("Package: https://github.com/LogBrewCo/sdk.git"));
     assert!(text.contains("Product: LogBrew"));
@@ -378,6 +336,57 @@ fn environment(root: &std::path::Path) -> CliEnvironment {
         home: None,
         cwd: Some(root.to_path_buf()),
     }
+}
+
+async fn setup_text(root: &std::path::Path, args: &[&str]) -> TestResult<String> {
+    let command = parse_command(args.iter().copied())?;
+    let mut output = Vec::new();
+    execute_command(&command, &environment(root), &mut output).await?;
+    Ok(String::from_utf8(output)?)
+}
+
+async fn setup_json(
+    root: &std::path::Path,
+    args: &[&str],
+) -> TestResult<(serde_json::Value, String)> {
+    let text = setup_text(root, args).await?;
+    Ok((serde_json::from_str(text.as_str())?, text))
+}
+
+fn python_plan(
+    package_manager: &str,
+    integration: &str,
+    framework_package: Option<&str>,
+    framework_requirement: Option<&str>,
+    install_command: &str,
+) -> serde_json::Value {
+    let packages = std::iter::once(("logbrew-sdk", "core"))
+        .chain(framework_package.map(|name| (name, "framework")))
+        .map(|(name, role)| {
+            serde_json::json!({
+                "name": name,
+                "role": role,
+                "version_requirement": { "kind": "latest_compatible" }
+            })
+        })
+        .collect::<Vec<_>>();
+    serde_json::json!({
+        "mode": "non_mutating",
+        "ecosystem": "pypi",
+        "package_manager": package_manager,
+        "integration": integration,
+        "packages": packages,
+        "compatibility": {
+            "status": "review_required",
+            "requires_python": ">=3.10",
+            "requires_framework": framework_requirement
+        },
+        "install_command": install_command,
+        "next_action": {
+            "code": "review_compatibility_and_install",
+            "target": "project_environment"
+        }
+    })
 }
 
 fn fixture_root(label: &str) -> Result<std::path::PathBuf, std::io::Error> {

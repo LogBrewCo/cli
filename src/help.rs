@@ -196,6 +196,9 @@ or XcodeGen projects.
 Python planning detects Django, Flask, and FastAPI from bounded local project metadata. It emits \
 the public core and framework packages, the detected pip, uv, poetry, or pipenv command, and \
 explicit Python/framework compatibility requirements.
+CMake planning pins the released C++ SDK tag cpp/logbrew-cpp/v0.2.3, source subdirectory \
+cpp/logbrew-cpp, core target LogBrew::LogBrew, and optional libcurl target \
+LogBrew::HttpTransport. It prints a copyable FetchContent block without editing CMakeLists.txt.
 Authenticated project creation (no dashboard sign-in):
   logbrew projects create <name> --ingest-key-file <path> [--runtime <runtime>] \
                            [--environment <environment>] [--json]
@@ -214,10 +217,10 @@ Aliases (same non-mutating plan): logbrew init, logbrew install, logbrew configu
 Options: --auto records automatic detection preference; --yes records confirmation preference; \
                           --json prints stable setup JSON.
 Supported manifests: package.json, pyproject.toml, Pipfile, Cargo.toml, Package.swift, \
-                          project.yml, project.yaml, .xcodeproj, .xcworkspace, go.mod, \
-                          composer.json.
+                          project.yml, project.yaml, .xcodeproj, .xcworkspace, CMakeLists.txt, \
+                          go.mod, composer.json.
 Package managers: npm, pnpm, yarn, bun, pip, uv, poetry, pipenv, cargo, SwiftPM, XcodeGen, Go, \
-                          Composer.";
+                          Composer, CMake.";
 
 /// Status command help text.
 const STATUS_HELP: &str = "\
