@@ -88,19 +88,19 @@ class ReleasePolicy:
 
 PUBLIC_POLICY = ReleasePolicy(
     repository="LogBrewCo/cli",
-    tag="v0.1.38",
-    version="0.1.38",
-    source_commit="d83839ea1aedf37b76208cf3b8919c102c7f0971",
-    tag_object_sha="ebafca4ffea0a7bcae18e3eeb32b6270b731654a",
-    release_run_id=31387360000,
+    tag="v0.1.39",
+    version="0.1.39",
+    source_commit="48f4af8a70590a7e5e7a3a50d9a9bd0d2d055df4",
+    tag_object_sha="c12388cbc68b224cfeddfb7eceaf8ba706c02ee2",
+    release_run_id=31431922835,
     release_workflow_id=289984708,
-    release_id=367890475,
-    published_at="2026-08-10T12:24:38Z",
+    release_id=368198200,
+    published_at="2026-08-10T21:07:52Z",
     checksum_asset_name="sha256.sum",
-    checksum_asset_id=508723914,
+    checksum_asset_id=509259999,
     checksum_asset_size=820,
     checksum_asset_digest=(
-        "f059c276fa3f694e8817628e426b735584ba9dc74dfffef50c673c9fb38f7270"
+        "bdc469a4cc16ea293c0b214e2b6deb257fb346807dc1919460b06d0a82405cdd"
     ),
     receipts={
         "shell-linux-x64": ReceiptPolicy(
@@ -110,10 +110,10 @@ PUBLIC_POLICY = ReleasePolicy(
             mode="shell",
             artifact_id="installer:shell",
             asset_name="logbrew-cli-installer.sh",
-            asset_id=508723896,
+            asset_id=509259977,
             asset_size=54183,
             digest=(
-                "5257f8dcfda9d42045d8ff6d41717b9e034f518d9bae7bef6823abfdd5b1157f"
+                "cb352a21ea9609e3ec300bc74e251b4f524b24932dcdbea26d6c5a15dd85e0a2"
             ),
             checksum_required=False,
         ),
@@ -124,10 +124,10 @@ PUBLIC_POLICY = ReleasePolicy(
             mode="native",
             artifact_id="native:linux-arm64",
             asset_name="logbrew-cli-aarch64-unknown-linux-gnu.tar.xz",
-            asset_id=508723891,
-            asset_size=2356004,
+            asset_id=509259969,
+            asset_size=2358600,
             digest=(
-                "b2085980c42a11487ef76b93582b24d636c7acf243d2709c2eddfcc02c9ef9a3"
+                "90f3326dab4a421651368e75e721f09190bae45832aed7ea3433c5ff496d0ce8"
             ),
             checksum_required=True,
         ),
@@ -138,10 +138,10 @@ PUBLIC_POLICY = ReleasePolicy(
             mode="native",
             artifact_id="native:linux-x64",
             asset_name="logbrew-cli-x86_64-unknown-linux-gnu.tar.xz",
-            asset_id=508723911,
-            asset_size=2659688,
+            asset_id=509259991,
+            asset_size=2660948,
             digest=(
-                "5fca9589ede4d16342834da783e4cc63a9b2f983a844220c22ac91f8583324ca"
+                "95105bbc3365e7ccda87414ac7798476b778ac9e7160c839bfaa9f76dc897a0c"
             ),
             checksum_required=True,
         ),
@@ -152,10 +152,10 @@ PUBLIC_POLICY = ReleasePolicy(
             mode="powershell",
             artifact_id="installer:powershell",
             asset_name="logbrew-cli-installer.ps1",
-            asset_id=508723894,
+            asset_id=509259975,
             asset_size=22325,
             digest=(
-                "948052b9a6598e824326781b4bf5d336d8f1d14cb11eae8301160eef4b89eeda"
+                "9e6d8be7459ed1589b14d496cf8e44cf23403661de212a81730d4d8a6c984ca6"
             ),
             checksum_required=False,
         ),
@@ -166,10 +166,10 @@ PUBLIC_POLICY = ReleasePolicy(
             mode="native",
             artifact_id="native:windows-x64",
             asset_name="logbrew-cli-x86_64-pc-windows-msvc.zip",
-            asset_id=508723906,
-            asset_size=3423149,
+            asset_id=509259982,
+            asset_size=3424268,
             digest=(
-                "283cc6425109489175da02cc3e0f37371886e6638cd8128ad7c2b0a805cca373"
+                "a19c0fbb8328f60ee7fa8c4d4d9f94e0091ac6e951c9c3440e9e7653bf7b6e07"
             ),
             checksum_required=True,
         ),
@@ -180,10 +180,10 @@ PUBLIC_POLICY = ReleasePolicy(
             mode="native",
             artifact_id="native:macos-x64",
             asset_name="logbrew-cli-x86_64-apple-darwin.tar.xz",
-            asset_id=508723901,
-            asset_size=2610340,
+            asset_id=509259979,
+            asset_size=2611376,
             digest=(
-                "15e0333459ac8242e03a7779ee0f75c162cfbed46a92c0729e27824a84e14a63"
+                "8b75db1bc993eb70bcc9920efda3a6a51a8c3261f521a54da02d8d34bf561ccf"
             ),
             checksum_required=True,
         ),
@@ -952,9 +952,7 @@ def run_attestation(
     )
     verifier_bytes = validate_released_source(released_source, source_commit)
 
-    metadata_reader = json_reader
-    if metadata_reader is None:
-        metadata_reader = github_metadata_reader(environment)
+    metadata_reader = json_reader if json_reader is not None else github_metadata_reader(environment)
 
     urls = api_urls(policy)
     tag_reference = metadata_reader(urls["tag_ref"])
