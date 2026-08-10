@@ -18,6 +18,7 @@ mod analytics_segments;
 pub mod auth;
 #[doc(hidden)]
 pub mod auth_namespace;
+mod deployment;
 #[doc(hidden)]
 pub mod doctor;
 mod error;
@@ -226,6 +227,13 @@ pub enum Command {
         /// Emit machine-readable JSON.
         json: bool,
     },
+    /// Records one completed deployment boundary for release investigation.
+    Deploy {
+        /// Exact normalized deployment identity and completed boundary.
+        options: DeploymentRecordOptions,
+        /// Emit the exact validated server response.
+        json: bool,
+    },
     /// Summarizes bounded product activity and capture quality for one project.
     AnalyticsOverview {
         /// Normalized privacy-safe overview query.
@@ -361,6 +369,8 @@ pub enum HelpTopic {
     Watch,
     /// Explain command.
     Explain,
+    /// Completed deployment capture command.
+    Deploy,
     /// Product-analytics command overview.
     Analytics,
     /// Product-analytics project overview command.
@@ -413,6 +423,7 @@ impl HelpTopic {
             Self::ReadIssue => "read_issue",
             Self::Watch => "watch",
             Self::Explain => "explain",
+            Self::Deploy => "deploy",
             Self::Analytics => "analytics",
             Self::AnalyticsOverview => "analytics_overview",
             Self::AnalyticsProperties => "analytics_properties",
@@ -886,6 +897,50 @@ pub struct ExplainReleaseTarget {
     pub environment: String,
     /// Exact logical service name.
     pub service_name: String,
+}
+
+/// Terminal result of one completed deployment attempt.
+#[derive(Debug, Clone, Copy, serde::Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DeploymentStatus {
+    /// The deployment completed successfully.
+    Succeeded,
+    /// The deployment attempt completed unsuccessfully.
+    Failed,
+}
+
+impl DeploymentStatus {
+    /// Returns the canonical public wire value.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Succeeded => "succeeded",
+            Self::Failed => "failed",
+        }
+    }
+}
+
+/// Exact completed deployment boundary sent by `logbrew deploy`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeploymentRecordOptions {
+    /// Caller-owned deployment identity used for idempotent retries.
+    pub deployment_id: String,
+    /// Active account-owned project identifier.
+    pub project_id: String,
+    /// Exact application release used by runtime telemetry.
+    pub release: String,
+    /// Exact deployment environment used by runtime telemetry.
+    pub environment: String,
+    /// Exact logical service name used by runtime telemetry.
+    pub service_name: String,
+    /// Terminal deployment result.
+    pub status: DeploymentStatus,
+    /// RFC3339 deployment attempt start.
+    pub started_at: String,
+    /// RFC3339 deployment attempt finish.
+    pub finished_at: String,
+    /// Optional abbreviated or full source commit identity.
+    pub commit_sha: Option<String>,
 }
 
 /// Bounded query required by a metric investigation.
@@ -1374,6 +1429,10 @@ impl Command {
                 },
             )),
             Self::Explain { target, .. } => Some(explain_path(target)),
+            Self::Deploy { options, .. } => Some(format!(
+                "/api/telemetry/deployments/{}",
+                options.deployment_id
+            )),
             Self::AnalyticsOverview { options, .. } => {
                 Some(analytics_overview::request_path(options))
             }
@@ -1437,6 +1496,7 @@ impl Command {
             | Self::Read { json, .. }
             | Self::Watch { json, .. }
             | Self::Explain { json, .. }
+            | Self::Deploy { json, .. }
             | Self::AnalyticsOverview { json, .. }
             | Self::AnalyticsProperties { json, .. }
             | Self::AnalyticsCompare { json, .. }
@@ -1457,6 +1517,7 @@ impl Command {
     #[must_use]
     pub const fn http_method(&self) -> Option<HttpMethod> {
         match self {
+            Self::Deploy { .. } => Some(HttpMethod::Put),
             Self::ProjectCreate { .. }
             | Self::ProjectIngestKeyCreate { .. }
             | Self::ProjectSetupSeen { .. }
@@ -1510,6 +1571,16 @@ impl Command {
                 target: SetTarget::IssueStatus { status, .. },
                 ..
             } => Some(serde_json::json!({ "status": status })),
+            Self::Deploy { options, .. } => Some(serde_json::json!({
+                "project_id": options.project_id,
+                "release": options.release,
+                "environment": options.environment,
+                "service_name": options.service_name,
+                "status": options.status.as_str(),
+                "started_at": options.started_at,
+                "finished_at": options.finished_at,
+                "commit_sha": options.commit_sha,
+            })),
             Self::AnalyticsPaths { options, .. } => Some(analytics::request_body(options)),
             Self::AnalyticsCompare { options, .. } => {
                 Some(analytics_segments::request_body(options))
@@ -1579,6 +1650,7 @@ impl Command {
             | Self::Read { .. }
             | Self::Watch { .. }
             | Self::Explain { .. }
+            | Self::Deploy { .. }
             | Self::AnalyticsOverview { .. }
             | Self::AnalyticsProperties { .. }
             | Self::AnalyticsCompare { .. }
@@ -1606,6 +1678,8 @@ pub enum HttpMethod {
     Get,
     /// POST request.
     Post,
+    /// PUT request.
+    Put,
     /// PATCH request.
     Patch,
     /// DELETE request.
@@ -1721,6 +1795,7 @@ pub async fn execute_command<W: std::io::Write>(
             json,
         } => investigate::execute(env, issue_id.as_str(), occurrence, *json, output).await,
         Command::Explain { target, json } => explain::execute(env, target, *json, output).await,
+        Command::Deploy { options, json } => deployment::execute(env, options, *json, output).await,
         Command::AnalyticsOverview { options, json } => {
             analytics_overview::execute(env, options, *json, output).await
         }
@@ -1855,6 +1930,7 @@ fn build_command_request(
     let mut request = match command.http_method().unwrap_or(HttpMethod::Get) {
         HttpMethod::Get => client.get(url),
         HttpMethod::Post => client.post(url),
+        HttpMethod::Put => client.put(url),
         HttpMethod::Patch => client.patch(url),
         HttpMethod::Delete => client.delete(url),
     }

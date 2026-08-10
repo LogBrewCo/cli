@@ -243,6 +243,7 @@ fn parse_values(values: &[String]) -> Result<Command, CliError> {
         "resolve" | "close" | "ignore" | "reopen" => parse_issue_status_shortcut(head, tail),
         alias if is_watch_command_alias(alias) => parse_watch(tail),
         "explain" => parse_explain(tail),
+        "deploy" => crate::deployment::parse(tail),
         "set" => parse_set(tail),
         id if is_pasted_detail_id(id) => parse_pasted_detail_id(id, tail),
         _ => Err(unknown_command(head)),

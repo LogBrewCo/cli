@@ -86,6 +86,7 @@ logbrew logout
 logbrew logs --release checkout@1 --environment production
 logbrew issues open --json
 logbrew explain issue issue_123
+logbrew deploy ci-run-42 --project <project_id> --release checkout@1 --environment production --service checkout-api --status succeeded --started-at 2026-08-10T12:00:00Z --finished-at 2026-08-10T12:02:00Z --json
 logbrew explain release checkout@1 --project <project_id> --environment production --service checkout-api
 logbrew watch --json
 logbrew watch --severity error,critical --json

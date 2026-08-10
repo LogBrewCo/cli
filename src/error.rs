@@ -140,6 +140,9 @@ pub enum CliError {
     /// Confirmed project archival syntax is malformed.
     #[error("invalid project archive command")]
     InvalidProjectArchiveCommand,
+    /// Completed deployment capture syntax or values are malformed.
+    #[error("invalid deployment command")]
+    InvalidDeploymentCommand,
     /// Authenticated project catalog syntax is malformed.
     #[error("invalid projects command")]
     InvalidProjectsCommand,
@@ -645,6 +648,7 @@ const fn cli_error_code(error: &CliError) -> &'static str {
             "invalid_project_ingest_key_create_command"
         }
         CliError::InvalidProjectArchiveCommand => "invalid_project_archive_command",
+        CliError::InvalidDeploymentCommand => "invalid_deployment_command",
         CliError::InvalidProjectsCommand => "invalid_projects_command",
         CliError::InvalidLoginProvider => "invalid_login_provider",
         CliError::InvalidUsageCommand => "invalid_usage_command",
@@ -700,6 +704,7 @@ const fn cli_error_next_step(error: &CliError) -> &'static str {
         CliError::InvalidProjectArchiveCommand => {
             "use logbrew projects archive <project_id> --yes with optional --json"
         }
+        CliError::InvalidDeploymentCommand => crate::deployment::DEPLOYMENT_NEXT_STEP,
         CliError::InvalidProjectsCommand => {
             "use logbrew projects with optional --json, or logbrew projects --help"
         }
