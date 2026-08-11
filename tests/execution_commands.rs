@@ -16,12 +16,7 @@ type TestResult = Result<(), Box<dyn std::error::Error>>;
 async fn authenticated_reads_without_token_explain_login_step() {
     let command = parse_command(["logbrew", "read", "logs", "--release", "api@1", "--json"])
         .expect("command parses");
-    let env = CliEnvironment {
-        base_url: "http://127.0.0.1:1".to_owned(),
-        token: None,
-        home: Some(std::env::temp_dir().join("logbrew-missing-token-test")),
-        cwd: None,
-    };
+    let env = test_env("http://127.0.0.1:1", None, "missing-token");
     let mut output = Vec::new();
 
     let error = execute_command(&command, &env, &mut output)
@@ -33,12 +28,7 @@ async fn authenticated_reads_without_token_explain_login_step() {
 
 #[tokio::test]
 async fn login_no_open_json_prints_auth_url_without_browser_side_effect() {
-    let env = CliEnvironment {
-        base_url: "https://example.test".to_owned(),
-        token: None,
-        home: Some(std::env::temp_dir().join("logbrew-login-no-open-test")),
-        cwd: None,
-    };
+    let env = test_env("https://example.test", None, "login-no-open");
     for args in [
         &["logbrew", "login", "--no-open", "--json"][..],
         &["logbrew", "--json", "login"][..],
@@ -80,12 +70,7 @@ async fn login_no_open_json_prints_auth_url_without_browser_side_effect() {
 async fn login_no_open_human_prints_browser_state_and_next_step() {
     let command = parse_command(["logbrew", "login", "--provider", "bitbucket", "--no-open"])
         .expect("command");
-    let env = CliEnvironment {
-        base_url: "https://example.test".to_owned(),
-        token: None,
-        home: Some(std::env::temp_dir().join("logbrew-login-no-open-human-test")),
-        cwd: None,
-    };
+    let env = test_env("https://example.test", None, "login-no-open-human");
     let mut output = Vec::new();
 
     execute_command(&command, &env, &mut output)
@@ -141,6 +126,52 @@ async fn setup_json_detects_parent_project_when_run_from_subdirectory() -> TestR
     assert_eq!(body["detected"][0]["runtime"], "node");
     assert_eq!(body["detected"][0]["package_manager"], "npm");
     assert_eq!(body["detected"][0]["manifest"], "../package.json");
+    Ok(())
+}
+
+#[tokio::test]
+async fn setup_reports_a_non_mutating_symfony_composer_plan() -> TestResult {
+    let project_dir = setup_fixture("setup-symfony")?;
+    fs::create_dir_all(project_dir.join("config"))?;
+    fs::write(project_dir.join("config/bundles.php"), "<?php return [];\n")?;
+    fs::write(
+        project_dir.join("composer.json"),
+        r#"{"require":{"symfony/framework-bundle":"^7.0"}}"#,
+    )?;
+
+    let output = setup_output(&["logbrew", "setup", "--json"], &project_dir).await?;
+    let body: serde_json::Value = serde_json::from_slice(&output)?;
+    assert_eq!(body["install_ready"], true);
+    assert_eq!(
+        body["install_plan"],
+        serde_json::json!({
+            "mode": "non_mutating",
+            "ecosystem": "composer",
+            "package_manager": "composer",
+            "integration": "symfony",
+            "package": "logbrew/sdk",
+            "framework_manifest": "config/bundles.php",
+            "compatibility": {
+                "status": "review_required",
+                "requires_php": "^8.2",
+                "requires_framework": "Symfony^6.4 || ^7.0 || ^8.0",
+            },
+            "install_command": "composer require logbrew/sdk",
+            "next_action": {
+                "code": "review_compatibility_and_install",
+                "target": "project_environment",
+            }
+        })
+    );
+    let text = String::from_utf8(setup_output(&["logbrew", "setup"], &project_dir).await?)?;
+    for expected in [
+        "Integration: Symfony",
+        "Package: logbrew/sdk",
+        "Command: composer require logbrew/sdk",
+    ] {
+        assert!(text.contains(expected));
+    }
+    assert!(!text.contains(project_dir.to_string_lossy().as_ref()));
     Ok(())
 }
 
@@ -206,10 +237,9 @@ async fn setup_json_prefers_objective_c_app_over_nested_swift_package() -> TestR
 }
 
 #[tokio::test]
-async fn setup_human_explains_empty_project_next_step() -> TestResult {
-    let project_dir = setup_fixture("setup-empty")?;
-    let output = setup_output(&["logbrew", "setup"], project_dir.as_path()).await?;
-    let text = String::from_utf8(output)?;
+async fn setup_human_reports_empty_unsupported_and_preference_states() -> TestResult {
+    let empty = setup_fixture("setup-empty")?;
+    let text = String::from_utf8(setup_output(&["logbrew", "setup"], &empty).await?)?;
     assert_eq!(
         text,
         "LogBrew setup plan\nMode: non-mutating plan\nNo files changed.\nInstall: not ready\nNo \
@@ -217,15 +247,10 @@ async fn setup_human_explains_empty_project_next_step() -> TestResult {
          package.json, pyproject.toml, Pipfile, Cargo.toml, Package.swift, project.yml, \
          project.yaml, .xcodeproj, .xcworkspace, CMakeLists.txt, go.mod, or composer.json.\n"
     );
-    Ok(())
-}
 
-#[tokio::test]
-async fn setup_human_detects_project_without_claiming_install() -> TestResult {
-    let project_dir = setup_fixture("setup-rust-human")?;
-    fs::write(project_dir.join("Cargo.toml"), "")?;
-    let output = setup_output(&["logbrew", "setup"], project_dir.as_path()).await?;
-    let text = String::from_utf8(output)?;
+    let rust = setup_fixture("setup-rust-human")?;
+    fs::write(rust.join("Cargo.toml"), "")?;
+    let text = String::from_utf8(setup_output(&["logbrew", "setup"], &rust).await?)?;
     assert_eq!(
         text,
         "LogBrew setup plan\nMode: non-mutating plan\nNo files changed.\nInstall: not \
@@ -233,20 +258,9 @@ async fn setup_human_detects_project_without_claiming_install() -> TestResult {
          guidance for this runtime; this CLI version does not yet provide a structured install \
          plan\n"
     );
-    Ok(())
-}
 
-#[tokio::test]
-async fn setup_human_echoes_non_mutating_preferences() -> TestResult {
-    let project_dir = setup_fixture("setup-rust-human-prefs")?;
-    fs::write(project_dir.join("Cargo.toml"), "")?;
-    let output = setup_output(
-        &["logbrew", "setup", "--auto", "--yes"],
-        project_dir.as_path(),
-    )
-    .await?;
-    let text = String::from_utf8(output)?;
-    assert!(text.contains("Mode: non-mutating plan\n"));
+    let text =
+        String::from_utf8(setup_output(&["logbrew", "setup", "--auto", "--yes"], &rust).await?)?;
     assert!(text.contains("Preferences: auto=true, yes=true\n"));
     assert!(text.contains("No files changed.\n"));
     assert!(text.contains("Install: not ready\n"));
@@ -285,12 +299,7 @@ async fn watch_json_streams_websocket_events_without_leaking_ticket() {
             json: true
         }
     );
-    let env = CliEnvironment {
-        base_url,
-        token: Some("fixture-token".to_owned()),
-        home: Some(std::env::temp_dir().join("logbrew-watch-stream-test")),
-        cwd: None,
-    };
+    let env = test_env(base_url, Some("fixture-token"), "watch-stream");
     let mut output = Vec::new();
 
     execute_command(&command, &env, &mut output)
@@ -407,12 +416,7 @@ async fn watch_json_filters_error_and_critical_events_client_side() {
             json: true
         }
     );
-    let env = CliEnvironment {
-        base_url,
-        token: Some("fixture-token".to_owned()),
-        home: Some(std::env::temp_dir().join("logbrew-watch-filter-test")),
-        cwd: None,
-    };
+    let env = test_env(base_url, Some("fixture-token"), "watch-filter");
     let mut output = Vec::new();
 
     execute_command(&command, &env, &mut output)
@@ -468,12 +472,7 @@ async fn watch_json_reconnects_with_fresh_ticket_after_transient_disconnect() {
     ];
     let (base_url, server) = spawn_feed_server_sessions(sessions).await;
     let command = parse_command(["logbrew", "watch", "logs", "--json"]).expect("command parses");
-    let env = CliEnvironment {
-        base_url,
-        token: Some("fixture-token".to_owned()),
-        home: Some(std::env::temp_dir().join("logbrew-watch-reconnect-test")),
-        cwd: None,
-    };
+    let env = test_env(base_url, Some("fixture-token"), "watch-reconnect");
     let mut output = Vec::new();
 
     execute_command(&command, &env, &mut output)
@@ -501,12 +500,7 @@ async fn watch_human_requires_json_for_live_stream() {
             json: false
         }
     );
-    let env = CliEnvironment {
-        base_url: "https://example.test".to_owned(),
-        token: None,
-        home: Some(std::env::temp_dir().join("logbrew-watch-human-test")),
-        cwd: None,
-    };
+    let env = test_env("https://example.test", None, "watch-human");
     let mut output = Vec::new();
 
     let error = execute_command(&command, &env, &mut output)
@@ -537,28 +531,10 @@ async fn spawn_feed_server(
         let lower_request = request.to_ascii_lowercase();
         assert!(request.starts_with("POST /api/feed/ticket "));
         assert!(lower_request.contains("authorization: bearer fixture-token"));
-        let body = serde_json::json!({ "ticket": ticket }).to_string();
-        let response = format!(
-            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
-            body.len(),
-            body
-        );
-        ticket_stream
-            .write_all(response.as_bytes())
-            .await
-            .expect("write ticket response");
+        write_json_response(&mut ticket_stream, serde_json::json!({ "ticket": ticket })).await;
 
         let (live_stream, _) = listener.accept().await.expect("websocket connection");
-        let callback =
-            |request: &tokio_tungstenite::tungstenite::handshake::server::Request,
-             response: tokio_tungstenite::tungstenite::handshake::server::Response| {
-                assert_eq!(request.uri().path(), "/api/feed/live");
-                assert_eq!(request.uri().query(), Some(expected_ticket_query.as_str()));
-                Ok(response)
-            };
-        let mut websocket = accept_hdr_async(live_stream, callback)
-            .await
-            .expect("accept websocket");
+        let mut websocket = accept_feed(live_stream, &expected_ticket_query).await;
         for message in messages {
             websocket
                 .send(Message::Text(message.into()))
@@ -597,20 +573,14 @@ async fn spawn_refreshing_feed_server() -> (String, tokio::task::JoinHandle<()>)
         let refresh_request = read_http_request(&mut refresh_stream).await;
         assert!(refresh_request.starts_with("POST /api/auth/refresh "));
         assert!(refresh_request.contains(r#"{"refresh_token":"watch-refresh"}"#));
-        let refresh_body = serde_json::json!({
-            "access_token": "watch-fresh",
-            "refresh_token": "watch-next-refresh"
-        })
-        .to_string();
-        let refresh_response = format!(
-            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
-            refresh_body.len(),
-            refresh_body
-        );
-        refresh_stream
-            .write_all(refresh_response.as_bytes())
-            .await
-            .expect("write refresh response");
+        write_json_response(
+            &mut refresh_stream,
+            serde_json::json!({
+                "access_token": "watch-fresh",
+                "refresh_token": "watch-next-refresh"
+            }),
+        )
+        .await;
 
         let (mut ticket_stream, _) = listener.accept().await.expect("fresh ticket request");
         let ticket_request = read_http_request(&mut ticket_stream).await;
@@ -620,28 +590,14 @@ async fn spawn_refreshing_feed_server() -> (String, tokio::task::JoinHandle<()>)
                 .to_ascii_lowercase()
                 .contains("authorization: bearer watch-fresh")
         );
-        let ticket_body = serde_json::json!({ "ticket": "watch-ticket" }).to_string();
-        let ticket_response = format!(
-            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
-            ticket_body.len(),
-            ticket_body
-        );
-        ticket_stream
-            .write_all(ticket_response.as_bytes())
-            .await
-            .expect("write ticket response");
+        write_json_response(
+            &mut ticket_stream,
+            serde_json::json!({ "ticket": "watch-ticket" }),
+        )
+        .await;
 
         let (live_stream, _) = listener.accept().await.expect("websocket request");
-        let callback =
-            |request: &tokio_tungstenite::tungstenite::handshake::server::Request,
-             response: tokio_tungstenite::tungstenite::handshake::server::Response| {
-                assert_eq!(request.uri().path(), "/api/feed/live");
-                assert_eq!(request.uri().query(), Some("ticket=watch-ticket"));
-                Ok(response)
-            };
-        let mut websocket = accept_hdr_async(live_stream, callback)
-            .await
-            .expect("accept refreshed websocket");
+        let mut websocket = accept_feed(live_stream, "ticket=watch-ticket").await;
         websocket
             .send(Message::Text(
                 serde_json::json!({
@@ -687,29 +643,15 @@ async fn spawn_feed_server_sessions(
             let lower_request = request.to_ascii_lowercase();
             assert!(request.starts_with("POST /api/feed/ticket "));
             assert!(lower_request.contains("authorization: bearer fixture-token"));
-            let body = serde_json::json!({ "ticket": session.ticket }).to_string();
-            let response = format!(
-                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
-                body.len(),
-                body
-            );
-            ticket_stream
-                .write_all(response.as_bytes())
-                .await
-                .expect("write ticket response");
+            write_json_response(
+                &mut ticket_stream,
+                serde_json::json!({ "ticket": session.ticket }),
+            )
+            .await;
 
             let expected_ticket_query = format!("ticket={}", percent_encode(session.ticket));
             let (live_stream, _) = listener.accept().await.expect("websocket connection");
-            let callback =
-                |request: &tokio_tungstenite::tungstenite::handshake::server::Request,
-                 response: tokio_tungstenite::tungstenite::handshake::server::Response| {
-                    assert_eq!(request.uri().path(), "/api/feed/live");
-                    assert_eq!(request.uri().query(), Some(expected_ticket_query.as_str()));
-                    Ok(response)
-                };
-            let mut websocket = accept_hdr_async(live_stream, callback)
-                .await
-                .expect("accept websocket");
+            let mut websocket = accept_feed(live_stream, &expected_ticket_query).await;
             for message in session.messages {
                 websocket
                     .send(Message::Text(message.into()))
@@ -753,6 +695,34 @@ async fn read_http_request(stream: &mut tokio::net::TcpStream) -> String {
     String::from_utf8(request).expect("request is utf8")
 }
 
+async fn accept_feed(
+    stream: tokio::net::TcpStream,
+    expected_query: &str,
+) -> tokio_tungstenite::WebSocketStream<tokio::net::TcpStream> {
+    let callback =
+        |request: &tokio_tungstenite::tungstenite::handshake::server::Request,
+         response: tokio_tungstenite::tungstenite::handshake::server::Response| {
+            assert_eq!(request.uri().path(), "/api/feed/live");
+            assert_eq!(request.uri().query(), Some(expected_query));
+            Ok(response)
+        };
+    accept_hdr_async(stream, callback)
+        .await
+        .expect("accept websocket")
+}
+
+async fn write_json_response(stream: &mut tokio::net::TcpStream, body: serde_json::Value) {
+    let body = body.to_string();
+    let response = format!(
+        "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+        body.len()
+    );
+    stream
+        .write_all(response.as_bytes())
+        .await
+        .expect("write JSON response");
+}
+
 fn percent_encode(value: &str) -> String {
     let mut encoded = String::new();
     for byte in value.bytes() {
@@ -777,9 +747,20 @@ fn hex_digit(nibble: u8) -> char {
 
 fn setup_fixture(name: &str) -> Result<std::path::PathBuf, std::io::Error> {
     let dir = std::env::temp_dir().join(format!("logbrew-cli-{name}-{}", std::process::id()));
-    remove_dir_if_exists(dir.as_path())?;
+    if dir.try_exists()? {
+        fs::remove_dir_all(&dir)?;
+    }
     fs::create_dir_all(&dir)?;
     Ok(dir)
+}
+
+fn test_env(base_url: impl Into<String>, token: Option<&str>, name: &str) -> CliEnvironment {
+    CliEnvironment {
+        base_url: base_url.into(),
+        token: token.map(str::to_owned),
+        home: Some(std::env::temp_dir().join(format!("logbrew-{name}-test"))),
+        cwd: None,
+    }
 }
 
 async fn setup_output(
@@ -796,12 +777,4 @@ async fn setup_output(
     let mut output = Vec::new();
     execute_command(&command, &env, &mut output).await?;
     Ok(output)
-}
-
-fn remove_dir_if_exists(path: &std::path::Path) -> Result<(), std::io::Error> {
-    match fs::remove_dir_all(path) {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(error),
-    }
 }
