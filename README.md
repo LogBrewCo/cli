@@ -9,30 +9,44 @@ Public command-line interface for LogBrew.
 The CLI is built for humans and coding agents: stable JSON output, readable
 human output, clear `Next:` recovery steps, and token-safe diagnostics.
 
-## Install
+## Install or update
 
-Use one of the published package-manager installs:
+For a new package-manager installation:
 
 ```bash
 cargo install logbrew-cli
-npm install -g logbrew-cli
+npm install -g logbrew-cli@latest
 brew install LogBrewCo/tap/logbrew
 ```
 
-Or install the native GitHub Release artifact directly:
+Existing installations do not update themselves. Refresh through the same
+package manager before relying on a newly documented setup capability:
+
+```bash
+cargo install --locked logbrew-cli
+npm install -g logbrew-cli@latest
+brew update && brew upgrade LogBrewCo/tap/logbrew
+```
+
+The native GitHub Release installers can be run again to replace their prior
+binary:
 
 ```bash
 curl --proto '=https' --tlsv1.2 -LsSf https://github.com/LogBrewCo/cli/releases/latest/download/logbrew-cli-installer.sh | sh
 powershell -ExecutionPolicy Bypass -c "irm https://github.com/LogBrewCo/cli/releases/latest/download/logbrew-cli-installer.ps1 | iex"
 ```
 
-Windows users can also download the latest MSI from the GitHub Release assets.
+Windows users can also install the latest MSI from the GitHub Release assets.
+After any update, compare `logbrew version --json` with the
+[latest public release](https://github.com/LogBrewCo/cli/releases/latest).
+CMake setup planning requires CLI 0.1.39 or newer; correct Objective-C
+classification for XcodeGen projects requires CLI 0.1.40 or newer.
 
 Cargo installs and source builds require Rust 1.87 or newer. The npm,
 Homebrew, shell, PowerShell, and MSI installers use native release artifacts and
 do not require a local Rust toolchain.
 
-For development from the public repository:
+For development from this public repository:
 
 ```bash
 cargo install --git https://github.com/LogBrewCo/cli logbrew-cli
