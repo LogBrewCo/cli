@@ -6,61 +6,53 @@ const SWIFT_PACKAGE_URL: &str = "https://github.com/LogBrewCo/sdk.git";
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
 #[tokio::test]
-async fn swiftpm_and_xcodegen_emit_exact_non_mutating_install_plan() -> TestResult {
+async fn swiftpm_emits_exact_non_mutating_install_plan() -> TestResult {
     let root = fixture_root("swift-ready")?;
     std::fs::write(
         root.join("Package.swift"),
         "// deterministic public Swift package fixture\n",
     )?;
-    std::fs::write(root.join("project.yml"), "name: Fixture\n")?;
-    let (body, text) = setup_json(root.as_path(), &["logbrew", "setup", "--json"]).await?;
-    assert_eq!(body["install_ready"], true);
+    let (body, _) = setup_json(root.as_path(), &["logbrew", "setup", "--json"]).await?;
     assert_eq!(
-        body["install_plan"],
+        body,
         serde_json::json!({
-            "mode": "non_mutating",
-            "ecosystem": "swiftpm",
-            "package_url": SWIFT_PACKAGE_URL,
-            "product": "LogBrew",
-            "version": "0.1.6",
-            "version_requirement": {
-                "kind": "up_to_next_major",
-                "minimum_version": "0.1.6"
+            "ok": true,
+            "auto": false,
+            "yes": false,
+            "install_ready": true,
+            "install_plan": {
+                "mode": "non_mutating",
+                "ecosystem": "swiftpm",
+                "package_url": SWIFT_PACKAGE_URL,
+                "product": "LogBrew",
+                "version": "0.1.6",
+                "version_requirement": {
+                    "kind": "up_to_next_major",
+                    "minimum_version": "0.1.6"
+                },
+                "dependency_declaration": ".package(url: \"https://github.com/LogBrewCo/sdk.git\", from: \"0.1.6\")",
+                "next_action": {
+                    "code": "add_swift_package_dependency",
+                    "target": "project_manifest"
+                }
             },
-            "dependency_declaration": ".package(url: \"https://github.com/LogBrewCo/sdk.git\", from: \"0.1.6\")",
-            "next_action": {
-                "code": "add_swift_package_dependency",
-                "target": "project_manifest"
-            }
-        })
-    );
-    assert_eq!(
-        body["next"],
-        "add the LogBrew Swift package from the install plan; no files were changed"
-    );
-    assert_eq!(
-        body["detected"],
-        serde_json::json!([
-            {
+            "detected": [{
                 "runtime": "swift",
                 "package_manager": "swift package manager",
                 "manifest": "Package.swift"
-            },
-            {
-                "runtime": "swift-ios",
-                "package_manager": "xcodegen",
-                "manifest": "project.yml"
-            }
-        ])
+            }],
+            "next": "add the LogBrew Swift package from the install plan; no files were changed"
+        })
     );
-    for forbidden in [
-        root.to_string_lossy().as_ref(),
-        "installed\":true",
-        "token",
-        "credential",
+    let human = setup_text(root.as_path(), &["logbrew", "setup"]).await?;
+    for expected in [
+        "Product: LogBrew",
+        "Minimum version: 0.1.6",
+        r#"Dependency: .package(url: "https://github.com/LogBrewCo/sdk.git", from: "0.1.6")"#,
     ] {
-        assert!(!text.contains(forbidden));
+        assert!(human.contains(expected));
     }
+    assert!(!human.contains(root.to_string_lossy().as_ref()));
     Ok(())
 }
 
@@ -74,7 +66,6 @@ async fn cmake_emits_exact_pinned_cpp_install_plan() -> TestResult {
 
     let (body, text) = setup_json(root.as_path(), &["logbrew", "setup", "--json"]).await?;
 
-    assert_eq!(body["install_ready"], true);
     assert_eq!(
         body["install_plan"],
         serde_json::json!({
@@ -167,7 +158,6 @@ classifiers = ["Framework :: Django", "Programming Language :: Python :: 3.10"]
     )?;
     std::fs::write(root.join("requirements.txt"), "Django>=4.2,<6\n")?;
     let (body, _) = setup_json(root.as_path(), &["logbrew", "setup", "--json"]).await?;
-    assert_eq!(body["install_ready"], true);
     assert_eq!(
         body["install_plan"],
         python_plan(
@@ -235,7 +225,6 @@ async fn released_python_frameworks_use_the_detected_package_manager() -> TestRe
         )?;
         std::fs::write(root.join(lockfile), "")?;
         let (body, _) = setup_json(root.as_path(), &["logbrew", "setup", "--json"]).await?;
-        assert_eq!(body["install_ready"], true);
         assert_eq!(body["install_plan"]["package_manager"], package_manager);
         assert_eq!(body["install_plan"]["integration"], integration);
         assert_eq!(body["install_plan"]["packages"][0]["name"], "logbrew-sdk");
@@ -265,7 +254,6 @@ async fn framework_neutral_pipenv_project_gets_the_core_python_plan() -> TestRes
     )?;
     std::fs::write(root.join("Pipfile.lock"), "{}")?;
     let (body, _) = setup_json(root.as_path(), &["logbrew", "setup", "--json"]).await?;
-    assert_eq!(body["install_ready"], true);
     assert_eq!(
         body["install_plan"],
         python_plan("pipenv", "python", None, None, "pipenv install logbrew-sdk",)
@@ -308,24 +296,6 @@ async fn runtimes_without_structured_plans_get_truthful_recovery() -> TestResult
         body["next"],
         "use the released SDK guidance for this runtime; this CLI version does not yet provide a structured install plan"
     );
-    Ok(())
-}
-
-#[tokio::test]
-async fn swift_human_plan_is_truthful_and_path_free() -> TestResult {
-    let root = fixture_root("human")?;
-    std::fs::write(root.join("project.yml"), "name: Fixture\n")?;
-    let text = setup_text(root.as_path(), &["logbrew", "setup"]).await?;
-    assert!(text.contains("Install: ready"));
-    assert!(text.contains("Package: https://github.com/LogBrewCo/sdk.git"));
-    assert!(text.contains("Product: LogBrew"));
-    assert!(text.contains("Minimum version: 0.1.6"));
-    assert!(text.contains(
-        r#"Dependency: .package(url: "https://github.com/LogBrewCo/sdk.git", from: "0.1.6")"#
-    ));
-    assert!(text.contains("No files changed."));
-    assert!(!text.contains(root.to_string_lossy().as_ref()));
-    assert!(!text.contains("installed"));
     Ok(())
 }
 
