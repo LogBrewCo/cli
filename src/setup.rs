@@ -11,8 +11,8 @@ const MAX_APPLE_SOURCE_SCAN_ENTRIES: usize = 4_096;
 /// Next step when setup finds a supported project.
 const SDK_NEXT_STEP: &str = "use the released SDK guidance for this runtime; this CLI version does \
                              not yet provide a structured install plan";
-/// Next step when a public Python package plan is available.
-const PYTHON_NEXT_STEP: &str =
+/// Next step when a public package-registry plan is available.
+const PACKAGE_NEXT_STEP: &str =
     "review the compatibility requirements, then run the install command; no files were changed";
 /// Minimum Python version required by the current public Python SDK family.
 const PYTHON_MINIMUM_VERSION: &str = ">=3.10";
@@ -22,7 +22,11 @@ const DJANGO_VERSION_REQUIREMENT: &str = "Django>=4.2.30,<6";
 const FLASK_MINIMUM_VERSION: &str = "Flask>=3.1";
 /// Minimum `FastAPI` version required by the current public `FastAPI` integration.
 const FASTAPI_MINIMUM_VERSION: &str = "FastAPI>=0.111.1";
-/// Maximum bytes read from any manifest while detecting a Python framework.
+/// Minimum PHP version required by the current public PHP SDK.
+const PHP_MINIMUM_VERSION: &str = "^8.2";
+/// Supported Symfony range for the current public integration.
+const SYMFONY_VERSION_REQUIREMENT: &str = "Symfony^6.4 || ^7.0 || ^8.0";
+/// Maximum bytes read from a manifest while detecting a framework.
 const MAX_FRAMEWORK_MANIFEST_BYTES: u64 = 256 * 1024;
 /// Public SDK repository used by non-mutating install plans.
 const SDK_PACKAGE_URL: &str = "https://github.com/LogBrewCo/sdk.git";
@@ -76,6 +80,13 @@ enum PythonIntegration {
     FastApi,
 }
 
+/// Released package-registry integration selected from local project evidence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PackageIntegration {
+    Python(PythonIntegration),
+    Php { symfony: bool },
+}
+
 impl PythonIntegration {
     /// Returns stable key, display name, and optional framework package requirement.
     const fn details(
@@ -115,12 +126,12 @@ enum InstallPlan {
     ObjectiveC,
     /// `CMake` `FetchContent` plan for the C++ SDK.
     Cmake,
-    /// Python package-index plan.
-    Python {
-        /// Detected Python package manager.
+    /// Package-registry plan.
+    Package {
+        /// Detected package manager.
         package_manager: &'static str,
-        /// Detected framework integration.
-        integration: PythonIntegration,
+        /// Detected language/framework integration.
+        integration: PackageIntegration,
     },
 }
 
@@ -182,9 +193,9 @@ impl InstallPlan {
                     "target": "CMakeLists.txt",
                 }
             }),
-            Self::Python {
+            Self::Package {
                 package_manager,
-                integration,
+                integration: PackageIntegration::Python(integration),
             } => {
                 let (key, _, framework) = integration.details();
                 let packages = std::iter::once(("logbrew-sdk", "core"))
@@ -211,12 +222,13 @@ impl InstallPlan {
                         "requires_framework": framework.map(|(_, requirement)| requirement),
                     },
                     "install_command": python_install_command(package_manager, integration),
-                    "next_action": {
-                        "code": "review_compatibility_and_install",
-                        "target": "project_environment",
-                    }
+                    "next_action": package_next_action(),
                 })
             }
+            Self::Package {
+                package_manager,
+                integration: PackageIntegration::Php { symfony },
+            } => composer_plan_json(package_manager, symfony),
         }
     }
 
@@ -242,9 +254,9 @@ impl InstallPlan {
                  (optional; requires libcurl)\nDependency:\n{}",
                 cmake_dependency_declaration()
             ),
-            Self::Python {
+            Self::Package {
                 package_manager,
-                integration,
+                integration: PackageIntegration::Python(integration),
             } => {
                 let (_, display_name, framework) = integration.details();
                 let package_names = python_package_names(integration);
@@ -259,6 +271,20 @@ impl InstallPlan {
                     python_install_command(package_manager, integration)
                 )
             }
+            Self::Package {
+                package_manager,
+                integration: PackageIntegration::Php { symfony },
+            } => writeln!(
+                output,
+                "Package manager: {package_manager}\nIntegration: {}\nPackage: logbrew/sdk\nCompatibility review: PHP {PHP_MINIMUM_VERSION}{}{}\nCommand: composer require logbrew/sdk",
+                if symfony { "Symfony" } else { "PHP" },
+                if symfony { "; " } else { "" },
+                if symfony {
+                    SYMFONY_VERSION_REQUIREMENT
+                } else {
+                    ""
+                }
+            ),
         }
     }
 
@@ -268,9 +294,34 @@ impl InstallPlan {
             Self::Swift => SWIFT_NEXT_STEP,
             Self::ObjectiveC => OBJC_NEXT_STEP,
             Self::Cmake => CMAKE_NEXT_STEP,
-            Self::Python { .. } => PYTHON_NEXT_STEP,
+            Self::Package { .. } => PACKAGE_NEXT_STEP,
         }
     }
+}
+
+fn package_next_action() -> serde_json::Value {
+    serde_json::json!({
+        "code": "review_compatibility_and_install",
+        "target": "project_environment",
+    })
+}
+
+fn composer_plan_json(package_manager: &str, symfony: bool) -> serde_json::Value {
+    serde_json::json!({
+        "mode": "non_mutating",
+        "ecosystem": "composer",
+        "package_manager": package_manager,
+        "integration": if symfony { "symfony" } else { "php" },
+        "package": "logbrew/sdk",
+        "framework_manifest": symfony.then_some("config/bundles.php"),
+        "compatibility": {
+            "status": "review_required",
+            "requires_php": PHP_MINIMUM_VERSION,
+            "requires_framework": symfony.then_some(SYMFONY_VERSION_REQUIREMENT),
+        },
+        "install_command": "composer require logbrew/sdk",
+        "next_action": package_next_action(),
+    })
 }
 
 /// Writes the non-mutating setup plan.
@@ -343,10 +394,10 @@ fn cmake_dependency_declaration() -> String {
 
 /// Returns the space-separated public Python package names.
 fn python_package_names(integration: PythonIntegration) -> String {
-    std::iter::once("logbrew-sdk")
-        .chain(integration.details().2.map(|(name, _)| name))
-        .collect::<Vec<_>>()
-        .join(" ")
+    match integration.details().2 {
+        Some((name, _)) => format!("logbrew-sdk {name}"),
+        None => "logbrew-sdk".to_owned(),
+    }
 }
 
 /// Builds a copyable package-manager command from public package names.
@@ -364,27 +415,35 @@ fn python_install_command(package_manager: &str, integration: PythonIntegration)
 fn install_plan(detected: &[ProjectDetection]) -> Option<InstallPlan> {
     detected
         .iter()
-        .find_map(|detection| match detection.runtime {
-            "objective-c" => Some(InstallPlan::ObjectiveC),
-            "swift" | "swift-ios" => Some(InstallPlan::Swift),
-            _ => None,
+        .filter_map(|detection| {
+            let (priority, plan) = match detection.runtime {
+                "objective-c" => (0, InstallPlan::ObjectiveC),
+                "swift" | "swift-ios" => (1, InstallPlan::Swift),
+                "cpp" => (2, InstallPlan::Cmake),
+                "python" => (
+                    3,
+                    InstallPlan::Package {
+                        package_manager: detection.package_manager,
+                        integration: detection
+                            .package_integration
+                            .unwrap_or(PackageIntegration::Python(PythonIntegration::Core)),
+                    },
+                ),
+                "php" => (
+                    4,
+                    InstallPlan::Package {
+                        package_manager: detection.package_manager,
+                        integration: detection
+                            .package_integration
+                            .unwrap_or(PackageIntegration::Php { symfony: false }),
+                    },
+                ),
+                _ => return None,
+            };
+            Some((priority, plan))
         })
-        .or_else(|| {
-            detected
-                .iter()
-                .any(|detection| detection.runtime == "cpp")
-                .then_some(InstallPlan::Cmake)
-        })
-        .or_else(|| {
-            detected.iter().find_map(|detection| {
-                (detection.runtime == "python").then_some(InstallPlan::Python {
-                    package_manager: detection.package_manager,
-                    integration: detection
-                        .python_integration
-                        .unwrap_or(PythonIntegration::Core),
-                })
-            })
-        })
+        .min_by_key(|(priority, _)| *priority)
+        .map(|(_, plan)| plan)
 }
 
 /// One detected project manifest.
@@ -394,9 +453,9 @@ struct ProjectDetection {
     runtime: &'static str,
     /// Package manager or ecosystem used by the runtime.
     package_manager: &'static str,
-    /// Released Python integration inferred from bounded local metadata.
+    /// Released package integration inferred from bounded local metadata.
     #[serde(skip_serializing)]
-    python_integration: Option<PythonIntegration>,
+    package_integration: Option<PackageIntegration>,
     /// Manifest path relative to the scanned root.
     manifest: String,
 }
@@ -420,7 +479,9 @@ fn detect_projects(root: &Path) -> Vec<ProjectDetection> {
             })
             .then_with(|| left.manifest.cmp(&right.manifest))
     });
-    dedupe_by_runtime(detected)
+    let mut runtimes = HashSet::new();
+    detected.retain(|detection| runtimes.insert(detection.runtime));
+    detected
 }
 
 /// Collects project manifests from nearby parent directories.
@@ -475,7 +536,13 @@ fn manifest_detection(root: &Path, path: &Path) -> Option<ProjectDetection> {
     Some(ProjectDetection {
         runtime,
         package_manager,
-        python_integration: (runtime == "python").then(|| detect_python_integration(path)),
+        package_integration: match runtime {
+            "python" => Some(PackageIntegration::Python(detect_python_integration(path))),
+            "php" => Some(PackageIntegration::Php {
+                symfony: detects_symfony(path),
+            }),
+            _ => None,
+        },
         manifest: relative_manifest(root, path),
     })
 }
@@ -627,6 +694,12 @@ fn detect_python_integration(manifest: &Path) -> PythonIntegration {
     }
 }
 
+/// Detects the native Symfony integration from its canonical bundle manifest.
+fn detects_symfony(manifest: &Path) -> bool {
+    std::fs::symlink_metadata(manifest.with_file_name("config").join("bundles.php"))
+        .is_ok_and(|metadata| metadata.file_type().is_file())
+}
+
 /// Reads one small UTF-8 manifest without accepting oversized metadata.
 fn read_framework_manifest(path: &Path) -> Option<String> {
     let metadata = std::fs::symlink_metadata(path).ok()?;
@@ -695,14 +768,6 @@ fn manifest_priority(path: &str) -> usize {
     }
 }
 
-/// Keeps the nearest manifest for each runtime.
-fn dedupe_by_runtime(detected: Vec<ProjectDetection>) -> Vec<ProjectDetection> {
-    let mut detected = detected;
-    let mut runtimes = HashSet::new();
-    detected.retain(|detection| runtimes.insert(detection.runtime));
-    detected
-}
-
 /// Returns human-readable runtime names.
 fn display_runtime(runtime: &str) -> &'static str {
     match runtime {
@@ -724,156 +789,123 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
 
-    use super::{ProjectDetection, PythonIntegration, detect_projects};
+    use super::{PackageIntegration, ProjectDetection, PythonIntegration, detect_projects};
     type TestResult = Result<(), Box<dyn std::error::Error>>;
 
     #[test]
-    fn detects_nearest_manifest_per_runtime() -> TestResult {
+    fn keeps_nearest_manifests_and_skips_build_output() -> TestResult {
         let root = fixture("nearest")?;
         fs::write(root.join("Cargo.toml"), "")?;
         fs::create_dir_all(root.join("crates/logbrew"))?;
         fs::write(root.join("crates/logbrew/Cargo.toml"), "")?;
         fs::write(root.join("package.json"), "{}")?;
 
+        let detected = detect_projects(root.as_path());
+        let summaries = detected
+            .iter()
+            .map(|value| {
+                (
+                    value.runtime,
+                    value.package_manager,
+                    value.manifest.as_str(),
+                )
+            })
+            .collect::<Vec<_>>();
         assert_eq!(
-            detect_projects(root.as_path()),
-            vec![
-                detection("node", "npm", "package.json", None),
-                detection("rust", "cargo", "Cargo.toml", None),
+            summaries,
+            [
+                ("node", "npm", "package.json"),
+                ("rust", "cargo", "Cargo.toml")
             ]
         );
+        let cmake = fixture("cmake")?;
+        fs::write(
+            cmake.join("CMakeLists.txt"),
+            "project(Fixture LANGUAGES CXX)\n",
+        )?;
+        fs::create_dir_all(cmake.join("build/nested"))?;
+        fs::write(
+            cmake.join("build/nested/CMakeLists.txt"),
+            "project(Generated)\n",
+        )?;
+        assert_detection(&cmake, ("cpp", "cmake", "CMakeLists.txt"), None);
         Ok(())
     }
 
     #[test]
-    fn detects_node_package_manager_from_lockfile() -> TestResult {
-        for (lockfile, package_manager) in [
-            ("pnpm-lock.yaml", "pnpm"),
-            ("yarn.lock", "yarn"),
-            ("bun.lockb", "bun"),
-            ("package-lock.json", "npm"),
+    fn detects_package_managers_from_manifests_and_locks() -> TestResult {
+        for (manifest, lockfile, runtime, manager) in [
+            ("package.json", Some("pnpm-lock.yaml"), "node", "pnpm"),
+            ("package.json", Some("yarn.lock"), "node", "yarn"),
+            ("package.json", Some("bun.lockb"), "node", "bun"),
+            ("package.json", Some("package-lock.json"), "node", "npm"),
+            ("pyproject.toml", Some("uv.lock"), "python", "uv"),
+            ("pyproject.toml", Some("poetry.lock"), "python", "poetry"),
+            ("pyproject.toml", Some("Pipfile.lock"), "python", "pipenv"),
+            ("Pipfile", None, "python", "pipenv"),
         ] {
-            let root = fixture(package_manager)?;
-            fs::write(root.join("package.json"), "{}")?;
-            fs::write(root.join(lockfile), "")?;
-
-            assert_detection(&root, "node", package_manager, "package.json", None);
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn detects_python_package_manager_from_lockfile() -> TestResult {
-        for (manifest, lockfile, package_manager) in [
-            ("pyproject.toml", Some("uv.lock"), "uv"),
-            ("pyproject.toml", Some("poetry.lock"), "poetry"),
-            ("pyproject.toml", Some("Pipfile.lock"), "pipenv"),
-            ("Pipfile", None, "pipenv"),
-        ] {
-            let root = fixture(package_manager)?;
+            let root = fixture(manager)?;
             fs::write(root.join(manifest), "")?;
             if let Some(lockfile) = lockfile {
                 fs::write(root.join(lockfile), "")?;
             }
-
-            assert_detection(
-                &root,
-                "python",
-                package_manager,
-                manifest,
-                Some(PythonIntegration::Core),
-            );
+            let integration = (runtime == "python")
+                .then_some(PackageIntegration::Python(PythonIntegration::Core));
+            assert_detection(&root, (runtime, manager, manifest), integration);
         }
         Ok(())
     }
 
     #[test]
-    fn detects_django_from_dynamic_requirements() -> TestResult {
-        let root = fixture("django-dynamic-requirements")?;
+    fn detects_frameworks_from_bounded_exact_metadata() -> TestResult {
+        let django = fixture("django-dynamic-requirements")?;
         fs::write(
-            root.join("pyproject.toml"),
-            "[project]\nname = \"fixture\"\ndynamic = [\"dependencies\"]\n",
+            django.join("pyproject.toml"),
+            "[project]\ndynamic = [\"dependencies\"]\n",
         )?;
-        fs::write(root.join("requirements.txt"), "Django>=4.2,<6\n")?;
+        fs::write(django.join("requirements.txt"), "Django>=4.2,<6\n")?;
+        assert_python(&django, PythonIntegration::Django);
 
+        let oversized = fixture("oversized-python-metadata")?;
+        fs::write(oversized.join("pyproject.toml"), "Django".repeat(50_000))?;
+        assert_python(&oversized, PythonIntegration::Core);
+
+        let symfony = fixture("symfony")?;
+        fs::create_dir_all(symfony.join("config"))?;
+        fs::write(symfony.join("config/bundles.php"), "<?php return [];\n")?;
+        fs::write(symfony.join("composer.json"), "{}")?;
         assert_detection(
-            &root,
-            "python",
-            "pip",
-            "pyproject.toml",
-            Some(PythonIntegration::Django),
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn oversized_python_metadata_falls_back_to_the_core_plan() -> TestResult {
-        let root = fixture("oversized-python-metadata")?;
-        fs::write(root.join("pyproject.toml"), "Django".repeat(50_000))?;
-
-        assert_detection(
-            &root,
-            "python",
-            "pip",
-            "pyproject.toml",
-            Some(PythonIntegration::Core),
+            &symfony,
+            ("php", "composer", "composer.json"),
+            Some(PackageIntegration::Php { symfony: true }),
         );
         Ok(())
     }
 
     #[cfg(unix)]
     #[test]
-    fn framework_detection_does_not_follow_metadata_symlinks() -> TestResult {
-        let root = fixture("python-metadata-symlink")?;
+    fn detection_does_not_follow_manifest_or_metadata_symlinks() -> TestResult {
+        let root = fixture("metadata-symlink")?;
         fs::write(
             root.join("pyproject.toml"),
             "[project]\nname = \"fixture\"\n",
         )?;
-        let outside = root.with_extension("outside-requirements");
-        fs::write(outside.as_path(), "Django>=5.2\n")?;
-        std::os::unix::fs::symlink(outside.as_path(), root.join("requirements.txt"))?;
+        let outside_metadata = root.with_extension("outside-requirements");
+        fs::write(&outside_metadata, "Django>=5.2\n")?;
+        std::os::unix::fs::symlink(&outside_metadata, root.join("requirements.txt"))?;
+        assert_python(&root, PythonIntegration::Core);
 
-        assert_detection(
-            &root,
-            "python",
-            "pip",
-            "pyproject.toml",
-            Some(PythonIntegration::Core),
-        );
-        fs::remove_file(outside)?;
-        Ok(())
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn project_detection_rejects_symlinked_manifests() -> TestResult {
-        let root = fixture("project-manifest-symlink")?;
-        let outside = root.with_extension("outside-pyproject");
+        let linked = fixture("manifest-symlink")?;
+        let outside_manifest = linked.with_extension("outside-pyproject");
         fs::write(
-            outside.as_path(),
-            "[project]\nname = \"fixture\"\ndependencies = [\"Django\"]\n",
+            &outside_manifest,
+            "[project]\ndependencies = [\"Django\"]\n",
         )?;
-        std::os::unix::fs::symlink(outside.as_path(), root.join("pyproject.toml"))?;
+        std::os::unix::fs::symlink(&outside_manifest, linked.join("pyproject.toml"))?;
+        assert!(detect_projects(linked.as_path()).is_empty());
 
-        assert!(detect_projects(root.as_path()).is_empty());
-        fs::remove_file(outside)?;
-        Ok(())
-    }
-
-    #[test]
-    fn detects_root_cmake_project_without_scanning_build_output() -> TestResult {
-        let root = fixture("cmake")?;
-        fs::write(
-            root.join("CMakeLists.txt"),
-            "project(Fixture LANGUAGES CXX)\n",
-        )?;
-        fs::create_dir_all(root.join("build/nested"))?;
-        fs::write(
-            root.join("build/nested/CMakeLists.txt"),
-            "project(Generated)\n",
-        )?;
-
-        assert_detection(&root, "cpp", "cmake", "CMakeLists.txt", None);
+        fs::remove_file(outside_metadata)?;
+        fs::remove_file(outside_manifest)?;
         Ok(())
     }
 
@@ -895,7 +927,7 @@ mod tests {
                 fs::create_dir_all(path.parent().expect("source fixture has a parent"))?;
                 fs::write(path, "// source evidence\n")?;
             }
-            assert_detection(&root, runtime, "xcodegen", "project.yml", None);
+            assert_detection(&root, (runtime, "xcodegen", "project.yml"), None);
         }
         for (manifest, package_manager) in [
             ("Checkout.xcodeproj", "xcode"),
@@ -904,46 +936,39 @@ mod tests {
             let root = fixture(manifest)?;
             fs::create_dir_all(root.join(manifest))?;
 
-            assert_detection(&root, "swift-ios", package_manager, manifest, None);
+            assert_detection(&root, ("swift-ios", package_manager, manifest), None);
         }
         let root = fixture("xcodegen-preference")?;
         fs::write(root.join("project.yaml"), "name: Checkout\n")?;
         fs::create_dir_all(root.join("Checkout.xcodeproj"))?;
         fs::create_dir_all(root.join("Checkout.xcworkspace"))?;
 
-        assert_detection(&root, "swift-ios", "xcodegen", "project.yaml", None);
+        assert_detection(&root, ("swift-ios", "xcodegen", "project.yaml"), None);
         Ok(())
-    }
-
-    fn detection(
-        runtime: &'static str,
-        package_manager: &'static str,
-        manifest: &str,
-        python_integration: Option<PythonIntegration>,
-    ) -> ProjectDetection {
-        ProjectDetection {
-            runtime,
-            package_manager,
-            python_integration,
-            manifest: manifest.to_owned(),
-        }
     }
 
     fn assert_detection(
         root: &std::path::Path,
-        runtime: &'static str,
-        package_manager: &'static str,
-        manifest: &str,
-        python_integration: Option<PythonIntegration>,
+        expected: (&'static str, &'static str, &str),
+        package_integration: Option<PackageIntegration>,
     ) {
+        let (runtime, package_manager, manifest) = expected;
         assert_eq!(
             detect_projects(root),
-            vec![detection(
+            vec![ProjectDetection {
                 runtime,
                 package_manager,
-                manifest,
-                python_integration
-            )]
+                package_integration,
+                manifest: manifest.to_owned(),
+            }]
+        );
+    }
+
+    fn assert_python(root: &std::path::Path, integration: PythonIntegration) {
+        assert_detection(
+            root,
+            ("python", "pip", "pyproject.toml"),
+            Some(PackageIntegration::Python(integration)),
         );
     }
 
@@ -952,16 +977,10 @@ mod tests {
             "logbrew-cli-setup-module-{name}-{}",
             std::process::id()
         ));
-        remove_dir_if_exists(root.as_path())?;
+        if root.try_exists()? {
+            fs::remove_dir_all(&root)?;
+        }
         fs::create_dir_all(&root)?;
         Ok(root)
-    }
-
-    fn remove_dir_if_exists(path: &std::path::Path) -> Result<(), std::io::Error> {
-        match fs::remove_dir_all(path) {
-            Ok(()) => Ok(()),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(error) => Err(error),
-        }
     }
 }
