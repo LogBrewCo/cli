@@ -51,10 +51,10 @@ class InstalledReleaseAttestationWorkflowTests(unittest.TestCase):
     def test_dispatch_inputs_bind_the_exact_release(self) -> None:
         workflow = self.workflow()
         for name, value in [
-            ("tag", "v0.1.41"),
-            ("version", "0.1.41"),
-            ("source_commit", "c8835f35e4cd5694e11a79f42375bdf2883a8814"),
-            ("release_run", "31456899938"),
+            ("tag", "v0.1.42"),
+            ("version", "0.1.42"),
+            ("source_commit", "ef8801c5887d0352bf103ee0da6550e26bfb93d3"),
+            ("release_run", "31462670939"),
         ]:
             with self.subTest(name=name):
                 self.assertRegex(
@@ -62,84 +62,10 @@ class InstalledReleaseAttestationWorkflowTests(unittest.TestCase):
                     rf"(?ms)^      {name}:\n.*?^        default: [\"']?{re.escape(value)}[\"']?$",
                 )
 
-    def test_dispatch_scopes_select_only_the_exact_receipt_sets(self) -> None:
+    def test_matrix_always_contains_all_six_real_platform_receipts(self) -> None:
         workflow = self.workflow()
-        self.assertRegex(
-            workflow,
-            r"(?ms)^      receipt_scope:\n"
-            r"        description: [^\n]+\n"
-            r"        required: true\n"
-            r"        type: choice\n"
-            r"        options:\n"
-            r"          - all\n"
-            r"          - failed-five\n"
-            r"          - windows-two\n"
-            r"        default: all$",
-        )
-        rows = {
-            receipt: frozenset(json.loads(scopes))
-            for receipt, scopes in re.findall(
-                r"(?ms)^          - receipt: ([^\n]+)\n"
-                r".*?^            scopes: '([^'\n]+)'$",
-                workflow,
-            )
-        }
-        expected = {
-            "all": {
-                "shell-linux-x64",
-                "native-linux-arm64",
-                "native-linux-x64",
-                "powershell-windows-x64",
-                "native-windows-x64",
-                "native-macos-x64",
-            },
-            "failed-five": {
-                "native-linux-arm64",
-                "native-linux-x64",
-                "powershell-windows-x64",
-                "native-windows-x64",
-                "native-macos-x64",
-            },
-            "windows-two": {
-                "powershell-windows-x64",
-                "native-windows-x64",
-            },
-        }
-        self.assertEqual(len(rows), 6)
-        for scope, receipts in expected.items():
-            with self.subTest(scope=scope):
-                self.assertEqual(
-                    {
-                        receipt
-                        for receipt, allowed_scopes in rows.items()
-                        if scope in allowed_scopes
-                    },
-                    receipts,
-                )
-
-        for scope in [
-            "unknown",
-            "windows-two; echo unsafe",
-            "${{ github.token }}",
-            "windows-two\r\nall",
-        ]:
-            with self.subTest(rejected_scope=scope):
-                self.assertFalse(
-                    {
-                        receipt
-                        for receipt, allowed_scopes in rows.items()
-                        if scope in allowed_scopes
-                    }
-                )
-
-        condition = (
-            "${{ contains(fromJSON(matrix.scopes), inputs.receipt_scope) }}"
-        )
-        self.assertEqual(workflow.count(f"        if: {condition}"), 4)
-        self.assertNotIn("inputs.receipt_scope", self.receipt_run_command(workflow))
-
-    def test_matrix_contains_only_the_six_missing_real_platform_receipts(self) -> None:
-        workflow = self.workflow()
+        self.assertNotIn("receipt_scope", workflow)
+        self.assertNotIn("matrix.scopes", workflow)
         expected = {
             (
                 "shell-linux-x64",
@@ -215,7 +141,7 @@ class InstalledReleaseAttestationWorkflowTests(unittest.TestCase):
             workflow.count("actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"),
             2,
         )
-        self.assertIn("ref: c8835f35e4cd5694e11a79f42375bdf2883a8814", workflow)
+        self.assertIn("ref: ef8801c5887d0352bf103ee0da6550e26bfb93d3", workflow)
         self.assertIn("path: released-source", workflow)
         self.assertEqual(workflow.count("persist-credentials: false"), 2)
         self.assertIn(
