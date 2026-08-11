@@ -145,34 +145,63 @@ async fn setup_json_detects_parent_project_when_run_from_subdirectory() -> TestR
 }
 
 #[tokio::test]
-async fn setup_json_detects_xcodegen_ios_project() -> TestResult {
-    let project_dir = setup_fixture("setup-xcodegen-ios")?;
-    fs::write(project_dir.join("project.yml"), "name: Checkout\n")?;
+async fn setup_json_prefers_objective_c_app_over_nested_swift_package() -> TestResult {
+    let project_dir = setup_fixture("setup-xcodegen-objective-c")?;
+    fs::create_dir_all(project_dir.join("App/Sources"))?;
+    fs::create_dir_all(project_dir.join("Packages/Helper"))?;
+    fs::write(project_dir.join("App/project.yml"), "name: Checkout\n")?;
+    fs::write(project_dir.join("App/Sources/main.m"), "")?;
+    fs::write(project_dir.join("Packages/Helper/Package.swift"), "")?;
     let output = setup_output(&["logbrew", "setup", "--json"], project_dir.as_path()).await?;
     let body: serde_json::Value = serde_json::from_slice(output.as_slice())?;
-    assert_eq!(body["ok"], true);
     assert_eq!(body["install_ready"], true);
-    assert_eq!(body["install_plan"]["ecosystem"], "swiftpm");
     assert_eq!(
-        body["install_plan"]["package_url"],
-        "https://github.com/LogBrewCo/sdk.git"
-    );
-    assert_eq!(body["install_plan"]["product"], "LogBrew");
-    assert_eq!(body["install_plan"]["version"], "0.1.6");
-    assert_eq!(
-        body["install_plan"]["version_requirement"],
+        body["install_plan"],
         serde_json::json!({
-            "kind": "up_to_next_major",
-            "minimum_version": "0.1.6"
+            "mode": "non_mutating",
+            "ecosystem": "source",
+            "language": "objective-c",
+            "package_url": "https://github.com/LogBrewCo/sdk.git",
+            "release_tag": "objc/logbrew-objc/v0.2.3",
+            "version": "0.2.3",
+            "source_subdirectory": "objc/logbrew-objc",
+            "header": "include/LogBrew.h",
+            "source_directory": "src",
+            "frameworks": ["Foundation"],
+            "next_action": {
+                "code": "vendor_objective_c_sources",
+                "target": "application_target"
+            }
         })
     );
     assert_eq!(
-        body["install_plan"]["dependency_declaration"],
-        r#".package(url: "https://github.com/LogBrewCo/sdk.git", from: "0.1.6")"#
+        body["detected"],
+        serde_json::json!([
+            {
+                "runtime": "objective-c",
+                "package_manager": "xcodegen",
+                "manifest": "App/project.yml"
+            },
+            {
+                "runtime": "swift",
+                "package_manager": "swift package manager",
+                "manifest": "Packages/Helper/Package.swift"
+            }
+        ])
     );
-    assert_eq!(body["detected"][0]["runtime"], "swift-ios");
-    assert_eq!(body["detected"][0]["package_manager"], "xcodegen");
-    assert_eq!(body["detected"][0]["manifest"], "project.yml");
+    let text =
+        String::from_utf8(setup_output(&["logbrew", "setup"], project_dir.as_path()).await?)?;
+    for expected in [
+        "Release tag: objc/logbrew-objc/v0.2.3",
+        "Source subdirectory: objc/logbrew-objc",
+        "Header: include/LogBrew.h",
+        "Source directory: src",
+        "Framework: Foundation",
+        "No files changed.",
+    ] {
+        assert!(text.contains(expected));
+    }
+    assert!(!text.contains(project_dir.to_string_lossy().as_ref()));
     Ok(())
 }
 

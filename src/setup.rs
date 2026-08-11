@@ -1,11 +1,13 @@
 //! Local SDK setup planning.
 
-use std::path::Path;
+use std::{collections::HashSet, path::Path};
 
 /// Maximum directory depth scanned for nearby project manifests.
 const MAX_SCAN_DEPTH: usize = 3;
 /// Maximum parent levels checked when setup is run from a project subdirectory.
 const MAX_PARENT_SCAN_DEPTH: usize = 3;
+/// Maximum entries inspected when classifying an `XcodeGen` project's sources.
+const MAX_APPLE_SOURCE_SCAN_ENTRIES: usize = 4_096;
 /// Next step when setup finds a supported project.
 const SDK_NEXT_STEP: &str = "use the released SDK guidance for this runtime; this CLI version does \
                              not yet provide a structured install plan";
@@ -33,6 +35,14 @@ const SWIFT_VERSION_REQUIREMENT: &str = "up_to_next_major";
 /// Next step when a public Swift package can be planned truthfully.
 const SWIFT_NEXT_STEP: &str =
     "add the LogBrew Swift package from the install plan; no files were changed";
+/// Scoped immutable release tag for the current Objective-C SDK package.
+const OBJC_RELEASE_TAG: &str = "objc/logbrew-objc/v0.2.3";
+/// Current released Objective-C SDK version.
+const OBJC_VERSION: &str = "0.2.3";
+/// Objective-C package location inside the public SDK repository.
+const OBJC_SOURCE_SUBDIRECTORY: &str = "objc/logbrew-objc";
+/// Next step for the released Objective-C source/header package.
+const OBJC_NEXT_STEP: &str = "vendor the pinned LogBrew Objective-C header and source directory into the application target; no files were changed";
 /// Scoped immutable release tag for the current C++ SDK package.
 const CPP_RELEASE_TAG: &str = "cpp/logbrew-cpp/v0.2.3";
 /// Current released C++ SDK version.
@@ -101,6 +111,8 @@ impl PythonIntegration {
 enum InstallPlan {
     /// Swift Package Manager plan.
     Swift,
+    /// Source/header plan for the Objective-C SDK.
+    ObjectiveC,
     /// `CMake` `FetchContent` plan for the C++ SDK.
     Cmake,
     /// Python package-index plan.
@@ -130,6 +142,22 @@ impl InstallPlan {
                 "next_action": {
                     "code": "add_swift_package_dependency",
                     "target": "project_manifest",
+                }
+            }),
+            Self::ObjectiveC => serde_json::json!({
+                "mode": "non_mutating",
+                "ecosystem": "source",
+                "language": "objective-c",
+                "package_url": SDK_PACKAGE_URL,
+                "release_tag": OBJC_RELEASE_TAG,
+                "version": OBJC_VERSION,
+                "source_subdirectory": OBJC_SOURCE_SUBDIRECTORY,
+                "header": "include/LogBrew.h",
+                "source_directory": "src",
+                "frameworks": ["Foundation"],
+                "next_action": {
+                    "code": "vendor_objective_c_sources",
+                    "target": "application_target",
                 }
             }),
             Self::Cmake => serde_json::json!({
@@ -201,6 +229,12 @@ impl InstallPlan {
                  {SWIFT_MINIMUM_VERSION}\nDependency: {}",
                 swift_dependency_declaration()
             ),
+            Self::ObjectiveC => writeln!(
+                output,
+                "Package: {SDK_PACKAGE_URL}\nRelease tag: {OBJC_RELEASE_TAG}\nSource subdirectory: \
+                 {OBJC_SOURCE_SUBDIRECTORY}\nHeader: include/LogBrew.h\nSource directory: src\nFramework: \
+                 Foundation"
+            ),
             Self::Cmake => writeln!(
                 output,
                 "Package: {SDK_PACKAGE_URL}\nRelease tag: {CPP_RELEASE_TAG}\nSource subdirectory: \
@@ -214,23 +248,14 @@ impl InstallPlan {
             } => {
                 let (_, display_name, framework) = integration.details();
                 let package_names = python_package_names(integration);
-                writeln!(output, "Package manager: {package_manager}")?;
-                writeln!(output, "Integration: {display_name}")?;
-                writeln!(output, "Packages: {package_names}")?;
-                if let Some((_, requirement)) = framework {
-                    writeln!(
-                        output,
-                        "Compatibility review: Python {PYTHON_MINIMUM_VERSION}; {requirement}"
-                    )?;
-                } else {
-                    writeln!(
-                        output,
-                        "Compatibility review: Python {PYTHON_MINIMUM_VERSION}"
-                    )?;
-                }
+                let requirement = framework
+                    .map(|(_, value)| format!("; {value}"))
+                    .unwrap_or_default();
                 writeln!(
                     output,
-                    "Command: {}",
+                    "Package manager: {package_manager}\nIntegration: {display_name}\nPackages: \
+                     {package_names}\nCompatibility review: Python \
+                     {PYTHON_MINIMUM_VERSION}{requirement}\nCommand: {}",
                     python_install_command(package_manager, integration)
                 )
             }
@@ -241,6 +266,7 @@ impl InstallPlan {
     const fn next_step(self) -> &'static str {
         match self {
             Self::Swift => SWIFT_NEXT_STEP,
+            Self::ObjectiveC => OBJC_NEXT_STEP,
             Self::Cmake => CMAKE_NEXT_STEP,
             Self::Python { .. } => PYTHON_NEXT_STEP,
         }
@@ -255,40 +281,42 @@ pub(crate) fn write_setup_plan<W: std::io::Write>(
     json: bool,
     output: &mut W,
 ) -> Result<(), std::io::Error> {
-    let root = root.unwrap_or_else(|| Path::new("."));
-    let plan = SetupPlan::detect(root, auto, yes);
-    let install_plan = plan.install_plan();
+    let detected = detect_projects(root.unwrap_or_else(|| Path::new(".")));
+    let install_plan = install_plan(detected.as_slice());
+    let next = match install_plan {
+        Some(plan) => plan.next_step(),
+        None if detected.is_empty() => EMPTY_NEXT_STEP,
+        None => SDK_NEXT_STEP,
+    };
 
     if json {
         let body = serde_json::json!({
             "ok": true,
-            "auto": plan.auto,
-            "yes": plan.yes,
+            "auto": auto,
+            "yes": yes,
             "install_ready": install_plan.is_some(),
             "install_plan": install_plan.map(InstallPlan::json),
-            "detected": &plan.detected,
-            "next": plan.next_step(),
+            "detected": detected,
+            "next": next,
         });
         return writeln!(output, "{body}");
     }
 
-    writeln!(output, "LogBrew setup plan")?;
-    writeln!(output, "Mode: non-mutating plan")?;
-    if plan.auto || plan.yes {
-        writeln!(output, "Preferences: auto={}, yes={}", plan.auto, plan.yes)?;
+    writeln!(output, "LogBrew setup plan\nMode: non-mutating plan")?;
+    if auto || yes {
+        writeln!(output, "Preferences: auto={auto}, yes={yes}")?;
     }
     writeln!(output, "No files changed.")?;
+    let readiness = install_plan.map_or("not ready", |_| "ready");
+    writeln!(output, "Install: {readiness}")?;
     if let Some(install_plan) = install_plan {
-        writeln!(output, "Install: ready")?;
         install_plan.write_human(output)?;
-    } else {
-        writeln!(output, "Install: not ready")?;
     }
-    if plan.detected.is_empty() {
+    if detected.is_empty() {
         writeln!(output, "No supported project manifest found.")?;
     } else {
         writeln!(output, "Detected runtimes:")?;
-        for detection in &plan.detected {
+        for detection in &detected {
             writeln!(
                 output,
                 "- {} ({}) at {}",
@@ -298,7 +326,7 @@ pub(crate) fn write_setup_plan<W: std::io::Write>(
             )?;
         }
     }
-    writeln!(output, "Next: {}", plan.next_step())
+    writeln!(output, "Next: {next}")
 }
 
 /// Builds the copyable `SwiftPM` dependency declaration from canonical fields.
@@ -332,66 +360,31 @@ fn python_install_command(package_manager: &str, integration: PythonIntegration)
     }
 }
 
-/// Non-mutating SDK setup plan.
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct SetupPlan {
-    /// Whether automatic setup was requested.
-    auto: bool,
-    /// Whether confirmation prompts should be skipped.
-    yes: bool,
-    /// Detected project manifests, at most one per runtime.
-    detected: Vec<ProjectDetection>,
-}
-
-impl SetupPlan {
-    /// Builds a setup plan by scanning the project root.
-    fn detect(root: &Path, auto: bool, yes: bool) -> Self {
-        Self {
-            auto,
-            yes,
-            detected: detect_projects(root),
-        }
-    }
-
-    /// Returns the setup follow-up step.
-    fn next_step(&self) -> &'static str {
-        if self.detected.is_empty() {
-            EMPTY_NEXT_STEP
-        } else if let Some(install_plan) = self.install_plan() {
-            install_plan.next_step()
-        } else {
-            SDK_NEXT_STEP
-        }
-    }
-
-    /// Returns the highest-priority released install plan.
-    fn install_plan(&self) -> Option<InstallPlan> {
-        if self.detected.iter().any(|detection| {
-            matches!(
-                detection.package_manager,
-                "swift package manager" | "xcodegen"
-            )
-        }) {
-            return Some(InstallPlan::Swift);
-        }
-        if self
-            .detected
-            .iter()
-            .any(|detection| detection.runtime == "cpp")
-        {
-            return Some(InstallPlan::Cmake);
-        }
-
-        self.detected
-            .iter()
-            .find(|detection| detection.runtime == "python")
-            .map(|detection| InstallPlan::Python {
-                package_manager: detection.package_manager,
-                integration: detection
-                    .python_integration
-                    .unwrap_or(PythonIntegration::Core),
+/// Returns the highest-priority released install plan.
+fn install_plan(detected: &[ProjectDetection]) -> Option<InstallPlan> {
+    detected
+        .iter()
+        .find_map(|detection| match detection.runtime {
+            "objective-c" => Some(InstallPlan::ObjectiveC),
+            "swift" | "swift-ios" => Some(InstallPlan::Swift),
+            _ => None,
+        })
+        .or_else(|| {
+            detected
+                .iter()
+                .any(|detection| detection.runtime == "cpp")
+                .then_some(InstallPlan::Cmake)
+        })
+        .or_else(|| {
+            detected.iter().find_map(|detection| {
+                (detection.runtime == "python").then_some(InstallPlan::Python {
+                    package_manager: detection.package_manager,
+                    integration: detection
+                        .python_integration
+                        .unwrap_or(PythonIntegration::Core),
+                })
             })
-    }
+        })
 }
 
 /// One detected project manifest.
@@ -416,8 +409,10 @@ fn detect_projects(root: &Path) -> Vec<ProjectDetection> {
         collect_parent_manifests(root, &mut detected);
     }
     detected.sort_by(|left, right| {
-        manifest_depth(left.manifest.as_str())
-            .cmp(&manifest_depth(right.manifest.as_str()))
+        left.manifest
+            .matches('/')
+            .count()
+            .cmp(&right.manifest.matches('/').count())
             .then_with(|| left.runtime.cmp(right.runtime))
             .then_with(|| {
                 manifest_priority(left.manifest.as_str())
@@ -430,16 +425,11 @@ fn detect_projects(root: &Path) -> Vec<ProjectDetection> {
 
 /// Collects project manifests from nearby parent directories.
 fn collect_parent_manifests(root: &Path, detected: &mut Vec<ProjectDetection>) {
-    let mut current = root;
-    for _ in 0..MAX_PARENT_SCAN_DEPTH {
-        let Some(parent) = current.parent() else {
-            return;
-        };
+    for parent in root.ancestors().skip(1).take(MAX_PARENT_SCAN_DEPTH) {
         collect_manifests(root, parent, MAX_SCAN_DEPTH, detected);
         if !detected.is_empty() {
             return;
         }
-        current = parent;
     }
 }
 
@@ -450,18 +440,11 @@ fn collect_manifests(
     depth: usize,
     detected: &mut Vec<ProjectDetection>,
 ) {
-    if depth > MAX_SCAN_DEPTH {
-        return;
-    }
-
     let Ok(entries) = std::fs::read_dir(directory) else {
         return;
     };
 
-    for entry in entries {
-        let Ok(entry) = entry else {
-            continue;
-        };
+    for entry in entries.flatten() {
         let path = entry.path();
         let Ok(file_type) = entry.file_type() else {
             continue;
@@ -529,12 +512,51 @@ fn manifest_runtime(path: &Path) -> Option<(&'static str, &'static str)> {
         "go.mod" => Some(("go", "go")),
         "package.json" => Some(("node", node_package_manager(path))),
         "Pipfile" => Some(("python", "pipenv")),
-        "project.yml" | "project.yaml" => Some(("swift-ios", "xcodegen")),
+        "project.yml" | "project.yaml" => Some((xcodegen_runtime(path), "xcodegen")),
         "pyproject.toml" => Some(("python", python_package_manager(path))),
         _ if file_name.ends_with(".xcodeproj") => Some(("swift-ios", "xcode")),
         _ if file_name.ends_with(".xcworkspace") => Some(("swift-ios", "xcode workspace")),
         _ => None,
     }
+}
+
+/// Classifies Objective-C only with complete bounded source evidence.
+fn xcodegen_runtime(manifest: &Path) -> &'static str {
+    let mut remaining = MAX_APPLE_SOURCE_SCAN_ENTRIES;
+    match manifest
+        .parent()
+        .and_then(|directory| apple_source_languages(directory, 0, &mut remaining))
+    {
+        Some(1) => "objective-c",
+        _ => "swift-ios",
+    }
+}
+
+/// Returns Objective-C/Swift source bits, or no result when evidence is incomplete.
+fn apple_source_languages(directory: &Path, depth: usize, remaining: &mut usize) -> Option<u8> {
+    let mut languages = 0;
+    for entry in std::fs::read_dir(directory).ok()? {
+        *remaining = remaining.checked_sub(1)?;
+        let entry = entry.ok()?;
+        let path = entry.path();
+        let file_type = entry.file_type().ok()?;
+        if file_type.is_dir() && !should_skip_dir(path.as_path()) {
+            if depth == MAX_SCAN_DEPTH {
+                return None;
+            }
+            languages |= apple_source_languages(path.as_path(), depth + 1, remaining)?;
+        } else if file_type.is_file() {
+            languages |= match path.extension().and_then(std::ffi::OsStr::to_str) {
+                Some("m" | "mm") => 1,
+                Some("swift") => 2,
+                _ => 0,
+            };
+        }
+        if languages == 3 {
+            return Some(languages);
+        }
+    }
+    Some(languages)
 }
 
 /// Detects the Node package manager from sibling lockfiles.
@@ -574,7 +596,9 @@ fn detect_python_integration(manifest: &Path) -> PythonIntegration {
     let Some(directory) = manifest.parent() else {
         return PythonIntegration::Core;
     };
-    if is_regular_file(directory.join("manage.py").as_path()) {
+    if std::fs::symlink_metadata(directory.join("manage.py"))
+        .is_ok_and(|metadata| metadata.file_type().is_file())
+    {
         return PythonIntegration::Django;
     }
 
@@ -586,9 +610,6 @@ fn detect_python_integration(manifest: &Path) -> PythonIntegration {
         "setup.py",
     ] {
         let candidate = directory.join(file_name);
-        if candidate == manifest {
-            continue;
-        }
         if let Some(candidate_text) = read_framework_manifest(candidate.as_path()) {
             text.push('\n');
             text.push_str(candidate_text.as_str());
@@ -616,11 +637,6 @@ fn read_framework_manifest(path: &Path) -> Option<String> {
     (u64::try_from(text.len()).ok()? <= MAX_FRAMEWORK_MANIFEST_BYTES).then_some(text)
 }
 
-/// Returns whether a path is a regular file rather than a symlink.
-fn is_regular_file(path: &Path) -> bool {
-    std::fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_file())
-}
-
 /// Returns whether metadata contains a complete normalized distribution token.
 fn mentions_python_distribution(text: &str, distribution: &str) -> bool {
     text.split(|character: char| {
@@ -631,10 +647,10 @@ fn mentions_python_distribution(text: &str, distribution: &str) -> bool {
 
 /// Returns a manifest path relative to the project root.
 fn relative_manifest(root: &Path, path: &Path) -> String {
-    if let Ok(relative) = path.strip_prefix(root) {
-        return display_path(relative);
-    }
-    relative_path(root, path).unwrap_or_else(|| display_path(path))
+    path.strip_prefix(root).map_or_else(
+        |_| relative_path(root, path).unwrap_or_else(|| display_path(path)),
+        display_path,
+    )
 }
 
 /// Returns a portable display path with forward slashes.
@@ -656,54 +672,35 @@ fn relative_path(root: &Path, path: &Path) -> Option<String> {
         return None;
     }
 
-    let mut parts = Vec::new();
-    for _ in common..root_components.len() {
-        parts.push(String::from(".."));
-    }
-    for component in &path_components[common..] {
-        parts.push(component.as_os_str().to_string_lossy().into_owned());
-    }
-
-    if parts.is_empty() {
-        Some(String::from("."))
+    let mut parts = vec![String::from(".."); root_components.len() - common];
+    parts.extend(
+        path_components[common..]
+            .iter()
+            .map(|component| component.as_os_str().to_string_lossy().into_owned()),
+    );
+    Some(if parts.is_empty() {
+        String::from(".")
     } else {
-        Some(parts.join("/"))
-    }
-}
-
-/// Returns an approximate path depth for nearest-manifest sorting.
-fn manifest_depth(path: &str) -> usize {
-    path.split('/').count()
+        parts.join("/")
+    })
 }
 
 /// Returns the source-of-truth preference when several manifests describe one runtime.
 fn manifest_priority(path: &str) -> usize {
-    if matches!(path, "project.yml" | "project.yaml")
-        || path.ends_with("/project.yml")
-        || path.ends_with("/project.yaml")
-    {
-        0
-    } else if path.ends_with(".xcworkspace") {
-        1
-    } else if path.ends_with(".xcodeproj") {
-        2
-    } else {
-        3
+    match path.rsplit('/').next() {
+        Some("project.yml" | "project.yaml") => 0,
+        _ if path.ends_with(".xcworkspace") => 1,
+        _ if path.ends_with(".xcodeproj") => 2,
+        _ => 3,
     }
 }
 
 /// Keeps the nearest manifest for each runtime.
 fn dedupe_by_runtime(detected: Vec<ProjectDetection>) -> Vec<ProjectDetection> {
-    let mut runtimes = Vec::new();
-    let mut deduped = Vec::new();
-    for detection in detected {
-        if runtimes.contains(&detection.runtime) {
-            continue;
-        }
-        runtimes.push(detection.runtime);
-        deduped.push(detection);
-    }
-    deduped
+    let mut detected = detected;
+    let mut runtimes = HashSet::new();
+    detected.retain(|detection| runtimes.insert(detection.runtime));
+    detected
 }
 
 /// Returns human-readable runtime names.
@@ -712,6 +709,7 @@ fn display_runtime(runtime: &str) -> &'static str {
         "go" => "Go",
         "cpp" => "C++",
         "node" => "Node",
+        "objective-c" => "Objective-C",
         "php" => "PHP",
         "python" => "Python",
         "rust" => "Rust",
@@ -755,7 +753,7 @@ mod tests {
             ("bun.lockb", "bun"),
             ("package-lock.json", "npm"),
         ] {
-            let root = fixture(lockfile)?;
+            let root = fixture(package_manager)?;
             fs::write(root.join("package.json"), "{}")?;
             fs::write(root.join(lockfile), "")?;
 
@@ -766,38 +764,26 @@ mod tests {
 
     #[test]
     fn detects_python_package_manager_from_lockfile() -> TestResult {
-        for (lockfile, package_manager) in [
-            ("uv.lock", "uv"),
-            ("poetry.lock", "poetry"),
-            ("Pipfile.lock", "pipenv"),
+        for (manifest, lockfile, package_manager) in [
+            ("pyproject.toml", Some("uv.lock"), "uv"),
+            ("pyproject.toml", Some("poetry.lock"), "poetry"),
+            ("pyproject.toml", Some("Pipfile.lock"), "pipenv"),
+            ("Pipfile", None, "pipenv"),
         ] {
-            let root = fixture(lockfile)?;
-            fs::write(root.join("pyproject.toml"), "")?;
-            fs::write(root.join(lockfile), "")?;
+            let root = fixture(package_manager)?;
+            fs::write(root.join(manifest), "")?;
+            if let Some(lockfile) = lockfile {
+                fs::write(root.join(lockfile), "")?;
+            }
 
             assert_detection(
                 &root,
                 "python",
                 package_manager,
-                "pyproject.toml",
+                manifest,
                 Some(PythonIntegration::Core),
             );
         }
-        Ok(())
-    }
-
-    #[test]
-    fn detects_pipfile_as_python_project() -> TestResult {
-        let root = fixture("pipfile")?;
-        fs::write(root.join("Pipfile"), "")?;
-
-        assert_detection(
-            &root,
-            "python",
-            "pipenv",
-            "Pipfile",
-            Some(PythonIntegration::Core),
-        );
         Ok(())
     }
 
@@ -892,18 +878,25 @@ mod tests {
     }
 
     #[test]
-    fn detects_xcodegen_ios_project_manifest() -> TestResult {
-        for manifest in ["project.yml", "project.yaml"] {
-            let root = fixture(manifest)?;
-            fs::write(root.join(manifest), "name: Checkout\n")?;
-
-            assert_detection(&root, "swift-ios", "xcodegen", manifest, None);
+    fn classifies_and_prioritizes_apple_project_manifests() -> TestResult {
+        for (name, sources, runtime) in [
+            ("objc", &["Sources/main.m"][..], "objective-c"),
+            ("swift", &["Sources/App.swift"][..], "swift-ios"),
+            (
+                "mixed",
+                &["Sources/App.m", "Sources/One/Two/Three/Bridge.swift"][..],
+                "swift-ios",
+            ),
+        ] {
+            let root = fixture(name)?;
+            fs::write(root.join("project.yml"), "name: Checkout\n")?;
+            for source in sources {
+                let path = root.join(source);
+                fs::create_dir_all(path.parent().expect("source fixture has a parent"))?;
+                fs::write(path, "// source evidence\n")?;
+            }
+            assert_detection(&root, runtime, "xcodegen", "project.yml", None);
         }
-        Ok(())
-    }
-
-    #[test]
-    fn detects_xcode_project_directories() -> TestResult {
         for (manifest, package_manager) in [
             ("Checkout.xcodeproj", "xcode"),
             ("Checkout.xcworkspace", "xcode workspace"),
@@ -913,11 +906,6 @@ mod tests {
 
             assert_detection(&root, "swift-ios", package_manager, manifest, None);
         }
-        Ok(())
-    }
-
-    #[test]
-    fn prefers_xcodegen_manifest_over_generated_xcode_containers() -> TestResult {
         let root = fixture("xcodegen-preference")?;
         fs::write(root.join("project.yaml"), "name: Checkout\n")?;
         fs::create_dir_all(root.join("Checkout.xcodeproj"))?;
