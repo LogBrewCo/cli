@@ -88,19 +88,19 @@ class ReleasePolicy:
 
 PUBLIC_POLICY = ReleasePolicy(
     repository="LogBrewCo/cli",
-    tag="v0.1.39",
-    version="0.1.39",
-    source_commit="48f4af8a70590a7e5e7a3a50d9a9bd0d2d055df4",
-    tag_object_sha="c12388cbc68b224cfeddfb7eceaf8ba706c02ee2",
-    release_run_id=31431922835,
+    tag="v0.1.40",
+    version="0.1.40",
+    source_commit="d045e40f96e4cc65d119fe57e42909df1edf26ab",
+    tag_object_sha="c5d8bc0614e8dab9dc23891d392c42636d12f6b9",
+    release_run_id=31448677300,
     release_workflow_id=289984708,
-    release_id=368198200,
-    published_at="2026-08-10T21:07:52Z",
+    release_id=368282275,
+    published_at="2026-08-11T01:20:45Z",
     checksum_asset_name="sha256.sum",
-    checksum_asset_id=509259999,
+    checksum_asset_id=509483672,
     checksum_asset_size=820,
     checksum_asset_digest=(
-        "bdc469a4cc16ea293c0b214e2b6deb257fb346807dc1919460b06d0a82405cdd"
+        "b21f8667971fe4fdbf98ceeefb3e730f8c0a9cbd0032d7e1de56f6a44b9619e7"
     ),
     receipts={
         "shell-linux-x64": ReceiptPolicy(
@@ -110,10 +110,10 @@ PUBLIC_POLICY = ReleasePolicy(
             mode="shell",
             artifact_id="installer:shell",
             asset_name="logbrew-cli-installer.sh",
-            asset_id=509259977,
+            asset_id=509483638,
             asset_size=54183,
             digest=(
-                "cb352a21ea9609e3ec300bc74e251b4f524b24932dcdbea26d6c5a15dd85e0a2"
+                "5b7fbe620cc35fea1c2fd49b3806bc5c20f617356268873a69ad3fc831fd1de9"
             ),
             checksum_required=False,
         ),
@@ -124,10 +124,10 @@ PUBLIC_POLICY = ReleasePolicy(
             mode="native",
             artifact_id="native:linux-arm64",
             asset_name="logbrew-cli-aarch64-unknown-linux-gnu.tar.xz",
-            asset_id=509259969,
-            asset_size=2358600,
+            asset_id=509483625,
+            asset_size=2360952,
             digest=(
-                "90f3326dab4a421651368e75e721f09190bae45832aed7ea3433c5ff496d0ce8"
+                "1f9f2d05f2e6e7312a8ca0fa93d29cae55a7939542acf3ce7cd840df0746cff6"
             ),
             checksum_required=True,
         ),
@@ -138,10 +138,10 @@ PUBLIC_POLICY = ReleasePolicy(
             mode="native",
             artifact_id="native:linux-x64",
             asset_name="logbrew-cli-x86_64-unknown-linux-gnu.tar.xz",
-            asset_id=509259991,
-            asset_size=2660948,
+            asset_id=509483663,
+            asset_size=2665664,
             digest=(
-                "95105bbc3365e7ccda87414ac7798476b778ac9e7160c839bfaa9f76dc897a0c"
+                "9b583660e329c9bc3b56c8c40a0306c798e88fd8993dda7f513697740f459fa6"
             ),
             checksum_required=True,
         ),
@@ -152,10 +152,10 @@ PUBLIC_POLICY = ReleasePolicy(
             mode="powershell",
             artifact_id="installer:powershell",
             asset_name="logbrew-cli-installer.ps1",
-            asset_id=509259975,
+            asset_id=509483637,
             asset_size=22325,
             digest=(
-                "9e6d8be7459ed1589b14d496cf8e44cf23403661de212a81730d4d8a6c984ca6"
+                "37886fd237045b85dca7c27705af36ed3f9bf9467a6ad4c4e3a790ec29a6d0af"
             ),
             checksum_required=False,
         ),
@@ -166,10 +166,10 @@ PUBLIC_POLICY = ReleasePolicy(
             mode="native",
             artifact_id="native:windows-x64",
             asset_name="logbrew-cli-x86_64-pc-windows-msvc.zip",
-            asset_id=509259982,
-            asset_size=3424268,
+            asset_id=509483657,
+            asset_size=3433142,
             digest=(
-                "a19c0fbb8328f60ee7fa8c4d4d9f94e0091ac6e951c9c3440e9e7653bf7b6e07"
+                "ef212c3f1911744f594071ea3842a3f27d6cf3ebd5688d37210a042c28eea8c7"
             ),
             checksum_required=True,
         ),
@@ -180,10 +180,10 @@ PUBLIC_POLICY = ReleasePolicy(
             mode="native",
             artifact_id="native:macos-x64",
             asset_name="logbrew-cli-x86_64-apple-darwin.tar.xz",
-            asset_id=509259979,
-            asset_size=2611376,
+            asset_id=509483651,
+            asset_size=2615072,
             digest=(
-                "8b75db1bc993eb70bcc9920efda3a6a51a8c3261f521a54da02d8d34bf561ccf"
+                "1eb935a65a001c4ba1e8a7826dc8a2d6434aa52331bd4b9eacada5c4ed769734"
             ),
             checksum_required=True,
         ),
@@ -298,6 +298,21 @@ def validate_asset(
         raise AttestationError
 
 
+def select_exact_asset(
+    assets: Sequence[object],
+    name: str,
+) -> Mapping[str, object]:
+    """Select one named release asset without accepting duplicates."""
+    matches = [
+        asset
+        for asset in assets
+        if isinstance(asset, dict) and asset.get("name") == name
+    ]
+    if len(matches) != 1:
+        raise AttestationError
+    return matches[0]
+
+
 def select_release_assets(
     policy: ReleasePolicy,
     receipt: ReceiptPolicy,
@@ -317,14 +332,7 @@ def select_release_assets(
     if not isinstance(assets, list):
         raise AttestationError
 
-    matches = [
-        asset
-        for asset in assets
-        if isinstance(asset, dict) and asset.get("name") == receipt.asset_name
-    ]
-    if len(matches) != 1:
-        raise AttestationError
-    artifact = matches[0]
+    artifact = select_exact_asset(assets, receipt.asset_name)
     validate_asset(
         policy,
         artifact,
@@ -336,15 +344,7 @@ def select_release_assets(
 
     if not receipt.checksum_required:
         return artifact, None
-    checksum_matches = [
-        asset
-        for asset in assets
-        if isinstance(asset, dict)
-        and asset.get("name") == policy.checksum_asset_name
-    ]
-    if len(checksum_matches) != 1:
-        raise AttestationError
-    checksum = checksum_matches[0]
+    checksum = select_exact_asset(assets, policy.checksum_asset_name)
     validate_asset(
         policy,
         checksum,
