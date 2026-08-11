@@ -113,6 +113,7 @@ fn setup_help_is_honest_about_install_readiness() {
             "Product: LogBrew",
             r#".package(url: "https://github.com/LogBrewCo/sdk.git", from: "0.1.6")"#,
             "Python planning detects Django, Flask, and FastAPI",
+            "Bundler planning detects Rails",
             "CMake planning pins the released C++ SDK tag cpp/logbrew-cpp/v0.2.3",
             "LogBrew::LogBrew",
             "LogBrew::HttpTransport",
@@ -122,8 +123,8 @@ fn setup_help_is_honest_about_install_readiness() {
             "Supported manifests: package.json, pyproject.toml, Pipfile,",
             "Cargo.toml, Package.swift, project.yml, project.yaml, .xcodeproj, .xcworkspace,",
             "CMakeLists.txt",
-            "go.mod, composer.json.",
-            "Package managers: npm, pnpm, yarn, bun, pip, uv, poetry, pipenv, cargo, SwiftPM, XcodeGen, Go, Composer, CMake.",
+            "go.mod, composer.json, Gemfile.",
+            "Package managers: npm, pnpm, yarn, bun, pip, uv, poetry, pipenv, cargo, SwiftPM, XcodeGen, Go, Composer, Bundler, CMake.",
         ],
     );
     assert!(!setup_help.contains("until their public package is ready"));

@@ -26,6 +26,10 @@ const FASTAPI_MINIMUM_VERSION: &str = "FastAPI>=0.111.1";
 const PHP_MINIMUM_VERSION: &str = "^8.2";
 /// Supported Symfony range for the current public integration.
 const SYMFONY_VERSION_REQUIREMENT: &str = "Symfony^6.4 || ^7.0 || ^8.0";
+/// Minimum Ruby version required by the current public Ruby SDK.
+const RUBY_MINIMUM_VERSION: &str = ">=2.6";
+/// Copyable Bundler command pinned to the current public Ruby SDK family.
+const RUBY_INSTALL_COMMAND: &str = "bundle add logbrew-sdk --version \"~> 0.1.5\"";
 /// Maximum bytes read from a manifest while detecting a framework.
 const MAX_FRAMEWORK_MANIFEST_BYTES: u64 = 256 * 1024;
 /// Public SDK repository used by non-mutating install plans.
@@ -64,11 +68,12 @@ const CMAKE_NEXT_STEP: &str = "add the pinned LogBrew C++ FetchContent block and
 /// Next step when setup cannot find a supported project.
 const EMPTY_NEXT_STEP: &str = "run logbrew setup from a project containing package.json, \
                                pyproject.toml, Pipfile, Cargo.toml, Package.swift, project.yml, \
-                               project.yaml, .xcodeproj, .xcworkspace, CMakeLists.txt, go.mod, or \
-                               composer.json.";
+                               project.yaml, .xcodeproj, .xcworkspace, CMakeLists.txt, go.mod, \
+                               composer.json, or Gemfile.";
 
 /// Released Python integration selected from local project evidence.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
 enum PythonIntegration {
     /// Framework-neutral Python client.
     Core,
@@ -80,40 +85,42 @@ enum PythonIntegration {
     FastApi,
 }
 
+type PythonDetails = (
+    &'static str,
+    &'static str,
+    Option<(&'static str, &'static str)>,
+);
+const PYTHON_DETAILS: [PythonDetails; 4] = [
+    ("python", "Python", None),
+    (
+        "django",
+        "Django",
+        Some(("logbrew-django", DJANGO_VERSION_REQUIREMENT)),
+    ),
+    (
+        "flask",
+        "Flask",
+        Some(("logbrew-flask", FLASK_MINIMUM_VERSION)),
+    ),
+    (
+        "fastapi",
+        "FastAPI",
+        Some(("logbrew-fastapi", FASTAPI_MINIMUM_VERSION)),
+    ),
+];
+
 /// Released package-registry integration selected from local project evidence.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PackageIntegration {
     Python(PythonIntegration),
-    Php { symfony: bool },
+    Php(bool),
+    Ruby(bool),
 }
 
 impl PythonIntegration {
     /// Returns stable key, display name, and optional framework package requirement.
-    const fn details(
-        self,
-    ) -> (
-        &'static str,
-        &'static str,
-        Option<(&'static str, &'static str)>,
-    ) {
-        match self {
-            Self::Core => ("python", "Python", None),
-            Self::Django => (
-                "django",
-                "Django",
-                Some(("logbrew-django", DJANGO_VERSION_REQUIREMENT)),
-            ),
-            Self::Flask => (
-                "flask",
-                "Flask",
-                Some(("logbrew-flask", FLASK_MINIMUM_VERSION)),
-            ),
-            Self::FastApi => (
-                "fastapi",
-                "FastAPI",
-                Some(("logbrew-fastapi", FASTAPI_MINIMUM_VERSION)),
-            ),
-        }
+    const fn details(self) -> PythonDetails {
+        PYTHON_DETAILS[self as usize]
     }
 }
 
@@ -227,8 +234,12 @@ impl InstallPlan {
             }
             Self::Package {
                 package_manager,
-                integration: PackageIntegration::Php { symfony },
+                integration: PackageIntegration::Php(symfony),
             } => composer_plan_json(package_manager, symfony),
+            Self::Package {
+                package_manager,
+                integration: PackageIntegration::Ruby(rails),
+            } => ruby_plan_json(package_manager, rails),
         }
     }
 
@@ -273,7 +284,7 @@ impl InstallPlan {
             }
             Self::Package {
                 package_manager,
-                integration: PackageIntegration::Php { symfony },
+                integration: PackageIntegration::Php(symfony),
             } => writeln!(
                 output,
                 "Package manager: {package_manager}\nIntegration: {}\nPackage: logbrew/sdk\nCompatibility review: PHP {PHP_MINIMUM_VERSION}{}{}\nCommand: composer require logbrew/sdk",
@@ -284,6 +295,14 @@ impl InstallPlan {
                 } else {
                     ""
                 }
+            ),
+            Self::Package {
+                package_manager,
+                integration: PackageIntegration::Ruby(rails),
+            } => writeln!(
+                output,
+                "Package manager: {package_manager}\nIntegration: {}\nPackage: logbrew-sdk\nCompatibility review: Ruby {RUBY_MINIMUM_VERSION}\nCommand: {RUBY_INSTALL_COMMAND}",
+                if rails { "Rails" } else { "Ruby" },
             ),
         }
     }
@@ -320,6 +339,24 @@ fn composer_plan_json(package_manager: &str, symfony: bool) -> serde_json::Value
             "requires_framework": symfony.then_some(SYMFONY_VERSION_REQUIREMENT),
         },
         "install_command": "composer require logbrew/sdk",
+        "next_action": package_next_action(),
+    })
+}
+
+fn ruby_plan_json(package_manager: &str, rails: bool) -> serde_json::Value {
+    serde_json::json!({
+        "mode": "non_mutating",
+        "ecosystem": "rubygems",
+        "package_manager": package_manager,
+        "integration": if rails { "rails" } else { "ruby" },
+        "package": "logbrew-sdk",
+        "framework_manifest": rails.then_some("config/application.rb"),
+        "compatibility": {
+            "status": "review_required",
+            "requires_ruby": RUBY_MINIMUM_VERSION,
+            "requires_framework": serde_json::Value::Null,
+        },
+        "install_command": RUBY_INSTALL_COMMAND,
         "next_action": package_next_action(),
     })
 }
@@ -420,22 +457,15 @@ fn install_plan(detected: &[ProjectDetection]) -> Option<InstallPlan> {
                 "objective-c" => (0, InstallPlan::ObjectiveC),
                 "swift" | "swift-ios" => (1, InstallPlan::Swift),
                 "cpp" => (2, InstallPlan::Cmake),
-                "python" => (
-                    3,
-                    InstallPlan::Package {
-                        package_manager: detection.package_manager,
-                        integration: detection
-                            .package_integration
-                            .unwrap_or(PackageIntegration::Python(PythonIntegration::Core)),
+                "python" | "php" | "ruby" => (
+                    match detection.runtime {
+                        "python" => 3,
+                        "php" => 4,
+                        _ => 5,
                     },
-                ),
-                "php" => (
-                    4,
                     InstallPlan::Package {
                         package_manager: detection.package_manager,
-                        integration: detection
-                            .package_integration
-                            .unwrap_or(PackageIntegration::Php { symfony: false }),
+                        integration: detection.package_integration?,
                     },
                 ),
                 _ => return None,
@@ -467,21 +497,19 @@ fn detect_projects(root: &Path) -> Vec<ProjectDetection> {
     if detected.is_empty() {
         collect_parent_manifests(root, &mut detected);
     }
-    detected.sort_by(|left, right| {
-        left.manifest
-            .matches('/')
-            .count()
-            .cmp(&right.manifest.matches('/').count())
-            .then_with(|| left.runtime.cmp(right.runtime))
-            .then_with(|| {
-                manifest_priority(left.manifest.as_str())
-                    .cmp(&manifest_priority(right.manifest.as_str()))
-            })
-            .then_with(|| left.manifest.cmp(&right.manifest))
-    });
+    detected.sort_by(|left, right| detection_key(left).cmp(&detection_key(right)));
     let mut runtimes = HashSet::new();
     detected.retain(|detection| runtimes.insert(detection.runtime));
     detected
+}
+
+fn detection_key(detection: &ProjectDetection) -> (usize, &'static str, usize, &str) {
+    (
+        detection.manifest.matches('/').count(),
+        detection.runtime,
+        manifest_priority(&detection.manifest),
+        &detection.manifest,
+    )
 }
 
 /// Collects project manifests from nearby parent directories.
@@ -533,14 +561,16 @@ fn manifest_detection(root: &Path, path: &Path) -> Option<ProjectDetection> {
     {
         return None;
     }
+    let project_file = |relative| has_project_file(path, relative);
     Some(ProjectDetection {
         runtime,
         package_manager,
         package_integration: match runtime {
             "python" => Some(PackageIntegration::Python(detect_python_integration(path))),
-            "php" => Some(PackageIntegration::Php {
-                symfony: detects_symfony(path),
-            }),
+            "php" => Some(PackageIntegration::Php(project_file("config/bundles.php"))),
+            "ruby" => Some(PackageIntegration::Ruby(project_file(
+                "config/application.rb",
+            ))),
             _ => None,
         },
         manifest: relative_manifest(root, path),
@@ -576,6 +606,7 @@ fn manifest_runtime(path: &Path) -> Option<(&'static str, &'static str)> {
         "CMakeLists.txt" => Some(("cpp", "cmake")),
         "Package.swift" => Some(("swift", "swift package manager")),
         "composer.json" => Some(("php", "composer")),
+        "Gemfile" => Some(("ruby", "bundler")),
         "go.mod" => Some(("go", "go")),
         "package.json" => Some(("node", node_package_manager(path))),
         "Pipfile" => Some(("python", "pipenv")),
@@ -663,40 +694,37 @@ fn detect_python_integration(manifest: &Path) -> PythonIntegration {
     let Some(directory) = manifest.parent() else {
         return PythonIntegration::Core;
     };
-    if std::fs::symlink_metadata(directory.join("manage.py"))
-        .is_ok_and(|metadata| metadata.file_type().is_file())
-    {
+    if has_project_file(manifest, "manage.py") {
         return PythonIntegration::Django;
     }
 
     let mut text = read_framework_manifest(manifest).unwrap_or_default();
-    for file_name in [
+    for file in [
         "requirements.txt",
         "requirements.in",
         "setup.cfg",
         "setup.py",
     ] {
-        let candidate = directory.join(file_name);
-        if let Some(candidate_text) = read_framework_manifest(candidate.as_path()) {
+        if let Some(candidate_text) = read_framework_manifest(&directory.join(file)) {
             text.push('\n');
             text.push_str(candidate_text.as_str());
         }
     }
-
-    if mentions_python_distribution(text.as_str(), "django") {
-        PythonIntegration::Django
-    } else if mentions_python_distribution(text.as_str(), "fastapi") {
-        PythonIntegration::FastApi
-    } else if mentions_python_distribution(text.as_str(), "flask") {
-        PythonIntegration::Flask
-    } else {
-        PythonIntegration::Core
-    }
+    [
+        ("django", PythonIntegration::Django),
+        ("fastapi", PythonIntegration::FastApi),
+        ("flask", PythonIntegration::Flask),
+    ]
+    .into_iter()
+    .find_map(|(name, integration)| {
+        mentions_python_distribution(&text, name).then_some(integration)
+    })
+    .unwrap_or(PythonIntegration::Core)
 }
 
-/// Detects the native Symfony integration from its canonical bundle manifest.
-fn detects_symfony(manifest: &Path) -> bool {
-    std::fs::symlink_metadata(manifest.with_file_name("config").join("bundles.php"))
+/// Checks framework evidence without following a metadata symlink.
+fn has_project_file(manifest: &Path, relative: &str) -> bool {
+    std::fs::symlink_metadata(manifest.with_file_name(relative))
         .is_ok_and(|metadata| metadata.file_type().is_file())
 }
 
@@ -745,16 +773,18 @@ fn relative_path(root: &Path, path: &Path) -> Option<String> {
         return None;
     }
 
-    let mut parts = vec![String::from(".."); root_components.len() - common];
-    parts.extend(
-        path_components[common..]
-            .iter()
-            .map(|component| component.as_os_str().to_string_lossy().into_owned()),
-    );
-    Some(if parts.is_empty() {
+    let relative = std::iter::repeat_n("..".to_owned(), root_components.len() - common)
+        .chain(
+            path_components[common..]
+                .iter()
+                .map(|part| part.as_os_str().to_string_lossy().into_owned()),
+        )
+        .collect::<Vec<_>>()
+        .join("/");
+    Some(if relative.is_empty() {
         String::from(".")
     } else {
-        parts.join("/")
+        relative
     })
 }
 
@@ -777,6 +807,7 @@ fn display_runtime(runtime: &str) -> &'static str {
         "objective-c" => "Objective-C",
         "php" => "PHP",
         "python" => "Python",
+        "ruby" => "Ruby",
         "rust" => "Rust",
         "swift" => "Swift",
         "swift-ios" => "Swift/iOS",
@@ -829,6 +860,15 @@ mod tests {
             "project(Generated)\n",
         )?;
         assert_detection(&cmake, ("cpp", "cmake", "CMakeLists.txt"), None);
+
+        let parent = fixture("parent")?;
+        fs::write(parent.join("package.json"), "{}")?;
+        fs::create_dir_all(parent.join("src"))?;
+        assert_detection(
+            &parent.join("src"),
+            ("node", "npm", "../package.json"),
+            None,
+        );
         Ok(())
     }
 
@@ -843,14 +883,18 @@ mod tests {
             ("pyproject.toml", Some("poetry.lock"), "python", "poetry"),
             ("pyproject.toml", Some("Pipfile.lock"), "python", "pipenv"),
             ("Pipfile", None, "python", "pipenv"),
+            ("Gemfile", Some("Gemfile.lock"), "ruby", "bundler"),
         ] {
             let root = fixture(manager)?;
             fs::write(root.join(manifest), "")?;
             if let Some(lockfile) = lockfile {
                 fs::write(root.join(lockfile), "")?;
             }
-            let integration = (runtime == "python")
-                .then_some(PackageIntegration::Python(PythonIntegration::Core));
+            let integration = match runtime {
+                "python" => Some(PackageIntegration::Python(PythonIntegration::Core)),
+                "ruby" => Some(PackageIntegration::Ruby(false)),
+                _ => None,
+            };
             assert_detection(&root, (runtime, manager, manifest), integration);
         }
         Ok(())
@@ -877,8 +921,9 @@ mod tests {
         assert_detection(
             &symfony,
             ("php", "composer", "composer.json"),
-            Some(PackageIntegration::Php { symfony: true }),
+            Some(PackageIntegration::Php(true)),
         );
+
         Ok(())
     }
 
@@ -903,6 +948,14 @@ mod tests {
         )?;
         std::os::unix::fs::symlink(&outside_manifest, linked.join("pyproject.toml"))?;
         assert!(detect_projects(linked.as_path()).is_empty());
+        fs::write(linked.join("Gemfile"), "")?;
+        fs::create_dir_all(linked.join("config"))?;
+        std::os::unix::fs::symlink(&outside_manifest, linked.join("config/application.rb"))?;
+        assert_detection(
+            &linked,
+            ("ruby", "bundler", "Gemfile"),
+            Some(PackageIntegration::Ruby(false)),
+        );
 
         fs::remove_file(outside_metadata)?;
         fs::remove_file(outside_manifest)?;

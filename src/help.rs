@@ -196,6 +196,8 @@ or XcodeGen projects.
 Python planning detects Django, Flask, and FastAPI from bounded local project metadata. It emits \
 the public core and framework packages, the detected pip, uv, poetry, or pipenv command, and \
 explicit Python/framework compatibility requirements.
+Bundler planning detects Rails from its canonical application manifest and pins the released \
+logbrew-sdk 0.1.5-compatible requirement without changing Gemfile.
 CMake planning pins the released C++ SDK tag cpp/logbrew-cpp/v0.2.3, source subdirectory \
 cpp/logbrew-cpp, core target LogBrew::LogBrew, and optional libcurl target \
 LogBrew::HttpTransport. It prints a copyable FetchContent block without editing CMakeLists.txt.
@@ -211,16 +213,16 @@ logbrew setup --create-project shows secure project-creation help and does not c
 Package: https://github.com/LogBrewCo/sdk.git
 Product: LogBrew
 Dependency: .package(url: \"https://github.com/LogBrewCo/sdk.git\", from: \"0.1.6\")
-Python packages: logbrew-sdk, logbrew-django, logbrew-flask, logbrew-fastapi.
+Python packages: logbrew-sdk, logbrew-django, logbrew-flask, logbrew-fastapi. Ruby package: logbrew-sdk.
 Other detected runtimes use released SDK guidance until a structured CLI install plan is enabled.
 Aliases (same non-mutating plan): logbrew init, logbrew install, logbrew configure, logbrew sdk.
 Options: --auto records automatic detection preference; --yes records confirmation preference; \
                           --json prints stable setup JSON.
 Supported manifests: package.json, pyproject.toml, Pipfile, Cargo.toml, Package.swift, \
                           project.yml, project.yaml, .xcodeproj, .xcworkspace, CMakeLists.txt, \
-                          go.mod, composer.json.
+                          go.mod, composer.json, Gemfile.
 Package managers: npm, pnpm, yarn, bun, pip, uv, poetry, pipenv, cargo, SwiftPM, XcodeGen, Go, \
-                          Composer, CMake.";
+                          Composer, Bundler, CMake.";
 
 /// Status command help text.
 const STATUS_HELP: &str = "\
