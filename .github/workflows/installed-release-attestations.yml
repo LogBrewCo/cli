@@ -7,22 +7,22 @@ on:
         description: Immutable release tag
         required: true
         type: string
-        default: v0.1.42
+        default: v0.1.44
       version:
         description: Exact released version
         required: true
         type: string
-        default: 0.1.42
+        default: 0.1.44
       source_commit:
         description: Exact released source commit
         required: true
         type: string
-        default: ef8801c5887d0352bf103ee0da6550e26bfb93d3
+        default: 2ae7c5f363e0a8a31fe14a607838beab7cb9c82b
       release_run:
         description: Exact successful release workflow run
         required: true
         type: string
-        default: "31462670939"
+        default: "31627146810"
 
 permissions:
   contents: read
@@ -87,7 +87,7 @@ jobs:
       - name: Checkout released source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: ef8801c5887d0352bf103ee0da6550e26bfb93d3
+          ref: 2ae7c5f363e0a8a31fe14a607838beab7cb9c82b
           path: released-source
           persist-credentials: false
 
