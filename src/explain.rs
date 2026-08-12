@@ -51,7 +51,7 @@ const ISSUE_OCCURRENCE_CANDIDATE_LIMIT: u64 = 50;
 const ISSUE_OCCURRENCE_FRAME_LIMIT: u64 = 32;
 /// Largest integer accepted from JSON-number investigation contracts.
 const MAX_SAFE_JSON_INTEGER: u64 = 9_007_199_254_740_991;
-/// Exact top-level vocabulary for the schema-version-5 issue response.
+/// Exact top-level vocabulary for the schema-version-6 issue response.
 const ISSUE_RESPONSE_FIELDS: &[&str] = &[
     "schema_version",
     "subject",
@@ -65,6 +65,20 @@ const ISSUE_RESPONSE_FIELDS: &[&str] = &[
     "correlations",
     "evidence",
     "next_actions",
+];
+/// Shared evidence receipt partitions in their wire order.
+const EVIDENCE_CATEGORIES: [&str; 4] = [
+    "captured_fields",
+    "missing_fields",
+    "redacted_fields",
+    "truncated_fields",
+];
+/// Exact schema-version-6 request receipt vocabulary.
+const REQUEST_EVIDENCE_FIELDS: [&str; 4] = [
+    "request",
+    "request.method",
+    "request.route_template",
+    "request.response_status_code",
 ];
 
 /// Duplicate-aware JSON value.
@@ -285,7 +299,7 @@ fn validate_issue_response(
 ) -> Result<(), RuntimeError> {
     let response = response_object(value, ISSUE_RESPONSE_FIELDS)?;
     require_exact_fields(response, ISSUE_RESPONSE_FIELDS)?;
-    validate_schema_version_value(response, 5)?;
+    validate_schema_version_value(response, 6)?;
     let subject = required_object(response, "subject")?;
     require_string_equals(subject, "kind", "issue")?;
     require_string_equals(subject, "id", expected_id)?;
@@ -313,6 +327,7 @@ fn validate_issue_response(
     let _breadcrumbs_truncated = require_bool(event, "breadcrumbs_truncated")?;
     let evidence = required_object(response, "evidence")?;
     validate_evidence(evidence)?;
+    validate_issue_request(event, evidence)?;
     let stack_projection_receipted =
         evidence_has_field(evidence, "truncated_fields", "stack_frames")?;
     let selected_occurrence = validate_issue_occurrence_selection(
@@ -369,6 +384,96 @@ fn validate_issue_response(
     validate_selected_occurrence_correlations(selected_occurrence, event, correlations)?;
     validate_next_actions(response.get("next_actions"))?;
     issue_lifecycle::validate_next_action(response.get("next_actions"), regression_detected)
+}
+
+/// Validates only normalized, low-cardinality request evidence and its omission receipts.
+fn validate_issue_request(
+    event: &Map<String, Value>,
+    evidence: &Map<String, Value>,
+) -> Result<(), RuntimeError> {
+    let unknown = EVIDENCE_CATEGORIES.iter().any(|category| {
+        evidence[*category].as_array().is_none_or(|fields| {
+            fields.iter().filter_map(Value::as_str).any(|field| {
+                (field == "request" || field.starts_with("request."))
+                    && !REQUEST_EVIDENCE_FIELDS.contains(&field)
+            })
+        })
+    });
+    if unknown {
+        return Err(invalid_response());
+    }
+    let Some(value) = event.get("request") else {
+        let redacted = evidence_has_field(evidence, "redacted_fields", "request")?;
+        let truncated = evidence_has_field(evidence, "truncated_fields", "request.route_template")?;
+        if redacted && truncated {
+            return Err(invalid_response());
+        }
+        for (field, expected) in [
+            ("request", [false, true, redacted, false]),
+            ("request.method", [false; 4]),
+            ("request.route_template", [false, false, false, truncated]),
+            ("request.response_status_code", [false; 4]),
+        ] {
+            validate_field_receipts(evidence, field, expected)?;
+        }
+        return require_string_equals(evidence, "status", "partial");
+    };
+    let request = value.as_object().ok_or_else(invalid_response)?;
+    require_exact_fields(
+        request,
+        &["method", "route_template", "response_status_code"],
+    )?;
+    if !matches!(
+        require_string(request, "method")?,
+        "GET" | "HEAD" | "POST" | "PUT" | "PATCH" | "DELETE" | "OPTIONS" | "CONNECT"
+    ) || !safe_route_template(require_string(request, "route_template")?)
+    {
+        return Err(invalid_response());
+    }
+    let status = optional_safe_u64(request, "response_status_code")?;
+    if status.is_some_and(|value| !(100..=599).contains(&value)) {
+        return Err(invalid_response());
+    }
+    for field in ["request", "request.method", "request.route_template"] {
+        validate_field_receipts(evidence, field, [true, false, false, false])?;
+    }
+    let redacted = evidence_has_field(evidence, "redacted_fields", "request.response_status_code")?;
+    validate_field_receipts(
+        evidence,
+        "request.response_status_code",
+        [
+            status.is_some(),
+            status.is_none() && !redacted,
+            redacted,
+            false,
+        ],
+    )?;
+    if status.is_none() {
+        require_string_equals(evidence, "status", "partial")
+    } else {
+        Ok(())
+    }
+}
+
+/// Accepts parameterized route templates without concrete identifier segments.
+fn safe_route_template(route: &str) -> bool {
+    route == "<unmatched>"
+        || route.starts_with('/')
+            && route.chars().count() <= 256
+            && !route.contains("//")
+            && route.split('/').all(|segment| {
+                let identifier = !segment.is_empty()
+                    && (segment.bytes().all(|byte| byte.is_ascii_digit())
+                        || segment.len() >= 16
+                            && segment
+                                .bytes()
+                                .all(|byte| byte.is_ascii_hexdigit() || byte == b'-'));
+                !identifier
+                    && segment.len() <= 64
+                    && segment.bytes().all(|byte| {
+                        byte.is_ascii_alphanumeric() || b"-._~:{}<>*[]()+".contains(&byte)
+                    })
+            })
 }
 
 /// Validated occurrence facts used to bind detailed evidence and correlations.
@@ -1631,12 +1736,7 @@ fn validate_evidence(evidence: &Map<String, Value>) -> Result<(), RuntimeError> 
     if !matches!(require_string(evidence, "status")?, "complete" | "partial") {
         return Err(invalid_response());
     }
-    for name in [
-        "captured_fields",
-        "missing_fields",
-        "redacted_fields",
-        "truncated_fields",
-    ] {
+    for name in EVIDENCE_CATEGORIES {
         let fields = evidence
             .get(name)
             .and_then(Value::as_array)
@@ -1659,6 +1759,27 @@ fn evidence_has_field(
         .and_then(Value::as_array)
         .ok_or_else(invalid_response)?;
     Ok(fields.iter().any(|value| value.as_str() == Some(field)))
+}
+
+/// Requires one evidence field to occur exactly in its expected receipt partitions.
+fn validate_field_receipts(
+    evidence: &Map<String, Value>,
+    field: &str,
+    expected: [bool; 4],
+) -> Result<(), RuntimeError> {
+    for (category, expected) in EVIDENCE_CATEGORIES.into_iter().zip(expected) {
+        let count = evidence
+            .get(category)
+            .and_then(Value::as_array)
+            .ok_or_else(invalid_response)?
+            .iter()
+            .filter(|value| value.as_str() == Some(field))
+            .count();
+        if count != usize::from(expected) {
+            return Err(invalid_response());
+        }
+    }
+    Ok(())
 }
 
 /// Validates prioritized backend-generated actions.
@@ -1891,6 +2012,7 @@ fn render_issue(value: &Value) -> Option<String> {
         if let Some(sdk) = event.get("sdk") {
             append_named_pair(&mut output, "SDK", sdk, "name", "version", "@");
         }
+        append_issue_request(&mut output, event.get("request"));
         append_issue_exception(&mut output, event.get("exception"));
         issue_exception_chain::render(&mut output, event.get("exception_chain"));
         append_issue_frames(&mut output, event.get("stack_frames"));
@@ -1906,6 +2028,16 @@ fn render_issue(value: &Value) -> Option<String> {
     append_evidence(&mut output, value.get("evidence"));
     append_actions(&mut output, value.get("next_actions"));
     Some(output)
+}
+
+/// Appends normalized request context without raw URLs, headers, cookies, bodies, or IPs.
+fn append_issue_request(output: &mut String, value: Option<&Value>) {
+    let Some(request) = value else { return };
+    output.push_str("Request:");
+    append_labeled_text(output, "method", request, "method", 16);
+    append_labeled_text(output, "route", request, "route_template", 256);
+    append_labeled_integer(output, "status", request, "response_status_code");
+    output.push('\n');
 }
 
 /// Appends selected, boundary, and recommendation receipts for retained issue occurrences.

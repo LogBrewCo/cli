@@ -55,7 +55,7 @@ fn parses_named_and_exact_occurrence_selection_for_both_issue_commands() {
         exact.http_path().as_deref(),
         Some(
             "/api/telemetry/issues/11111111-1111-4111-8111-111111111111/investigation?\
-             response_version=5&occurrence_id=22222222-2222-4222-8222-222222222222"
+             response_version=6&occurrence_id=22222222-2222-4222-8222-222222222222"
         )
     );
     assert!(exact.wants_json());
@@ -72,7 +72,7 @@ fn parses_named_and_exact_occurrence_selection_for_both_issue_commands() {
         latest.http_path().as_deref(),
         Some(
             "/api/telemetry/issues/11111111-1111-4111-8111-111111111111/investigation?\
-             response_version=5&selection=latest"
+             response_version=6&selection=latest"
         )
     );
 }
@@ -151,7 +151,7 @@ fn help_describes_the_complete_versioned_bundle() {
     assert!(text.contains("approximate affected-user coverage and limitations"));
     assert!(text.contains("trace, related logs, actions, metric exemplars"));
     assert!(text.contains("same contract as logbrew explain issue"));
-    assert!(text.contains("exact validated schema-version-5 response"));
+    assert!(text.contains("exact validated schema-version-6 response"));
     assert!(text.contains("explicit selected, first, latest, and recommended occurrence"));
     assert!(text.contains("status activity and server-observed regression evidence"));
     assert!(text.contains("zero-filled occurrence trend"));
@@ -291,6 +291,7 @@ async fn human_output_surfaces_failure_fix_timeline_correlations_and_limits()
         "Exception stack node=1 state=truncated frames=1",
         "Exception frame node=1 index=0 module=checkout.provider function=requestPayment \
          file=provider_client.ts line=142 column=9 in_app=true",
+        "Request: method=POST route=/checkout/{cart_id} status=503",
         "Frame: module=checkout function=capturePayment file=payment_gateway.ts line=87",
         "Breadcrumb: at=2026-08-04T07:59:58Z category=checkout.submit",
         "Runtime: service=checkout-api@1.2.3 runtime=node@24",
@@ -585,9 +586,9 @@ async fn contradictory_occurrence_receipts_fail_closed_without_reflection()
 }
 
 #[tokio::test]
-async fn contradictory_exception_chains_fail_closed_without_reflection()
+async fn contradictory_event_evidence_fails_closed_without_reflection()
 -> Result<(), Box<dyn std::error::Error>> {
-    for (bundle, marker) in invalid_exception_chain_bundles() {
+    for (bundle, marker) in invalid_event_evidence_bundles() {
         let server = MockServer::start().await;
         mount_bundle(&server, bundle, 1).await;
         let command = parse_command(["logbrew", "investigate", "issue", ISSUE_ID, "--json"])?;
@@ -595,7 +596,7 @@ async fn contradictory_exception_chains_fail_closed_without_reflection()
 
         let error = execute_command(&command, &authenticated_env(&server), &mut output)
             .await
-            .expect_err("contradictory exception chain fails closed");
+            .expect_err("contradictory event evidence fails closed");
         write_runtime_error(&error, true, &mut output)?;
         let text = String::from_utf8(output)?;
         let response: serde_json::Value = serde_json::from_str(text.as_str())?;
@@ -753,7 +754,7 @@ async fn mount_bundle(server: &MockServer, bundle: serde_json::Value, expected_r
         .and(path(format!(
             "/api/telemetry/issues/{ISSUE_ID}/investigation"
         )))
-        .and(query_param("response_version", "5"))
+        .and(query_param("response_version", "6"))
         .and(query_param("selection", "recommended"))
         .and(header("authorization", "Bearer test-token"))
         .respond_with(ResponseTemplate::new(200).set_body_json(bundle))
@@ -771,7 +772,7 @@ async fn mount_exact_bundle(
         .and(path(format!(
             "/api/telemetry/issues/{ISSUE_ID}/investigation"
         )))
-        .and(query_param("response_version", "5"))
+        .and(query_param("response_version", "6"))
         .and(query_param("occurrence_id", OCCURRENCE_ID))
         .and(header("authorization", "Bearer test-token"))
         .respond_with(ResponseTemplate::new(200).set_body_json(bundle))
@@ -809,7 +810,7 @@ fn rich_investigation_bundle() -> serde_json::Value {
     let first = first_occurrence_summary();
     let latest = latest_occurrence_summary();
     serde_json::json!({
-        "schema_version": 5,
+        "schema_version": 6,
         "subject": {
             "kind": "issue",
             "id": ISSUE_ID,
@@ -899,6 +900,11 @@ fn rich_investigation_bundle() -> serde_json::Value {
                     }
                 ],
                 "truncated": true
+            },
+            "request": {
+                "method": "POST",
+                "route_template": "/checkout/{cart_id}",
+                "response_status_code": 503
             },
             "stack_frames": [{
                 "index": 0,
@@ -1094,6 +1100,10 @@ fn rich_investigation_bundle() -> serde_json::Value {
                 "occurrence.selection",
                 "occurrence.trend",
                 "release",
+                "request",
+                "request.method",
+                "request.response_status_code",
+                "request.route_template",
                 "stack_frames",
                 "trace",
                 "affected_users.known"
@@ -1502,7 +1512,7 @@ fn add_evidence_field(bundle: &mut serde_json::Value, category: &str, field: &st
     fields.sort_by(|left, right| left.as_str().cmp(&right.as_str()));
 }
 
-fn invalid_exception_chain_bundles() -> Vec<(serde_json::Value, &'static str)> {
+fn invalid_event_evidence_bundles() -> Vec<(serde_json::Value, &'static str)> {
     let mut cases = Vec::new();
 
     let mut forward_parent = rich_investigation_bundle();
@@ -1524,10 +1534,7 @@ fn invalid_exception_chain_bundles() -> Vec<(serde_json::Value, &'static str)> {
     let mut missing_receipt = rich_investigation_bundle();
     missing_receipt["event"]["exception_chain"]["entries"][0]["message"] =
         serde_json::json!("hostile-receipt-marker");
-    missing_receipt["evidence"]["captured_fields"]
-        .as_array_mut()
-        .expect("captured fields are an array")
-        .retain(|value| value != "exception_chain");
+    remove_evidence_fields(&mut missing_receipt, &["exception_chain"]);
     cases.push((missing_receipt, "hostile-receipt-marker"));
 
     let mut forged_fix = underlying_exception_fix_bundle();
@@ -1539,6 +1546,44 @@ fn invalid_exception_chain_bundles() -> Vec<(serde_json::Value, &'static str)> {
         serde_json::json!("hostile-signal-marker");
     remove_cause_signal(&mut missing_signal, "runtime_exception_chain");
     cases.push((missing_signal, "hostile-signal-marker"));
+
+    let mut concrete_route = rich_investigation_bundle();
+    concrete_route["event"]["request"]["route_template"] = serde_json::json!("/checkout/12345");
+    cases.push((concrete_route, "/checkout/12345"));
+
+    let mut invalid_method = rich_investigation_bundle();
+    invalid_method["event"]["request"]["method"] = serde_json::json!("HOSTILE-METHOD");
+    cases.push((invalid_method, "HOSTILE-METHOD"));
+
+    let mut missing_request_receipt = rich_investigation_bundle();
+    remove_evidence_fields(&mut missing_request_receipt, &["request.route_template"]);
+    cases.push((missing_request_receipt, "/checkout/{cart_id}"));
+
+    let mut unknown_request_receipt = rich_investigation_bundle();
+    add_evidence_field(
+        &mut unknown_request_receipt,
+        "captured_fields",
+        "request.raw_url",
+    );
+    cases.push((unknown_request_receipt, "request.raw_url"));
+
+    let mut missing_request = rich_investigation_bundle();
+    let _removed = missing_request["event"]
+        .as_object_mut()
+        .expect("event")
+        .remove("request");
+    remove_evidence_fields(
+        &mut missing_request,
+        &[
+            "request",
+            "request.method",
+            "request.route_template",
+            "request.response_status_code",
+        ],
+    );
+    add_evidence_field(&mut missing_request, "missing_fields", "request");
+    missing_request["evidence"]["status"] = serde_json::json!("complete");
+    cases.push((missing_request, "/checkout/{cart_id}"));
 
     cases
 }

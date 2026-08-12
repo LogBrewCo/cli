@@ -564,13 +564,9 @@ Metric explanations preserve gauge/counter/histogram semantics, compare the imme
                             equal window, expose the latest privacy-bounded raw sample with SDK, runtime context, \
                             structured metadata, exact trace/span links when captured, and nearby completed deployments, \
                             and never claim that an observed change or deployment proves an anomaly or root cause.
-Issue explanations use the backend-recommended context-rich retained occurrence by default. Use \
-                            --occurrence first, latest, recommended, or a retained occurrence UUID \
-                            from a previous occurrence receipt to inspect another exact event. JSON emits the exact validated \
-                            schema-version-5 issue response with explicit selection, candidate \
-                            coverage, status activity, server-observed regression evidence, a \
-                            zero-filled occurrence trend, bounded release, environment, service, and SDK distributions, and \
-                            explicit parent-first runtime exception capture states.
+Issue explanations use the same schema-version-6 request, occurrence, lifecycle, exception, impact, \
+                            correlation, and evidence contract as logbrew investigate issue. The default is the \
+                            backend-recommended context-rich occurrence; --occurrence selects another retained event.
 Metric explanations preserve gauge, delta-counter, histogram, and cumulative-stream semantics; \
                             they never invent reset-unsafe rates.
 Release investigation requires the exact project, environment, and service identity returned by \
@@ -850,7 +846,7 @@ Usage:
   logbrew investigate issue <issue_id> [--occurrence <recommended|first|latest|occurrence_id>] \
                          [--json]
 
-Reads one schema-version-5 bounded issue investigation with explicit selected, first, latest, and \
+Reads one schema-version-6 bounded issue investigation with privacy-bounded request evidence and explicit selected, first, latest, and \
 recommended occurrence receipts; parent-first runtime exception evidence with per-node message and \
 stack capture states, frames, breadcrumbs, typed runtime context, honest \
 cause and fix assessments, approximate affected-user \
@@ -862,7 +858,7 @@ The default is the bounded context-rich recommendation. --occurrence accepts fir
 recommended, or an exact retained occurrence UUID copied from a previous occurrence receipt.
 The command is read-only and uses the same contract as logbrew explain issue.
 Human output is bounded and marks application telemetry as untrusted evidence. JSON emits the exact \
-validated schema-version-5 response for AI agents.";
+validated schema-version-6 response for AI agents.";
 
 /// Apple native debug-artifact command help text.
 const NATIVE_DEBUG_ARTIFACTS_HELP: &str = "\
