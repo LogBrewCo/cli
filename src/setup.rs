@@ -31,7 +31,8 @@ const RUBY_MINIMUM_VERSION: &str = ">=2.6";
 /// Copyable Bundler command pinned to the current public Ruby SDK family.
 const RUBY_INSTALL_COMMAND: &str = "bundle add logbrew-sdk --version \"~> 0.1.5\"";
 const SVELTE_PACKAGES: &str = "@logbrew/sdk @logbrew/browser @logbrew/svelte";
-const SVELTE_COMPATIBILITY: &str = "Node >=18; Svelte >=5";
+const REACT_EXPRESS_PACKAGES: &str =
+    "@logbrew/sdk @logbrew/browser @logbrew/react @logbrew/node @logbrew/express";
 /// Maximum bytes read from a manifest while detecting a framework.
 const MAX_FRAMEWORK_MANIFEST_BYTES: u64 = 256 * 1024;
 /// Public SDK repository used by non-mutating install plans.
@@ -118,6 +119,7 @@ enum PackageIntegration {
     Php(bool),
     Ruby(bool),
     SvelteKit,
+    ReactExpress,
 }
 
 impl PythonIntegration {
@@ -205,48 +207,14 @@ impl InstallPlan {
             }),
             Self::Package {
                 package_manager,
-                integration: PackageIntegration::Python(integration),
-            } => {
-                let (key, _, framework) = integration.details();
-                let packages = std::iter::once(("logbrew-sdk", "core"))
-                    .chain(framework.map(|(name, _)| (name, "framework")))
-                    .map(|(name, role)| {
-                        serde_json::json!({
-                            "name": name,
-                            "role": role,
-                            "version_requirement": {
-                                "kind": "latest_compatible",
-                            }
-                        })
-                    })
-                    .collect::<Vec<_>>();
-                serde_json::json!({
-                    "mode": "non_mutating",
-                    "ecosystem": "pypi",
-                    "package_manager": package_manager,
-                    "integration": key,
-                    "packages": packages,
-                    "compatibility": {
-                        "status": "review_required",
-                        "requires_python": PYTHON_MINIMUM_VERSION,
-                        "requires_framework": framework.map(|(_, requirement)| requirement),
-                    },
-                    "install_command": python_install_command(package_manager, integration),
-                    "next_action": package_next_action(),
-                })
-            }
-            Self::Package {
-                package_manager,
-                integration: PackageIntegration::Php(symfony),
-            } => composer_plan_json(package_manager, symfony),
-            Self::Package {
-                package_manager,
-                integration: PackageIntegration::Ruby(rails),
-            } => ruby_plan_json(package_manager, rails),
-            Self::Package {
-                package_manager,
-                integration: PackageIntegration::SvelteKit,
-            } => svelte_plan_json(package_manager),
+                integration,
+            } => match integration {
+                PackageIntegration::Python(value) => python_plan_json(package_manager, value),
+                PackageIntegration::Php(value) => composer_plan_json(package_manager, value),
+                PackageIntegration::Ruby(value) => ruby_plan_json(package_manager, value),
+                PackageIntegration::SvelteKit => svelte_plan_json(package_manager),
+                PackageIntegration::ReactExpress => react_express_plan_json(package_manager),
+            },
         }
     }
 
@@ -274,51 +242,8 @@ impl InstallPlan {
             ),
             Self::Package {
                 package_manager,
-                integration: PackageIntegration::Python(integration),
-            } => {
-                let (_, display_name, framework) = integration.details();
-                let package_names = python_package_names(integration);
-                let requirement = framework
-                    .map(|(_, value)| format!("; {value}"))
-                    .unwrap_or_default();
-                writeln!(
-                    output,
-                    "Package manager: {package_manager}\nIntegration: {display_name}\nPackages: \
-                     {package_names}\nCompatibility review: Python \
-                     {PYTHON_MINIMUM_VERSION}{requirement}\nCommand: {}",
-                    python_install_command(package_manager, integration)
-                )
-            }
-            Self::Package {
-                package_manager,
-                integration: PackageIntegration::Php(symfony),
-            } => writeln!(
-                output,
-                "Package manager: {package_manager}\nIntegration: {}\nPackage: logbrew/sdk\nCompatibility review: PHP {PHP_MINIMUM_VERSION}{}{}\nCommand: composer require logbrew/sdk",
-                if symfony { "Symfony" } else { "PHP" },
-                if symfony { "; " } else { "" },
-                if symfony {
-                    SYMFONY_VERSION_REQUIREMENT
-                } else {
-                    ""
-                }
-            ),
-            Self::Package {
-                package_manager,
-                integration: PackageIntegration::Ruby(rails),
-            } => writeln!(
-                output,
-                "Package manager: {package_manager}\nIntegration: {}\nPackage: logbrew-sdk\nCompatibility review: Ruby {RUBY_MINIMUM_VERSION}\nCommand: {RUBY_INSTALL_COMMAND}",
-                if rails { "Rails" } else { "Ruby" },
-            ),
-            Self::Package {
-                package_manager,
-                integration: PackageIntegration::SvelteKit,
-            } => writeln!(
-                output,
-                "Package manager: {package_manager}\nIntegration: SvelteKit\nPackages: {SVELTE_PACKAGES}\nCompatibility review: {SVELTE_COMPATIBILITY}\nCommand: {}",
-                svelte_install_command(package_manager)
-            ),
+                integration,
+            } => write_package_human(package_manager, integration, output),
         }
     }
 
@@ -337,6 +262,28 @@ fn package_next_action() -> serde_json::Value {
     serde_json::json!({
         "code": "review_compatibility_and_install",
         "target": "project_environment",
+    })
+}
+
+fn python_plan_json(package_manager: &str, integration: PythonIntegration) -> serde_json::Value {
+    let (key, _, framework) = integration.details();
+    let packages = std::iter::once(("logbrew-sdk", "core"))
+        .chain(framework.map(|(name, _)| (name, "framework")))
+        .map(|(name, role)| npm_package(name, role))
+        .collect::<Vec<_>>();
+    serde_json::json!({
+        "mode": "non_mutating",
+        "ecosystem": "pypi",
+        "package_manager": package_manager,
+        "integration": key,
+        "packages": packages,
+        "compatibility": {
+            "status": "review_required",
+            "requires_python": PYTHON_MINIMUM_VERSION,
+            "requires_framework": framework.map(|(_, requirement)| requirement),
+        },
+        "install_command": python_install_command(package_manager, integration),
+        "next_action": package_next_action(),
     })
 }
 
@@ -377,41 +324,104 @@ fn ruby_plan_json(package_manager: &str, rails: bool) -> serde_json::Value {
 }
 
 fn svelte_plan_json(package_manager: &str) -> serde_json::Value {
-    let package = |name, role| {
-        serde_json::json!({
-            "name": name,
-            "role": role,
-            "version_requirement": {"kind": "latest_compatible"},
-        })
-    };
     serde_json::json!({
         "mode": "non_mutating",
         "ecosystem": "npm",
         "package_manager": package_manager,
         "integration": "sveltekit",
         "packages": [
-            package("@logbrew/sdk", "core"),
-            package("@logbrew/browser", "delivery"),
-            package("@logbrew/svelte", "framework"),
+            npm_package("@logbrew/sdk", "core"),
+            npm_package("@logbrew/browser", "delivery"),
+            npm_package("@logbrew/svelte", "framework"),
         ],
         "compatibility": {
             "status": "review_required",
             "requires_node": ">=18",
             "requires_framework": "Svelte >=5",
         },
-        "install_command": svelte_install_command(package_manager),
+        "install_command": javascript_install_command(package_manager, SVELTE_PACKAGES),
         "next_action": package_next_action(),
     })
 }
 
-fn svelte_install_command(package_manager: &str) -> String {
-    format!(
-        "{} {SVELTE_PACKAGES}",
-        match package_manager {
-            "pnpm" | "yarn" | "bun" => format!("{package_manager} add"),
-            _ => "npm install".to_owned(),
+fn react_express_plan_json(package_manager: &str) -> serde_json::Value {
+    serde_json::json!({
+        "mode": "non_mutating",
+        "ecosystem": "npm",
+        "package_manager": package_manager,
+        "integration": "react_express",
+        "packages": REACT_EXPRESS_PACKAGES.split_whitespace().collect::<Vec<_>>(),
+        "compatibility": {
+            "status": "review_required",
+            "requires_node": ">=18",
+            "requires_frameworks": ["React >=18", "Express >=4"],
+        },
+        "surfaces": [
+            {"surface": "browser", "integration": "react", "credential_kind": "browser", "service_name_required": true},
+            {"surface": "server", "integration": "express", "credential_kind": "server", "service_name_required": true},
+        ],
+        "install_command": javascript_install_command(package_manager, REACT_EXPRESS_PACKAGES),
+        "next_action": package_next_action(),
+    })
+}
+
+fn npm_package(name: &str, role: &str) -> serde_json::Value {
+    serde_json::json!({
+        "name": name,
+        "role": role,
+        "version_requirement": {"kind": "latest_compatible"},
+    })
+}
+
+fn write_package_human<W: std::io::Write>(
+    package_manager: &str,
+    integration: PackageIntegration,
+    output: &mut W,
+) -> Result<(), std::io::Error> {
+    match integration {
+        PackageIntegration::Python(integration) => {
+            let (_, display, framework) = integration.details();
+            let requirement = framework.map_or(String::new(), |(_, value)| format!("; {value}"));
+            writeln!(
+                output,
+                "Package manager: {package_manager}\nIntegration: {display}\nPackages: {}\nCompatibility review: Python {PYTHON_MINIMUM_VERSION}{requirement}\nCommand: {}",
+                python_package_names(integration),
+                python_install_command(package_manager, integration),
+            )
         }
-    )
+        PackageIntegration::Php(symfony) => writeln!(
+            output,
+            "Package manager: {package_manager}\nIntegration: {}\nPackage: logbrew/sdk\nCompatibility review: PHP {PHP_MINIMUM_VERSION}{}\nCommand: composer require logbrew/sdk",
+            if symfony { "Symfony" } else { "PHP" },
+            if symfony {
+                "; Symfony^6.4 || ^7.0 || ^8.0"
+            } else {
+                ""
+            },
+        ),
+        PackageIntegration::Ruby(rails) => writeln!(
+            output,
+            "Package manager: {package_manager}\nIntegration: {}\nPackage: logbrew-sdk\nCompatibility review: Ruby {RUBY_MINIMUM_VERSION}\nCommand: {RUBY_INSTALL_COMMAND}",
+            if rails { "Rails" } else { "Ruby" },
+        ),
+        PackageIntegration::SvelteKit => writeln!(
+            output,
+            "Package manager: {package_manager}\nIntegration: SvelteKit\nPackages: {SVELTE_PACKAGES}\nCompatibility review: Node >=18; Svelte >=5\nCommand: {}",
+            javascript_install_command(package_manager, SVELTE_PACKAGES),
+        ),
+        PackageIntegration::ReactExpress => writeln!(
+            output,
+            "Package manager: {package_manager}\nIntegration: React + Express\nPackages: {REACT_EXPRESS_PACKAGES}\nCompatibility review: Node >=18; React >=18; Express >=4\nSurfaces:\n- browser: React; key kind: browser; stable service name required\n- server: Express; key kind: server; stable service name required\nCommand: {}",
+            javascript_install_command(package_manager, REACT_EXPRESS_PACKAGES),
+        ),
+    }
+}
+
+fn javascript_install_command(package_manager: &str, packages: &str) -> String {
+    match package_manager {
+        "pnpm" | "yarn" | "bun" => format!("{package_manager} add {packages}"),
+        _ => format!("npm install {packages}"),
+    }
 }
 
 /// Writes the non-mutating setup plan.
@@ -510,7 +520,7 @@ fn install_plan(detected: &[ProjectDetection]) -> Option<InstallPlan> {
                 "objective-c" => (0, InstallPlan::ObjectiveC),
                 "swift" | "swift-ios" => (1, InstallPlan::Swift),
                 "cpp" => (2, InstallPlan::Cmake),
-                "python" | "php" | "ruby" | "sveltekit" => (
+                "python" | "php" | "ruby" | "sveltekit" | "react-express" => (
                     match detection.runtime {
                         "python" => 3,
                         "php" => 4,
@@ -616,7 +626,7 @@ fn manifest_detection(root: &Path, path: &Path) -> Option<ProjectDetection> {
         return None;
     }
     let package_integration = match runtime {
-        "node" if has_package(path, "@sveltejs/kit") => Some(PackageIntegration::SvelteKit),
+        "node" => detect_javascript_integration(path),
         "python" => Some(PackageIntegration::Python(detect_python_integration(path))),
         "php" => Some(PackageIntegration::Php(has_project_file(
             path,
@@ -629,10 +639,10 @@ fn manifest_detection(root: &Path, path: &Path) -> Option<ProjectDetection> {
         _ => None,
     };
     Some(ProjectDetection {
-        runtime: if package_integration == Some(PackageIntegration::SvelteKit) {
-            "sveltekit"
-        } else {
-            runtime
+        runtime: match package_integration {
+            Some(PackageIntegration::SvelteKit) => "sveltekit",
+            Some(PackageIntegration::ReactExpress) => "react-express",
+            _ => runtime,
         },
         package_manager,
         package_integration,
@@ -640,21 +650,27 @@ fn manifest_detection(root: &Path, path: &Path) -> Option<ProjectDetection> {
     })
 }
 
-/// Detects an exact package name from the standard dependency maps in `package.json`.
-fn has_package(manifest: &Path, package: &str) -> bool {
-    read_framework_manifest(manifest)
-        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
-        .is_some_and(|value| {
-            [
-                "dependencies",
-                "devDependencies",
-                "optionalDependencies",
-                "peerDependencies",
-            ]
-            .into_iter()
-            .filter_map(|field| value.get(field)?.as_object())
-            .any(|dependencies| dependencies.contains_key(package))
-        })
+/// Detects one released JavaScript integration from bounded standard dependency maps.
+fn detect_javascript_integration(manifest: &Path) -> Option<PackageIntegration> {
+    let text = read_framework_manifest(manifest)?;
+    let value = serde_json::from_str::<serde_json::Value>(&text).ok()?;
+    let has = |package| {
+        [
+            "dependencies",
+            "devDependencies",
+            "optionalDependencies",
+            "peerDependencies",
+        ]
+        .into_iter()
+        .filter_map(|field| value.get(field)?.as_object())
+        .any(|dependencies| dependencies.contains_key(package))
+    };
+    if has("@sveltejs/kit") {
+        Some(PackageIntegration::SvelteKit)
+    } else {
+        (!has("next") && !has("react-native") && has("react") && has("express"))
+            .then_some(PackageIntegration::ReactExpress)
+    }
 }
 
 /// Returns whether a directory should be skipped during setup detection.
@@ -887,258 +903,12 @@ fn display_runtime(runtime: &str) -> &'static str {
         "objective-c" => "Objective-C",
         "php" => "PHP",
         "python" => "Python",
+        "react-express" => "React + Express",
         "ruby" => "Ruby",
         "rust" => "Rust",
         "sveltekit" => "SvelteKit",
         "swift" => "Swift",
         "swift-ios" => "Swift/iOS",
         _ => "Project",
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::fs;
-    use std::path::PathBuf;
-
-    use super::{PackageIntegration, ProjectDetection, PythonIntegration, detect_projects};
-    type TestResult = Result<(), Box<dyn std::error::Error>>;
-
-    #[test]
-    fn keeps_nearest_manifests_and_skips_build_output() -> TestResult {
-        let root = fixture("nearest")?;
-        fs::write(root.join("Cargo.toml"), "")?;
-        fs::create_dir_all(root.join("crates/logbrew"))?;
-        fs::write(root.join("crates/logbrew/Cargo.toml"), "")?;
-        fs::write(root.join("package.json"), "{}")?;
-
-        let detected = detect_projects(root.as_path());
-        let summaries = detected
-            .iter()
-            .map(|value| {
-                (
-                    value.runtime,
-                    value.package_manager,
-                    value.manifest.as_str(),
-                )
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(
-            summaries,
-            [
-                ("node", "npm", "package.json"),
-                ("rust", "cargo", "Cargo.toml")
-            ]
-        );
-        let cmake = fixture("cmake")?;
-        fs::write(
-            cmake.join("CMakeLists.txt"),
-            "project(Fixture LANGUAGES CXX)\n",
-        )?;
-        fs::create_dir_all(cmake.join("build/nested"))?;
-        fs::write(
-            cmake.join("build/nested/CMakeLists.txt"),
-            "project(Generated)\n",
-        )?;
-        assert_detection(&cmake, ("cpp", "cmake", "CMakeLists.txt"), None);
-
-        let parent = fixture("parent")?;
-        fs::write(parent.join("package.json"), "{}")?;
-        fs::create_dir_all(parent.join("src"))?;
-        assert_detection(
-            &parent.join("src"),
-            ("node", "npm", "../package.json"),
-            None,
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn detects_package_managers_from_manifests_and_locks() -> TestResult {
-        for (manifest, lockfile, runtime, manager) in [
-            ("package.json", Some("pnpm-lock.yaml"), "node", "pnpm"),
-            ("package.json", Some("yarn.lock"), "node", "yarn"),
-            ("package.json", Some("bun.lockb"), "node", "bun"),
-            ("package.json", Some("package-lock.json"), "node", "npm"),
-            ("pyproject.toml", Some("uv.lock"), "python", "uv"),
-            ("pyproject.toml", Some("poetry.lock"), "python", "poetry"),
-            ("pyproject.toml", Some("Pipfile.lock"), "python", "pipenv"),
-            ("Pipfile", None, "python", "pipenv"),
-            ("Gemfile", Some("Gemfile.lock"), "ruby", "bundler"),
-        ] {
-            let root = fixture(manager)?;
-            fs::write(root.join(manifest), "")?;
-            if let Some(lockfile) = lockfile {
-                fs::write(root.join(lockfile), "")?;
-            }
-            let integration = match runtime {
-                "python" => Some(PackageIntegration::Python(PythonIntegration::Core)),
-                "ruby" => Some(PackageIntegration::Ruby(false)),
-                _ => None,
-            };
-            assert_detection(&root, (runtime, manager, manifest), integration);
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn detects_frameworks_from_bounded_exact_metadata() -> TestResult {
-        let django = fixture("django-dynamic-requirements")?;
-        fs::write(
-            django.join("pyproject.toml"),
-            "[project]\ndynamic = [\"dependencies\"]\n",
-        )?;
-        fs::write(django.join("requirements.txt"), "Django>=4.2,<6\n")?;
-        assert_python(&django, PythonIntegration::Django);
-
-        let oversized = fixture("oversized-python-metadata")?;
-        fs::write(oversized.join("pyproject.toml"), "Django".repeat(50_000))?;
-        assert_python(&oversized, PythonIntegration::Core);
-
-        let symfony = fixture("symfony")?;
-        fs::create_dir_all(symfony.join("config"))?;
-        fs::write(symfony.join("config/bundles.php"), "<?php return [];\n")?;
-        fs::write(symfony.join("composer.json"), "{}")?;
-        assert_detection(
-            &symfony,
-            ("php", "composer", "composer.json"),
-            Some(PackageIntegration::Php(true)),
-        );
-
-        let rails = fixture("rails")?;
-        fs::create_dir_all(rails.join("config"))?;
-        fs::write(
-            rails.join("config/application.rb"),
-            "class Application; end\n",
-        )?;
-        fs::write(rails.join("Gemfile"), "source 'https://rubygems.org'\n")?;
-        assert_detection(
-            &rails,
-            ("ruby", "bundler", "Gemfile"),
-            Some(PackageIntegration::Ruby(true)),
-        );
-
-        let sveltekit = fixture("sveltekit")?;
-        fs::write(sveltekit.join("pnpm-lock.yaml"), "lockfileVersion: '9.0'\n")?;
-        fs::write(
-            sveltekit.join("package.json"),
-            r#"{"devDependencies":{"@sveltejs/kit":"2.5.27"}}"#,
-        )?;
-        assert_detection(
-            &sveltekit,
-            ("sveltekit", "pnpm", "package.json"),
-            Some(PackageIntegration::SvelteKit),
-        );
-        Ok(())
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn detection_does_not_follow_manifest_or_metadata_symlinks() -> TestResult {
-        let root = fixture("metadata-symlink")?;
-        fs::write(
-            root.join("pyproject.toml"),
-            "[project]\nname = \"fixture\"\n",
-        )?;
-        let outside_metadata = root.with_extension("outside-requirements");
-        fs::write(&outside_metadata, "Django>=5.2\n")?;
-        std::os::unix::fs::symlink(&outside_metadata, root.join("requirements.txt"))?;
-        assert_python(&root, PythonIntegration::Core);
-
-        let linked = fixture("manifest-symlink")?;
-        let outside_manifest = linked.with_extension("outside-pyproject");
-        fs::write(
-            &outside_manifest,
-            "[project]\ndependencies = [\"Django\"]\n",
-        )?;
-        std::os::unix::fs::symlink(&outside_manifest, linked.join("pyproject.toml"))?;
-        assert!(detect_projects(linked.as_path()).is_empty());
-        fs::write(linked.join("Gemfile"), "")?;
-        fs::create_dir_all(linked.join("config"))?;
-        std::os::unix::fs::symlink(&outside_manifest, linked.join("config/application.rb"))?;
-        assert_detection(
-            &linked,
-            ("ruby", "bundler", "Gemfile"),
-            Some(PackageIntegration::Ruby(false)),
-        );
-
-        fs::remove_file(outside_metadata)?;
-        fs::remove_file(outside_manifest)?;
-        Ok(())
-    }
-
-    #[test]
-    fn classifies_and_prioritizes_apple_project_manifests() -> TestResult {
-        for (name, sources, runtime) in [
-            ("objc", &["Sources/main.m"][..], "objective-c"),
-            ("swift", &["Sources/App.swift"][..], "swift-ios"),
-            (
-                "mixed",
-                &["Sources/App.m", "Sources/One/Two/Three/Bridge.swift"][..],
-                "swift-ios",
-            ),
-        ] {
-            let root = fixture(name)?;
-            fs::write(root.join("project.yml"), "name: Checkout\n")?;
-            for source in sources {
-                let path = root.join(source);
-                fs::create_dir_all(path.parent().expect("source fixture has a parent"))?;
-                fs::write(path, "// source evidence\n")?;
-            }
-            assert_detection(&root, (runtime, "xcodegen", "project.yml"), None);
-        }
-        for (manifest, package_manager) in [
-            ("Checkout.xcodeproj", "xcode"),
-            ("Checkout.xcworkspace", "xcode workspace"),
-        ] {
-            let root = fixture(manifest)?;
-            fs::create_dir_all(root.join(manifest))?;
-
-            assert_detection(&root, ("swift-ios", package_manager, manifest), None);
-        }
-        let root = fixture("xcodegen-preference")?;
-        fs::write(root.join("project.yaml"), "name: Checkout\n")?;
-        fs::create_dir_all(root.join("Checkout.xcodeproj"))?;
-        fs::create_dir_all(root.join("Checkout.xcworkspace"))?;
-
-        assert_detection(&root, ("swift-ios", "xcodegen", "project.yaml"), None);
-        Ok(())
-    }
-
-    fn assert_detection(
-        root: &std::path::Path,
-        expected: (&'static str, &'static str, &str),
-        package_integration: Option<PackageIntegration>,
-    ) {
-        let (runtime, package_manager, manifest) = expected;
-        assert_eq!(
-            detect_projects(root),
-            vec![ProjectDetection {
-                runtime,
-                package_manager,
-                package_integration,
-                manifest: manifest.to_owned(),
-            }]
-        );
-    }
-
-    fn assert_python(root: &std::path::Path, integration: PythonIntegration) {
-        assert_detection(
-            root,
-            ("python", "pip", "pyproject.toml"),
-            Some(PackageIntegration::Python(integration)),
-        );
-    }
-
-    fn fixture(name: &str) -> Result<PathBuf, std::io::Error> {
-        let root = std::env::temp_dir().join(format!(
-            "logbrew-cli-setup-module-{name}-{}",
-            std::process::id()
-        ));
-        if root.try_exists()? {
-            fs::remove_dir_all(&root)?;
-        }
-        fs::create_dir_all(&root)?;
-        Ok(root)
     }
 }

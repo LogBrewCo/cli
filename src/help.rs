@@ -201,8 +201,8 @@ logbrew-sdk 0.1.5-compatible requirement without changing Gemfile.
 CMake planning pins the released C++ SDK tag cpp/logbrew-cpp/v0.2.3, source subdirectory \
 cpp/logbrew-cpp, core target LogBrew::LogBrew, and optional libcurl target \
 LogBrew::HttpTransport. It prints a copyable FetchContent block without editing CMakeLists.txt.
-SvelteKit planning detects @sveltejs/kit and emits the released core, browser, and Svelte packages \
-with the detected npm, pnpm, yarn, or bun command and explicit compatibility requirements.
+JavaScript planning detects exact @sveltejs/kit and mixed React + Express dependencies, then emits \
+released packages, detected install commands, compatibility, key scopes, and service-name requirements.
 Authenticated project creation (no dashboard sign-in):
   logbrew projects create <name> --ingest-key-file <path> [--runtime <runtime>] \
                            [--environment <environment>] [--json]
