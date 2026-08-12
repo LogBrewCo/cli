@@ -1,13 +1,13 @@
-//! Strict schema-version-5 exception-tree validation and bounded human projection.
+//! Strict schema-version-6 exception-tree validation and bounded human projection.
 
 use std::collections::BTreeSet;
 
 use serde_json::{Map, Value};
 
 use super::{
-    append_labeled_bool, append_labeled_integer, append_labeled_text, evidence_has_field,
-    invalid_response, optional_string, require_bool, require_exact_fields, require_string,
-    require_u64, required_object,
+    append_labeled_bool, append_labeled_integer, append_labeled_text, invalid_response,
+    optional_safe_u64, optional_string, require_bool, require_exact_fields, require_known_fields,
+    require_string, require_u64, required_object, validate_field_receipts,
 };
 use crate::RuntimeError;
 
@@ -46,14 +46,14 @@ struct ChainFacts<'a> {
     stack_states: BTreeSet<&'a str>,
 }
 
-/// Validates the exact version-5 event vocabulary and all exception-tree cross-field receipts.
+/// Validates the version-6 event vocabulary and all exception-tree cross-field receipts.
 pub(super) fn validate(
     event: &Map<String, Value>,
     evidence: &Map<String, Value>,
     cause: &Map<String, Value>,
     fix: &Map<String, Value>,
 ) -> Result<(), RuntimeError> {
-    require_exact_fields(
+    require_known_fields(
         event,
         &[
             "id",
@@ -66,6 +66,7 @@ pub(super) fn validate(
             "breadcrumbs",
             "breadcrumbs_truncated",
         ],
+        &["request"],
     )?;
     let legacy = validate_legacy_exception(event.get("exception"))?;
     let facts = validate_chain(required_object(event, "exception_chain")?, legacy)?;
@@ -169,7 +170,7 @@ fn validate_entry(
         return Err(invalid_response());
     }
     let relationship = require_string(entry, "relationship")?;
-    let parent_id = optional_u64(entry, "parent_id")?;
+    let parent_id = optional_safe_u64(entry, "parent_id")?;
     if index == 0 {
         if relationship != "reported" || parent_id.is_some() {
             return Err(invalid_response());
@@ -305,48 +306,16 @@ fn validate_receipts(
     )?;
     let chain_is_partial = facts.status != "captured"
         || facts.truncated
-        || facts.message_states.contains("not_captured")
-        || facts.message_states.contains("redacted")
-        || facts.message_states.contains("truncated")
-        || facts.stack_states.contains("not_captured")
-        || facts.stack_states.contains("truncated");
+        || facts
+            .message_states
+            .iter()
+            .any(|state| *state != "captured")
+        || facts.stack_states.iter().any(|state| *state != "captured");
     if chain_is_partial && require_string(evidence, "status")? != "partial" {
         Err(invalid_response())
     } else {
         Ok(())
     }
-}
-
-/// Requires one field to occur once or zero times in each standard receipt partition.
-fn validate_field_receipts(
-    evidence: &Map<String, Value>,
-    field: &str,
-    expected: [bool; 4],
-) -> Result<(), RuntimeError> {
-    for (index, category) in [
-        "captured_fields",
-        "missing_fields",
-        "redacted_fields",
-        "truncated_fields",
-    ]
-    .iter()
-    .enumerate()
-    {
-        let values = evidence
-            .get(*category)
-            .and_then(Value::as_array)
-            .ok_or_else(invalid_response)?;
-        let count = values
-            .iter()
-            .filter(|value| value.as_str() == Some(field))
-            .count();
-        if count != usize::from(expected[index])
-            || evidence_has_field(evidence, category, field)? != expected[index]
-        {
-            return Err(invalid_response());
-        }
-    }
-    Ok(())
 }
 
 /// Binds the runtime-chain cause signal to the presence of an underlying node.
@@ -360,11 +329,9 @@ fn validate_cause(cause: &Map<String, Value>, facts: &ChainFacts<'_>) -> Result<
         .filter(|value| value.as_str() == Some("runtime_exception_chain"))
         .count();
     let expected = facts.status == "captured" && facts.entries.len() > 1;
-    if count == usize::from(expected) {
-        Ok(())
-    } else {
-        Err(invalid_response())
-    }
+    (count == usize::from(expected))
+        .then_some(())
+        .ok_or_else(invalid_response)
 }
 
 /// Binds the derived underlying-fix location to an exact returned exception frame.
@@ -499,30 +466,19 @@ fn optional_bounded_text<'a>(
     }
 }
 
-/// Returns one required nullable unsigned integer.
-fn optional_u64(value: &Map<String, Value>, name: &str) -> Result<Option<u64>, RuntimeError> {
-    match value.get(name) {
-        Some(Value::Null) => Ok(None),
-        Some(Value::Number(_)) => require_u64(value, name).map(Some),
-        _ => Err(invalid_response()),
-    }
-}
-
 /// Returns one required nullable positive 32-bit integer.
 fn optional_positive_u32(
     value: &Map<String, Value>,
     name: &str,
 ) -> Result<Option<u32>, RuntimeError> {
-    optional_u64(value, name)?.map_or_else(
-        || Ok(None),
-        |value| {
+    optional_safe_u64(value, name)?
+        .map(|value| {
             u32::try_from(value)
                 .ok()
                 .filter(|value| *value > 0)
-                .map(Some)
                 .ok_or_else(invalid_response)
-        },
-    )
+        })
+        .transpose()
 }
 
 /// Returns one required nullable boolean.

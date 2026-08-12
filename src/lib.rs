@@ -2419,42 +2419,22 @@ fn explain_path(target: &ExplainTarget) -> String {
     }
 }
 
-/// Builds one explicit version-5 issue investigation path.
+/// Builds one explicit version-6 issue investigation path.
 fn issue_explain_path(id: &str, occurrence: &IssueOccurrenceSelection) -> String {
     let base = format!(
         "/api/telemetry/issues/{}/investigation",
         encode_component(id)
     );
-    match occurrence {
-        IssueOccurrenceSelection::Recommended => path_with_query(
-            base.as_str(),
-            &[
-                ("response_version", Some("5")),
-                ("selection", Some("recommended")),
-            ],
-        ),
-        IssueOccurrenceSelection::First => path_with_query(
-            base.as_str(),
-            &[
-                ("response_version", Some("5")),
-                ("selection", Some("first")),
-            ],
-        ),
-        IssueOccurrenceSelection::Latest => path_with_query(
-            base.as_str(),
-            &[
-                ("response_version", Some("5")),
-                ("selection", Some("latest")),
-            ],
-        ),
-        IssueOccurrenceSelection::Exact(occurrence_id) => path_with_query(
-            base.as_str(),
-            &[
-                ("response_version", Some("5")),
-                ("occurrence_id", Some(occurrence_id.as_str())),
-            ],
-        ),
-    }
+    let (name, value) = match occurrence {
+        IssueOccurrenceSelection::Recommended => ("selection", "recommended"),
+        IssueOccurrenceSelection::First => ("selection", "first"),
+        IssueOccurrenceSelection::Latest => ("selection", "latest"),
+        IssueOccurrenceSelection::Exact(id) => ("occurrence_id", id.as_str()),
+    };
+    path_with_query(
+        base.as_str(),
+        &[("response_version", Some("6")), (name, Some(value))],
+    )
 }
 
 /// Builds one bounded metric-investigation endpoint path.
