@@ -112,7 +112,7 @@ fn setup_help_is_honest_about_install_readiness() {
             "Python planning detects Django, Flask, and FastAPI",
             "Bundler planning detects Rails",
             "CMake planning pins the released C++ SDK tag cpp/logbrew-cpp/v0.2.3",
-            "SvelteKit planning detects @sveltejs/kit",
+            "mixed React + Express dependencies",
             "LogBrew::LogBrew",
             "LogBrew::HttpTransport",
             "without editing CMakeLists.txt",

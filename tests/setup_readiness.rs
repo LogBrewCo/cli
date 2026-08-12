@@ -3,6 +3,8 @@
 use logbrew_cli::{CliEnvironment, execute_command, parse_command};
 
 const SWIFT_PACKAGE_URL: &str = "https://github.com/LogBrewCo/sdk.git";
+const REACT_EXPRESS_PACKAGES: &str =
+    "@logbrew/sdk @logbrew/browser @logbrew/react @logbrew/node @logbrew/express";
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
 #[tokio::test]
@@ -12,7 +14,7 @@ async fn swiftpm_emits_exact_non_mutating_install_plan() -> TestResult {
         root.join("Package.swift"),
         "// deterministic public Swift package fixture\n",
     )?;
-    let body = setup_json(root.as_path(), &["logbrew", "setup", "--json"]).await?;
+    let body = setup_json(root.as_path()).await?;
     assert_eq!(
         body,
         serde_json::json!({
@@ -65,7 +67,7 @@ async fn cmake_emits_exact_pinned_cpp_install_plan() -> TestResult {
         "cmake_minimum_required(VERSION 3.16)\nproject(Fixture LANGUAGES CXX)\n",
     )?;
 
-    let body = setup_json(root.as_path(), &["logbrew", "setup", "--json"]).await?;
+    let body = setup_json(root.as_path()).await?;
 
     assert_eq!(
         body["install_plan"],
@@ -129,7 +131,7 @@ async fn xcodegen_prefers_the_objective_c_app_plan() -> TestResult {
     std::fs::write(root.join("App/project.yml"), "name: Checkout\n")?;
     std::fs::write(root.join("App/Sources/main.m"), "")?;
     std::fs::write(root.join("Packages/Helper/Package.swift"), "")?;
-    let body = setup_json(&root, &["logbrew", "setup", "--json"]).await?;
+    let body = setup_json(&root).await?;
     assert_eq!(
         body["install_plan"],
         serde_json::json!({
@@ -225,7 +227,7 @@ async fn released_python_frameworks_use_the_detected_package_manager() -> TestRe
         if !lockfile.is_empty() {
             std::fs::write(root.join(lockfile), "")?;
         }
-        let body = setup_json(&root, &["logbrew", "setup", "--json"]).await?;
+        let body = setup_json(&root).await?;
         assert_eq!(
             body["install_plan"],
             python_plan(
@@ -249,7 +251,7 @@ async fn sveltekit_emits_a_truthful_non_mutating_plan() -> TestResult {
         root.join("package.json"),
         r#"{"devDependencies":{"@sveltejs/kit":"2.5.27"}}"#,
     )?;
-    let body = setup_json(&root, &["logbrew", "setup", "--json"]).await?;
+    let body = setup_json(&root).await?;
     let plan = &body["install_plan"];
     assert_eq!(
         plan,
@@ -284,10 +286,233 @@ async fn sveltekit_emits_a_truthful_non_mutating_plan() -> TestResult {
 }
 
 #[tokio::test]
+async fn mixed_react_express_emits_scoped_surface_plan() -> TestResult {
+    let root = fixture_root("react-express")?;
+    std::fs::write(
+        root.join("package.json"),
+        r#"{"dependencies":{"react":"18.3.1","express":"4.21.2"},"devDependencies":{"vite":"6.0.7"}}"#,
+    )?;
+    let body = setup_json(&root).await?;
+    assert_eq!(
+        body["install_plan"],
+        serde_json::json!({
+            "mode": "non_mutating",
+            "ecosystem": "npm",
+            "package_manager": "npm",
+            "integration": "react_express",
+            "packages": REACT_EXPRESS_PACKAGES.split_whitespace().collect::<Vec<_>>(),
+            "compatibility": {
+                "status": "review_required",
+                "requires_node": ">=18",
+                "requires_frameworks": ["React >=18", "Express >=4"],
+            },
+            "install_command": "npm install @logbrew/sdk @logbrew/browser @logbrew/react @logbrew/node @logbrew/express",
+            "next_action": {
+                "code": "review_compatibility_and_install",
+                "target": "project_environment",
+            },
+            "surfaces": [
+                {
+                    "surface": "browser",
+                    "integration": "react",
+                    "credential_kind": "browser",
+                    "service_name_required": true,
+                },
+                {
+                    "surface": "server",
+                    "integration": "express",
+                    "credential_kind": "server",
+                    "service_name_required": true,
+                },
+            ],
+        })
+    );
+    assert_eq!(body["detected"][0]["runtime"], "react-express");
+    let human = setup_text(&root, &["logbrew", "setup"]).await?;
+    assert_contains_all(
+        &human,
+        &[
+            "Integration: React + Express",
+            "Compatibility review: Node >=18; React >=18; Express >=4",
+            "browser: React; key kind: browser; stable service name required",
+            "server: Express; key kind: server; stable service name required",
+        ],
+    );
+    assert!(!human.contains(root.to_string_lossy().as_ref()));
+    Ok(())
+}
+
+#[tokio::test]
+async fn scanner_prefers_nearby_manifests_and_package_managers() -> TestResult {
+    let root = fixture_root("scanner-nearest")?;
+    std::fs::write(root.join("Cargo.toml"), "")?;
+    std::fs::write(root.join("package.json"), "{}")?;
+    std::fs::create_dir_all(root.join("crates/nested"))?;
+    std::fs::write(root.join("crates/nested/Cargo.toml"), "")?;
+    assert_eq!(
+        setup_json(&root).await?["detected"],
+        serde_json::json!([
+            {"runtime": "node", "package_manager": "npm", "manifest": "package.json"},
+            {"runtime": "rust", "package_manager": "cargo", "manifest": "Cargo.toml"},
+        ])
+    );
+
+    let cmake = fixture_root("scanner-build-skip")?;
+    std::fs::write(
+        cmake.join("CMakeLists.txt"),
+        "project(Fixture LANGUAGES CXX)\n",
+    )?;
+    std::fs::create_dir_all(cmake.join("build/nested"))?;
+    std::fs::write(
+        cmake.join("build/nested/CMakeLists.txt"),
+        "project(Generated)\n",
+    )?;
+    let body = setup_json(&cmake).await?;
+    assert_eq!(body["detected"].as_array().map(Vec::len), Some(1));
+    assert_eq!(body["detected"][0]["manifest"], "CMakeLists.txt");
+
+    let parent = fixture_root("scanner-parent")?;
+    std::fs::write(parent.join("package.json"), "{}")?;
+    std::fs::create_dir_all(parent.join("src"))?;
+    let body = setup_json(&parent.join("src")).await?;
+    assert_eq!(body["detected"][0]["manifest"], "../package.json");
+
+    for (lockfile, manager) in [("yarn.lock", "yarn"), ("bun.lockb", "bun")] {
+        let root = fixture_root(manager)?;
+        std::fs::write(root.join("package.json"), "{}")?;
+        std::fs::write(root.join(lockfile), "")?;
+        let body = setup_json(&root).await?;
+        assert_eq!(body["detected"][0]["package_manager"], manager);
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn framework_detection_is_bounded_and_exact() -> TestResult {
+    let django = fixture_root("django-requirements")?;
+    std::fs::write(
+        django.join("pyproject.toml"),
+        "[project]\ndynamic = [\"dependencies\"]\n",
+    )?;
+    std::fs::write(django.join("requirements.txt"), "Django>=4.2,<6\n")?;
+    let body = setup_json(&django).await?;
+    assert_eq!(body["install_plan"]["integration"], "django");
+
+    let oversized = fixture_root("oversized-metadata")?;
+    std::fs::write(oversized.join("pyproject.toml"), "Django".repeat(50_000))?;
+    let body = setup_json(&oversized).await?;
+    assert_eq!(body["install_plan"]["integration"], "python");
+
+    for (label, manifest, marker, integration) in [
+        ("symfony", "composer.json", "config/bundles.php", "symfony"),
+        ("rails", "Gemfile", "config/application.rb", "rails"),
+    ] {
+        let root = fixture_root(label)?;
+        std::fs::create_dir_all(root.join("config"))?;
+        std::fs::write(root.join(manifest), "")?;
+        std::fs::write(root.join(marker), "framework marker\n")?;
+        let body = setup_json(&root).await?;
+        assert_eq!(body["install_plan"]["integration"], integration);
+        assert_eq!(body["install_plan"]["framework_manifest"], marker);
+    }
+
+    for (index, dependencies) in [
+        r#""react":"18","next":"1""#,
+        r#""react":"18","react-native":"1""#,
+        r#""react":"18""#,
+        r#""express":"4""#,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let root = fixture_root(&format!("unsupported-js-{index}"))?;
+        std::fs::write(
+            root.join("package.json"),
+            format!(r#"{{"dependencies":{{{dependencies}}}}}"#),
+        )?;
+        let body = setup_json(&root).await?;
+        assert_eq!(body["detected"][0]["runtime"], "node");
+        assert_eq!(body["install_plan"], serde_json::Value::Null);
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn scanner_does_not_follow_manifest_or_metadata_symlinks() -> TestResult {
+    let root = fixture_root("metadata-symlink")?;
+    std::fs::write(
+        root.join("pyproject.toml"),
+        "[project]\nname = \"fixture\"\n",
+    )?;
+    let outside = root.with_extension("outside-requirements");
+    std::fs::write(&outside, "Django>=5.2\n")?;
+    std::os::unix::fs::symlink(&outside, root.join("requirements.txt"))?;
+    let body = setup_json(&root).await?;
+    assert_eq!(body["install_plan"]["integration"], "python");
+
+    let linked = fixture_root("manifest-symlink")?;
+    let outside_manifest = linked.with_extension("outside-pyproject");
+    std::fs::write(
+        &outside_manifest,
+        "[project]\ndependencies = [\"Django\"]\n",
+    )?;
+    std::os::unix::fs::symlink(&outside_manifest, linked.join("pyproject.toml"))?;
+    let body = setup_json(&linked).await?;
+    assert!(body["detected"].as_array().is_some_and(Vec::is_empty));
+    std::fs::write(linked.join("Gemfile"), "")?;
+    std::fs::create_dir_all(linked.join("config"))?;
+    std::os::unix::fs::symlink(&outside_manifest, linked.join("config/application.rb"))?;
+    let body = setup_json(&linked).await?;
+    assert_eq!(body["install_plan"]["integration"], "ruby");
+    std::fs::remove_file(outside)?;
+    std::fs::remove_file(outside_manifest)?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn scanner_classifies_and_prioritizes_apple_projects() -> TestResult {
+    for (label, sources, runtime) in [
+        ("swift", &["Sources/App.swift"][..], "swift-ios"),
+        (
+            "mixed",
+            &["Sources/App.m", "Sources/Bridge.swift"][..],
+            "swift-ios",
+        ),
+    ] {
+        let root = fixture_root(label)?;
+        std::fs::write(root.join("project.yml"), "name: Checkout\n")?;
+        for source in sources {
+            let path = root.join(source);
+            std::fs::create_dir_all(path.parent().expect("source has parent"))?;
+            std::fs::write(path, "// source evidence\n")?;
+        }
+        let body = setup_json(&root).await?;
+        assert_eq!(body["detected"][0]["runtime"], runtime);
+    }
+    for (manifest, manager) in [
+        ("Checkout.xcodeproj", "xcode"),
+        ("Checkout.xcworkspace", "xcode workspace"),
+    ] {
+        let root = fixture_root(manifest)?;
+        std::fs::create_dir_all(root.join(manifest))?;
+        let body = setup_json(&root).await?;
+        assert_eq!(body["detected"][0]["package_manager"], manager);
+    }
+    let root = fixture_root("xcodegen-preference")?;
+    std::fs::write(root.join("project.yaml"), "name: Checkout\n")?;
+    std::fs::create_dir_all(root.join("Checkout.xcodeproj"))?;
+    std::fs::create_dir_all(root.join("Checkout.xcworkspace"))?;
+    let body = setup_json(&root).await?;
+    assert_eq!(body["detected"][0]["package_manager"], "xcodegen");
+    Ok(())
+}
+
+#[tokio::test]
 async fn runtimes_without_structured_plans_get_truthful_recovery() -> TestResult {
     let root = fixture_root("rust-not-ready")?;
     std::fs::write(root.join("Cargo.toml"), "[package]\nname = \"fixture\"\n")?;
-    let body = setup_json(root.as_path(), &["logbrew", "setup", "--json"]).await?;
+    let body = setup_json(root.as_path()).await?;
     assert_eq!(body["install_ready"], false);
     assert_eq!(body["install_plan"], serde_json::Value::Null);
     assert_eq!(
@@ -331,8 +556,8 @@ async fn setup_text(root: &std::path::Path, args: &[&str]) -> TestResult<String>
     Ok(String::from_utf8(output)?)
 }
 
-async fn setup_json(root: &std::path::Path, args: &[&str]) -> TestResult<serde_json::Value> {
-    let text = setup_text(root, args).await?;
+async fn setup_json(root: &std::path::Path) -> TestResult<serde_json::Value> {
+    let text = setup_text(root, &["logbrew", "setup", "--json"]).await?;
     Ok(serde_json::from_str(text.as_str())?)
 }
 
