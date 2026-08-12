@@ -134,6 +134,9 @@ receive a package-index plan for the core SDK or the detected Django, Flask, or
 FastAPI integration, including the pip, uv, poetry, or pipenv command. Bundler
 projects receive the released Ruby package plan, and Rails applications are
 identified from `config/application.rb` without reading application source.
+SvelteKit projects receive the public core, browser, and Svelte integration
+packages with the detected npm, pnpm, yarn, or bun command. Detection requires
+an exact `@sveltejs/kit` dependency in a standard `package.json` dependency map.
 
 Python plans report the public package compatibility requirements separately.
 Review them before running the command, especially when a library supports

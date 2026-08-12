@@ -201,6 +201,8 @@ logbrew-sdk 0.1.5-compatible requirement without changing Gemfile.
 CMake planning pins the released C++ SDK tag cpp/logbrew-cpp/v0.2.3, source subdirectory \
 cpp/logbrew-cpp, core target LogBrew::LogBrew, and optional libcurl target \
 LogBrew::HttpTransport. It prints a copyable FetchContent block without editing CMakeLists.txt.
+SvelteKit planning detects @sveltejs/kit and emits the released core, browser, and Svelte packages \
+with the detected npm, pnpm, yarn, or bun command and explicit compatibility requirements.
 Authenticated project creation (no dashboard sign-in):
   logbrew projects create <name> --ingest-key-file <path> [--runtime <runtime>] \
                            [--environment <environment>] [--json]
@@ -210,9 +212,6 @@ Existing-project key creation (no dashboard sign-in):
 Run either command after logbrew login. Each stores the one-time ingest key in the chosen \
 owner-only file and never prints the key or its path.
 logbrew setup --create-project shows secure project-creation help and does not create a project.
-Package: https://github.com/LogBrewCo/sdk.git
-Product: LogBrew
-Dependency: .package(url: \"https://github.com/LogBrewCo/sdk.git\", from: \"0.1.6\")
 Python packages: logbrew-sdk, logbrew-django, logbrew-flask, logbrew-fastapi. Ruby package: logbrew-sdk.
 Other detected runtimes use released SDK guidance until a structured CLI install plan is enabled.
 Aliases (same non-mutating plan): logbrew init, logbrew install, logbrew configure, logbrew sdk.
