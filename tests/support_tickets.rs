@@ -73,7 +73,7 @@ fn support_create_builds_exact_safe_request() {
         serde_json::json!({
             "arch": std::env::consts::ARCH,
             "binary": "logbrew",
-            "cli_version": "0.1.42",
+            "cli_version": env!("CARGO_PKG_VERSION"),
             "os": std::env::consts::OS
         })
     );

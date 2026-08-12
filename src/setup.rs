@@ -30,6 +30,8 @@ const SYMFONY_VERSION_REQUIREMENT: &str = "Symfony^6.4 || ^7.0 || ^8.0";
 const RUBY_MINIMUM_VERSION: &str = ">=2.6";
 /// Copyable Bundler command pinned to the current public Ruby SDK family.
 const RUBY_INSTALL_COMMAND: &str = "bundle add logbrew-sdk --version \"~> 0.1.5\"";
+const SVELTE_PACKAGES: &str = "@logbrew/sdk @logbrew/browser @logbrew/svelte";
+const SVELTE_COMPATIBILITY: &str = "Node >=18; Svelte >=5";
 /// Maximum bytes read from a manifest while detecting a framework.
 const MAX_FRAMEWORK_MANIFEST_BYTES: u64 = 256 * 1024;
 /// Public SDK repository used by non-mutating install plans.
@@ -115,6 +117,7 @@ enum PackageIntegration {
     Python(PythonIntegration),
     Php(bool),
     Ruby(bool),
+    SvelteKit,
 }
 
 impl PythonIntegration {
@@ -240,6 +243,10 @@ impl InstallPlan {
                 package_manager,
                 integration: PackageIntegration::Ruby(rails),
             } => ruby_plan_json(package_manager, rails),
+            Self::Package {
+                package_manager,
+                integration: PackageIntegration::SvelteKit,
+            } => svelte_plan_json(package_manager),
         }
     }
 
@@ -304,6 +311,14 @@ impl InstallPlan {
                 "Package manager: {package_manager}\nIntegration: {}\nPackage: logbrew-sdk\nCompatibility review: Ruby {RUBY_MINIMUM_VERSION}\nCommand: {RUBY_INSTALL_COMMAND}",
                 if rails { "Rails" } else { "Ruby" },
             ),
+            Self::Package {
+                package_manager,
+                integration: PackageIntegration::SvelteKit,
+            } => writeln!(
+                output,
+                "Package manager: {package_manager}\nIntegration: SvelteKit\nPackages: {SVELTE_PACKAGES}\nCompatibility review: {SVELTE_COMPATIBILITY}\nCommand: {}",
+                svelte_install_command(package_manager)
+            ),
         }
     }
 
@@ -359,6 +374,44 @@ fn ruby_plan_json(package_manager: &str, rails: bool) -> serde_json::Value {
         "install_command": RUBY_INSTALL_COMMAND,
         "next_action": package_next_action(),
     })
+}
+
+fn svelte_plan_json(package_manager: &str) -> serde_json::Value {
+    let package = |name, role| {
+        serde_json::json!({
+            "name": name,
+            "role": role,
+            "version_requirement": {"kind": "latest_compatible"},
+        })
+    };
+    serde_json::json!({
+        "mode": "non_mutating",
+        "ecosystem": "npm",
+        "package_manager": package_manager,
+        "integration": "sveltekit",
+        "packages": [
+            package("@logbrew/sdk", "core"),
+            package("@logbrew/browser", "delivery"),
+            package("@logbrew/svelte", "framework"),
+        ],
+        "compatibility": {
+            "status": "review_required",
+            "requires_node": ">=18",
+            "requires_framework": "Svelte >=5",
+        },
+        "install_command": svelte_install_command(package_manager),
+        "next_action": package_next_action(),
+    })
+}
+
+fn svelte_install_command(package_manager: &str) -> String {
+    format!(
+        "{} {SVELTE_PACKAGES}",
+        match package_manager {
+            "pnpm" | "yarn" | "bun" => format!("{package_manager} add"),
+            _ => "npm install".to_owned(),
+        }
+    )
 }
 
 /// Writes the non-mutating setup plan.
@@ -457,11 +510,12 @@ fn install_plan(detected: &[ProjectDetection]) -> Option<InstallPlan> {
                 "objective-c" => (0, InstallPlan::ObjectiveC),
                 "swift" | "swift-ios" => (1, InstallPlan::Swift),
                 "cpp" => (2, InstallPlan::Cmake),
-                "python" | "php" | "ruby" => (
+                "python" | "php" | "ruby" | "sveltekit" => (
                     match detection.runtime {
                         "python" => 3,
                         "php" => 4,
-                        _ => 5,
+                        "ruby" => 5,
+                        _ => 6,
                     },
                     InstallPlan::Package {
                         package_manager: detection.package_manager,
@@ -561,20 +615,46 @@ fn manifest_detection(root: &Path, path: &Path) -> Option<ProjectDetection> {
     {
         return None;
     }
-    let project_file = |relative| has_project_file(path, relative);
+    let package_integration = match runtime {
+        "node" if has_package(path, "@sveltejs/kit") => Some(PackageIntegration::SvelteKit),
+        "python" => Some(PackageIntegration::Python(detect_python_integration(path))),
+        "php" => Some(PackageIntegration::Php(has_project_file(
+            path,
+            "config/bundles.php",
+        ))),
+        "ruby" => Some(PackageIntegration::Ruby(has_project_file(
+            path,
+            "config/application.rb",
+        ))),
+        _ => None,
+    };
     Some(ProjectDetection {
-        runtime,
-        package_manager,
-        package_integration: match runtime {
-            "python" => Some(PackageIntegration::Python(detect_python_integration(path))),
-            "php" => Some(PackageIntegration::Php(project_file("config/bundles.php"))),
-            "ruby" => Some(PackageIntegration::Ruby(project_file(
-                "config/application.rb",
-            ))),
-            _ => None,
+        runtime: if package_integration == Some(PackageIntegration::SvelteKit) {
+            "sveltekit"
+        } else {
+            runtime
         },
+        package_manager,
+        package_integration,
         manifest: relative_manifest(root, path),
     })
+}
+
+/// Detects an exact package name from the standard dependency maps in `package.json`.
+fn has_package(manifest: &Path, package: &str) -> bool {
+    read_framework_manifest(manifest)
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+        .is_some_and(|value| {
+            [
+                "dependencies",
+                "devDependencies",
+                "optionalDependencies",
+                "peerDependencies",
+            ]
+            .into_iter()
+            .filter_map(|field| value.get(field)?.as_object())
+            .any(|dependencies| dependencies.contains_key(package))
+        })
 }
 
 /// Returns whether a directory should be skipped during setup detection.
@@ -809,6 +889,7 @@ fn display_runtime(runtime: &str) -> &'static str {
         "python" => "Python",
         "ruby" => "Ruby",
         "rust" => "Rust",
+        "sveltekit" => "SvelteKit",
         "swift" => "Swift",
         "swift-ios" => "Swift/iOS",
         _ => "Project",
@@ -924,6 +1005,30 @@ mod tests {
             Some(PackageIntegration::Php(true)),
         );
 
+        let rails = fixture("rails")?;
+        fs::create_dir_all(rails.join("config"))?;
+        fs::write(
+            rails.join("config/application.rb"),
+            "class Application; end\n",
+        )?;
+        fs::write(rails.join("Gemfile"), "source 'https://rubygems.org'\n")?;
+        assert_detection(
+            &rails,
+            ("ruby", "bundler", "Gemfile"),
+            Some(PackageIntegration::Ruby(true)),
+        );
+
+        let sveltekit = fixture("sveltekit")?;
+        fs::write(sveltekit.join("pnpm-lock.yaml"), "lockfileVersion: '9.0'\n")?;
+        fs::write(
+            sveltekit.join("package.json"),
+            r#"{"devDependencies":{"@sveltejs/kit":"2.5.27"}}"#,
+        )?;
+        assert_detection(
+            &sveltekit,
+            ("sveltekit", "pnpm", "package.json"),
+            Some(PackageIntegration::SvelteKit),
+        );
         Ok(())
     }
 

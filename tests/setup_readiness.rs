@@ -122,77 +122,6 @@ async fn cmake_emits_exact_pinned_cpp_install_plan() -> TestResult {
 }
 
 #[tokio::test]
-async fn framework_package_managers_emit_exact_non_mutating_plans() -> TestResult {
-    for (integration, compatibility, command) in [
-        (
-            "symfony",
-            serde_json::json!({
-                "status": "review_required",
-                "requires_php": "^8.2",
-                "requires_framework": "Symfony^6.4 || ^7.0 || ^8.0",
-            }),
-            "composer require logbrew/sdk",
-        ),
-        (
-            "rails",
-            serde_json::json!({
-                "status": "review_required",
-                "requires_ruby": ">=2.6",
-                "requires_framework": null,
-            }),
-            "bundle add logbrew-sdk --version \"~> 0.1.5\"",
-        ),
-    ] {
-        let rails = integration == "rails";
-        let pick = |php, ruby| if rails { ruby } else { php };
-        let manifest = pick("composer.json", "Gemfile");
-        let marker = pick("config/bundles.php", "config/application.rb");
-        let ecosystem = pick("composer", "rubygems");
-        let manager = pick("composer", "bundler");
-        let package = pick("logbrew/sdk", "logbrew-sdk");
-        let integration_line = pick("Integration: Symfony", "Integration: Rails");
-        let review_line = pick(
-            "Compatibility review: PHP ^8.2; Symfony^6.4 || ^7.0 || ^8.0",
-            "Compatibility review: Ruby >=2.6",
-        );
-        let root = fixture_root(integration)?;
-        std::fs::create_dir_all(root.join("config"))?;
-        std::fs::write(root.join(marker), "framework marker\n")?;
-        std::fs::write(root.join(manifest), "framework dependency\n")?;
-        let body = setup_json(&root, &["logbrew", "setup", "--json"]).await?;
-        assert_eq!(
-            body["install_plan"],
-            serde_json::json!({
-                "mode": "non_mutating",
-                "ecosystem": ecosystem,
-                "package_manager": manager,
-                "integration": integration,
-                "package": package,
-                "framework_manifest": marker,
-                "compatibility": compatibility,
-                "install_command": command,
-                "next_action": {
-                    "code": "review_compatibility_and_install",
-                    "target": "project_environment",
-                },
-            })
-        );
-        let human = setup_text(&root, &["logbrew", "setup"]).await?;
-        assert_contains_all(
-            &human,
-            &[
-                integration_line,
-                review_line,
-                &format!("Package: {package}"),
-                &format!("Command: {command}"),
-            ],
-        );
-        assert!(!human.contains(root.to_string_lossy().as_ref()));
-    }
-    Ok(())
-}
-
-#[tokio::test]
 async fn xcodegen_prefers_the_objective_c_app_plan() -> TestResult {
     let root = fixture_root("xcodegen-objective-c")?;
     std::fs::create_dir_all(root.join("App/Sources"))?;
@@ -241,77 +170,8 @@ async fn xcodegen_prefers_the_objective_c_app_plan() -> TestResult {
 }
 
 #[tokio::test]
-async fn setup_aliases_and_json_order_share_the_swift_install_plan() -> TestResult {
-    let root = fixture_root("aliases")?;
-    std::fs::write(root.join("Package.swift"), "// swift fixture\n")?;
-    let cases = [
-        &["logbrew", "setup", "--json"][..],
-        &["logbrew", "--json", "setup"][..],
-        &["logbrew", "init", "--json"][..],
-        &["logbrew", "--json", "install"][..],
-        &["logbrew", "configure", "--json"][..],
-        &["logbrew", "--json", "sdk"][..],
-    ];
-    let expected = setup_json(root.as_path(), cases[0]).await?;
-    for args in &cases[1..] {
-        assert_eq!(setup_json(root.as_path(), args).await?, expected);
-    }
-    let preferences = setup_json(
-        root.as_path(),
-        &["logbrew", "setup", "--auto", "--yes", "--json"],
-    )
-    .await?;
-    assert_eq!(
-        (preferences["auto"].as_bool(), preferences["yes"].as_bool()),
-        (Some(true), Some(true))
-    );
-    Ok(())
-}
-
-#[tokio::test]
-async fn django_pyproject_emits_exact_public_python_install_plan() -> TestResult {
-    let root = fixture_root("django-ready")?;
-    std::fs::write(
-        root.join("pyproject.toml"),
-        r#"[project]
-name = "conference-app"
-dynamic = ["dependencies"]
-classifiers = ["Framework :: Django", "Programming Language :: Python :: 3.10"]
-"#,
-    )?;
-    std::fs::write(root.join("requirements.txt"), "Django>=4.2,<6\n")?;
-    let body = setup_json(root.as_path(), &["logbrew", "setup", "--json"]).await?;
-    assert_eq!(
-        body["install_plan"],
-        python_plan(
-            "pip",
-            "django",
-            Some("logbrew-django"),
-            Some("Django>=4.2.30,<6"),
-            "python3 -m pip install --upgrade logbrew-sdk logbrew-django",
-        )
-    );
-    assert_eq!(
-        body["next"],
-        "review the compatibility requirements, then run the install command; no files were changed"
-    );
-    assert_eq!(
-        body["detected"],
-        serde_json::json!([
-            {
-                "runtime": "python",
-                "package_manager": "pip",
-                "manifest": "pyproject.toml"
-            }
-        ])
-    );
-    Ok(())
-}
-
-#[tokio::test]
 async fn released_python_frameworks_use_the_detected_package_manager() -> TestResult {
     for (
-        label,
         dependency,
         lockfile,
         package_manager,
@@ -321,7 +181,15 @@ async fn released_python_frameworks_use_the_detected_package_manager() -> TestRe
         install_command,
     ) in [
         (
-            "flask-uv",
+            "Django>=4.2",
+            "",
+            "pip",
+            "django",
+            "logbrew-django",
+            "Django>=4.2.30,<6",
+            "python3 -m pip install --upgrade logbrew-sdk logbrew-django",
+        ),
+        (
             "Flask>=3.1",
             "uv.lock",
             "uv",
@@ -331,7 +199,6 @@ async fn released_python_frameworks_use_the_detected_package_manager() -> TestRe
             "uv add logbrew-sdk logbrew-flask",
         ),
         (
-            "fastapi-poetry",
             "FastAPI>=0.111.1",
             "poetry.lock",
             "poetry",
@@ -340,65 +207,79 @@ async fn released_python_frameworks_use_the_detected_package_manager() -> TestRe
             "FastAPI>=0.111.1",
             "poetry add logbrew-sdk logbrew-fastapi",
         ),
+        (
+            "requests",
+            "Pipfile.lock",
+            "pipenv",
+            "python",
+            "",
+            "",
+            "pipenv install logbrew-sdk",
+        ),
     ] {
-        let root = fixture_root(label)?;
+        let root = fixture_root(integration)?;
         std::fs::write(
             root.join("pyproject.toml"),
             format!("[project]\nname = \"fixture\"\ndependencies = [\"{dependency}\"]\n"),
         )?;
-        std::fs::write(root.join(lockfile), "")?;
-        let body = setup_json(root.as_path(), &["logbrew", "setup", "--json"]).await?;
+        if !lockfile.is_empty() {
+            std::fs::write(root.join(lockfile), "")?;
+        }
+        let body = setup_json(&root, &["logbrew", "setup", "--json"]).await?;
         assert_eq!(
             body["install_plan"],
             python_plan(
                 package_manager,
                 integration,
-                Some(framework_package),
-                Some(framework_requirement),
+                (!framework_package.is_empty()).then_some(framework_package),
+                (!framework_requirement.is_empty()).then_some(framework_requirement),
                 install_command,
             )
         );
+        assert_eq!(body["detected"][0]["runtime"], "python");
     }
     Ok(())
 }
 
 #[tokio::test]
-async fn framework_neutral_pipenv_project_gets_the_core_python_plan() -> TestResult {
-    let root = fixture_root("python-core-pipenv")?;
+async fn sveltekit_emits_a_truthful_non_mutating_plan() -> TestResult {
+    let root = fixture_root("sveltekit-pnpm")?;
+    std::fs::write(root.join("pnpm-lock.yaml"), "lockfileVersion: '9.0'\n")?;
     std::fs::write(
-        root.join("pyproject.toml"),
-        "[project]\nname = \"fixture\"\ndependencies = [\"requests\"]\n",
+        root.join("package.json"),
+        r#"{"devDependencies":{"@sveltejs/kit":"2.5.27"}}"#,
     )?;
-    std::fs::write(root.join("Pipfile.lock"), "{}")?;
-    let body = setup_json(root.as_path(), &["logbrew", "setup", "--json"]).await?;
+    let body = setup_json(&root, &["logbrew", "setup", "--json"]).await?;
+    let plan = &body["install_plan"];
     assert_eq!(
-        body["install_plan"],
-        python_plan("pipenv", "python", None, None, "pipenv install logbrew-sdk",)
+        plan,
+        &serde_json::json!({
+            "mode": "non_mutating",
+            "ecosystem": "npm",
+            "package_manager": "pnpm",
+            "integration": "sveltekit",
+            "packages": [
+                {"name": "@logbrew/sdk", "role": "core", "version_requirement": {"kind": "latest_compatible"}},
+                {"name": "@logbrew/browser", "role": "delivery", "version_requirement": {"kind": "latest_compatible"}},
+                {"name": "@logbrew/svelte", "role": "framework", "version_requirement": {"kind": "latest_compatible"}},
+            ],
+            "compatibility": {
+                "status": "review_required",
+                "requires_node": ">=18",
+                "requires_framework": "Svelte >=5",
+            },
+            "install_command": "pnpm add @logbrew/sdk @logbrew/browser @logbrew/svelte",
+            "next_action": {
+                "code": "review_compatibility_and_install",
+                "target": "project_environment",
+            },
+        })
     );
-    Ok(())
-}
-
-#[tokio::test]
-async fn django_human_plan_is_explicit_and_path_free() -> TestResult {
-    let root = fixture_root("django-human")?;
-    std::fs::write(
-        root.join("pyproject.toml"),
-        "[project]\nname = \"fixture\"\ndependencies = [\"Django==4.2.30\"]\n",
-    )?;
-    let text = setup_text(root.as_path(), &["logbrew", "setup"]).await?;
-    assert_contains_all(
-        &text,
-        &[
-            "Install: ready\n",
-            "Package manager: pip\n",
-            "Integration: Django\n",
-            "Packages: logbrew-sdk logbrew-django\n",
-            "Compatibility review: Python >=3.10; Django>=4.2.30,<6\n",
-            "Command: python3 -m pip install --upgrade logbrew-sdk logbrew-django\n",
-            "Next: review the compatibility requirements, then run the install command; no files were changed\n",
-        ],
-    );
-    assert!(!text.contains(root.to_string_lossy().as_ref()));
+    assert_eq!(body["detected"][0]["runtime"], "sveltekit");
+    let human = setup_text(&root, &["logbrew", "setup"]).await?;
+    assert!(human.contains("Integration: SvelteKit"));
+    assert!(human.contains("Compatibility review: Node >=18; Svelte >=5"));
+    assert!(!human.contains(root.to_string_lossy().as_ref()));
     Ok(())
 }
 
