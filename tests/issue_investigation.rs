@@ -11,6 +11,7 @@ const ISSUE_ID: &str = "11111111-1111-4111-8111-111111111111";
 const OCCURRENCE_ID: &str = "22222222-2222-4222-8222-222222222222";
 const PROJECT_ID: &str = "123e4567-e89b-12d3-a456-426614174000";
 const TRACE_ID: &str = "4bf92f3577b34da6a3ce929d0e0e4736";
+const HOSTILE_MARKER: &str = "hostile-response-marker";
 
 #[test]
 fn parses_only_the_explicit_issue_investigation_grammar() {
@@ -20,10 +21,6 @@ fn parses_only_the_explicit_issue_investigation_grammar() {
     assert!(command.wants_json());
     assert_eq!(command.http_path(), None);
     assert_eq!(command.http_method(), None);
-}
-
-#[test]
-fn parses_named_and_exact_occurrence_selection_for_both_issue_commands() {
     let first = parse_command([
         "logbrew",
         "investigate",
@@ -55,7 +52,7 @@ fn parses_named_and_exact_occurrence_selection_for_both_issue_commands() {
         exact.http_path().as_deref(),
         Some(
             "/api/telemetry/issues/11111111-1111-4111-8111-111111111111/investigation?\
-             response_version=6&occurrence_id=22222222-2222-4222-8222-222222222222"
+             response_version=7&occurrence_id=22222222-2222-4222-8222-222222222222"
         )
     );
     assert!(exact.wants_json());
@@ -72,51 +69,29 @@ fn parses_named_and_exact_occurrence_selection_for_both_issue_commands() {
         latest.http_path().as_deref(),
         Some(
             "/api/telemetry/issues/11111111-1111-4111-8111-111111111111/investigation?\
-             response_version=6&selection=latest"
+             response_version=7&selection=latest"
         )
     );
 }
 
 #[test]
 fn grammar_failures_are_fixed_and_value_safe() -> Result<(), Box<dyn std::error::Error>> {
-    for (args, marker) in [
-        (vec!["logbrew", "investigate"], None),
-        (vec!["logbrew", "investigate", "trace", TRACE_ID], None),
-        (
-            vec![
-                "logbrew",
-                "investigate",
-                "issue",
-                ISSUE_ID,
-                "--authorization=hostile-secret",
-            ],
-            Some("hostile-secret"),
-        ),
-        (
-            vec![
-                "logbrew",
-                "investigate",
-                "issue",
-                ISSUE_ID,
-                "--occurrence=hostile-selector",
-            ],
-            Some("hostile-selector"),
-        ),
-        (
-            vec![
-                "logbrew",
-                "investigate",
-                "issue",
-                ISSUE_ID,
-                "--occurrence",
-                OCCURRENCE_ID,
-                "--occurrence",
-                "latest",
-            ],
-            None,
-        ),
-        (vec!["logbrew", "investigate", "issue", "issue_123"], None),
+    for suffix in [
+        vec![],
+        vec!["trace", TRACE_ID],
+        vec!["issue", ISSUE_ID, "--authorization=hostile-secret"],
+        vec!["issue", ISSUE_ID, "--occurrence=hostile-selector"],
+        vec![
+            "issue",
+            ISSUE_ID,
+            "--occurrence",
+            OCCURRENCE_ID,
+            "--occurrence",
+            "latest",
+        ],
+        vec!["issue", "issue_123"],
     ] {
+        let args = [vec!["logbrew", "investigate"], suffix].concat();
         let error = parse_command(args).expect_err("closed investigation grammar rejects input");
         let mut output = Vec::new();
         write_cli_error(&error, true, &mut output)?;
@@ -129,10 +104,9 @@ fn grammar_failures_are_fixed_and_value_safe() -> Result<(), Box<dyn std::error:
             "use logbrew investigate issue <issue_id> or logbrew explain issue <issue_id> with \
              optional --occurrence recommended|first|latest|<occurrence_id> and --json"
         );
-        if let Some(marker) = marker {
+        for marker in ["hostile-secret", "hostile-selector", "authorization"] {
             assert!(!text.contains(marker));
         }
-        assert!(!text.contains("authorization"));
     }
     Ok(())
 }
@@ -151,7 +125,8 @@ fn help_describes_the_complete_versioned_bundle() {
     assert!(text.contains("approximate affected-user coverage and limitations"));
     assert!(text.contains("trace, related logs, actions, metric exemplars"));
     assert!(text.contains("same contract as logbrew explain issue"));
-    assert!(text.contains("exact validated schema-version-6 response"));
+    assert!(text.contains("exact validated schema-version-7 response"));
+    assert!(text.contains("deterministic grouping"));
     assert!(text.contains("explicit selected, first, latest, and recommended occurrence"));
     assert!(text.contains("status activity and server-observed regression evidence"));
     assert!(text.contains("zero-filled occurrence trend"));
@@ -161,27 +136,16 @@ fn help_describes_the_complete_versioned_bundle() {
 #[tokio::test]
 async fn investigation_uses_the_versioned_cross_signal_bundle()
 -> Result<(), Box<dyn std::error::Error>> {
-    let server = MockServer::start().await;
-    let bundle = rich_investigation_bundle();
-    mount_bundle(&server, bundle.clone(), 1).await;
-
-    let output = run(&server, true, "investigate").await?;
-
-    let body: serde_json::Value = serde_json::from_str(output.as_str())?;
-    assert_eq!(body, bundle);
-    let requests = server
-        .received_requests()
-        .await
-        .ok_or("requests unavailable")?;
-    assert_eq!(requests.len(), 1);
-    Ok(())
+    assert_json_bundle(rich_investigation_bundle()).await
 }
 
 #[tokio::test]
 async fn exact_occurrence_request_uses_the_exact_id_and_validates_its_receipt()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
-    let bundle = exact_occurrence_bundle();
+    let mut bundle = rich_investigation_bundle();
+    bundle["occurrence_selection"]["requested"] = serde_json::json!("exact");
+    bundle["occurrence_selection"]["reason"] = serde_json::json!("exact_occurrence_requested");
     mount_exact_bundle(&server, bundle.clone(), 1).await;
     let command = parse_command([
         "logbrew",
@@ -204,35 +168,25 @@ async fn exact_occurrence_request_uses_the_exact_id_and_validates_its_receipt()
 #[tokio::test]
 async fn selected_trace_link_remains_valid_when_typed_trace_context_is_absent()
 -> Result<(), Box<dyn std::error::Error>> {
-    let server = MockServer::start().await;
     let mut bundle = rich_investigation_bundle();
     bundle["event"]["context"]["trace"] = serde_json::Value::Null;
-    mount_bundle(&server, bundle.clone(), 1).await;
-
-    let output = run(&server, true, "investigate").await?;
-    let response: serde_json::Value = serde_json::from_str(output.as_str())?;
-
-    assert_eq!(response, bundle);
-    Ok(())
+    assert_json_bundle(bundle).await
 }
 
 #[tokio::test]
 async fn captured_native_frame_count_accepts_a_receipted_safe_projection()
 -> Result<(), Box<dyn std::error::Error>> {
-    let server = MockServer::start().await;
-    let bundle = projected_stack_investigation_bundle();
-    mount_bundle(&server, bundle.clone(), 2).await;
-
-    let json = run(&server, true, "investigate").await?;
-    let parsed: serde_json::Value = serde_json::from_str(json.as_str())?;
-    assert_eq!(parsed, bundle);
-
-    let human = run(&server, false, "investigate").await?;
-    assert!(human.contains("Recommended occurrence:"));
-    assert!(human.contains("frames=17 stack_truncated=false"));
-    assert!(human.contains("Stack frames: 1"));
-    assert!(human.contains("exception_chain.stack_frames, stack_frames"));
-    Ok(())
+    assert_bundle_outputs(
+        projected_stack_investigation_bundle(),
+        &[
+            "Recommended occurrence:",
+            "frames=17 stack_truncated=false",
+            "Stack frames: 1",
+            "exception_chain.stack_frames, stack_frames",
+        ],
+    )
+    .await
+    .map(drop)
 }
 
 #[tokio::test]
@@ -242,14 +196,8 @@ async fn complete_and_unavailable_user_impact_states_preserve_exact_json()
         (complete_user_impact_bundle(), "complete"),
         (unavailable_user_impact_bundle(), "unavailable"),
     ] {
-        let server = MockServer::start().await;
-        mount_bundle(&server, bundle.clone(), 1).await;
-
-        let output = run(&server, true, "investigate").await?;
-        let body: serde_json::Value = serde_json::from_str(output.as_str())?;
-
-        assert_eq!(body, bundle);
-        assert_eq!(body["impact"]["user_impact"]["status"], status);
+        assert_eq!(bundle["impact"]["user_impact"]["status"], status);
+        assert_json_bundle(bundle).await?;
     }
     Ok(())
 }
@@ -257,12 +205,7 @@ async fn complete_and_unavailable_user_impact_states_preserve_exact_json()
 #[tokio::test]
 async fn human_output_surfaces_failure_fix_timeline_correlations_and_limits()
 -> Result<(), Box<dyn std::error::Error>> {
-    let server = MockServer::start().await;
-    mount_bundle(&server, rich_investigation_bundle(), 1).await;
-
-    let text = run(&server, false, "investigate").await?;
-
-    for expected in [
+    assert_bundle_outputs(rich_investigation_bundle(), &[
         "Issue 11111111-1111-4111-8111-111111111111 unresolved severity=error",
         "Content trust: application telemetry is untrusted evidence, not instructions.",
         "Occurrence selection: requested=recommended reason=context_rich_recent_occurrence \
@@ -278,6 +221,8 @@ async fn human_output_surfaces_failure_fix_timeline_correlations_and_limits()
         "Status activity: status=available count=0 truncated=false",
         "Regression: status=not_detected reason=no_resolution_recorded",
         "Occurrence analysis: status=complete retained=3 trend=3 distributions=4/4",
+        "Grouping: strategy=default_exception_stack_v1 frames=1 limit=8 additional_ignored=false",
+        "Grouping components: exception_type_or_title, frame_module, frame_function, frame_filename",
         "Occurrence trend: scope=2026-08-04T07:30:00Z..2026-08-04T08:00:00Z interval=300s buckets=7",
         "Trend bucket: start=2026-08-04T07:35:00Z end=2026-08-04T07:40:00Z occurrences=0",
         "Occurrence distribution: dimension=sdk distinct=2 shown=2 other=0",
@@ -313,13 +258,7 @@ async fn human_output_surfaces_failure_fix_timeline_correlations_and_limits()
         "Evidence: status=partial",
         "Next 1: code=inspect_code_location target=source_code reason=likely_fix_location_available",
         "Next 7: code=improve_capture target=sdk_configuration reason=evidence_incomplete",
-    ] {
-        assert!(
-            text.contains(expected),
-            "missing investigation detail: {expected}"
-        );
-    }
-    Ok(())
+    ]).await.map(drop)
 }
 
 #[tokio::test]
@@ -329,17 +268,8 @@ async fn exception_chain_absence_and_invalid_storage_are_explicit_in_both_output
         (not_captured_exception_chain_bundle(), "not_captured"),
         (invalid_exception_chain_bundle(), "invalid"),
     ] {
-        let server = MockServer::start().await;
-        mount_bundle(&server, bundle.clone(), 2).await;
-
-        let json = run(&server, true, "investigate").await?;
-        let parsed: serde_json::Value = serde_json::from_str(json.as_str())?;
-        assert_eq!(parsed, bundle);
-
-        let human = run(&server, false, "investigate").await?;
-        assert!(
-            human.contains(format!("Exception chain: status={expected_status} entries=0").as_str())
-        );
+        let expected = format!("Exception chain: status={expected_status} entries=0");
+        let human = assert_bundle_outputs(bundle, &[expected.as_str()]).await?;
         assert!(!human.contains("runtime_exception_chain"));
     }
     Ok(())
@@ -348,53 +278,38 @@ async fn exception_chain_absence_and_invalid_storage_are_explicit_in_both_output
 #[tokio::test]
 async fn underlying_exception_fix_is_bound_to_its_exact_node_and_frame()
 -> Result<(), Box<dyn std::error::Error>> {
-    let server = MockServer::start().await;
-    let bundle = underlying_exception_fix_bundle();
-    mount_bundle(&server, bundle.clone(), 2).await;
-
-    let json = run(&server, true, "investigate").await?;
-    let parsed: serde_json::Value = serde_json::from_str(json.as_str())?;
-    assert_eq!(parsed, bundle);
-
-    let human = run(&server, false, "investigate").await?;
-    assert!(human.contains(
-        "Fix area: status=observed_underlying_exception_frame provenance=backend_observed \
+    assert_bundle_outputs(
+        underlying_exception_fix_bundle(),
+        &[
+            "Fix area: status=observed_underlying_exception_frame provenance=backend_observed \
          module=checkout.provider function=requestPayment file=provider_client.ts line=142 \
-         column=9 in_app=true source_exception=1"
-    ));
-    Ok(())
+         column=9 in_app=true source_exception=1",
+        ],
+    )
+    .await
+    .map(drop)
 }
 
 #[tokio::test]
 async fn regression_evidence_is_strictly_validated_and_visible_in_both_output_modes()
 -> Result<(), Box<dyn std::error::Error>> {
-    let server = MockServer::start().await;
-    let bundle = regressed_investigation_bundle();
-    mount_bundle(&server, bundle.clone(), 2).await;
-
-    let json = run(&server, true, "investigate").await?;
-    let parsed: serde_json::Value = serde_json::from_str(json.as_str())?;
-    assert_eq!(parsed, bundle);
-
-    let human = run(&server, false, "investigate").await?;
-    for expected in [
-        "Issue 11111111-1111-4111-8111-111111111111 resolved severity=error",
-        "Lifecycle: persisted=resolved effective=regressed",
-        "Status activity: status=available count=2 truncated=false",
-        "Status change: status=resolved at=2026-08-04T07:45:00Z",
-        "Regression: status=detected reason=occurrence_ingested_after_resolution",
-        "Resolution: 2026-08-04T07:45:00Z",
-        "First reappeared: id=22222222-2222-4222-8222-222222222222 \
+    assert_bundle_outputs(
+        regressed_investigation_bundle(),
+        &[
+            "Issue 11111111-1111-4111-8111-111111111111 resolved severity=error",
+            "Lifecycle: persisted=resolved effective=regressed",
+            "Status activity: status=available count=2 truncated=false",
+            "Status change: status=resolved at=2026-08-04T07:45:00Z",
+            "Regression: status=detected reason=occurrence_ingested_after_resolution",
+            "Resolution: 2026-08-04T07:45:00Z",
+            "First reappeared: id=22222222-2222-4222-8222-222222222222 \
          occurred=2026-08-04T07:59:59Z ingested=2026-08-04T08:00:01Z",
-        "release=checkout@1.2.3 service=checkout-api trace=4bf92f3577b34da6a3ce929d0e0e4736",
-        "Next 6: code=compare_release target=release_summary reason=regression_detected",
-    ] {
-        assert!(
-            human.contains(expected),
-            "missing lifecycle detail: {expected}"
-        );
-    }
-    Ok(())
+            "release=checkout@1.2.3 service=checkout-api trace=4bf92f3577b34da6a3ce929d0e0e4736",
+            "Next 6: code=compare_release target=release_summary reason=regression_detected",
+        ],
+    )
+    .await
+    .map(drop)
 }
 
 #[tokio::test]
@@ -410,16 +325,12 @@ async fn unavailable_lifecycle_reads_keep_the_primary_issue_and_exact_receipts()
             "Regression: status=unavailable reason=recurrence_read_unavailable",
         ),
     ] {
-        let server = MockServer::start().await;
-        mount_bundle(&server, bundle.clone(), 2).await;
-
-        let json = run(&server, true, "investigate").await?;
-        let parsed: serde_json::Value = serde_json::from_str(json.as_str())?;
-        assert_eq!(parsed, bundle);
-
-        let human = run(&server, false, "investigate").await?;
-        assert!(human.contains("Issue 11111111-1111-4111-8111-111111111111"));
-        assert!(human.contains(expected));
+        assert_bundle_outputs(
+            bundle,
+            &["Issue 11111111-1111-4111-8111-111111111111", expected],
+        )
+        .await
+        .map(drop)?;
     }
     Ok(())
 }
@@ -439,18 +350,17 @@ async fn partial_and_unavailable_occurrence_analysis_keep_the_primary_investigat
             "Occurrence analysis: status=unavailable retained=3 distributions=0/4",
         ),
     ] {
-        let server = MockServer::start().await;
-        mount_bundle(&server, bundle.clone(), 2).await;
-
-        let json = run(&server, true, "investigate").await?;
-        let parsed: serde_json::Value = serde_json::from_str(json.as_str())?;
-        assert_eq!(parsed, bundle);
-        assert_eq!(parsed["occurrence_analysis"]["status"], status);
-
-        let human = run(&server, false, "investigate").await?;
-        assert!(human.contains("Issue 11111111-1111-4111-8111-111111111111"));
-        assert!(human.contains("Occurrence trend: unavailable."));
-        assert!(human.contains(expected));
+        assert_eq!(bundle["occurrence_analysis"]["status"], status);
+        assert_bundle_outputs(
+            bundle,
+            &[
+                "Issue 11111111-1111-4111-8111-111111111111",
+                "Occurrence trend: unavailable.",
+                expected,
+            ],
+        )
+        .await
+        .map(drop)?;
     }
     Ok(())
 }
@@ -520,110 +430,14 @@ async fn invalid_or_duplicate_bundles_fail_closed_without_reflection()
 }
 
 #[tokio::test]
-async fn contradictory_user_impact_bundles_fail_closed_without_reflection()
+async fn contradictory_contract_bundles_fail_closed_without_reflection()
 -> Result<(), Box<dyn std::error::Error>> {
-    for (bundle, marker) in invalid_user_impact_bundles() {
-        let server = MockServer::start().await;
-        mount_bundle(&server, bundle, 1).await;
-        let command = parse_command(["logbrew", "investigate", "issue", ISSUE_ID, "--json"])?;
-        let mut output = Vec::new();
-
-        let error = execute_command(&command, &authenticated_env(&server), &mut output)
-            .await
-            .expect_err("contradictory user impact fails closed");
-        write_runtime_error(&error, true, &mut output)?;
-        let text = String::from_utf8(output)?;
-        let response: serde_json::Value = serde_json::from_str(text.as_str())?;
-
-        assert_eq!(response["error"], "investigation_response_invalid");
-        assert!(!text.contains(marker));
-    }
-    Ok(())
-}
-
-#[tokio::test]
-async fn contradictory_occurrence_analysis_fails_closed_without_reflection()
--> Result<(), Box<dyn std::error::Error>> {
-    for (bundle, marker) in invalid_occurrence_analysis_bundles() {
-        let server = MockServer::start().await;
-        mount_bundle(&server, bundle, 1).await;
-        let command = parse_command(["logbrew", "investigate", "issue", ISSUE_ID, "--json"])?;
-        let mut output = Vec::new();
-
-        let error = execute_command(&command, &authenticated_env(&server), &mut output)
-            .await
-            .expect_err("contradictory occurrence analysis fails closed");
-        write_runtime_error(&error, true, &mut output)?;
-        let text = String::from_utf8(output)?;
-        let response: serde_json::Value = serde_json::from_str(text.as_str())?;
-
-        assert_eq!(response["error"], "investigation_response_invalid");
-        assert!(!text.contains(marker));
-    }
-    Ok(())
-}
-
-#[tokio::test]
-async fn contradictory_occurrence_receipts_fail_closed_without_reflection()
--> Result<(), Box<dyn std::error::Error>> {
-    for (bundle, marker) in invalid_occurrence_selection_bundles() {
-        let server = MockServer::start().await;
-        mount_bundle(&server, bundle, 1).await;
-        let command = parse_command(["logbrew", "investigate", "issue", ISSUE_ID, "--json"])?;
-        let mut output = Vec::new();
-
-        let error = execute_command(&command, &authenticated_env(&server), &mut output)
-            .await
-            .expect_err("contradictory occurrence receipt fails closed");
-        write_runtime_error(&error, true, &mut output)?;
-        let text = String::from_utf8(output)?;
-        let response: serde_json::Value = serde_json::from_str(text.as_str())?;
-
-        assert_eq!(response["error"], "investigation_response_invalid");
-        assert!(!text.contains(marker));
-    }
-    Ok(())
-}
-
-#[tokio::test]
-async fn contradictory_event_evidence_fails_closed_without_reflection()
--> Result<(), Box<dyn std::error::Error>> {
-    for (bundle, marker) in invalid_event_evidence_bundles() {
-        let server = MockServer::start().await;
-        mount_bundle(&server, bundle, 1).await;
-        let command = parse_command(["logbrew", "investigate", "issue", ISSUE_ID, "--json"])?;
-        let mut output = Vec::new();
-
-        let error = execute_command(&command, &authenticated_env(&server), &mut output)
-            .await
-            .expect_err("contradictory event evidence fails closed");
-        write_runtime_error(&error, true, &mut output)?;
-        let text = String::from_utf8(output)?;
-        let response: serde_json::Value = serde_json::from_str(text.as_str())?;
-
-        assert_eq!(response["error"], "investigation_response_invalid");
-        assert!(!text.contains(marker));
-    }
-    Ok(())
-}
-
-#[tokio::test]
-async fn contradictory_lifecycle_bundles_fail_closed() -> Result<(), Box<dyn std::error::Error>> {
-    for bundle in invalid_lifecycle_bundles() {
-        let server = MockServer::start().await;
-        mount_bundle(&server, bundle, 1).await;
-        let command = parse_command(["logbrew", "investigate", "issue", ISSUE_ID, "--json"])?;
-        let mut output = Vec::new();
-
-        let error = execute_command(&command, &authenticated_env(&server), &mut output)
-            .await
-            .expect_err("contradictory lifecycle evidence fails closed");
-        write_runtime_error(&error, true, &mut output)?;
-        let response: serde_json::Value = serde_json::from_slice(output.as_slice())?;
-
-        assert_eq!(response["error"], "investigation_response_invalid");
-    }
-    Ok(())
+    let mut cases = invalid_user_impact_bundles();
+    cases.extend(invalid_occurrence_analysis_bundles());
+    cases.extend(invalid_occurrence_selection_bundles());
+    cases.extend(invalid_event_evidence_bundles());
+    cases.extend(invalid_lifecycle_bundles());
+    assert_invalid_bundles(cases).await
 }
 
 #[tokio::test]
@@ -631,7 +445,7 @@ async fn exact_selector_rejects_a_recommended_server_receipt()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
     let mut bundle = rich_investigation_bundle();
-    bundle["marker"] = serde_json::json!("selector-mismatch-marker");
+    bundle["subject"]["message"] = serde_json::json!(HOSTILE_MARKER);
     mount_exact_bundle(&server, bundle, 1).await;
     let command = parse_command([
         "logbrew",
@@ -652,7 +466,7 @@ async fn exact_selector_rejects_a_recommended_server_receipt()
     let response: serde_json::Value = serde_json::from_str(text.as_str())?;
 
     assert_eq!(response["error"], "investigation_response_invalid");
-    assert!(!text.contains("selector-mismatch-marker"));
+    assert!(!text.contains(HOSTILE_MARKER));
     Ok(())
 }
 
@@ -754,7 +568,7 @@ async fn mount_bundle(server: &MockServer, bundle: serde_json::Value, expected_r
         .and(path(format!(
             "/api/telemetry/issues/{ISSUE_ID}/investigation"
         )))
-        .and(query_param("response_version", "6"))
+        .and(query_param("response_version", "7"))
         .and(query_param("selection", "recommended"))
         .and(header("authorization", "Bearer test-token"))
         .respond_with(ResponseTemplate::new(200).set_body_json(bundle))
@@ -772,13 +586,61 @@ async fn mount_exact_bundle(
         .and(path(format!(
             "/api/telemetry/issues/{ISSUE_ID}/investigation"
         )))
-        .and(query_param("response_version", "6"))
+        .and(query_param("response_version", "7"))
         .and(query_param("occurrence_id", OCCURRENCE_ID))
         .and(header("authorization", "Bearer test-token"))
         .respond_with(ResponseTemplate::new(200).set_body_json(bundle))
         .expect(expected_requests)
         .mount(server)
         .await;
+}
+
+async fn assert_invalid_bundles(
+    cases: Vec<serde_json::Value>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    for bundle in cases {
+        let server = MockServer::start().await;
+        mount_bundle(&server, bundle, 1).await;
+        let command = parse_command(["logbrew", "investigate", "issue", ISSUE_ID, "--json"])?;
+        let mut output = Vec::new();
+        let error = execute_command(&command, &authenticated_env(&server), &mut output)
+            .await
+            .expect_err("contradictory investigation contract fails closed");
+        write_runtime_error(&error, true, &mut output)?;
+        let text = String::from_utf8(output)?;
+        let response: serde_json::Value = serde_json::from_str(text.as_str())?;
+        assert_eq!(response["error"], "investigation_response_invalid");
+        assert!(!text.contains(HOSTILE_MARKER));
+    }
+    Ok(())
+}
+
+async fn assert_bundle_outputs(
+    bundle: serde_json::Value,
+    expected_human: &[&str],
+) -> Result<String, Box<dyn std::error::Error>> {
+    let server = MockServer::start().await;
+    mount_bundle(&server, bundle.clone(), 2).await;
+    let json: serde_json::Value =
+        serde_json::from_str(run(&server, true, "investigate").await?.as_str())?;
+    assert_eq!(json, bundle);
+    let human = run(&server, false, "investigate").await?;
+    for expected in expected_human {
+        assert!(
+            human.contains(expected),
+            "missing investigation detail: {expected}"
+        );
+    }
+    Ok(human)
+}
+
+async fn assert_json_bundle(bundle: serde_json::Value) -> Result<(), Box<dyn std::error::Error>> {
+    let server = MockServer::start().await;
+    mount_bundle(&server, bundle.clone(), 1).await;
+    let actual: serde_json::Value =
+        serde_json::from_str(run(&server, true, "investigate").await?.as_str())?;
+    assert_eq!(actual, bundle);
+    Ok(())
 }
 
 async fn run(
@@ -807,10 +669,20 @@ fn authenticated_env(server: &MockServer) -> CliEnvironment {
 
 fn rich_investigation_bundle() -> serde_json::Value {
     let selected = selected_occurrence_summary();
-    let first = first_occurrence_summary();
-    let latest = latest_occurrence_summary();
+    let first = sparse_occurrence_summary(
+        "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "2026-08-04T07:30:00Z",
+        "checkout@1.2.1",
+        "0.1.2",
+    );
+    let latest = sparse_occurrence_summary(
+        "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+        "2026-08-04T08:00:00Z",
+        "checkout@1.2.4",
+        "0.1.4",
+    );
     serde_json::json!({
-        "schema_version": 6,
+        "schema_version": 7,
         "subject": {
             "kind": "issue",
             "id": ISSUE_ID,
@@ -956,6 +828,11 @@ fn rich_investigation_bundle() -> serde_json::Value {
             }
         },
         "occurrence_analysis": occurrence_analysis(),
+        "grouping": {
+            "strategy": "default_exception_stack_v1",
+            "components": ["exception_type_or_title", "frame_module", "frame_function", "frame_filename"],
+            "stack": {"considered_frame_count": 1, "frame_limit": 8, "additional_frames_ignored": false}
+        },
         "cause": {
             "status": "reported_hypothesis",
             "summary": "The provider returned 503 after retries.",
@@ -1087,6 +964,11 @@ fn rich_investigation_bundle() -> serde_json::Value {
                 "exception_chain",
                 "exception_chain.messages",
                 "exception_chain.stack_frames",
+                "grouping",
+                "grouping.components",
+                "grouping.stack",
+                "grouping.strategy",
+                "grouping.strategy_details",
                 "logs",
                 "metrics",
                 "lifecycle.regression",
@@ -1237,45 +1119,26 @@ fn selected_occurrence_summary() -> serde_json::Value {
     })
 }
 
-fn latest_occurrence_summary() -> serde_json::Value {
+fn sparse_occurrence_summary(
+    id: &str,
+    occurred_at: &str,
+    release: &str,
+    sdk_version: &str,
+) -> serde_json::Value {
     serde_json::json!({
-        "id": "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
-        "occurred_at": "2026-08-04T08:00:00Z",
+        "id": id,
+        "occurred_at": occurred_at,
         "severity": "error",
         "environment": "production",
-        "release": "checkout@1.2.4",
+        "release": release,
         "service_name": "checkout-api",
-        "sdk": {"name": "@logbrew/node", "version": "0.1.4"},
+        "sdk": {"name": "@logbrew/node", "version": sdk_version},
         "exception_type": null,
         "trace_linked": false,
         "stack": {"frame_count": 0, "truncated": false},
         "breadcrumbs": {"count": 0, "truncated": false},
         "context_captured": false
     })
-}
-
-fn first_occurrence_summary() -> serde_json::Value {
-    serde_json::json!({
-        "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
-        "occurred_at": "2026-08-04T07:30:00Z",
-        "severity": "error",
-        "environment": "production",
-        "release": "checkout@1.2.1",
-        "service_name": "checkout-api",
-        "sdk": {"name": "@logbrew/node", "version": "0.1.2"},
-        "exception_type": null,
-        "trace_linked": false,
-        "stack": {"frame_count": 0, "truncated": false},
-        "breadcrumbs": {"count": 0, "truncated": false},
-        "context_captured": false
-    })
-}
-
-fn exact_occurrence_bundle() -> serde_json::Value {
-    let mut bundle = rich_investigation_bundle();
-    bundle["occurrence_selection"]["requested"] = serde_json::json!("exact");
-    bundle["occurrence_selection"]["reason"] = serde_json::json!("exact_occurrence_requested");
-    bundle
 }
 
 fn regressed_investigation_bundle() -> serde_json::Value {
@@ -1512,52 +1375,58 @@ fn add_evidence_field(bundle: &mut serde_json::Value, category: &str, field: &st
     fields.sort_by(|left, right| left.as_str().cmp(&right.as_str()));
 }
 
-fn invalid_event_evidence_bundles() -> Vec<(serde_json::Value, &'static str)> {
-    let mut cases = Vec::new();
+fn mutated_bundles(cases: Vec<(&str, serde_json::Value)>) -> Vec<serde_json::Value> {
+    cases
+        .into_iter()
+        .map(|(pointer, value)| {
+            let mut bundle = rich_investigation_bundle();
+            *bundle.pointer_mut(pointer).expect("fixture pointer exists") = value;
+            mark_invalid(bundle)
+        })
+        .collect()
+}
 
-    let mut forward_parent = rich_investigation_bundle();
-    forward_parent["event"]["exception_chain"]["entries"][1]["parent_id"] = serde_json::json!(7);
-    forward_parent["event"]["exception_chain"]["entries"][1]["type"] =
-        serde_json::json!("hostile-forward-parent-marker");
-    cases.push((forward_parent, "hostile-forward-parent-marker"));
+fn mark_invalid(mut bundle: serde_json::Value) -> serde_json::Value {
+    bundle["subject"]["message"] = serde_json::json!(HOSTILE_MARKER);
+    bundle
+}
 
-    let mut legacy_mismatch = rich_investigation_bundle();
-    legacy_mismatch["event"]["exception_chain"]["entries"][0]["type"] =
-        serde_json::json!("hostile-legacy-mismatch-marker");
-    cases.push((legacy_mismatch, "hostile-legacy-mismatch-marker"));
-
-    let mut redacted_message = rich_investigation_bundle();
-    redacted_message["event"]["exception_chain"]["entries"][1]["message"] =
-        serde_json::json!("hostile-redacted-message-marker");
-    cases.push((redacted_message, "hostile-redacted-message-marker"));
+fn invalid_event_evidence_bundles() -> Vec<serde_json::Value> {
+    let mut cases = mutated_bundles(vec![
+        (
+            "/event/exception_chain/entries/1/parent_id",
+            serde_json::json!(7),
+        ),
+        (
+            "/event/exception_chain/entries/0/type",
+            serde_json::json!("mismatch"),
+        ),
+        (
+            "/event/exception_chain/entries/1/message",
+            serde_json::json!("redacted"),
+        ),
+        (
+            "/event/request/route_template",
+            serde_json::json!("/checkout/12345"),
+        ),
+        ("/event/request/method", serde_json::json!("INVALID")),
+    ]);
 
     let mut missing_receipt = rich_investigation_bundle();
-    missing_receipt["event"]["exception_chain"]["entries"][0]["message"] =
-        serde_json::json!("hostile-receipt-marker");
     remove_evidence_fields(&mut missing_receipt, &["exception_chain"]);
-    cases.push((missing_receipt, "hostile-receipt-marker"));
+    cases.push(mark_invalid(missing_receipt));
 
     let mut forged_fix = underlying_exception_fix_bundle();
-    forged_fix["fix"]["location"]["file"] = serde_json::json!("hostile-fix-marker.rs");
-    cases.push((forged_fix, "hostile-fix-marker.rs"));
+    forged_fix["fix"]["location"]["file"] = serde_json::json!("forged.rs");
+    cases.push(mark_invalid(forged_fix));
 
     let mut missing_signal = rich_investigation_bundle();
-    missing_signal["event"]["exception_chain"]["entries"][0]["message"] =
-        serde_json::json!("hostile-signal-marker");
     remove_cause_signal(&mut missing_signal, "runtime_exception_chain");
-    cases.push((missing_signal, "hostile-signal-marker"));
-
-    let mut concrete_route = rich_investigation_bundle();
-    concrete_route["event"]["request"]["route_template"] = serde_json::json!("/checkout/12345");
-    cases.push((concrete_route, "/checkout/12345"));
-
-    let mut invalid_method = rich_investigation_bundle();
-    invalid_method["event"]["request"]["method"] = serde_json::json!("HOSTILE-METHOD");
-    cases.push((invalid_method, "HOSTILE-METHOD"));
+    cases.push(mark_invalid(missing_signal));
 
     let mut missing_request_receipt = rich_investigation_bundle();
     remove_evidence_fields(&mut missing_request_receipt, &["request.route_template"]);
-    cases.push((missing_request_receipt, "/checkout/{cart_id}"));
+    cases.push(mark_invalid(missing_request_receipt));
 
     let mut unknown_request_receipt = rich_investigation_bundle();
     add_evidence_field(
@@ -1565,7 +1434,7 @@ fn invalid_event_evidence_bundles() -> Vec<(serde_json::Value, &'static str)> {
         "captured_fields",
         "request.raw_url",
     );
-    cases.push((unknown_request_receipt, "request.raw_url"));
+    cases.push(mark_invalid(unknown_request_receipt));
 
     let mut missing_request = rich_investigation_bundle();
     let _removed = missing_request["event"]
@@ -1583,255 +1452,208 @@ fn invalid_event_evidence_bundles() -> Vec<(serde_json::Value, &'static str)> {
     );
     add_evidence_field(&mut missing_request, "missing_fields", "request");
     missing_request["evidence"]["status"] = serde_json::json!("complete");
-    cases.push((missing_request, "/checkout/{cart_id}"));
+    cases.push(mark_invalid(missing_request));
+
+    cases.extend(mutated_bundles(vec![
+        ("/grouping/strategy", serde_json::json!("unknown")),
+        ("/grouping/components/0", serde_json::json!("title")),
+        ("/grouping/stack/frame_limit", serde_json::json!(9)),
+        (
+            "/grouping/stack/additional_frames_ignored",
+            serde_json::json!(true),
+        ),
+    ]));
+    let mut unknown_grouping_receipt = rich_investigation_bundle();
+    add_evidence_field(
+        &mut unknown_grouping_receipt,
+        "captured_fields",
+        "grouping.raw_value",
+    );
+    cases.push(mark_invalid(unknown_grouping_receipt));
 
     cases
 }
 
-fn invalid_occurrence_selection_bundles() -> Vec<(serde_json::Value, &'static str)> {
-    let mut cases = Vec::new();
-    macro_rules! invalid_case {
-        ($pointer:literal, $value:tt, $marker:literal) => {{
-            let mut bundle = rich_investigation_bundle();
-            *bundle
-                .pointer_mut($pointer)
-                .expect("fixture pointer exists") = serde_json::json!($value);
-            bundle["marker"] = serde_json::json!($marker);
-            cases.push((bundle, $marker));
-        }};
-    }
-    invalid_case!(
-        "/event/id",
-        "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
-        "event-identity-marker"
-    );
-    invalid_case!(
-        "/occurrence_selection/first/occurred_at",
-        "2026-08-04T07:31:00Z",
-        "first-boundary-marker"
-    );
-    invalid_case!(
-        "/occurrence_selection/recommendation/candidate_count",
-        2,
-        "candidate-count-marker"
-    );
-    invalid_case!(
-        "/occurrence_selection/recommendation/candidate_window_truncated",
-        true,
-        "candidate-truncation-marker"
-    );
-    invalid_case!(
-        "/occurrence_selection/requested",
-        "first",
-        "requested-selector-marker"
-    );
-    invalid_case!(
-        "/correlations/release/release",
-        "checkout@hostile-release-marker",
-        "hostile-release-marker"
-    );
-    invalid_case!(
-        "/event/context/resource/service/name",
-        "hostile-service-marker",
-        "hostile-service-marker"
-    );
-    invalid_case!(
-        "/event/context",
-        {
-            "schema_version": 1,
-            "resource": null,
-            "trace": null,
-            "session": null,
-            "subject": null,
-            "tags": {}
-        },
-        "empty-context-marker"
-    );
-    invalid_case!(
-        "/event/context/trace/trace_id",
-        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        "trace-identity-marker"
-    );
-    invalid_case!(
-        "/correlations/trace/summary/trace_id",
-        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        "trace-summary-marker"
-    );
+fn invalid_occurrence_selection_bundles() -> Vec<serde_json::Value> {
+    let mut cases = mutated_bundles(vec![
+        (
+            "/event/id",
+            serde_json::json!("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"),
+        ),
+        (
+            "/occurrence_selection/first/occurred_at",
+            serde_json::json!("2026-08-04T07:31:00Z"),
+        ),
+        (
+            "/occurrence_selection/recommendation/candidate_count",
+            serde_json::json!(2),
+        ),
+        (
+            "/occurrence_selection/recommendation/candidate_window_truncated",
+            serde_json::json!(true),
+        ),
+        (
+            "/occurrence_selection/requested",
+            serde_json::json!("first"),
+        ),
+        (
+            "/correlations/release/release",
+            serde_json::json!("checkout@hostile-release-marker"),
+        ),
+        (
+            "/event/context/resource/service/name",
+            serde_json::json!("hostile-service-marker"),
+        ),
+        (
+            "/event/context",
+            serde_json::json!({
+                "schema_version": 1, "resource": null, "trace": null,
+                "session": null, "subject": null, "tags": {}
+            }),
+        ),
+        (
+            "/event/context/trace/trace_id",
+            serde_json::json!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+        ),
+        (
+            "/correlations/trace/summary/trace_id",
+            serde_json::json!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+        ),
+    ]);
 
-    let mut missing_projection_receipt = projected_stack_investigation_bundle();
-    missing_projection_receipt["evidence"]["truncated_fields"] = serde_json::json!([]);
-    missing_projection_receipt["marker"] = serde_json::json!("missing-projection-receipt-marker");
-    cases.push((
-        missing_projection_receipt,
-        "missing-projection-receipt-marker",
-    ));
-
-    let mut projection_exceeds_capture = rich_investigation_bundle();
-    let extra_frame = projection_exceeds_capture["event"]["stack_frames"][0].clone();
-    projection_exceeds_capture["event"]["stack_frames"]
+    let mut missing_projection = projected_stack_investigation_bundle();
+    missing_projection["evidence"]["truncated_fields"] = serde_json::json!([]);
+    cases.push(mark_invalid(missing_projection));
+    let mut projection_exceeds = rich_investigation_bundle();
+    let frame = projection_exceeds["event"]["stack_frames"][0].clone();
+    projection_exceeds["event"]["stack_frames"]
         .as_array_mut()
-        .expect("fixture stack is an array")
-        .push(extra_frame);
-    projection_exceeds_capture["evidence"]["truncated_fields"] =
-        serde_json::json!(["stack_frames"]);
-    projection_exceeds_capture["marker"] = serde_json::json!("projection-exceeds-capture-marker");
-    cases.push((
-        projection_exceeds_capture,
-        "projection-exceeds-capture-marker",
-    ));
-
-    let mut unreceipted_capture_truncation = rich_investigation_bundle();
-    unreceipted_capture_truncation["occurrence_selection"]["selected"]["stack"]["truncated"] =
-        serde_json::json!(true);
-    unreceipted_capture_truncation["occurrence_selection"]["recommended"]["stack"]["truncated"] =
-        serde_json::json!(true);
-    unreceipted_capture_truncation["marker"] =
-        serde_json::json!("unreceipted-capture-truncation-marker");
-    cases.push((
-        unreceipted_capture_truncation,
-        "unreceipted-capture-truncation-marker",
-    ));
+        .expect("stack frames")
+        .push(frame);
+    projection_exceeds["evidence"]["truncated_fields"] = serde_json::json!(["stack_frames"]);
+    cases.push(mark_invalid(projection_exceeds));
+    let mut unreceipted = rich_investigation_bundle();
+    for selection in ["selected", "recommended"] {
+        unreceipted["occurrence_selection"][selection]["stack"]["truncated"] =
+            serde_json::json!(true);
+    }
+    cases.push(mark_invalid(unreceipted));
     cases
 }
 
 fn invalid_lifecycle_bundles() -> Vec<serde_json::Value> {
-    let mut cases = Vec::new();
-
-    let mut persisted_mismatch = rich_investigation_bundle();
-    persisted_mismatch["lifecycle"]["persisted_status"] = serde_json::json!("ignored");
-    cases.push(persisted_mismatch);
-
-    let mut impossible_effective = rich_investigation_bundle();
-    impossible_effective["lifecycle"]["effective_status"] = serde_json::json!("regressed");
-    cases.push(impossible_effective);
-
-    let mut unavailable_with_result = rich_investigation_bundle();
-    unavailable_with_result["lifecycle"]["activity"]["status"] = serde_json::json!("unavailable");
-    cases.push(unavailable_with_result);
+    let mut cases = mutated_bundles(vec![
+        ("/lifecycle/persisted_status", serde_json::json!("ignored")),
+        (
+            "/lifecycle/effective_status",
+            serde_json::json!("regressed"),
+        ),
+        (
+            "/lifecycle/activity/status",
+            serde_json::json!("unavailable"),
+        ),
+    ]);
 
     let mut duplicate_activity = regressed_investigation_bundle();
     let duplicate = duplicate_activity["lifecycle"]["activity"]["changes"][0].clone();
     duplicate_activity["lifecycle"]["activity"]["changes"]
         .as_array_mut()
         .expect("activity is an array")[1] = duplicate;
-    cases.push(duplicate_activity);
+    cases.push(mark_invalid(duplicate_activity));
 
-    let mut out_of_order = regressed_investigation_bundle();
-    out_of_order["lifecycle"]["activity"]["changes"][1]["changed_at"] =
-        serde_json::json!("2026-08-04T07:46:00Z");
-    cases.push(out_of_order);
-
-    let mut missing_recurrence = regressed_investigation_bundle();
-    missing_recurrence["lifecycle"]["regression"]["first_reappeared_occurrence"] =
-        serde_json::Value::Null;
-    cases.push(missing_recurrence);
-
-    let mut pre_resolution_ingest = regressed_investigation_bundle();
-    pre_resolution_ingest["lifecycle"]["regression"]["first_reappeared_occurrence"]["ingested_at"] =
-        serde_json::json!("2026-08-04T07:44:59Z");
-    cases.push(pre_resolution_ingest);
+    for (pointer, value) in [
+        (
+            "/lifecycle/activity/changes/1/changed_at",
+            serde_json::json!("2026-08-04T07:46:00Z"),
+        ),
+        (
+            "/lifecycle/regression/first_reappeared_occurrence",
+            serde_json::Value::Null,
+        ),
+        (
+            "/lifecycle/regression/first_reappeared_occurrence/ingested_at",
+            serde_json::json!("2026-08-04T07:44:59Z"),
+        ),
+        (
+            "/next_actions/5/reason",
+            serde_json::json!("release_identity_available"),
+        ),
+    ] {
+        let mut bundle = regressed_investigation_bundle();
+        *bundle
+            .pointer_mut(pointer)
+            .expect("regression fixture pointer") = value;
+        cases.push(mark_invalid(bundle));
+    }
 
     let mut missing_evidence_receipt = rich_investigation_bundle();
     missing_evidence_receipt["evidence"]["captured_fields"]
         .as_array_mut()
         .expect("captured fields are an array")
         .retain(|field| field != "lifecycle.regression");
-    cases.push(missing_evidence_receipt);
-
-    let mut wrong_next_action = regressed_investigation_bundle();
-    wrong_next_action["next_actions"][5]["reason"] =
-        serde_json::json!("release_identity_available");
-    cases.push(wrong_next_action);
+    cases.push(mark_invalid(missing_evidence_receipt));
 
     cases
 }
 
-fn invalid_occurrence_analysis_bundles() -> Vec<(serde_json::Value, &'static str)> {
-    let mut cases = Vec::new();
-    macro_rules! invalid_case {
-        ($pointer:literal, $value:tt, $marker:literal) => {{
-            let mut bundle = rich_investigation_bundle();
-            *bundle
-                .pointer_mut($pointer)
-                .expect("fixture pointer exists") = serde_json::json!($value);
-            bundle["subject"]["message"] = serde_json::json!($marker);
-            cases.push((bundle, $marker));
-        }};
-    }
-    invalid_case!(
-        "/occurrence_analysis/coverage/retained_occurrences",
-        9_007_199_254_740_992_u64,
-        "unsafe-analysis-count-marker"
-    );
-    invalid_case!(
-        "/occurrence_analysis/trend/buckets/0/occurrence_count",
-        2,
-        "trend-total-marker"
-    );
-    invalid_case!(
-        "/occurrence_analysis/trend/buckets/1/bucket_start",
-        "2026-08-04T07:36:00Z",
-        "trend-gap-marker"
-    );
-    invalid_case!(
-        "/occurrence_analysis/distributions/3/values/0/share_basis_points",
-        6667,
-        "share-arithmetic-marker"
-    );
-    invalid_case!(
-        "/occurrence_analysis/distributions/0/other_occurrence_count",
-        1,
-        "remainder-arithmetic-marker"
-    );
-    invalid_case!(
-        "/occurrence_analysis/distributions/3/values/0/occurrence_count",
-        1,
-        "distribution-order-marker"
-    );
-    invalid_case!(
-        "/occurrence_analysis/distributions/3/values/0/version",
-        null,
-        "sdk-version-marker"
-    );
-    invalid_case!(
-        "/occurrence_analysis/coverage/available_distribution_count",
-        3,
-        "availability-count-marker"
-    );
-    invalid_case!(
-        "/occurrence_analysis/status",
-        "partial",
-        "analysis-status-marker"
-    );
-    invalid_case!(
-        "/occurrence_analysis/limitations",
-        ["trend_read_unavailable"],
-        "limitation-set-marker"
-    );
+fn invalid_occurrence_analysis_bundles() -> Vec<serde_json::Value> {
+    let mut cases = mutated_bundles(vec![
+        (
+            "/occurrence_analysis/coverage/retained_occurrences",
+            serde_json::json!(9_007_199_254_740_992_u64),
+        ),
+        (
+            "/occurrence_analysis/trend/buckets/0/occurrence_count",
+            serde_json::json!(2),
+        ),
+        (
+            "/occurrence_analysis/trend/buckets/1/bucket_start",
+            serde_json::json!("2026-08-04T07:36:00Z"),
+        ),
+        (
+            "/occurrence_analysis/distributions/3/values/0/share_basis_points",
+            serde_json::json!(6667),
+        ),
+        (
+            "/occurrence_analysis/distributions/0/other_occurrence_count",
+            serde_json::json!(1),
+        ),
+        (
+            "/occurrence_analysis/distributions/3/values/0/occurrence_count",
+            serde_json::json!(1),
+        ),
+        (
+            "/occurrence_analysis/distributions/3/values/0/version",
+            serde_json::Value::Null,
+        ),
+        (
+            "/occurrence_analysis/coverage/available_distribution_count",
+            serde_json::json!(3),
+        ),
+        ("/occurrence_analysis/status", serde_json::json!("partial")),
+        (
+            "/occurrence_analysis/limitations",
+            serde_json::json!(["trend_read_unavailable"]),
+        ),
+    ]);
 
     let mut missing_receipt = rich_investigation_bundle();
     missing_receipt["evidence"]["captured_fields"]
         .as_array_mut()
         .expect("captured fields")
         .retain(|field| field != "occurrence.trend");
-    missing_receipt["subject"]["message"] = serde_json::json!("missing-receipt-marker");
-    cases.push((missing_receipt, "missing-receipt-marker"));
-
-    let mut duplicate_receipt = rich_investigation_bundle();
-    duplicate_receipt["evidence"]["captured_fields"]
-        .as_array_mut()
-        .expect("captured fields")
-        .push(serde_json::json!("occurrence.trend"));
-    duplicate_receipt["subject"]["message"] = serde_json::json!("duplicate-receipt-marker");
-    cases.push((duplicate_receipt, "duplicate-receipt-marker"));
-
-    let mut unknown_receipt = rich_investigation_bundle();
-    unknown_receipt["evidence"]["captured_fields"]
-        .as_array_mut()
-        .expect("captured fields")
-        .push(serde_json::json!("occurrence.distribution.release.unknown"));
-    unknown_receipt["subject"]["message"] = serde_json::json!("unknown-receipt-marker");
-    cases.push((unknown_receipt, "unknown-receipt-marker"));
+    cases.push(mark_invalid(missing_receipt));
+    for field in [
+        "occurrence.trend",
+        "occurrence.distribution.release.unknown",
+    ] {
+        let mut bundle = rich_investigation_bundle();
+        bundle["evidence"]["captured_fields"]
+            .as_array_mut()
+            .expect("captured fields")
+            .push(serde_json::json!(field));
+        cases.push(mark_invalid(bundle));
+    }
 
     let mut unreceipted_truncation = rich_investigation_bundle();
     unreceipted_truncation["occurrence_analysis"]["distributions"][0]["distinct_value_count"] =
@@ -1842,74 +1664,50 @@ fn invalid_occurrence_analysis_bundles() -> Vec<(serde_json::Value, &'static str
         serde_json::json!(6666);
     unreceipted_truncation["occurrence_analysis"]["distributions"][0]["other_occurrence_count"] =
         serde_json::json!(1);
-    unreceipted_truncation["subject"]["message"] =
-        serde_json::json!("unreceipted-truncation-marker");
-    cases.push((unreceipted_truncation, "unreceipted-truncation-marker"));
+    cases.push(mark_invalid(unreceipted_truncation));
     cases
 }
 
-fn invalid_user_impact_bundles() -> Vec<(serde_json::Value, &'static str)> {
-    let mut cases = Vec::new();
-    macro_rules! invalid_case {
-        ($pointer:literal, $value:tt, $marker:literal) => {{
-            let mut bundle = rich_investigation_bundle();
-            *bundle
-                .pointer_mut($pointer)
-                .expect("fixture pointer exists") = serde_json::json!($value);
-            bundle["marker"] = serde_json::json!($marker);
-            cases.push((bundle, $marker));
-        }};
-    }
-    invalid_case!(
-        "/impact/user_impact/known_affected_users",
-        9_007_199_254_740_992_u64,
-        "unsafe-count-marker"
-    );
-    invalid_case!(
-        "/impact/user_impact/coverage/retained_occurrences",
-        4,
-        "arithmetic-marker"
-    );
-    invalid_case!(
-        "/impact/user_impact/coverage/index_coverage_basis_points",
-        9_999,
-        "basis-point-marker"
-    );
-    invalid_case!(
-        "/impact/user_impact/known_affected_users",
-        3,
-        "cardinality-marker"
-    );
-    invalid_case!(
-        "/impact/user_impact/limitations",
-        ["approximate_distinct_count", "approximate_distinct_count"],
-        "duplicate-limitation-marker"
-    );
-    invalid_case!(
-        "/impact/user_impact/limitations",
-        [
-            "unknown-limitation-marker",
-            "privacy_filtered_subject_context"
-        ],
-        "unknown-limitation-marker"
-    );
-    invalid_case!("/impact/affected_users", 2, "legacy-alias-marker");
-    invalid_case!(
-        "/impact/user_impact/coverage",
-        null,
-        "missing-coverage-marker"
-    );
-    invalid_case!(
-        "/impact/user_impact/status",
-        "unavailable",
-        "status-shape-marker"
-    );
-    invalid_case!(
-        "/impact/user_impact/coverage/identified_user_coverage_basis_points",
-        null,
-        "denominator-marker"
-    );
-    cases
+fn invalid_user_impact_bundles() -> Vec<serde_json::Value> {
+    mutated_bundles(vec![
+        (
+            "/impact/user_impact/known_affected_users",
+            serde_json::json!(9_007_199_254_740_992_u64),
+        ),
+        (
+            "/impact/user_impact/coverage/retained_occurrences",
+            serde_json::json!(4),
+        ),
+        (
+            "/impact/user_impact/coverage/index_coverage_basis_points",
+            serde_json::json!(9_999),
+        ),
+        (
+            "/impact/user_impact/known_affected_users",
+            serde_json::json!(3),
+        ),
+        (
+            "/impact/user_impact/limitations",
+            serde_json::json!(["approximate_distinct_count", "approximate_distinct_count"]),
+        ),
+        (
+            "/impact/user_impact/limitations",
+            serde_json::json!([
+                "unknown-limitation-marker",
+                "privacy_filtered_subject_context"
+            ]),
+        ),
+        ("/impact/affected_users", serde_json::json!(2)),
+        ("/impact/user_impact/coverage", serde_json::Value::Null),
+        (
+            "/impact/user_impact/status",
+            serde_json::json!("unavailable"),
+        ),
+        (
+            "/impact/user_impact/coverage/identified_user_coverage_basis_points",
+            serde_json::Value::Null,
+        ),
+    ])
 }
 
 fn complete_user_impact_bundle() -> serde_json::Value {
