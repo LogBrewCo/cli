@@ -564,7 +564,7 @@ Metric explanations preserve gauge/counter/histogram semantics, compare the imme
                             equal window, expose the latest privacy-bounded raw sample with SDK, runtime context, \
                             structured metadata, exact trace/span links when captured, and nearby completed deployments, \
                             and never claim that an observed change or deployment proves an anomaly or root cause.
-Issue explanations use the same schema-version-6 request, occurrence, lifecycle, exception, impact, \
+Issue explanations use the same schema-version-7 request, grouping, occurrence, lifecycle, exception, impact, \
                             correlation, and evidence contract as logbrew investigate issue. The default is the \
                             backend-recommended context-rich occurrence; --occurrence selects another retained event.
 Metric explanations preserve gauge, delta-counter, histogram, and cumulative-stream semantics; \
@@ -846,7 +846,7 @@ Usage:
   logbrew investigate issue <issue_id> [--occurrence <recommended|first|latest|occurrence_id>] \
                          [--json]
 
-Reads one schema-version-6 bounded issue investigation with privacy-bounded request evidence and explicit selected, first, latest, and \
+Reads one schema-version-7 bounded issue investigation with deterministic grouping and privacy-bounded request evidence, plus explicit selected, first, latest, and \
 recommended occurrence receipts; parent-first runtime exception evidence with per-node message and \
 stack capture states, frames, breadcrumbs, typed runtime context, honest \
 cause and fix assessments, approximate affected-user \
@@ -858,7 +858,7 @@ The default is the bounded context-rich recommendation. --occurrence accepts fir
 recommended, or an exact retained occurrence UUID copied from a previous occurrence receipt.
 The command is read-only and uses the same contract as logbrew explain issue.
 Human output is bounded and marks application telemetry as untrusted evidence. JSON emits the exact \
-validated schema-version-6 response for AI agents.";
+validated schema-version-7 response for AI agents.";
 
 /// Apple native debug-artifact command help text.
 const NATIVE_DEBUG_ARTIFACTS_HELP: &str = "\

@@ -51,7 +51,7 @@ const ISSUE_OCCURRENCE_CANDIDATE_LIMIT: u64 = 50;
 const ISSUE_OCCURRENCE_FRAME_LIMIT: u64 = 32;
 /// Largest integer accepted from JSON-number investigation contracts.
 const MAX_SAFE_JSON_INTEGER: u64 = 9_007_199_254_740_991;
-/// Exact top-level vocabulary for the schema-version-6 issue response.
+/// Exact top-level vocabulary for the schema-version-7 issue response.
 const ISSUE_RESPONSE_FIELDS: &[&str] = &[
     "schema_version",
     "subject",
@@ -59,6 +59,7 @@ const ISSUE_RESPONSE_FIELDS: &[&str] = &[
     "occurrence_selection",
     "lifecycle",
     "occurrence_analysis",
+    "grouping",
     "cause",
     "fix",
     "impact",
@@ -73,12 +74,21 @@ const EVIDENCE_CATEGORIES: [&str; 4] = [
     "redacted_fields",
     "truncated_fields",
 ];
-/// Exact schema-version-6 request receipt vocabulary.
+/// Exact schema-version-6-and-later request receipt vocabulary.
 const REQUEST_EVIDENCE_FIELDS: [&str; 4] = [
     "request",
     "request.method",
     "request.route_template",
     "request.response_status_code",
+];
+/// Exact schema-version-7 grouping receipt vocabulary.
+const GROUPING_EVIDENCE_FIELDS: [&str; 6] = [
+    "grouping",
+    "grouping.strategy",
+    "grouping.components",
+    "grouping.strategy_details",
+    "grouping.stack",
+    "grouping.stack_frames",
 ];
 
 /// Duplicate-aware JSON value.
@@ -299,7 +309,7 @@ fn validate_issue_response(
 ) -> Result<(), RuntimeError> {
     let response = response_object(value, ISSUE_RESPONSE_FIELDS)?;
     require_exact_fields(response, ISSUE_RESPONSE_FIELDS)?;
-    validate_schema_version_value(response, 6)?;
+    validate_schema_version_value(response, 7)?;
     let subject = required_object(response, "subject")?;
     require_string_equals(subject, "kind", "issue")?;
     require_string_equals(subject, "id", expected_id)?;
@@ -328,6 +338,7 @@ fn validate_issue_response(
     let evidence = required_object(response, "evidence")?;
     validate_evidence(evidence)?;
     validate_issue_request(event, evidence)?;
+    validate_issue_grouping(required_object(response, "grouping")?, evidence)?;
     let stack_projection_receipted =
         evidence_has_field(evidence, "truncated_fields", "stack_frames")?;
     let selected_occurrence = validate_issue_occurrence_selection(
@@ -391,17 +402,7 @@ fn validate_issue_request(
     event: &Map<String, Value>,
     evidence: &Map<String, Value>,
 ) -> Result<(), RuntimeError> {
-    let unknown = EVIDENCE_CATEGORIES.iter().any(|category| {
-        evidence[*category].as_array().is_none_or(|fields| {
-            fields.iter().filter_map(Value::as_str).any(|field| {
-                (field == "request" || field.starts_with("request."))
-                    && !REQUEST_EVIDENCE_FIELDS.contains(&field)
-            })
-        })
-    });
-    if unknown {
-        return Err(invalid_response());
-    }
+    validate_evidence_vocabulary(evidence, "request", &REQUEST_EVIDENCE_FIELDS)?;
     let Some(value) = event.get("request") else {
         let redacted = evidence_has_field(evidence, "redacted_fields", "request")?;
         let truncated = evidence_has_field(evidence, "truncated_fields", "request.route_template")?;
@@ -449,6 +450,88 @@ fn validate_issue_request(
         ],
     )?;
     if status.is_none() {
+        require_string_equals(evidence, "status", "partial")
+    } else {
+        Ok(())
+    }
+}
+
+/// Validates one value-free grouping explanation and its exact evidence receipts.
+fn validate_issue_grouping(
+    grouping: &Map<String, Value>,
+    evidence: &Map<String, Value>,
+) -> Result<(), RuntimeError> {
+    require_exact_fields(grouping, &["strategy", "components", "stack"])?;
+    validate_evidence_vocabulary(evidence, "grouping", &GROUPING_EVIDENCE_FIELDS)?;
+    let strategy = require_string(grouping, "strategy")?;
+    let expected_components: &[&str] = match strategy {
+        "sdk_fingerprint" => &["sdk_fingerprint"],
+        "default_exception_title_message_v1" => &["exception_type_or_title", "title", "message"],
+        "default_exception_stack_v1" => &[
+            "exception_type_or_title",
+            "frame_module",
+            "frame_function",
+            "frame_filename",
+        ],
+        "custom_or_legacy" => &[],
+        _ => return Err(invalid_response()),
+    };
+    let expects_stack = strategy == "default_exception_stack_v1";
+    let components = grouping
+        .get("components")
+        .and_then(Value::as_array)
+        .ok_or_else(invalid_response)?;
+    if components.len() != expected_components.len()
+        || components
+            .iter()
+            .zip(expected_components)
+            .any(|(actual, expected)| actual.as_str() != Some(expected))
+    {
+        return Err(invalid_response());
+    }
+    let mut ignored = false;
+    if expects_stack {
+        let stack = grouping
+            .get("stack")
+            .and_then(Value::as_object)
+            .ok_or_else(invalid_response)?;
+        require_exact_fields(
+            stack,
+            &[
+                "considered_frame_count",
+                "frame_limit",
+                "additional_frames_ignored",
+            ],
+        )?;
+        ignored = require_bool(stack, "additional_frames_ignored")?;
+        if !(1..=8).contains(&require_safe_u64(stack, "considered_frame_count")?)
+            || require_safe_u64(stack, "frame_limit")? != 8
+        {
+            return Err(invalid_response());
+        }
+    } else if !grouping.get("stack").is_some_and(Value::is_null) {
+        return Err(invalid_response());
+    }
+    for field in ["grouping", "grouping.strategy", "grouping.components"] {
+        validate_field_receipts(evidence, field, [true, false, false, false])?;
+    }
+    let custom = strategy == "custom_or_legacy";
+    validate_field_receipts(
+        evidence,
+        "grouping.strategy_details",
+        [!custom, custom, false, false],
+    )?;
+    validate_field_receipts(
+        evidence,
+        "grouping.stack",
+        [expects_stack, false, false, false],
+    )?;
+    validate_field_receipts(
+        evidence,
+        "grouping.stack_frames",
+        [false, false, false, ignored],
+    )?;
+    if custom || ignored {
         require_string_equals(evidence, "status", "partial")
     } else {
         Ok(())
@@ -1748,6 +1831,27 @@ fn validate_evidence(evidence: &Map<String, Value>) -> Result<(), RuntimeError> 
     Ok(())
 }
 
+/// Rejects additions inside one privacy-sensitive evidence namespace.
+fn validate_evidence_vocabulary(
+    evidence: &Map<String, Value>,
+    prefix: &str,
+    known: &[&str],
+) -> Result<(), RuntimeError> {
+    let namespace = format!("{prefix}.");
+    if EVIDENCE_CATEGORIES.iter().any(|category| {
+        evidence[*category].as_array().is_none_or(|fields| {
+            fields.iter().filter_map(Value::as_str).any(|field| {
+                (field == prefix || field.starts_with(namespace.as_str()))
+                    && !known.contains(&field)
+            })
+        })
+    }) {
+        Err(invalid_response())
+    } else {
+        Ok(())
+    }
+}
+
 /// Returns whether one validated evidence array contains an exact field receipt.
 fn evidence_has_field(
     evidence: &Map<String, Value>,
@@ -2005,6 +2109,7 @@ fn render_issue(value: &Value) -> Option<String> {
     append_issue_occurrence_selection(&mut output, value.get("occurrence_selection"));
     issue_lifecycle::render(&mut output, value.get("lifecycle"));
     issue_occurrence_analysis::render(&mut output, value.get("occurrence_analysis"));
+    append_issue_grouping(&mut output, value.get("grouping"));
 
     if let Some(event) = value.get("event").filter(|event| !event.is_null()) {
         append_named_text(&mut output, "Occurrence", event, "id", 80);
@@ -2028,6 +2133,25 @@ fn render_issue(value: &Value) -> Option<String> {
     append_evidence(&mut output, value.get("evidence"));
     append_actions(&mut output, value.get("next_actions"));
     Some(output)
+}
+
+/// Appends the proven grouping rule without repeating captured values.
+fn append_issue_grouping(output: &mut String, value: Option<&Value>) {
+    let Some(grouping) = value else { return };
+    output.push_str("Grouping:");
+    append_labeled_text(output, "strategy", grouping, "strategy", 64);
+    if let Some(stack) = grouping.get("stack").filter(|value| !value.is_null()) {
+        append_labeled_integer(output, "frames", stack, "considered_frame_count");
+        append_labeled_integer(output, "limit", stack, "frame_limit");
+        append_labeled_bool(
+            output,
+            "additional_ignored",
+            stack,
+            "additional_frames_ignored",
+        );
+    }
+    output.push('\n');
+    append_string_array(output, "Grouping components", grouping.get("components"), 8);
 }
 
 /// Appends normalized request context without raw URLs, headers, cookies, bodies, or IPs.

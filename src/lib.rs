@@ -2419,7 +2419,7 @@ fn explain_path(target: &ExplainTarget) -> String {
     }
 }
 
-/// Builds one explicit version-6 issue investigation path.
+/// Builds one explicit version-7 issue investigation path.
 fn issue_explain_path(id: &str, occurrence: &IssueOccurrenceSelection) -> String {
     let base = format!(
         "/api/telemetry/issues/{}/investigation",
@@ -2433,7 +2433,7 @@ fn issue_explain_path(id: &str, occurrence: &IssueOccurrenceSelection) -> String
     };
     path_with_query(
         base.as_str(),
-        &[("response_version", Some("6")), (name, Some(value))],
+        &[("response_version", Some("7")), (name, Some(value))],
     )
 }
 

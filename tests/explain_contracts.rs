@@ -18,7 +18,7 @@ async fn human_issue_explanation_surfaces_fix_context_timeline_and_evidence()
         .and(path(format!(
             "/api/telemetry/issues/{ISSUE_ID}/investigation"
         )))
-        .and(query_param("response_version", "6"))
+        .and(query_param("response_version", "7"))
         .and(query_param("selection", "recommended"))
         .respond_with(ResponseTemplate::new(200).set_body_json(issue_response()))
         .mount(&server)
@@ -36,6 +36,7 @@ async fn human_issue_explanation_surfaces_fix_context_timeline_and_evidence()
         "Lifecycle: persisted=unresolved effective=unresolved",
         "Regression: status=not_detected reason=no_resolution_recorded",
         "Occurrence analysis: status=unavailable retained=3 distributions=0/4",
+        "Grouping: strategy=default_exception_title_message_v1",
         "Exception: PaymentError mechanism=unhandled handled=false",
         "Cause assessment: status=evidence_only",
         "Fix area: status=observed_application_frame provenance=backend_observed",
@@ -1276,7 +1277,7 @@ fn issue_response() -> serde_json::Value {
     first["id"] = serde_json::json!("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee");
     first["occurred_at"] = serde_json::json!("2026-08-03T10:00:00Z");
     serde_json::json!({
-        "schema_version": 6,
+        "schema_version": 7,
         "subject": {
             "kind": "issue",
             "id": ISSUE_ID,
@@ -1358,6 +1359,11 @@ fn issue_response() -> serde_json::Value {
             }
         },
         "occurrence_analysis": issue_occurrence_analysis(),
+        "grouping": {
+            "strategy": "default_exception_title_message_v1",
+            "components": ["exception_type_or_title", "title", "message"],
+            "stack": null
+        },
         "cause": {
             "status": "evidence_only",
             "summary": null,
@@ -1423,6 +1429,10 @@ fn issue_response() -> serde_json::Value {
                 "exception_chain",
                 "exception_chain.messages",
                 "exception_chain.stack_frames",
+                "grouping",
+                "grouping.components",
+                "grouping.strategy",
+                "grouping.strategy_details",
                 "issue.exception",
                 "lifecycle.regression",
                 "lifecycle.status_history",
