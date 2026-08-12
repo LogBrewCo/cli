@@ -149,50 +149,50 @@ class InstalledReleaseAttestationTests(unittest.TestCase):
             ),
             (
                 "LogBrewCo/cli",
-                "v0.1.42",
-                "0.1.42",
-                "ef8801c5887d0352bf103ee0da6550e26bfb93d3",
-                "fa9483c5d464cd81effad027941b4ef6183d8797",
-                31462670939,
+                "v0.1.44",
+                "0.1.44",
+                "2ae7c5f363e0a8a31fe14a607838beab7cb9c82b",
+                "94d70d5e3b862416b7859c410bbf7497a8abd445",
+                31627146810,
                 289984708,
-                368355028,
-                "2026-08-11T05:51:12Z",
+                369446971,
+                "2026-08-12T18:26:37Z",
                 "sha256.sum",
-                509733585,
+                511921852,
                 820,
-                "2670c597380513b9d9bab04f61407be480e4a79b8029eaca51aa26cdb86d7131",
+                "093cc1df98d30330630a49c5828b5207acb3a55480a9a3f6f72b2a6897d2c83f",
             ),
         )
         expected_receipts = {
             "shell-linux-x64": (
-                509733567,
+                511921829,
                 54183,
-                "be2a3e722d6175b61847a5270d1a51fe94315030ae6921074c958c00cf3219f8",
+                "557abae52ea7386eda5dcf4b79a4770b4a90c8c668be88f79d107cf55e8dd096",
             ),
             "native-linux-arm64": (
-                509733563,
-                2361796,
-                "5e4f4afcf74039bde454f3f063d5b21ed15b882f3fa4d6b491a41c4d6191bd24",
+                511921821,
+                2365396,
+                "a2eb7edd5f98851365fb53d7e755b166d401430566c5bd8d0d7cb9994368a3f2",
             ),
             "native-linux-x64": (
-                509733580,
-                2665692,
-                "d9b674b7a0f8307384b0de0e9989157006fa6c9ce6ca5aeeaecf8dd8129606b3",
+                511921845,
+                2669024,
+                "600c199ae407333f44d15a5c34c9623981da503a559520614e7cd1662b02381e",
             ),
             "powershell-windows-x64": (
-                509733568,
+                511921827,
                 22325,
-                "d4efb3a9d1214b46aed7deab00ad39d0c9fb2bfc4a981f12fc0e26b5ea3436a5",
+                "42c3d389f3f2f382ea09fca8941e1d11851b423c4d16cd0645559817ccdb01a0",
             ),
             "native-windows-x64": (
-                509733573,
-                3433005,
-                "1608d7acac73d19f75b2a935caaeb8aef93d61c77d3d29ac75b0cb4198b2e814",
+                511921840,
+                3436862,
+                "b73da42a85a9d3128eebc9cef5a11c99cce5ce1eed23bb0d853bb87b2b735266",
             ),
             "native-macos-x64": (
-                509733570,
-                2616852,
-                "ae5696b0fbe0f5bf3233c5c2cae506ad220ac65c30baa7057ec302c931f9933e",
+                511921833,
+                2619492,
+                "e723f64c87d25ffbee63f0e574562a52e6b3a34ee9086ea6d3a043c71ae4ea6e",
             ),
         }
         self.assertEqual(
@@ -815,11 +815,12 @@ class InstalledReleaseAttestationTests(unittest.TestCase):
             asset_size=len(payload),
             digest=digest,
         )
+        receipt_name = "native-linux-x64"
         policy = replace(
             module.PUBLIC_POLICY,
             checksum_asset_size=len(checksum),
             checksum_asset_digest=checksum_digest,
-            receipts={receipt.name: receipt},
+            receipts={receipt_name: receipt},
         )
         urls = module.api_urls(policy)
         responses = {
@@ -897,7 +898,7 @@ class InstalledReleaseAttestationTests(unittest.TestCase):
                 ),
             ):
                 module.run_attestation(
-                    receipt_name=receipt.name,
+                    receipt_name=receipt_name,
                     tag=policy.tag,
                     version=policy.version,
                     source_commit=policy.source_commit,
