@@ -9,13 +9,15 @@ use super::projection::{
     validate_projection,
 };
 use super::{
-    METRIC_POINT_LIMIT, METRIC_SERIES_LIMIT, NEXT_ACTION_LIMIT, append_actions, append_evidence,
-    append_labeled_bool, append_labeled_integer, append_labeled_number, append_labeled_text,
-    append_named_text, append_runtime_context, collect_scalar_fields, display_text, field_text,
-    invalid_response, optional_finite_number, optional_string, require_bool, require_exact_fields,
-    require_finite_number, require_known_fields, require_safe_positive_u64, require_safe_u64,
-    require_string, require_string_equals, require_timestamp, require_u64, required_object,
-    response_object, validate_evidence, validate_name_version, validate_schema_version_value,
+    DeploymentExpectation, METRIC_POINT_LIMIT, METRIC_SERIES_LIMIT, NEXT_ACTION_LIMIT,
+    append_actions, append_evidence, append_labeled_bool, append_labeled_integer,
+    append_labeled_number, append_labeled_text, append_named_text, append_runtime_context,
+    collect_scalar_fields, display_text, field_text, invalid_response, optional_finite_number,
+    optional_string, require_bool, require_exact_fields, require_finite_number,
+    require_known_fields, require_safe_positive_u64, require_safe_u64, require_string,
+    require_string_equals, require_timestamp, require_u64, required_object, response_object,
+    validate_deployment_boundary, validate_evidence, validate_name_version,
+    validate_schema_version_value,
 };
 use crate::ids::{is_trace_id, is_uuid};
 use crate::{ExplainMetricTarget, RuntimeError};
@@ -1264,36 +1266,13 @@ fn validate_metric_deployments(response: &Map<String, Value>) -> Result<(), Runt
     let mut previous_finish = None;
     for item in items {
         let item = item.as_object().ok_or_else(invalid_response)?;
-        require_exact_fields(
-            item,
-            &[
-                "deployment_id",
-                "release",
-                "environment",
-                "service_name",
-                "status",
-                "started_at",
-                "finished_at",
-                "commit_sha",
-            ],
-        )?;
-        let id = require_string(item, "deployment_id")?;
-        let started = require_timestamp(item, "started_at")?;
-        let finished = require_timestamp(item, "finished_at")?;
-        if started > finished
-            || !ids.insert(id)
-            || previous_finish.is_some_and(|previous| previous < finished)
+        let boundary = validate_deployment_boundary(item, DeploymentExpectation::default())?;
+        if !ids.insert(boundary.id)
+            || previous_finish.is_some_and(|previous| previous < boundary.finished_millis)
         {
             return Err(invalid_response());
         }
-        previous_finish = Some(finished);
-        let _release = require_string(item, "release")?;
-        let _environment = require_string(item, "environment")?;
-        let _service = require_string(item, "service_name")?;
-        if !matches!(require_string(item, "status")?, "succeeded" | "failed") {
-            return Err(invalid_response());
-        }
-        let _commit = optional_string(item, "commit_sha")?;
+        previous_finish = Some(boundary.finished_millis);
     }
     Ok(())
 }

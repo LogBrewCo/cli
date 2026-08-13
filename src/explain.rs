@@ -8,7 +8,6 @@ mod metric;
 mod projection;
 mod release;
 mod span;
-mod time;
 
 use std::collections::BTreeSet;
 
@@ -18,6 +17,7 @@ use serde_json::{Map, Value};
 
 use crate::auth::{AuthCredential, send_authenticated_with_refresh};
 use crate::ids::{is_trace_id, is_uuid};
+use crate::time;
 use crate::{
     CliEnvironment, ExplainReleaseTarget, ExplainTarget, IssueOccurrenceSelection, RuntimeError,
     explain_path,
@@ -51,7 +51,7 @@ const ISSUE_OCCURRENCE_CANDIDATE_LIMIT: u64 = 50;
 const ISSUE_OCCURRENCE_FRAME_LIMIT: u64 = 32;
 /// Largest integer accepted from JSON-number investigation contracts.
 const MAX_SAFE_JSON_INTEGER: u64 = 9_007_199_254_740_991;
-/// Exact top-level vocabulary for the schema-version-7 issue response.
+/// Exact top-level vocabulary for the schema-version-8 issue response.
 const ISSUE_RESPONSE_FIELDS: &[&str] = &[
     "schema_version",
     "subject",
@@ -89,6 +89,13 @@ const GROUPING_EVIDENCE_FIELDS: [&str; 6] = [
     "grouping.strategy_details",
     "grouping.stack",
     "grouping.stack_frames",
+];
+/// Exact schema-version-8 deployment receipt vocabulary.
+const DEPLOYMENT_EVIDENCE_FIELDS: [&str; 4] = [
+    "deployment",
+    "deployment.commit_sha",
+    "deployment.lookup",
+    "deployment.timing",
 ];
 
 /// Duplicate-aware JSON value.
@@ -309,7 +316,7 @@ fn validate_issue_response(
 ) -> Result<(), RuntimeError> {
     let response = response_object(value, ISSUE_RESPONSE_FIELDS)?;
     require_exact_fields(response, ISSUE_RESPONSE_FIELDS)?;
-    validate_schema_version_value(response, 7)?;
+    validate_schema_version_value(response, 8)?;
     let subject = required_object(response, "subject")?;
     require_string_equals(subject, "kind", "issue")?;
     require_string_equals(subject, "id", expected_id)?;
@@ -391,7 +398,7 @@ fn validate_issue_response(
     validate_nullable_object(impact, "reported")?;
 
     let correlations = required_object(response, "correlations")?;
-    validate_issue_correlations(correlations)?;
+    validate_issue_correlations(correlations, event, evidence)?;
     validate_selected_occurrence_correlations(selected_occurrence, event, correlations)?;
     validate_next_actions(response.get("next_actions"))?;
     issue_lifecycle::validate_next_action(response.get("next_actions"), regression_detected)
@@ -1740,13 +1747,19 @@ fn validate_trace_link(value: &Map<String, Value>, exact_span: bool) -> Result<(
     Ok(())
 }
 
-/// Validates issue correlation containers and exact release identity.
-fn validate_issue_correlations(value: &Map<String, Value>) -> Result<(), RuntimeError> {
+/// Validates issue correlation containers and exact release/deployment identity.
+fn validate_issue_correlations(
+    value: &Map<String, Value>,
+    event: &Map<String, Value>,
+    evidence: &Map<String, Value>,
+) -> Result<(), RuntimeError> {
     validate_trace_link(required_object(value, "trace")?, false)?;
     for name in ["logs", "actions", "metrics"] {
         validate_items_collection(required_object(value, name)?, true)?;
     }
-    validate_release_scope(required_object(value, "release")?)
+    let release = required_object(value, "release")?;
+    validate_release_scope(release)?;
+    validate_issue_deployment(release, event, evidence)
 }
 
 /// Validates log correlation containers and exact release identity.
@@ -1788,6 +1801,175 @@ fn validate_release_scope(value: &Map<String, Value>) -> Result<(), RuntimeError
     let _release = require_string(value, "release")?;
     let _environment = require_string(value, "environment")?;
     let _service = require_string(value, "service_name")?;
+    Ok(())
+}
+
+/// Optional exact scope required of one shared deployment boundary.
+#[derive(Clone, Copy, Default)]
+struct DeploymentExpectation<'a> {
+    /// Required owning project when internal identity fields are present.
+    project_id: Option<&'a str>,
+    /// Required deployed release when the caller has exact scope.
+    release: Option<&'a str>,
+    /// Required deployment environment when the caller has exact scope.
+    environment: Option<&'a str>,
+    /// Required logical service when the caller has exact scope.
+    service_name: Option<&'a str>,
+    /// Whether the boundary must represent a successful deployment.
+    succeeded: bool,
+}
+
+/// Strict facts shared by issue, metric, and release deployment evidence.
+struct DeploymentBoundary<'a> {
+    /// Caller-owned external deployment identity.
+    id: &'a str,
+    /// Exact deployed release.
+    release: &'a str,
+    /// Terminal deployment result.
+    status: &'a str,
+    /// Parsed deployment start.
+    started_millis: i128,
+    /// Parsed deployment finish.
+    finished_millis: i128,
+}
+
+/// Validates one canonical completed deployment boundary and optional exact scope.
+fn validate_deployment_boundary<'a>(
+    value: &'a Map<String, Value>,
+    expected: DeploymentExpectation<'_>,
+) -> Result<DeploymentBoundary<'a>, RuntimeError> {
+    let mut fields = vec![
+        "deployment_id",
+        "release",
+        "environment",
+        "service_name",
+        "status",
+        "started_at",
+        "finished_at",
+        "commit_sha",
+    ];
+    if expected.project_id.is_some() {
+        drop(fields.splice(0..0, ["id", "project_id"]));
+    }
+    require_exact_fields(value, fields.as_slice())?;
+    if expected.project_id.is_some()
+        && (!is_uuid(require_string(value, "id")?)
+            || optional_string(value, "project_id")? != expected.project_id)
+    {
+        return Err(invalid_response());
+    }
+    let id = require_string(value, "deployment_id")?;
+    let release = require_string(value, "release")?;
+    let environment = require_string(value, "environment")?;
+    let service = require_string(value, "service_name")?;
+    let status = require_string(value, "status")?;
+    let started_millis = time::parse_utc_millis(require_timestamp(value, "started_at")?)
+        .ok_or_else(invalid_response)?;
+    let finished_millis = time::parse_utc_millis(require_timestamp(value, "finished_at")?)
+        .ok_or_else(invalid_response)?;
+    let commit = optional_string(value, "commit_sha")?;
+    let valid = id.len() <= 128
+        && id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b':' | b'-'))
+        && matches!(status, "succeeded" | "failed")
+        && (!expected.succeeded || status == "succeeded")
+        && started_millis <= finished_millis
+        && expected.release.is_none_or(|expected| release == expected)
+        && expected
+            .environment
+            .is_none_or(|expected| environment == expected)
+        && expected
+            .service_name
+            .is_none_or(|expected| service == expected)
+        && commit.is_none_or(|value| {
+            (7..=64).contains(&value.len())
+                && value
+                    .bytes()
+                    .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+        });
+    valid
+        .then_some(DeploymentBoundary {
+            id,
+            release,
+            status,
+            started_millis,
+            finished_millis,
+        })
+        .ok_or_else(invalid_response)
+}
+
+/// Validates the exact deployment preceding the selected occurrence and its evidence receipts.
+fn validate_issue_deployment(
+    release: &Map<String, Value>,
+    event: &Map<String, Value>,
+    evidence: &Map<String, Value>,
+) -> Result<(), RuntimeError> {
+    validate_evidence_vocabulary(evidence, "deployment", &DEPLOYMENT_EVIDENCE_FIELDS)?;
+    let status = require_string(release, "deployment_status")?;
+    if !matches!(status, "available" | "not_found" | "unavailable") {
+        return Err(invalid_response());
+    }
+    let available = status == "available";
+    let not_found = status == "not_found";
+    let mut fields = vec![
+        "release",
+        "environment",
+        "service_name",
+        "deployment_status",
+    ];
+    if available {
+        fields.extend([
+            "deployment",
+            "time_since_deployment_ms",
+            "deployment_causality",
+        ]);
+    }
+    require_exact_fields(release, fields.as_slice())?;
+    let commit = if available {
+        let deployment = required_object(release, "deployment")?;
+        let boundary = validate_deployment_boundary(
+            deployment,
+            DeploymentExpectation {
+                release: Some(require_string(release, "release")?),
+                environment: Some(require_string(release, "environment")?),
+                service_name: Some(require_string(release, "service_name")?),
+                ..DeploymentExpectation::default()
+            },
+        )?;
+        let occurred = time::parse_utc_millis(require_timestamp(event, "occurred_at")?)
+            .ok_or_else(invalid_response)?;
+        let elapsed = occurred
+            .checked_sub(boundary.finished_millis)
+            .and_then(|value| u64::try_from(value).ok())
+            .filter(|value| *value <= MAX_SAFE_JSON_INTEGER)
+            .ok_or_else(invalid_response)?;
+        if require_safe_u64(release, "time_since_deployment_ms")? != elapsed
+            || require_string(release, "deployment_causality")? != "evidence_only"
+        {
+            return Err(invalid_response());
+        }
+        Some(optional_string(deployment, "commit_sha")?.is_some())
+    } else {
+        None
+    };
+    if !available || commit == Some(false) {
+        require_string_equals(evidence, "status", "partial")?;
+    }
+    for (field, expected) in [
+        ("deployment", [available, not_found, false, false]),
+        (
+            "deployment.commit_sha",
+            [commit == Some(true), commit == Some(false), false, false],
+        ),
+        (
+            "deployment.lookup",
+            [not_found, !available && !not_found, false, false],
+        ),
+        ("deployment.timing", [available, false, false, false]),
+    ] {
+        validate_field_receipts(evidence, field, expected)?;
+    }
     Ok(())
 }
 
@@ -2508,6 +2690,23 @@ fn append_issue_correlations(output: &mut String, correlations: Option<&Value>) 
         append_labeled_text(output, "release", release, "release", 200);
         append_labeled_text(output, "environment", release, "environment", 120);
         append_labeled_text(output, "service", release, "service_name", 160);
+        output.push('\n');
+        output.push_str("Preceding deployment:");
+        append_labeled_text(output, "status", release, "deployment_status", 40);
+        if let Some(deployment) = release.get("deployment") {
+            append_labeled_text(output, "id", deployment, "deployment_id", 128);
+            append_labeled_text(output, "result", deployment, "status", 32);
+            append_labeled_text(output, "started", deployment, "started_at", 64);
+            append_labeled_text(output, "finished", deployment, "finished_at", 64);
+            append_labeled_text(output, "commit", deployment, "commit_sha", 64);
+            append_labeled_integer(
+                output,
+                "before_occurrence_ms",
+                release,
+                "time_since_deployment_ms",
+            );
+            append_labeled_text(output, "causality", release, "deployment_causality", 32);
+        }
         output.push('\n');
     }
     if let Some(trace) = correlations.get("trace") {

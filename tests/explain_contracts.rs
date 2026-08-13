@@ -18,7 +18,7 @@ async fn human_issue_explanation_surfaces_fix_context_timeline_and_evidence()
         .and(path(format!(
             "/api/telemetry/issues/{ISSUE_ID}/investigation"
         )))
-        .and(query_param("response_version", "7"))
+        .and(query_param("response_version", "8"))
         .and(query_param("selection", "recommended"))
         .respond_with(ResponseTemplate::new(200).set_body_json(issue_response()))
         .mount(&server)
@@ -1277,7 +1277,7 @@ fn issue_response() -> serde_json::Value {
     first["id"] = serde_json::json!("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee");
     first["occurred_at"] = serde_json::json!("2026-08-03T10:00:00Z");
     serde_json::json!({
-        "schema_version": 7,
+        "schema_version": 8,
         "subject": {
             "kind": "issue",
             "id": ISSUE_ID,
@@ -1420,12 +1420,14 @@ fn issue_response() -> serde_json::Value {
             "release": {
                 "release": "checkout@1.2.3",
                 "environment": "production",
-                "service_name": "checkout-api"
+                "service_name": "checkout-api",
+                "deployment_status": "not_found"
             }
         },
         "evidence": {
             "status": "partial",
             "captured_fields": [
+                "deployment.lookup",
                 "exception_chain",
                 "exception_chain.messages",
                 "exception_chain.stack_frames",
@@ -1441,6 +1443,7 @@ fn issue_response() -> serde_json::Value {
                 "occurrence.selection",
             ],
             "missing_fields": [
+                "deployment",
                 "issue.attachment",
                 "issue.stack_frames",
                 "occurrence.distribution.environment",
