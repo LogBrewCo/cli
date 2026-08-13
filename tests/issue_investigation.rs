@@ -52,7 +52,7 @@ fn parses_only_the_explicit_issue_investigation_grammar() {
         exact.http_path().as_deref(),
         Some(
             "/api/telemetry/issues/11111111-1111-4111-8111-111111111111/investigation?\
-             response_version=8&occurrence_id=22222222-2222-4222-8222-222222222222"
+             response_version=9&occurrence_id=22222222-2222-4222-8222-222222222222"
         )
     );
     assert!(exact.wants_json());
@@ -69,7 +69,7 @@ fn parses_only_the_explicit_issue_investigation_grammar() {
         latest.http_path().as_deref(),
         Some(
             "/api/telemetry/issues/11111111-1111-4111-8111-111111111111/investigation?\
-             response_version=8&selection=latest"
+             response_version=9&selection=latest"
         )
     );
 }
@@ -123,9 +123,9 @@ fn help_describes_the_complete_versioned_bundle() {
     assert!(text.contains("parent-first runtime exception evidence"));
     assert!(text.contains("per-node message and stack capture states"));
     assert!(text.contains("approximate affected-user coverage and limitations"));
-    assert!(text.contains("trace, related logs, actions, metric exemplars"));
+    assert!(text.contains("trace, sibling issues, related logs, actions, metric exemplars"));
     assert!(text.contains("same contract as logbrew explain issue"));
-    assert!(text.contains("exact validated schema-version-8 response"));
+    assert!(text.contains("exact validated schema-version-9 response"));
     assert!(text.contains("deterministic grouping"));
     assert!(text.contains("exact preceding-deployment evidence"));
     assert!(text.contains("explicit selected, first, latest, and recommended occurrence"));
@@ -253,6 +253,8 @@ async fn human_output_surfaces_failure_fix_timeline_correlations_and_limits()
          started=2026-08-04T07:50:00Z finished=2026-08-04T07:52:00Z \
          commit=0123456789abcdef before_occurrence_ms=479000 causality=evidence_only",
         "Trace: status=available trace=4bf92f3577b34da6a3ce929d0e0e4736 spans=3 errors=1",
+        "Related issues: status=available count=1",
+        "Issue: title=Sibling checkout failure severity=error issue=66666666-6666-4666-8666-666666666666",
         "Related logs: status=available count=1",
         "Log: message=provider returned 503 severity=error source=payments service=checkout-api",
         "Related actions: status=available count=1",
@@ -572,7 +574,7 @@ async fn mount_bundle(server: &MockServer, bundle: serde_json::Value, expected_r
         .and(path(format!(
             "/api/telemetry/issues/{ISSUE_ID}/investigation"
         )))
-        .and(query_param("response_version", "8"))
+        .and(query_param("response_version", "9"))
         .and(query_param("selection", "recommended"))
         .and(header("authorization", "Bearer test-token"))
         .respond_with(ResponseTemplate::new(200).set_body_json(bundle))
@@ -590,7 +592,7 @@ async fn mount_exact_bundle(
         .and(path(format!(
             "/api/telemetry/issues/{ISSUE_ID}/investigation"
         )))
-        .and(query_param("response_version", "8"))
+        .and(query_param("response_version", "9"))
         .and(query_param("occurrence_id", OCCURRENCE_ID))
         .and(header("authorization", "Bearer test-token"))
         .respond_with(ResponseTemplate::new(200).set_body_json(bundle))
@@ -686,7 +688,7 @@ fn rich_investigation_bundle() -> serde_json::Value {
         "0.1.4",
     );
     serde_json::json!({
-        "schema_version": 8,
+        "schema_version": 9,
         "subject": {
             "kind": "issue",
             "id": ISSUE_ID,
@@ -953,6 +955,22 @@ fn rich_investigation_bundle() -> serde_json::Value {
                 }],
                 "truncated": false
             },
+            "related_issues": {
+                "status": "available",
+                "items": [{
+                    "id": "77777777-7777-4777-8777-777777777777",
+                    "issue_id": "66666666-6666-4666-8666-666666666666",
+                    "project_id": PROJECT_ID,
+                    "severity": "error",
+                    "title": "Sibling checkout failure",
+                    "message": "Observed on the selected occurrence trace.",
+                    "occurred_at": "2026-08-04T07:59:58Z",
+                    "service_name": "payment-worker",
+                    "environment": "production",
+                    "release": "checkout@1.2.3"
+                }],
+                "truncated": false
+            },
             "release": {
                 "release": "checkout@1.2.3",
                 "environment": "production",
@@ -1001,6 +1019,7 @@ fn rich_investigation_bundle() -> serde_json::Value {
                 "occurrence.recommendation",
                 "occurrence.selection",
                 "occurrence.trend",
+                "related_issues",
                 "release",
                 "request",
                 "request.method",
@@ -1551,7 +1570,36 @@ fn invalid_occurrence_selection_bundles() -> Vec<serde_json::Value> {
             "/correlations/trace/summary/trace_id",
             serde_json::json!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
         ),
+        (
+            "/correlations/related_issues/items/0/issue_id",
+            serde_json::json!(ISSUE_ID),
+        ),
+        (
+            "/correlations/related_issues/items/0/environment",
+            serde_json::json!("staging"),
+        ),
+        (
+            "/correlations/related_issues/items/0/severity",
+            serde_json::json!("debug"),
+        ),
+        (
+            "/correlations/related_issues/status",
+            serde_json::json!("not_found"),
+        ),
+        (
+            "/correlations/related_issues/truncated",
+            serde_json::json!(true),
+        ),
     ]);
+
+    let mut duplicate_issue = rich_investigation_bundle();
+    let mut sibling = duplicate_issue["correlations"]["related_issues"]["items"][0].clone();
+    sibling["id"] = serde_json::json!("88888888-8888-4888-8888-888888888888");
+    duplicate_issue["correlations"]["related_issues"]["items"]
+        .as_array_mut()
+        .expect("related issues")
+        .push(sibling);
+    cases.push(mark_invalid(duplicate_issue));
 
     let mut missing_projection = projected_stack_investigation_bundle();
     missing_projection["evidence"]["truncated_fields"] = serde_json::json!([]);

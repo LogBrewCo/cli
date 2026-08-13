@@ -18,7 +18,7 @@ async fn human_issue_explanation_surfaces_fix_context_timeline_and_evidence()
         .and(path(format!(
             "/api/telemetry/issues/{ISSUE_ID}/investigation"
         )))
-        .and(query_param("response_version", "8"))
+        .and(query_param("response_version", "9"))
         .and(query_param("selection", "recommended"))
         .respond_with(ResponseTemplate::new(200).set_body_json(issue_response()))
         .mount(&server)
@@ -1277,7 +1277,7 @@ fn issue_response() -> serde_json::Value {
     first["id"] = serde_json::json!("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee");
     first["occurred_at"] = serde_json::json!("2026-08-03T10:00:00Z");
     serde_json::json!({
-        "schema_version": 8,
+        "schema_version": 9,
         "subject": {
             "kind": "issue",
             "id": ISSUE_ID,
@@ -1417,6 +1417,7 @@ fn issue_response() -> serde_json::Value {
             "logs": {"status": "not_found", "items": [], "truncated": false},
             "actions": {"status": "not_found", "items": [], "truncated": false},
             "metrics": {"status": "not_found", "items": [], "truncated": false},
+            "related_issues": {"status": "not_found", "items": [], "truncated": false},
             "release": {
                 "release": "checkout@1.2.3",
                 "environment": "production",
@@ -1451,6 +1452,7 @@ fn issue_response() -> serde_json::Value {
                 "occurrence.distribution.sdk",
                 "occurrence.distribution.service",
                 "occurrence.trend",
+                "related_issues",
                 "request"
             ],
             "redacted_fields": [],
