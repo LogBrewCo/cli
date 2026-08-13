@@ -12,12 +12,14 @@ use super::{
     append_actions, append_evidence, append_labeled_bool, append_labeled_integer,
     append_labeled_text, append_log_analysis, append_log_correlations, append_named_pair,
     append_named_text, append_runtime_context, append_timeline, collect_scalar_fields, field_text,
-    invalid_response, optional_string, require_bool, require_exact_fields, require_finite_number,
-    require_nonnegative_integer, require_safe_positive_u64, require_safe_u64, require_string,
-    require_string_equals, require_timestamp, require_u64, require_uuid, required_object,
-    response_object, validate_availability, validate_evidence, validate_name_version,
-    validate_next_actions, validate_schema_version, validate_schema_version_value,
-    validate_string_array, validate_timeline,
+    invalid_response, is_w3c_id, nullable_w3c_id, optional_object_value, optional_string,
+    require_bool, require_exact_fields, require_safe_u64, require_string, require_string_equals,
+    require_timestamp, require_u64, require_uuid, required_object, response_object,
+    validate_availability, validate_correlated_collection, validate_correlated_log,
+    validate_correlated_signal, validate_evidence, validate_exact_release_scope,
+    validate_name_version, validate_next_actions, validate_schema_version,
+    validate_schema_version_value, validate_shared_span_summary, validate_shared_trace_summary,
+    validate_timeline,
 };
 use crate::RuntimeError;
 use crate::ids::is_uuid;
@@ -344,7 +346,7 @@ fn validate_action_resource_context(
         ],
     )?;
     for name in ["service", "runtime", "framework"] {
-        if let Some(identity) = optional_object(resource.get(name))? {
+        if let Some(identity) = optional_object_value(resource.get(name))? {
             require_exact_fields(identity, &["name", "version"])?;
             let identity_name = require_string(identity, "name")?;
             let _version = optional_string(identity, "version")?;
@@ -353,7 +355,7 @@ fn validate_action_resource_context(
             }
         }
     }
-    if let Some(deployment) = optional_object(resource.get("deployment"))? {
+    if let Some(deployment) = optional_object_value(resource.get("deployment"))? {
         require_exact_fields(deployment, &["environment", "release"])?;
         if optional_string(deployment, "environment")?.is_some_and(|value| value != environment)
             || optional_string(deployment, "release")?.is_some_and(|value| value != release)
@@ -361,19 +363,19 @@ fn validate_action_resource_context(
             return Err(invalid_response());
         }
     }
-    if let Some(os) = optional_object(resource.get("operating_system"))? {
+    if let Some(os) = optional_object_value(resource.get("operating_system"))? {
         require_exact_fields(os, &["name", "version", "build"])?;
         let _name = require_string(os, "name")?;
         let _version = optional_string(os, "version")?;
         let _build = optional_string(os, "build")?;
     }
-    if let Some(device) = optional_object(resource.get("device"))? {
+    if let Some(device) = optional_object_value(resource.get("device"))? {
         require_exact_fields(device, &["family", "model", "architecture"])?;
         for name in ["family", "model", "architecture"] {
             let _value = optional_string(device, name)?;
         }
     }
-    if let Some(application) = optional_object(resource.get("application"))? {
+    if let Some(application) = optional_object_value(resource.get("application"))? {
         require_exact_fields(application, &["name", "version", "build"])?;
         for name in ["name", "version", "build"] {
             let _value = optional_string(application, name)?;
@@ -384,15 +386,15 @@ fn validate_action_resource_context(
 
 /// Validates optional W3C context without accepting opaque identity-shaped additions.
 fn validate_action_trace_context(value: Option<&Value>) -> Result<(), RuntimeError> {
-    let Some(trace) = optional_object(value)? else {
+    let Some(trace) = optional_object_value(value)? else {
         return Ok(());
     };
     require_exact_fields(trace, &["trace_id", "span_id", "parent_span_id", "sampled"])?;
-    if !is_w3c_trace_id(require_string(trace, "trace_id")?) {
+    if !is_w3c_id(require_string(trace, "trace_id")?, 32) {
         return Err(invalid_response());
     }
-    let _span_id = validate_optional_span_id(trace, "span_id")?;
-    let _parent_span_id = validate_optional_span_id(trace, "parent_span_id")?;
+    let _span_id = nullable_w3c_id(trace, "span_id", 16)?;
+    let _parent_span_id = nullable_w3c_id(trace, "parent_span_id", 16)?;
     match trace.get("sampled") {
         Some(Value::Null | Value::Bool(_)) => Ok(()),
         _ => Err(invalid_response()),
@@ -423,17 +425,23 @@ fn validate_action_correlations(
     let trace = required_object(value, "trace")?;
     validate_action_trace_link(trace, context)?;
     for name in ["issues", "trace_logs", "nearby_logs", "actions", "metrics"] {
-        validate_action_collection(required_object(value, name)?, name, project_id, trace)?;
+        validate_action_collection(
+            required_object(value, name)?,
+            name,
+            project_id,
+            environment,
+            release,
+            trace,
+        )?;
     }
     let release_scope = required_object(value, "release")?;
-    require_exact_fields(
+    validate_exact_release_scope(
         release_scope,
-        &["project_id", "release", "environment", "service_name"],
-    )?;
-    require_string_equals(release_scope, "project_id", project_id)?;
-    require_string_equals(release_scope, "release", release)?;
-    require_string_equals(release_scope, "environment", environment)?;
-    require_string_equals(release_scope, "service_name", service_name)
+        project_id,
+        release,
+        environment,
+        service_name,
+    )
 }
 
 /// Validates exact linked trace/span facts and binds them to typed context when present.
@@ -452,26 +460,25 @@ fn validate_action_trace_link(
             "truncated",
         ],
     )?;
-    validate_availability(value, "status")?;
-    let status = require_string(value, "status")?;
+    let status = validate_availability(value, "status")?;
     let trace_id = optional_string(value, "trace_id")?;
-    if trace_id.is_some_and(|trace| !is_w3c_trace_id(trace)) {
+    if trace_id.is_some_and(|trace| !is_w3c_id(trace, 32)) {
         return Err(invalid_response());
     }
-    let span_id = validate_optional_span_id(value, "span_id")?;
+    let span_id = nullable_w3c_id(value, "span_id", 16)?;
     if (status == "not_linked") != trace_id.is_none() || span_id.is_some() && trace_id.is_none() {
         return Err(invalid_response());
     }
-    let exact_span = optional_object(value.get("exact_span"))?;
+    let exact_span = optional_object_value(value.get("exact_span"))?;
     if let Some(exact_span) = exact_span {
-        validate_action_span_summary(exact_span)?;
+        validate_shared_span_summary(exact_span)?;
         if span_id != Some(require_string(exact_span, "span_id")?) {
             return Err(invalid_response());
         }
     }
-    let summary = optional_object(value.get("summary"))?;
+    let summary = optional_object_value(value.get("summary"))?;
     if let Some(summary) = summary {
-        validate_action_trace_summary(summary)?;
+        validate_shared_trace_summary(summary, None)?;
         if trace_id != Some(require_string(summary, "trace_id")?) || status != "available" {
             return Err(invalid_response());
         }
@@ -509,288 +516,57 @@ fn action_context_trace_ids(
     Ok((Some(trace_id), span_id))
 }
 
-/// Validates one exact or summary span without accepting unversioned additions.
-fn validate_action_span_summary(value: &Map<String, Value>) -> Result<(), RuntimeError> {
-    require_exact_fields(
-        value,
-        &[
-            "span_id",
-            "parent_span_id",
-            "name",
-            "operation",
-            "status",
-            "started_at",
-            "duration_ms",
-            "service_name",
-        ],
-    )?;
-    if !is_w3c_span_id(require_string(value, "span_id")?) {
-        return Err(invalid_response());
-    }
-    let _parent_span_id = validate_optional_span_id(value, "parent_span_id")?;
-    let _name = require_string(value, "name")?;
-    let _operation = require_string(value, "operation")?;
-    let _status = optional_string(value, "status")?;
-    let _started_at = require_timestamp(value, "started_at")?;
-    require_nonnegative_integer(value, "duration_ms")?;
-    let _service = require_string(value, "service_name")?;
-    Ok(())
-}
-
-/// Validates one bounded trace summary and its internal count receipts.
-fn validate_action_trace_summary(value: &Map<String, Value>) -> Result<(), RuntimeError> {
-    require_exact_fields(
-        value,
-        &[
-            "trace_id",
-            "span_count",
-            "error_span_count",
-            "service_count",
-            "project_count",
-            "started_at",
-            "duration_ms",
-            "root_span",
-            "slowest_child_span",
-            "slowest_path",
-            "error_spans",
-            "services",
-            "releases",
-            "environments",
-        ],
-    )?;
-    if !is_w3c_trace_id(require_string(value, "trace_id")?) {
-        return Err(invalid_response());
-    }
-    let span_count = require_safe_positive_u64(value, "span_count")?;
-    let error_span_count = require_safe_u64(value, "error_span_count")?;
-    let service_count = require_safe_positive_u64(value, "service_count")?;
-    let project_count = require_safe_positive_u64(value, "project_count")?;
-    if error_span_count > span_count {
-        return Err(invalid_response());
-    }
-    let _started_at = require_timestamp(value, "started_at")?;
-    require_nonnegative_integer(value, "duration_ms")?;
-    for name in ["root_span", "slowest_child_span"] {
-        if let Some(span) = optional_object(value.get(name))? {
-            validate_action_span_summary(span)?;
-        }
-    }
-    for name in ["slowest_path", "error_spans"] {
-        let spans = value
-            .get(name)
-            .and_then(Value::as_array)
-            .ok_or_else(invalid_response)?;
-        for span in spans {
-            validate_action_span_summary(span.as_object().ok_or_else(invalid_response)?)?;
-        }
-    }
-    let services = value
-        .get("services")
-        .and_then(Value::as_array)
-        .ok_or_else(invalid_response)?;
-    if service_count != u64::try_from(services.len()).map_err(|_error| invalid_response())? {
-        return Err(invalid_response());
-    }
-    for service in services {
-        let service = service.as_object().ok_or_else(invalid_response)?;
-        require_exact_fields(
-            service,
-            &[
-                "service_name",
-                "span_count",
-                "error_span_count",
-                "max_duration_ms",
-            ],
-        )?;
-        let _name = require_string(service, "service_name")?;
-        let spans = require_safe_positive_u64(service, "span_count")?;
-        let errors = require_safe_u64(service, "error_span_count")?;
-        if errors > spans {
-            return Err(invalid_response());
-        }
-        require_nonnegative_integer(service, "max_duration_ms")?;
-    }
-    validate_string_array(value, "releases", 256)?;
-    validate_string_array(value, "environments", 256)?;
-    let _ = project_count;
-    Ok(())
-}
-
 /// Validates one bounded action correlation collection and every privacy-safe item shape.
 fn validate_action_collection(
     value: &Map<String, Value>,
     kind: &str,
     project_id: &str,
+    environment: &str,
+    release: &str,
     trace: &Map<String, Value>,
 ) -> Result<(), RuntimeError> {
-    require_exact_fields(value, &["status", "items", "truncated"])?;
-    validate_availability(value, "status")?;
-    let status = require_string(value, "status")?;
-    let items = value
-        .get("items")
-        .and_then(Value::as_array)
-        .ok_or_else(invalid_response)?;
-    if items.len() > 20 || !items.is_empty() && status != "available" {
-        return Err(invalid_response());
-    }
-    let _truncated = require_bool(value, "truncated")?;
-    for item in items {
-        let item = item.as_object().ok_or_else(invalid_response)?;
+    validate_correlated_collection(value, 20, true, |item| {
         match kind {
-            "issues" => validate_action_issue_item(item, project_id)?,
-            "trace_logs" => validate_action_log_item(item, project_id, "exact_trace", trace)?,
-            "nearby_logs" => validate_action_log_item(item, project_id, "nearby_scope", trace)?,
-            "actions" => validate_action_related_action(item, project_id)?,
-            "metrics" => validate_action_metric_item(item, project_id)?,
+            "issues" => {
+                let _signal = validate_correlated_signal(
+                    item,
+                    project_id,
+                    environment,
+                    release,
+                    "issue",
+                    None,
+                )?;
+            }
+            "trace_logs" | "nearby_logs" => validate_correlated_log(
+                item,
+                project_id,
+                environment,
+                release,
+                None,
+                Some((
+                    if kind == "trace_logs" {
+                        "exact_trace"
+                    } else {
+                        "nearby_scope"
+                    },
+                    optional_string(trace, "trace_id")?,
+                )),
+            )?,
+            "actions" | "metrics" => {
+                let _signal = validate_correlated_signal(
+                    item,
+                    project_id,
+                    environment,
+                    release,
+                    kind.trim_end_matches('s'),
+                    None,
+                )?;
+            }
             _ => return Err(invalid_response()),
         }
-    }
-    Ok(())
-}
-
-/// Validates one grouped-issue occurrence linked to the exact trace.
-fn validate_action_issue_item(
-    value: &Map<String, Value>,
-    project_id: &str,
-) -> Result<(), RuntimeError> {
-    require_exact_fields(
-        value,
-        &[
-            "id",
-            "issue_id",
-            "project_id",
-            "severity",
-            "title",
-            "message",
-            "occurred_at",
-            "service_name",
-            "environment",
-            "release",
-        ],
-    )?;
-    require_uuid(value, "id")?;
-    require_uuid(value, "issue_id")?;
-    require_string_equals(value, "project_id", project_id)?;
-    for name in [
-        "severity",
-        "title",
-        "message",
-        "service_name",
-        "environment",
-        "release",
-    ] {
-        let _field = require_string(value, name)?;
-    }
-    let _occurred_at = require_timestamp(value, "occurred_at")?;
-    Ok(())
-}
-
-/// Validates one exact-trace or same-scope log without private structured attributes.
-fn validate_action_log_item(
-    value: &Map<String, Value>,
-    project_id: &str,
-    relationship: &str,
-    trace: &Map<String, Value>,
-) -> Result<(), RuntimeError> {
-    require_exact_fields(
-        value,
-        &[
-            "id",
-            "project_id",
-            "severity",
-            "source",
-            "message",
-            "occurred_at",
-            "service_name",
-            "trace_id",
-            "span_id",
-            "environment",
-            "release",
-            "relationship",
-        ],
-    )?;
-    require_uuid(value, "id")?;
-    require_string_equals(value, "project_id", project_id)?;
-    for name in [
-        "severity",
-        "source",
-        "message",
-        "service_name",
-        "environment",
-        "release",
-    ] {
-        let _field = require_string(value, name)?;
-    }
-    let _occurred_at = require_timestamp(value, "occurred_at")?;
-    let trace_id = optional_string(value, "trace_id")?;
-    if trace_id.is_some_and(|trace| !is_w3c_trace_id(trace)) {
-        return Err(invalid_response());
-    }
-    let _span_id = validate_optional_span_id(value, "span_id")?;
-    require_string_equals(value, "relationship", relationship)?;
-    if relationship == "exact_trace" && trace_id != optional_string(trace, "trace_id")? {
-        return Err(invalid_response());
-    }
-    Ok(())
-}
-
-/// Validates one other action linked by the exact trace.
-fn validate_action_related_action(
-    value: &Map<String, Value>,
-    project_id: &str,
-) -> Result<(), RuntimeError> {
-    require_exact_fields(
-        value,
-        &[
-            "id",
-            "project_id",
-            "name",
-            "occurred_at",
-            "service_name",
-            "environment",
-            "release",
-        ],
-    )?;
-    require_uuid(value, "id")?;
-    require_string_equals(value, "project_id", project_id)?;
-    for name in ["name", "service_name", "environment", "release"] {
-        let _field = require_string(value, name)?;
-    }
-    let _occurred_at = require_timestamp(value, "occurred_at")?;
-    Ok(())
-}
-
-/// Validates one metric exemplar without inferring anomaly or causality.
-fn validate_action_metric_item(
-    value: &Map<String, Value>,
-    project_id: &str,
-) -> Result<(), RuntimeError> {
-    require_exact_fields(
-        value,
-        &[
-            "id",
-            "project_id",
-            "name",
-            "kind",
-            "value",
-            "unit",
-            "temporality",
-            "occurred_at",
-            "service_name",
-            "environment",
-            "release",
-        ],
-    )?;
-    require_uuid(value, "id")?;
-    require_string_equals(value, "project_id", project_id)?;
-    for name in ["name", "kind", "service_name", "environment", "release"] {
-        let _field = require_string(value, name)?;
-    }
-    let _value = require_finite_number(value, "value")?;
-    let _unit = optional_string(value, "unit")?;
-    let _temporality = optional_string(value, "temporality")?;
-    let _occurred_at = require_timestamp(value, "occurred_at")?;
-    Ok(())
+        Ok(())
+    })
+    .map(drop)
 }
 
 /// Validates analysis enum values and derives the strongest supported status.
@@ -958,7 +734,7 @@ fn validate_action_timeline(
             return Err(invalid_response());
         }
         let id = require_string(item, "id")?;
-        if kind == "span" && !is_w3c_span_id(id) || kind != "span" && !is_uuid(id) {
+        if kind == "span" && !is_w3c_id(id, 16) || kind != "span" && !is_uuid(id) {
             return Err(invalid_response());
         }
         let relationship = require_string(item, "relationship")?;
@@ -972,7 +748,7 @@ fn validate_action_timeline(
         let name = require_string(item, "name")?;
         let _message = optional_string(item, "message")?;
         let service_name = require_string(item, "service_name")?;
-        let _span_id = validate_optional_span_id(item, "span_id")?;
+        let _span_id = nullable_w3c_id(item, "span_id", 16)?;
         let _severity = optional_string(item, "severity")?;
         let status = optional_string(item, "status")?;
         match item.get("duration_ms") {
@@ -1182,7 +958,7 @@ fn validate_action_next_action(
         return Err(invalid_response());
     }
     let trace_id = optional_string(action, "trace_id")?;
-    let span_id = validate_optional_span_id(action, "span_id")?;
+    let span_id = nullable_w3c_id(action, "span_id", 16)?;
     let trace_mismatch = trace_id.is_some_and(|id| Some(id) != expected_trace);
     let span_mismatch = span_id.is_some_and(|id| Some(id) != expected_span);
     if trace_mismatch
@@ -1268,44 +1044,6 @@ fn collection_items<'a>(
         .and_then(Value::as_array)
         .map(Vec::as_slice)
         .ok_or_else(invalid_response)
-}
-
-/// Returns an explicitly nullable object while rejecting omission and wrong types.
-const fn optional_object(
-    value: Option<&Value>,
-) -> Result<Option<&Map<String, Value>>, RuntimeError> {
-    match value {
-        Some(Value::Null) => Ok(None),
-        Some(Value::Object(value)) => Ok(Some(value)),
-        _ => Err(invalid_response()),
-    }
-}
-
-/// Returns whether one identifier is a non-zero canonical W3C trace ID.
-fn is_w3c_trace_id(value: &str) -> bool {
-    value.len() == 32
-        && value.bytes().all(|byte| byte.is_ascii_hexdigit())
-        && value.bytes().any(|byte| byte != b'0')
-}
-
-/// Returns whether one identifier is a non-zero canonical W3C span ID.
-fn is_w3c_span_id(value: &str) -> bool {
-    value.len() == 16
-        && value.bytes().all(|byte| byte.is_ascii_hexdigit())
-        && value.bytes().any(|byte| byte != b'0')
-}
-
-/// Validates one explicitly nullable W3C span ID and returns it.
-fn validate_optional_span_id<'a>(
-    value: &'a Map<String, Value>,
-    name: &str,
-) -> Result<Option<&'a str>, RuntimeError> {
-    let span_id = optional_string(value, name)?;
-    if span_id.is_some_and(|span_id| !is_w3c_span_id(span_id)) {
-        Err(invalid_response())
-    } else {
-        Ok(span_id)
-    }
 }
 
 /// Builds a detailed privacy-bounded product-action investigation.

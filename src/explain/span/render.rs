@@ -3,10 +3,9 @@
 use serde_json::Value;
 
 use super::super::{
-    append_action_previews, append_evidence, append_issue_previews, append_labeled_basis_points,
-    append_labeled_bool, append_labeled_integer, append_labeled_number, append_labeled_text,
-    append_log_previews, append_metric_previews, append_named_pair, append_runtime_context,
-    append_string_array, collect_scalar_fields, field_text,
+    append_evidence, append_labeled_basis_points, append_labeled_bool, append_labeled_integer,
+    append_labeled_number, append_labeled_text, append_named_pair, append_related_collections,
+    append_runtime_context, append_string_array, collect_scalar_fields, field_text,
 };
 
 /// Maximum topology children rendered in the compact human view.
@@ -254,56 +253,16 @@ fn append_correlations(output: &mut String, value: Option<&Value>) {
         append_labeled_bool(output, "truncated", trace, "truncated");
         output.push('\n');
     }
-    append_related_collection(
+    append_related_collections(
         output,
         correlations,
-        "logs",
-        "Exact-span logs",
-        append_log_previews,
+        &[
+            ("logs", "Exact-span logs"),
+            ("issues", "Same-trace issues"),
+            ("actions", "Same-trace actions"),
+            ("metrics", "Same-trace metrics"),
+        ],
     );
-    append_related_collection(
-        output,
-        correlations,
-        "issues",
-        "Same-trace issues",
-        append_issue_previews,
-    );
-    append_related_collection(
-        output,
-        correlations,
-        "actions",
-        "Same-trace actions",
-        append_action_previews,
-    );
-    append_related_collection(
-        output,
-        correlations,
-        "metrics",
-        "Same-trace metrics",
-        append_metric_previews,
-    );
-}
-
-/// Appends one availability receipt and representative related items.
-fn append_related_collection(
-    output: &mut String,
-    correlations: &Value,
-    name: &str,
-    label: &str,
-    preview: fn(&mut String, Option<&[Value]>),
-) {
-    let Some(collection) = correlations.get(name) else {
-        return;
-    };
-    output.push_str(label);
-    output.push(':');
-    append_labeled_text(output, "status", collection, "status", 40);
-    let items = collection.get("items").and_then(Value::as_array);
-    output.push_str(" count=");
-    output.push_str(items.map_or(0, Vec::len).to_string().as_str());
-    append_labeled_bool(output, "truncated", collection, "truncated");
-    output.push('\n');
-    preview(output, items.map(Vec::as_slice));
 }
 
 /// Appends the mixed-signal causal timeline with signed offsets.

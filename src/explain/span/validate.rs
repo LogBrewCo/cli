@@ -15,9 +15,9 @@ use super::super::projection::{
     validate_projection,
 };
 use super::super::{
-    MAX_SAFE_JSON_INTEGER, invalid_response, require_bool, require_exact_fields, require_safe_u64,
-    require_string, require_timestamp, require_u64, required_object, response_object,
-    validate_schema_version,
+    MAX_SAFE_JSON_INTEGER, invalid_response, is_error_status, is_w3c_id, nullable_w3c_id,
+    require_bool, require_exact_fields, require_safe_u64, require_string, require_timestamp,
+    require_u64, required_object, response_object, validate_schema_version,
 };
 use crate::ids::is_uuid;
 use crate::{ExplainSpanTarget, RuntimeError};
@@ -693,39 +693,6 @@ pub(super) fn nullable_nonnegative_number(
             .ok_or_else(invalid_response),
         None => Err(invalid_response()),
     }
-}
-
-/// Returns one exact span or trace identifier when present.
-pub(super) fn nullable_w3c_id<'a>(
-    value: &'a Map<String, Value>,
-    name: &str,
-    length: usize,
-) -> Result<Option<&'a str>, RuntimeError> {
-    let id = nullable_string(value, name)?;
-    if id.is_some_and(|id| !is_w3c_id(id, length)) {
-        Err(invalid_response())
-    } else {
-        Ok(id)
-    }
-}
-
-/// Returns whether a string is one canonical non-zero lowercase W3C identifier.
-pub(super) fn is_w3c_id(value: &str, length: usize) -> bool {
-    value.len() == length
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-        && value.bytes().any(|byte| byte != b'0')
-}
-
-/// Returns whether a normalized status represents an error outcome.
-pub(super) fn is_error_status(value: Option<&str>) -> bool {
-    value.is_some_and(|value| {
-        matches!(
-            value.to_ascii_lowercase().as_str(),
-            "error" | "cancelled" | "deadline_exceeded"
-        )
-    })
 }
 
 /// Returns one allowed optional-evidence status without accepting `not_linked` here.
