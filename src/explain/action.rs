@@ -528,7 +528,7 @@ fn validate_action_collection(
     validate_correlated_collection(value, 20, true, |item| {
         match kind {
             "issues" => {
-                let _signal = validate_correlated_signal(
+                let _ = validate_correlated_signal(
                     item,
                     project_id,
                     environment,
@@ -553,7 +553,7 @@ fn validate_action_collection(
                 )),
             )?,
             "actions" | "metrics" => {
-                let _signal = validate_correlated_signal(
+                let _ = validate_correlated_signal(
                     item,
                     project_id,
                     environment,
