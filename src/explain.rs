@@ -328,9 +328,7 @@ fn validate_issue_response(
     if !issue_lifecycle::is_persisted_status(subject_status) {
         return Err(invalid_response());
     }
-    let _severity = require_string(subject, "severity")?;
-    let _title = require_string(subject, "title")?;
-    let _message = require_string(subject, "message")?;
+    validate_strings(subject, &["severity", "title", "message"])?;
     let occurrence_count = require_safe_positive_u64(subject, "occurrence_count")?;
     let first_seen = require_timestamp(subject, "first_seen_at")?;
     let last_seen = require_timestamp(subject, "last_seen_at")?;
@@ -1152,13 +1150,9 @@ fn validate_log_response(value: &Value, expected_id: &str) -> Result<(), Runtime
     require_string_equals(subject, "id", expected_id)?;
     require_uuid(subject, "project_id")?;
     require_string_equals(subject, "content_trust", "untrusted_telemetry")?;
-    let _severity = require_string(subject, "severity")?;
-    let _source = require_string(subject, "source")?;
-    let _message = require_string(subject, "message")?;
+    validate_strings(subject, &["severity", "source", "message"])?;
     let _occurred_at = require_timestamp(subject, "occurred_at")?;
-    let _service = require_string(subject, "service_name")?;
-    let _environment = require_string(subject, "environment")?;
-    let _release = require_string(subject, "release")?;
+    validate_strings(subject, &["service_name", "environment", "release"])?;
     validate_name_version(required_object(subject, "sdk")?)?;
     validate_nullable_object(response, "context")?;
 
@@ -1171,8 +1165,7 @@ fn validate_log_response(value: &Value, expected_id: &str) -> Result<(), Runtime
     let _truncated = require_bool(attributes, "truncated")?;
 
     let analysis = required_object(response, "analysis")?;
-    let _analysis_status = require_string(analysis, "status")?;
-    let _causality = require_string(analysis, "causality")?;
+    validate_strings(analysis, &["status", "causality"])?;
     validate_string_array(analysis, "observations", 32)?;
 
     validate_log_correlations(required_object(response, "correlations")?)?;
@@ -1210,8 +1203,7 @@ fn validate_trace_response(value: &Value, expected_id: &str) -> Result<(), Runti
     validate_string_array(subject, "environments", 256)?;
 
     let analysis = required_object(response, "analysis")?;
-    let _analysis_status = require_string(analysis, "status")?;
-    let _causality = require_string(analysis, "causality")?;
+    validate_strings(analysis, &["status", "causality"])?;
     for name in ["root_span", "first_error_span", "bottleneck_span"] {
         validate_nullable_object(analysis, name)?;
     }
@@ -1823,9 +1815,7 @@ fn validate_shared_span_summary(value: &Map<String, Value>) -> Result<(), Runtim
         return Err(invalid_response());
     }
     let _parent_span_id = nullable_w3c_id(value, "parent_span_id", 16)?;
-    for name in ["name", "operation", "service_name"] {
-        let _value = require_string(value, name)?;
-    }
+    validate_strings(value, &["name", "operation", "service_name"])?;
     let _status = optional_string(value, "status")?;
     let _started_at = require_timestamp(value, "started_at")?;
     let _duration_ms = require_safe_u64(value, "duration_ms")?;
@@ -1921,9 +1911,7 @@ fn validate_correlated_signal<'a>(
             {
                 return Err(invalid_response());
             }
-            for name in ["title", "message"] {
-                let _value = require_string(value, name)?;
-            }
+            validate_strings(value, &["title", "message"])?;
             Some(issue_id)
         }
         "action" => {
@@ -1931,9 +1919,7 @@ fn validate_correlated_signal<'a>(
             None
         }
         "metric" => {
-            for name in ["name", "kind"] {
-                let _value = require_string(value, name)?;
-            }
+            validate_strings(value, &["name", "kind"])?;
             let _value = require_finite_number(value, "value")?;
             let _unit = optional_string(value, "unit")?;
             let _temporality = optional_string(value, "temporality")?;
@@ -1994,9 +1980,7 @@ fn validate_correlated_log(
     {
         return Err(invalid_response());
     }
-    for name in ["source", "message", "service_name"] {
-        let _value = require_string(value, name)?;
-    }
+    validate_strings(value, &["source", "message", "service_name"])?;
     let _occurred_at = require_timestamp(value, "occurred_at")?;
     let span_id = nullable_w3c_id(value, "span_id", 16)?;
     if expected_span_id.is_some() && span_id != expected_span_id {
@@ -2014,9 +1998,7 @@ fn validate_correlated_log(
 
 /// Validates one required SDK or runtime name/version object.
 fn validate_name_version(value: &Map<String, Value>) -> Result<(), RuntimeError> {
-    let _name = require_string(value, "name")?;
-    let _version = require_string(value, "version")?;
-    Ok(())
+    validate_strings(value, &["name", "version"])
 }
 
 /// Validates one required nullable object field.
@@ -2136,8 +2118,7 @@ fn validate_correlated_collection(
         let item = item.as_object().ok_or_else(invalid_response)?;
         validate_item(item)?;
         let order = (
-            time::parse_utc_millis(require_timestamp(item, "occurred_at")?)
-                .ok_or_else(invalid_response)?,
+            require_timestamp_millis(item, "occurred_at")?,
             require_string(item, "id")?,
         );
         if previous.is_some_and(|previous| previous >= order) {
@@ -2280,8 +2261,7 @@ fn validate_trace_correlations(value: &Map<String, Value>) -> Result<(), Runtime
     for scope in scopes {
         let scope = scope.as_object().ok_or_else(invalid_response)?;
         require_uuid(scope, "project_id")?;
-        let _environment = require_string(scope, "environment")?;
-        let _release = require_string(scope, "release")?;
+        validate_strings(scope, &["environment", "release"])?;
     }
     let _truncated = require_bool(window, "truncated")?;
     for name in ["issues", "logs", "actions", "metrics"] {
@@ -2292,10 +2272,7 @@ fn validate_trace_correlations(value: &Map<String, Value>) -> Result<(), Runtime
 
 /// Validates one project-independent release scope.
 fn validate_release_scope(value: &Map<String, Value>) -> Result<(), RuntimeError> {
-    let _release = require_string(value, "release")?;
-    let _environment = require_string(value, "environment")?;
-    let _service = require_string(value, "service_name")?;
-    Ok(())
+    validate_strings(value, &["release", "environment", "service_name"])
 }
 
 /// Binds one exact correlated release scope to its selected subject.
@@ -2380,10 +2357,8 @@ fn validate_deployment_boundary<'a>(
     let environment = require_string(value, "environment")?;
     let service = require_string(value, "service_name")?;
     let status = require_string(value, "status")?;
-    let started_millis = time::parse_utc_millis(require_timestamp(value, "started_at")?)
-        .ok_or_else(invalid_response)?;
-    let finished_millis = time::parse_utc_millis(require_timestamp(value, "finished_at")?)
-        .ok_or_else(invalid_response)?;
+    let started_millis = require_timestamp_millis(value, "started_at")?;
+    let finished_millis = require_timestamp_millis(value, "finished_at")?;
     let commit = optional_string(value, "commit_sha")?;
     let valid = id.len() <= 128
         && id
@@ -2454,8 +2429,7 @@ fn validate_issue_deployment(
                 ..DeploymentExpectation::default()
             },
         )?;
-        let occurred = time::parse_utc_millis(require_timestamp(event, "occurred_at")?)
-            .ok_or_else(invalid_response)?;
+        let occurred = require_timestamp_millis(event, "occurred_at")?;
         let elapsed = occurred
             .checked_sub(boundary.finished_millis)
             .and_then(|value| u64::try_from(value).ok())
@@ -2495,19 +2469,19 @@ fn validate_timeline(value: &Map<String, Value>) -> Result<(), RuntimeError> {
     let items = value
         .get("items")
         .and_then(Value::as_array)
+        .filter(|items| items.len() <= 1_000)
         .ok_or_else(invalid_response)?;
-    if items.len() > 1_000 {
-        return Err(invalid_response());
-    }
     let mut previous_time = None;
     for item in items {
         let item = item.as_object().ok_or_else(invalid_response)?;
         let _kind = require_string(item, "kind")?;
-        let occurred_at = require_timestamp(item, "occurred_at")?;
-        if previous_time.is_some_and(|previous| previous > occurred_at) {
+        let occurred_at = require_timestamp_millis(item, "occurred_at")?;
+        if previous_time
+            .replace(occurred_at)
+            .is_some_and(|previous| previous > occurred_at)
+        {
             return Err(invalid_response());
         }
-        previous_time = Some(occurred_at);
     }
     let _truncated = require_bool(value, "truncated")?;
     Ok(())
@@ -2601,9 +2575,7 @@ fn validate_next_actions(value: Option<&Value>) -> Result<(), RuntimeError> {
         {
             return Err(invalid_response());
         }
-        let _code = require_string(action, "code")?;
-        let _target = require_string(action, "target")?;
-        let _reason = require_string(action, "reason")?;
+        validate_strings(action, &["code", "target", "reason"])?;
     }
     Ok(())
 }
@@ -2681,6 +2653,13 @@ fn require_string<'a>(value: &'a Map<String, Value>, name: &str) -> Result<&'a s
         .and_then(Value::as_str)
         .filter(|value| !value.is_empty())
         .ok_or_else(invalid_response)
+}
+
+/// Requires every named field to contain a non-empty string.
+fn validate_strings(value: &Map<String, Value>, names: &[&str]) -> Result<(), RuntimeError> {
+    names
+        .iter()
+        .try_for_each(|name| require_string(value, name).map(|_| ()))
 }
 
 /// Returns one optional string field while rejecting other types.
@@ -2767,11 +2746,14 @@ fn require_timestamp<'a>(
     name: &str,
 ) -> Result<&'a str, RuntimeError> {
     let timestamp = require_string(value, name)?;
-    if crate::render::is_rfc3339_utc(timestamp) {
-        Ok(timestamp)
-    } else {
-        Err(invalid_response())
-    }
+    crate::render::is_rfc3339_utc(timestamp)
+        .then_some(timestamp)
+        .ok_or_else(invalid_response)
+}
+
+/// Returns one UTC timestamp normalized to the API's millisecond precision.
+fn require_timestamp_millis(value: &Map<String, Value>, name: &str) -> Result<i128, RuntimeError> {
+    time::parse_utc_millis(require_timestamp(value, name)?).ok_or_else(invalid_response)
 }
 
 /// Builds one bounded human projection after contract validation.

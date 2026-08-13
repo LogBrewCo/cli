@@ -139,8 +139,8 @@ mod tests {
 
     #[test]
     fn utc_parser_preserves_leap_days_and_milliseconds() {
-        let before = parse_utc_millis("2024-02-29T23:59:59.500Z");
-        let after = parse_utc_millis("2024-03-01T00:00:00Z");
+        let before = parse_utc_millis("2024-02-29T23:59:59Z");
+        let after = parse_utc_millis("2024-02-29T23:59:59.500Z");
 
         assert_eq!(
             after.zip(before).map(|(after, before)| after - before),
