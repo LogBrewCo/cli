@@ -52,7 +52,7 @@ fn parses_only_the_explicit_issue_investigation_grammar() {
         exact.http_path().as_deref(),
         Some(
             "/api/telemetry/issues/11111111-1111-4111-8111-111111111111/investigation?\
-             response_version=7&occurrence_id=22222222-2222-4222-8222-222222222222"
+             response_version=8&occurrence_id=22222222-2222-4222-8222-222222222222"
         )
     );
     assert!(exact.wants_json());
@@ -69,7 +69,7 @@ fn parses_only_the_explicit_issue_investigation_grammar() {
         latest.http_path().as_deref(),
         Some(
             "/api/telemetry/issues/11111111-1111-4111-8111-111111111111/investigation?\
-             response_version=7&selection=latest"
+             response_version=8&selection=latest"
         )
     );
 }
@@ -125,8 +125,9 @@ fn help_describes_the_complete_versioned_bundle() {
     assert!(text.contains("approximate affected-user coverage and limitations"));
     assert!(text.contains("trace, related logs, actions, metric exemplars"));
     assert!(text.contains("same contract as logbrew explain issue"));
-    assert!(text.contains("exact validated schema-version-7 response"));
+    assert!(text.contains("exact validated schema-version-8 response"));
     assert!(text.contains("deterministic grouping"));
+    assert!(text.contains("exact preceding-deployment evidence"));
     assert!(text.contains("explicit selected, first, latest, and recommended occurrence"));
     assert!(text.contains("status activity and server-observed regression evidence"));
     assert!(text.contains("zero-filled occurrence trend"));
@@ -248,6 +249,9 @@ async fn human_output_surfaces_failure_fix_timeline_correlations_and_limits()
          privacy_filtered=1 historical_unindexed=0 index=100.00% identified_share=66.66%",
         "User-impact limitations: approximate_distinct_count, privacy_filtered_subject_context",
         "Reported impact (unverified): segment=paying failed_action=checkout.submit",
+        "Preceding deployment: status=available id=deploy-123 result=succeeded \
+         started=2026-08-04T07:50:00Z finished=2026-08-04T07:52:00Z \
+         commit=0123456789abcdef before_occurrence_ms=479000 causality=evidence_only",
         "Trace: status=available trace=4bf92f3577b34da6a3ce929d0e0e4736 spans=3 errors=1",
         "Related logs: status=available count=1",
         "Log: message=provider returned 503 severity=error source=payments service=checkout-api",
@@ -568,7 +572,7 @@ async fn mount_bundle(server: &MockServer, bundle: serde_json::Value, expected_r
         .and(path(format!(
             "/api/telemetry/issues/{ISSUE_ID}/investigation"
         )))
-        .and(query_param("response_version", "7"))
+        .and(query_param("response_version", "8"))
         .and(query_param("selection", "recommended"))
         .and(header("authorization", "Bearer test-token"))
         .respond_with(ResponseTemplate::new(200).set_body_json(bundle))
@@ -586,7 +590,7 @@ async fn mount_exact_bundle(
         .and(path(format!(
             "/api/telemetry/issues/{ISSUE_ID}/investigation"
         )))
-        .and(query_param("response_version", "7"))
+        .and(query_param("response_version", "8"))
         .and(query_param("occurrence_id", OCCURRENCE_ID))
         .and(header("authorization", "Bearer test-token"))
         .respond_with(ResponseTemplate::new(200).set_body_json(bundle))
@@ -682,7 +686,7 @@ fn rich_investigation_bundle() -> serde_json::Value {
         "0.1.4",
     );
     serde_json::json!({
-        "schema_version": 7,
+        "schema_version": 8,
         "subject": {
             "kind": "issue",
             "id": ISSUE_ID,
@@ -952,7 +956,20 @@ fn rich_investigation_bundle() -> serde_json::Value {
             "release": {
                 "release": "checkout@1.2.3",
                 "environment": "production",
-                "service_name": "checkout-api"
+                "service_name": "checkout-api",
+                "deployment_status": "available",
+                "deployment": {
+                    "deployment_id": "deploy-123",
+                    "release": "checkout@1.2.3",
+                    "environment": "production",
+                    "service_name": "checkout-api",
+                    "status": "succeeded",
+                    "started_at": "2026-08-04T07:50:00Z",
+                    "finished_at": "2026-08-04T07:52:00Z",
+                    "commit_sha": "0123456789abcdef"
+                },
+                "time_since_deployment_ms": 479000,
+                "deployment_causality": "evidence_only"
             }
         },
         "evidence": {
@@ -960,6 +977,9 @@ fn rich_investigation_bundle() -> serde_json::Value {
             "captured_fields": [
                 "actions",
                 "breadcrumbs",
+                "deployment",
+                "deployment.commit_sha",
+                "deployment.timing",
                 "exception",
                 "exception_chain",
                 "exception_chain.messages",
@@ -1499,6 +1519,18 @@ fn invalid_occurrence_selection_bundles() -> Vec<serde_json::Value> {
         (
             "/correlations/release/release",
             serde_json::json!("checkout@hostile-release-marker"),
+        ),
+        (
+            "/correlations/release/time_since_deployment_ms",
+            serde_json::json!(478_999),
+        ),
+        (
+            "/correlations/release/deployment/release",
+            serde_json::json!("checkout@2.0.0"),
+        ),
+        (
+            "/correlations/release/deployment_causality",
+            serde_json::json!("causal"),
         ),
         (
             "/event/context/resource/service/name",

@@ -6,12 +6,12 @@ use std::collections::BTreeSet;
 
 use serde_json::{Map, Value};
 
-use super::time::parse_utc_millis;
 use super::{
     invalid_response, optional_safe_u64, require_exact_fields, require_safe_positive_u64,
     require_safe_u64, require_string, require_timestamp, required_object,
 };
 use crate::RuntimeError;
+use crate::time::parse_utc_millis;
 
 /// Appends the bounded human-readable occurrence-analysis projection when available.
 pub(super) fn render(output: &mut String, value: Option<&Value>) {

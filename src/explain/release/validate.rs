@@ -4,13 +4,14 @@ use std::collections::BTreeSet;
 
 use serde_json::{Map, Value};
 
-use super::super::time::parse_utc_millis;
 use super::super::{
-    invalid_response, optional_string, require_bool, require_exact_fields, require_finite_number,
-    require_safe_positive_u64, require_safe_u64, require_string, require_string_equals,
-    require_timestamp, required_object,
+    DeploymentBoundary, DeploymentExpectation, invalid_response, optional_string, require_bool,
+    require_exact_fields, require_finite_number, require_safe_positive_u64, require_safe_u64,
+    require_string, require_string_equals, require_timestamp, required_object,
+    validate_deployment_boundary,
 };
 use crate::ids::{is_trace_id, is_uuid};
+use crate::time::parse_utc_millis;
 use crate::{ExplainReleaseTarget, RuntimeError};
 
 /// Public cap for SDK/version/stream aggregates.
@@ -104,18 +105,6 @@ struct SignalFacts {
     metrics: CollectionFacts,
     /// Whether retained bounded logs contain error or critical evidence.
     log_failure_observed: bool,
-}
-
-/// Validated deployment boundary facts.
-struct DeploymentFacts<'a> {
-    /// Exact deployed release.
-    release: &'a str,
-    /// Terminal deployment result.
-    status: &'a str,
-    /// Parsed deployment start.
-    started_millis: i128,
-    /// Parsed deployment finish.
-    finished_millis: i128,
 }
 
 /// Validated previous-release snapshot facts.
@@ -727,66 +716,24 @@ fn validate_deployment<'a>(
     deployment: &'a Map<String, Value>,
     subject: &SubjectFacts<'_>,
     is_subject: bool,
-) -> Result<DeploymentFacts<'a>, RuntimeError> {
-    require_exact_fields(
+) -> Result<DeploymentBoundary<'a>, RuntimeError> {
+    validate_deployment_boundary(
         deployment,
-        &[
-            "id",
-            "deployment_id",
-            "project_id",
-            "release",
-            "environment",
-            "service_name",
-            "status",
-            "started_at",
-            "finished_at",
-            "commit_sha",
-        ],
-    )?;
-    if !is_uuid(require_string(deployment, "id")?) {
-        return Err(invalid_response());
-    }
-    let _deployment_id = require_string(deployment, "deployment_id")?;
-    require_string_equals(deployment, "project_id", subject.project_id)?;
-    require_string_equals(deployment, "environment", subject.environment)?;
-    require_string_equals(deployment, "service_name", subject.service_name)?;
-    let release = require_string(deployment, "release")?;
-    if is_subject && release != subject.release {
-        return Err(invalid_response());
-    }
-    let status = require_string(deployment, "status")?;
-    if !matches!(status, "succeeded" | "failed") || !is_subject && status != "succeeded" {
-        return Err(invalid_response());
-    }
-    let started_at = require_timestamp(deployment, "started_at")?;
-    let finished_at = require_timestamp(deployment, "finished_at")?;
-    let started_millis = timestamp_millis(started_at)?;
-    let finished_millis = timestamp_millis(finished_at)?;
-    if started_millis > finished_millis {
-        return Err(invalid_response());
-    }
-    if let Some(commit) = optional_string(deployment, "commit_sha")? {
-        if !(7..=64).contains(&commit.len())
-            || !commit
-                .bytes()
-                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
-        {
-            return Err(invalid_response());
-        }
-    }
-    Ok(DeploymentFacts {
-        release,
-        status,
-        started_millis,
-        finished_millis,
-    })
+        DeploymentExpectation {
+            project_id: Some(subject.project_id),
+            release: is_subject.then_some(subject.release),
+            environment: Some(subject.environment),
+            service_name: Some(subject.service_name),
+            succeeded: !is_subject,
+        },
+    )
 }
 
 /// Validates the previous release snapshot against the prior successful deployment scope.
 fn validate_snapshot(
     snapshot: &Map<String, Value>,
     subject: &SubjectFacts<'_>,
-    deployment: &DeploymentFacts<'_>,
+    deployment: &DeploymentBoundary<'_>,
 ) -> Result<SnapshotFacts, RuntimeError> {
     require_exact_fields(
         snapshot,
@@ -883,7 +830,7 @@ fn validate_changes(
 fn validate_limitations(
     details: &Map<String, Value>,
     status: Availability,
-    subject: Option<&DeploymentFacts<'_>>,
+    subject: Option<&DeploymentBoundary<'_>>,
     current_rate: Option<u64>,
     previous_rate: Option<u64>,
 ) -> Result<(), RuntimeError> {

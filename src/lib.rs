@@ -42,6 +42,7 @@ pub mod setup;
 #[doc(hidden)]
 pub mod status;
 mod support;
+mod time;
 mod usage;
 #[doc(hidden)]
 pub mod version;
@@ -900,7 +901,7 @@ pub struct ExplainReleaseTarget {
 }
 
 /// Terminal result of one completed deployment attempt.
-#[derive(Debug, Clone, Copy, serde::Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum DeploymentStatus {
     /// The deployment completed successfully.
@@ -921,9 +922,10 @@ impl DeploymentStatus {
 }
 
 /// Exact completed deployment boundary sent by `logbrew deploy`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, serde::Serialize, PartialEq, Eq)]
 pub struct DeploymentRecordOptions {
     /// Caller-owned deployment identity used for idempotent retries.
+    #[serde(skip_serializing)]
     pub deployment_id: String,
     /// Active account-owned project identifier.
     pub project_id: String,
@@ -1571,16 +1573,7 @@ impl Command {
                 target: SetTarget::IssueStatus { status, .. },
                 ..
             } => Some(serde_json::json!({ "status": status })),
-            Self::Deploy { options, .. } => Some(serde_json::json!({
-                "project_id": options.project_id,
-                "release": options.release,
-                "environment": options.environment,
-                "service_name": options.service_name,
-                "status": options.status.as_str(),
-                "started_at": options.started_at,
-                "finished_at": options.finished_at,
-                "commit_sha": options.commit_sha,
-            })),
+            Self::Deploy { options, .. } => serde_json::to_value(options).ok(),
             Self::AnalyticsPaths { options, .. } => Some(analytics::request_body(options)),
             Self::AnalyticsCompare { options, .. } => {
                 Some(analytics_segments::request_body(options))
@@ -2419,7 +2412,7 @@ fn explain_path(target: &ExplainTarget) -> String {
     }
 }
 
-/// Builds one explicit version-7 issue investigation path.
+/// Builds one explicit version-8 issue investigation path.
 fn issue_explain_path(id: &str, occurrence: &IssueOccurrenceSelection) -> String {
     let base = format!(
         "/api/telemetry/issues/{}/investigation",
@@ -2433,7 +2426,7 @@ fn issue_explain_path(id: &str, occurrence: &IssueOccurrenceSelection) -> String
     };
     path_with_query(
         base.as_str(),
-        &[("response_version", Some("7")), (name, Some(value))],
+        &[("response_version", Some("8")), (name, Some(value))],
     )
 }
 

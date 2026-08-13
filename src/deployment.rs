@@ -1,6 +1,7 @@
 //! Strict completed-deployment capture for release comparison.
 
 use crate::auth::{AuthCredential, send_account_authenticated_with_refresh};
+use crate::time::parse_rfc3339;
 use crate::{
     CliEnvironment, CliError, Command, DeploymentRecordOptions, DeploymentStatus, RuntimeError,
 };
@@ -49,59 +50,12 @@ struct DeploymentFlags {
 
 /// Fully normalized deployment values plus comparable timestamps.
 struct NormalizedDeployment {
-    /// Caller-owned deployment identity.
-    deployment_id: String,
-    /// Canonical lowercase project UUID.
-    project_id: String,
-    /// Trimmed exact runtime release.
-    release: String,
-    /// Trimmed exact runtime environment.
-    environment: String,
-    /// Trimmed exact runtime service.
-    service_name: String,
-    /// Terminal deployment result.
-    status: DeploymentStatus,
-    /// Original valid RFC3339 start timestamp without surrounding whitespace.
-    started_at: String,
+    /// Canonical public command values and request body.
+    options: DeploymentRecordOptions,
     /// Start time normalized to the API's millisecond precision.
     started_at_millis: i128,
-    /// Original valid RFC3339 finish timestamp without surrounding whitespace.
-    finished_at: String,
     /// Finish time normalized to the API's millisecond precision.
     finished_at_millis: i128,
-    /// Optional normalized lowercase source commit.
-    commit_sha: Option<String>,
-}
-
-impl NormalizedDeployment {
-    /// Converts validated parser state into the public command model.
-    fn into_options(self) -> DeploymentRecordOptions {
-        DeploymentRecordOptions {
-            deployment_id: self.deployment_id,
-            project_id: self.project_id,
-            release: self.release,
-            environment: self.environment,
-            service_name: self.service_name,
-            status: self.status,
-            started_at: self.started_at,
-            finished_at: self.finished_at,
-            commit_sha: self.commit_sha,
-        }
-    }
-
-    /// Builds the exact version-1 deployment request.
-    fn request_body(&self) -> serde_json::Value {
-        serde_json::json!({
-            "project_id": self.project_id,
-            "release": self.release,
-            "environment": self.environment,
-            "service_name": self.service_name,
-            "status": self.status.as_str(),
-            "started_at": self.started_at,
-            "finished_at": self.finished_at,
-            "commit_sha": self.commit_sha,
-        })
-    }
 }
 
 /// Strict version-1 deployment response.
@@ -124,27 +78,6 @@ struct DeploymentResponse {
     finished_at: String,
     commit_sha: Option<String>,
     recorded_at: String,
-}
-
-/// Parsed RFC3339 instant at nanosecond precision.
-#[derive(Clone, Copy)]
-struct ParsedTimestamp {
-    /// Whole UTC seconds since the Unix epoch.
-    epoch_seconds: i64,
-    /// Positive sub-second nanoseconds.
-    nanoseconds: u32,
-}
-
-impl ParsedTimestamp {
-    /// Returns the instant at the API's truncating millisecond precision.
-    fn epoch_millis(self) -> i128 {
-        i128::from(self.epoch_seconds) * 1_000 + i128::from(self.nanoseconds / 1_000_000)
-    }
-
-    /// Returns whether no precision below milliseconds is present.
-    const fn is_millisecond_normalized(self) -> bool {
-        self.nanoseconds.is_multiple_of(1_000_000)
-    }
 }
 
 /// Parses the closed deployment command without reflecting invalid values.
@@ -204,7 +137,7 @@ pub(crate) fn parse(args: &[String]) -> Result<Command, CliError> {
     };
     let normalized = normalize(&raw)?;
     Ok(Command::Deploy {
-        options: normalized.into_options(),
+        options: normalized.options,
         json: flags.json,
     })
 }
@@ -265,9 +198,9 @@ pub(crate) async fn execute<W: std::io::Write>(
         .map_err(|_error| transport_error())?;
     let url = format!(
         "{origin}/api/telemetry/deployments/{}",
-        normalized.deployment_id
+        normalized.options.deployment_id
     );
-    let request_body = normalized.request_body();
+    let request_body = serde_json::to_value(&normalized.options).map_err(|_| invalid_response())?;
     let response = send_account_authenticated_with_refresh(&client, env, |client, credential| {
         client
             .put(url.as_str())
@@ -355,17 +288,19 @@ fn normalize(options: &DeploymentRecordOptions) -> Result<NormalizedDeployment, 
         .map(normalize_commit_sha)
         .transpose()?;
     Ok(NormalizedDeployment {
-        deployment_id: deployment_id.to_owned(),
-        project_id,
-        release: release.to_owned(),
-        environment: environment.to_owned(),
-        service_name: service_name.to_owned(),
-        status: options.status,
-        started_at: started_at.to_owned(),
+        options: DeploymentRecordOptions {
+            deployment_id: deployment_id.to_owned(),
+            project_id,
+            release: release.to_owned(),
+            environment: environment.to_owned(),
+            service_name: service_name.to_owned(),
+            status: options.status,
+            started_at: started_at.to_owned(),
+            finished_at: finished_at.to_owned(),
+            commit_sha,
+        },
         started_at_millis,
-        finished_at: finished_at.to_owned(),
         finished_at_millis,
-        commit_sha,
     })
 }
 
@@ -389,13 +324,13 @@ fn validated_response(
     let recorded = parse_rfc3339(response.recorded_at.as_str()).ok_or_else(invalid_response)?;
     let valid = response.schema_version == SCHEMA_VERSION
         && crate::ids::is_uuid(response.id.as_str())
-        && response.deployment_id == expected.deployment_id
-        && response.project_id == expected.project_id
-        && response.release == expected.release
-        && response.environment == expected.environment
-        && response.service_name == expected.service_name
-        && response.status == expected.status
-        && response.commit_sha == expected.commit_sha
+        && response.deployment_id == expected.options.deployment_id
+        && response.project_id == expected.options.project_id
+        && response.release == expected.options.release
+        && response.environment == expected.options.environment
+        && response.service_name == expected.options.service_name
+        && response.status == expected.options.status
+        && response.commit_sha == expected.options.commit_sha
         && response.started_at.ends_with('Z')
         && response.finished_at.ends_with('Z')
         && response.recorded_at.ends_with('Z')
@@ -548,123 +483,6 @@ fn safe_text(value: &str, limit: usize) -> bool {
                         | '\u{fff9}'..='\u{fffb}'
                 )
         })
-}
-
-/// Parses one RFC3339 timestamp with a required UTC designator or numeric offset.
-fn parse_rfc3339(value: &str) -> Option<ParsedTimestamp> {
-    let bytes = value.as_bytes();
-    if !(20..=35).contains(&bytes.len())
-        || !bytes.is_ascii()
-        || bytes.get(4) != Some(&b'-')
-        || bytes.get(7) != Some(&b'-')
-        || bytes.get(10) != Some(&b'T')
-        || bytes.get(13) != Some(&b':')
-        || bytes.get(16) != Some(&b':')
-    {
-        return None;
-    }
-    let year = decimal(bytes.get(0..4)?)?;
-    let month = decimal(bytes.get(5..7)?)?;
-    let day = decimal(bytes.get(8..10)?)?;
-    let hour = decimal(bytes.get(11..13)?)?;
-    let minute = decimal(bytes.get(14..16)?)?;
-    let second = decimal(bytes.get(17..19)?)?;
-    if year == 0
-        || !(1..=12).contains(&month)
-        || day == 0
-        || day > days_in_month(year, month)
-        || hour > 23
-        || minute > 59
-        || second > 59
-    {
-        return None;
-    }
-    let mut index = 19;
-    let nanoseconds = if bytes.get(index) == Some(&b'.') {
-        index += 1;
-        let start = index;
-        while bytes.get(index).is_some_and(u8::is_ascii_digit) {
-            index += 1;
-        }
-        parse_fraction(bytes.get(start..index)?)?
-    } else {
-        0
-    };
-    let offset_seconds = match bytes.get(index) {
-        Some(b'Z') if index + 1 == bytes.len() => 0_i64,
-        Some(sign @ (b'+' | b'-')) if index + 6 == bytes.len() => {
-            if bytes.get(index + 3) != Some(&b':') {
-                return None;
-            }
-            let offset_hour = decimal(bytes.get(index + 1..index + 3)?)?;
-            let offset_minute = decimal(bytes.get(index + 4..index + 6)?)?;
-            if offset_hour > 23 || offset_minute > 59 {
-                return None;
-            }
-            let magnitude = i64::from(offset_hour) * 3_600 + i64::from(offset_minute) * 60;
-            if *sign == b'+' { magnitude } else { -magnitude }
-        }
-        Some(_) | None => return None,
-    };
-    let days = days_from_civil(i64::from(year), i64::from(month), i64::from(day));
-    let local_seconds = days
-        .checked_mul(86_400)?
-        .checked_add(i64::from(hour).checked_mul(3_600)?)?
-        .checked_add(i64::from(minute).checked_mul(60)?)?
-        .checked_add(i64::from(second))?;
-    Some(ParsedTimestamp {
-        epoch_seconds: local_seconds.checked_sub(offset_seconds)?,
-        nanoseconds,
-    })
-}
-
-/// Parses one fixed-width ASCII decimal field.
-fn decimal(bytes: &[u8]) -> Option<u32> {
-    bytes.iter().try_fold(0_u32, |value, byte| {
-        byte.is_ascii_digit()
-            .then(|| value.checked_mul(10)?.checked_add(u32::from(*byte - b'0')))
-            .flatten()
-    })
-}
-
-/// Expands one one-to-nine-digit fractional second to nanoseconds.
-fn parse_fraction(bytes: &[u8]) -> Option<u32> {
-    if bytes.is_empty() || bytes.len() > 9 || !bytes.iter().all(u8::is_ascii_digit) {
-        return None;
-    }
-    let value = decimal(bytes)?;
-    value.checked_mul(10_u32.checked_pow(u32::try_from(9_usize.checked_sub(bytes.len())?).ok()?)?)
-}
-
-/// Returns the valid day count for one Gregorian month.
-const fn days_in_month(year: u32, month: u32) -> u32 {
-    match month {
-        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
-        4 | 6 | 9 | 11 => 30,
-        2 if is_leap_year(year) => 29,
-        2 => 28,
-        _ => 0,
-    }
-}
-
-/// Returns whether one Gregorian year is a leap year.
-const fn is_leap_year(year: u32) -> bool {
-    year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400))
-}
-
-/// Converts one civil date to days relative to the Unix epoch.
-fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
-    let adjusted_year = year - i64::from(month <= 2);
-    let era = if adjusted_year >= 0 {
-        adjusted_year
-    } else {
-        adjusted_year - 399
-    } / 400;
-    let year_of_era = adjusted_year - era * 400;
-    let adjusted_month = month + if month > 2 { -3 } else { 9 };
-    let day_of_year = (153 * adjusted_month + 2) / 5 + day - 1;
-    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
-    era * 146_097 + day_of_era - 719_468
 }
 
 /// Returns a fixed transport failure without host or request details.
