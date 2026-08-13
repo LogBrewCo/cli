@@ -92,8 +92,8 @@ pub(crate) fn parse_rfc3339(value: &str) -> Option<ParsedTimestamp> {
 /// Parses one already validated UTC timestamp into exact whole milliseconds.
 pub(crate) fn parse_utc_millis(value: &str) -> Option<i128> {
     (value.ends_with('Z') || value.ends_with("+00:00"))
-        .then(|| parse_rfc3339(value))
-        .flatten()
+        .then_some(value)
+        .and_then(parse_rfc3339)
         .filter(|value| value.is_millisecond_normalized())
         .map(ParsedTimestamp::epoch_millis)
 }
