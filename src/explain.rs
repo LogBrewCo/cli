@@ -1861,7 +1861,7 @@ fn validate_correlated_signal<'a>(
     release: &str,
     kind: &str,
     excluded_issue_id: Option<&str>,
-) -> Result<(&'a str, Option<&'a str>), RuntimeError> {
+) -> Result<Option<&'a str>, RuntimeError> {
     let fields: &[&str] = match kind {
         "issue" => &[
             "id",
@@ -1900,8 +1900,7 @@ fn validate_correlated_signal<'a>(
         _ => return Err(invalid_response()),
     };
     require_exact_fields(value, fields)?;
-    let id = require_string(value, "id")?;
-    if !is_uuid(id)
+    if !is_uuid(require_string(value, "id")?)
         || require_string(value, "project_id")? != project_id
         || require_string(value, "environment")? != environment
         || require_string(value, "release")? != release
@@ -1942,7 +1941,7 @@ fn validate_correlated_signal<'a>(
         }
         _ => return Err(invalid_response()),
     };
-    Ok((id, issue_id))
+    Ok(issue_id)
 }
 
 /// Validates one exact-span, exact-trace, or nearby privacy-bounded log.
@@ -2229,7 +2228,7 @@ fn validate_related_issues(
     let mut issue_ids = BTreeSet::new();
     let (status, truncated, _) =
         validate_correlated_collection(value, RELATED_ISSUE_LIMIT, true, |item| {
-            let (_, issue_id) = validate_correlated_signal(
+            let issue_id = validate_correlated_signal(
                 item,
                 project_id,
                 environment,
