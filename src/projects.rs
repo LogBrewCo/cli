@@ -100,7 +100,8 @@ pub(crate) async fn execute<W: std::io::Write>(
     json: bool,
     output: &mut W,
 ) -> Result<(), RuntimeError> {
-    let origin = normalized_origin(env.base_url.as_str())?;
+    let origin =
+        crate::http::normalized_origin(env.base_url.as_str()).ok_or_else(transport_error)?;
     let client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .timeout(std::time::Duration::from_secs(30))
@@ -115,7 +116,12 @@ pub(crate) async fn execute<W: std::io::Write>(
     .map_err(request_error)?;
     let (response, credential) = response;
     let status = response.status().as_u16();
-    let body = bounded_body(response).await?;
+    let body = crate::http::bounded_body(response, RESPONSE_LIMIT)
+        .await
+        .map_err(|error| match error {
+            crate::http::BodyError::Invalid => invalid_response(),
+            crate::http::BodyError::Transport => transport_error(),
+        })?;
 
     if status != 200 {
         return Err(validate_error(status, body.as_str(), &credential)?);
@@ -131,23 +137,6 @@ pub(crate) async fn execute<W: std::io::Write>(
         write_human(projects.as_slice(), output)?;
     }
     Ok(())
-}
-
-/// Reads one response without retaining oversized server content.
-async fn bounded_body(mut response: reqwest::Response) -> Result<String, RuntimeError> {
-    if response.content_length().is_some_and(|length| {
-        usize::try_from(length).map_or(true, |length| length > RESPONSE_LIMIT)
-    }) {
-        return Err(invalid_response());
-    }
-    let mut body = Vec::new();
-    while let Some(chunk) = response.chunk().await.map_err(|_| transport_error())? {
-        if body.len().saturating_add(chunk.len()) > RESPONSE_LIMIT {
-            return Err(invalid_response());
-        }
-        body.extend_from_slice(&chunk);
-    }
-    String::from_utf8(body).map_err(|_| invalid_response())
 }
 
 /// Converts request failures into fixed, host-free project recovery.
@@ -349,23 +338,6 @@ fn nullable_timestamp(value: Option<&serde_json::Value>) -> Result<Option<&str>,
         Some(value) => timestamp(Some(value)).map(Some),
         None => Err(invalid_response()),
     }
-}
-
-/// Normalizes one HTTP(S) API origin without credentials, query, or fragment.
-fn normalized_origin(value: &str) -> Result<String, RuntimeError> {
-    let mut parsed = reqwest::Url::parse(value).map_err(|_| transport_error())?;
-    if !matches!(parsed.scheme(), "http" | "https")
-        || parsed.host_str().is_none()
-        || !parsed.username().is_empty()
-        || parsed.password().is_some()
-        || !matches!(parsed.path(), "" | "/")
-        || parsed.query().is_some()
-        || parsed.fragment().is_some()
-    {
-        return Err(transport_error());
-    }
-    parsed.set_path("");
-    Ok(parsed.to_string().trim_end_matches('/').to_owned())
 }
 
 /// Rejects controls and display-direction characters in server text.

@@ -89,6 +89,7 @@ fn cursor_response_title(command: &Command) -> Option<&'static str> {
         | Command::ProjectCreate { .. }
         | Command::ProjectIngestKeyCreate { .. }
         | Command::ProjectArchive { .. }
+        | Command::ProjectDeletion { .. }
         | Command::Projects { .. }
         | Command::Usage { .. }
         | Command::Version { .. }
@@ -313,6 +314,7 @@ fn human_summary(command: &Command, value: &serde_json::Value) -> Option<String>
         Command::ProjectCreate { .. }
         | Command::ProjectIngestKeyCreate { .. }
         | Command::ProjectArchive { .. }
+        | Command::ProjectDeletion { .. }
         | Command::Projects { .. }
         | Command::Help { .. }
         | Command::Login { .. }
