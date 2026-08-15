@@ -571,7 +571,12 @@ fn detection_key(detection: &ProjectDetection) -> (usize, &'static str, usize, &
     (
         detection.manifest.matches('/').count(),
         detection.runtime,
-        manifest_priority(&detection.manifest),
+        match detection.manifest.rsplit('/').next() {
+            Some("project.yml" | "project.yaml") => 0,
+            _ if detection.manifest.ends_with(".xcworkspace") => 1,
+            _ if detection.manifest.ends_with(".xcodeproj") => 2,
+            _ => 3,
+        },
         &detection.manifest,
     )
 }
@@ -882,16 +887,6 @@ fn relative_path(root: &Path, path: &Path) -> Option<String> {
     } else {
         relative
     })
-}
-
-/// Returns the source-of-truth preference when several manifests describe one runtime.
-fn manifest_priority(path: &str) -> usize {
-    match path.rsplit('/').next() {
-        Some("project.yml" | "project.yaml") => 0,
-        _ if path.ends_with(".xcworkspace") => 1,
-        _ if path.ends_with(".xcodeproj") => 2,
-        _ => 3,
-    }
 }
 
 /// Returns human-readable runtime names.
