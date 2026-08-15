@@ -234,7 +234,8 @@ pub(crate) async fn execute<W: std::io::Write>(
     json: bool,
     output: &mut W,
 ) -> Result<(), RuntimeError> {
-    let origin = normalized_origin(env.base_url.as_str())?;
+    let origin =
+        crate::http::normalized_origin(env.base_url.as_str()).ok_or_else(transport_error)?;
     let client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .timeout(std::time::Duration::from_secs(30))
@@ -820,23 +821,6 @@ const fn days_in_month(year: u32, month: u32) -> u32 {
         2 => 28,
         _ => 0,
     }
-}
-
-/// Validates the configured API origin without retaining it in errors.
-fn normalized_origin(base_url: &str) -> Result<String, RuntimeError> {
-    let mut url = reqwest::Url::parse(base_url).map_err(|_| transport_error())?;
-    if !matches!(url.scheme(), "http" | "https")
-        || url.host_str().is_none()
-        || !url.username().is_empty()
-        || url.password().is_some()
-        || !matches!(url.path(), "" | "/")
-        || url.query().is_some()
-        || url.fragment().is_some()
-    {
-        return Err(transport_error());
-    }
-    url.set_path("");
-    Ok(url.as_str().trim_end_matches('/').to_owned())
 }
 
 /// Fixed recovery for malformed or oversized account-usage responses.

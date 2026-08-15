@@ -26,6 +26,7 @@ mod explain;
 #[doc(hidden)]
 pub mod flags;
 pub mod help;
+mod http;
 #[doc(hidden)]
 pub mod ids;
 #[doc(hidden)]
@@ -183,6 +184,13 @@ pub enum Command {
     },
     /// Archives one active account-owned project after explicit confirmation.
     ProjectArchive {
+        /// Canonical lowercase project UUID.
+        project_id: String,
+        /// Emit machine-readable JSON.
+        json: bool,
+    },
+    /// Permanently deletes one project after exact identifier confirmation.
+    ProjectDeletion {
         /// Canonical lowercase project UUID.
         project_id: String,
         /// Emit machine-readable JSON.
@@ -1457,6 +1465,7 @@ impl Command {
                 Some(format!("/api/projects/{project_id}/setup/seen"))
             }
             Self::ProjectArchive { project_id, .. } => Some(format!("/api/projects/{project_id}")),
+            Self::ProjectDeletion { .. } => Some(String::from("/api/support/tickets")),
             Self::ProjectIngestKeyCreate { options, .. } => {
                 Some(format!("/api/projects/{}/ingest-keys", options.project_id))
             }
@@ -1492,6 +1501,7 @@ impl Command {
             | Self::ProjectCreate { json, .. }
             | Self::ProjectIngestKeyCreate { json, .. }
             | Self::ProjectArchive { json, .. }
+            | Self::ProjectDeletion { json, .. }
             | Self::Projects { json }
             | Self::Usage { json }
             | Self::Version { json }
@@ -1531,7 +1541,8 @@ impl Command {
             | Self::Support {
                 target: SupportTarget::Create(_) | SupportTarget::ReplyContext(_),
                 ..
-            } => Some(HttpMethod::Post),
+            }
+            | Self::ProjectDeletion { .. } => Some(HttpMethod::Post),
             Self::Support {
                 target: SupportTarget::UpdateStatus { .. },
                 ..
@@ -1589,6 +1600,9 @@ impl Command {
             Self::ProjectCreate { options, .. } => Some(project_create_body(options)),
             Self::ProjectIngestKeyCreate { options, .. } => {
                 Some(project_ingest_key_create_body(options))
+            }
+            Self::ProjectDeletion { project_id, .. } => {
+                Some(project_archive::deletion_body(project_id))
             }
             Self::Support {
                 target: SupportTarget::Create(options),
@@ -1658,6 +1672,7 @@ impl Command {
             | Self::ProjectCreate { .. }
             | Self::ProjectIngestKeyCreate { .. }
             | Self::ProjectArchive { .. }
+            | Self::ProjectDeletion { .. }
             | Self::Projects { .. }
             | Self::Support { .. } => None,
         }
@@ -1778,6 +1793,9 @@ pub async fn execute_command<W: std::io::Write>(
         }
         Command::ProjectArchive { project_id, json } => {
             project_archive::execute(env, project_id.as_str(), *json, output).await
+        }
+        Command::ProjectDeletion { project_id, json } => {
+            project_archive::execute_deletion(env, project_id.as_str(), *json, output).await
         }
         Command::Projects { json } => projects::execute(env, *json, output).await,
         Command::Usage { json } => usage::execute(env, *json, output).await,

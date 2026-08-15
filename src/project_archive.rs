@@ -1,27 +1,50 @@
-//! Strict, explicitly confirmed project archival.
+//! Strict, explicitly confirmed project lifecycle mutations.
+#![expect(
+    clippy::redundant_pub_crate,
+    reason = "the parent command executor consumes these private-module helpers"
+)]
 
 use crate::auth::{AuthCredential, send_account_authenticated_with_refresh};
-use crate::ids::is_uuid;
+use crate::ids::{is_support_ticket_id, is_uuid};
 use crate::{CliEnvironment, CliError, RuntimeError};
 use serde::{Deserialize, Serialize};
 
-/// Maximum accepted archive response body.
-const RESPONSE_LIMIT: usize = 64 * 1024;
+/// Account-owned project mutation selected by the parser.
+#[derive(Clone, Copy)]
+enum Operation {
+    /// Remove a project from active use without hard deletion.
+    Archive,
+    /// Schedule permanent deletion after exact confirmation.
+    Delete,
+}
 
-/// Exact successful machine-readable archive result.
+/// Local failure boundary used to select fixed recovery text.
+enum Failure {
+    /// Account authentication was absent or invalid for mutation.
+    Auth,
+    /// The server response violated the selected operation contract.
+    Response,
+    /// Request construction, origin validation, or transport failed.
+    Transport,
+}
+
+/// Exact successful machine-readable lifecycle result.
 #[derive(Serialize)]
-struct ArchiveSuccess<'a> {
+struct Success<'a> {
     /// Stable success signal.
     ok: bool,
-    /// Canonical archived project UUID.
+    /// Canonical affected project UUID.
     project_id: &'a str,
+    /// Explicit inactive state returned only for permanent deletion.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    project_active: Option<bool>,
     /// Stable lifecycle result.
     status: &'static str,
     /// Deterministic active-catalog recovery.
     next: &'static str,
 }
 
-/// Strict backend error envelope.
+/// Strict backend archive error envelope.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ErrorEnvelope {
@@ -32,85 +55,140 @@ struct ErrorEnvelope {
     /// Human backend recovery, validated and then discarded.
     next: String,
     /// Typed backend recovery metadata.
-    next_action: ErrorAction,
+    next_action: Action,
 }
 
 /// Strict typed backend recovery metadata.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct ErrorAction {
+struct Action {
     /// Stable action code.
     code: String,
     /// Stable action target.
     target: String,
 }
 
+/// Strict accepted deletion receipt; all server text is discarded.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DeletionReceipt {
+    /// Public support-ticket identifier proving durable acceptance.
+    ticket_id: String,
+    /// Required initial ticket status.
+    status: String,
+    /// Required UTC creation timestamp.
+    created_at: String,
+    /// Bounded server guidance, validated and discarded.
+    next: String,
+    /// Required legacy support receipt action.
+    next_action: Action,
+}
+
 /// Executes one strict account-authenticated project archive.
-#[expect(
-    clippy::redundant_pub_crate,
-    reason = "the parent command executor consumes this private-module helper"
-)]
 pub(crate) async fn execute<W: std::io::Write>(
     env: &CliEnvironment,
     project_id: &str,
     json: bool,
     output: &mut W,
 ) -> Result<(), RuntimeError> {
+    execute_lifecycle(Operation::Archive, env, project_id, json, output).await
+}
+
+/// Executes one idempotent account-authenticated permanent deletion.
+pub(crate) async fn execute_deletion<W: std::io::Write>(
+    env: &CliEnvironment,
+    project_id: &str,
+    json: bool,
+    output: &mut W,
+) -> Result<(), RuntimeError> {
+    execute_lifecycle(Operation::Delete, env, project_id, json, output).await
+}
+
+/// Executes one validated lifecycle operation through the account auth path.
+async fn execute_lifecycle<W: std::io::Write>(
+    operation: Operation,
+    env: &CliEnvironment,
+    project_id: &str,
+    json: bool,
+    output: &mut W,
+) -> Result<(), RuntimeError> {
     if !is_uuid(project_id) {
-        return Err(CliError::InvalidProjectArchiveCommand.into());
+        return Err(match operation {
+            Operation::Archive => CliError::InvalidProjectArchiveCommand,
+            Operation::Delete => CliError::InvalidProjectDeletionCommand,
+        }
+        .into());
     }
     let project_id = project_id.to_ascii_lowercase();
-    let origin = normalized_origin(env.base_url.as_str())?;
     let client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .timeout(std::time::Duration::from_secs(30))
         .connect_timeout(std::time::Duration::from_secs(10))
         .build()
-        .map_err(|_| transport_error())?;
-    let url = format!("{origin}/api/projects/{project_id}");
-    let response = send_account_authenticated_with_refresh(&client, env, |client, credential| {
-        client.delete(url.as_str()).bearer_auth(credential.token())
-    })
+        .map_err(|_| failure(operation, Failure::Transport))?;
+    let origin = crate::http::normalized_origin(env.base_url.as_str())
+        .ok_or_else(|| failure(operation, Failure::Transport))?;
+    let url = match operation {
+        Operation::Archive => format!("{origin}/api/projects/{project_id}"),
+        Operation::Delete => format!("{origin}/api/support/tickets"),
+    };
+    let deletion = deletion_body(project_id.as_str());
+    let (response, credential) = send_account_authenticated_with_refresh(
+        &client,
+        env,
+        |client, credential| match operation {
+            Operation::Archive => client.delete(url.as_str()).bearer_auth(credential.token()),
+            Operation::Delete => client
+                .post(url.as_str())
+                .bearer_auth(credential.token())
+                .header("Idempotency-Key", project_id.as_str())
+                .json(&deletion),
+        },
+    )
     .await
-    .map_err(request_error)?;
-    let (response, credential) = response;
+    .map_err(|error| request_error(operation, error))?;
     let status = response.status().as_u16();
-    let body = bounded_body(response).await?;
+    let body = crate::http::bounded_body(response, 64 * 1024)
+        .await
+        .map_err(|_| failure(operation, Failure::Response))?;
 
-    if status != 204 {
-        return Err(validate_error(status, body.as_str(), &credential)?);
-    }
-    if !body.is_empty() {
-        return Err(invalid_response());
-    }
-    write_success(project_id.as_str(), json, output)?;
-    Ok(())
-}
-
-/// Reads one response without retaining oversized server content.
-async fn bounded_body(mut response: reqwest::Response) -> Result<String, RuntimeError> {
-    if response.content_length().is_some_and(|length| {
-        usize::try_from(length).map_or(true, |length| length > RESPONSE_LIMIT)
-    }) {
-        return Err(invalid_response());
-    }
-    let mut body = Vec::new();
-    while let Some(chunk) = response.chunk().await.map_err(|_| transport_error())? {
-        if body.len().saturating_add(chunk.len()) > RESPONSE_LIMIT {
-            return Err(invalid_response());
+    match operation {
+        Operation::Archive if status != 204 => {
+            return Err(validate_archive_error(status, body.as_str(), &credential)?);
         }
-        body.extend_from_slice(&chunk);
+        Operation::Archive if !body.is_empty() => {
+            return Err(failure(operation, Failure::Response));
+        }
+        Operation::Delete if status != 200 => {
+            if (200..300).contains(&status) {
+                return Err(failure(operation, Failure::Response));
+            }
+            return Err(api_error(operation, status, &credential));
+        }
+        Operation::Delete => validate_deletion_receipt(body.as_str())?,
+        Operation::Archive => {}
     }
-    String::from_utf8(body).map_err(|_| invalid_response())
+    write_success(operation, project_id.as_str(), json, output)
 }
 
-/// Converts request failures into fixed, host-free archive recovery.
-fn request_error(error: RuntimeError) -> RuntimeError {
+/// Fixed request body shared by execution and public command introspection.
+pub(crate) fn deletion_body(project_id: &str) -> serde_json::Value {
+    serde_json::json!({
+        "source": "cli",
+        "category": "project_deletion",
+        "project_id": project_id,
+        "title": "Permanent project deletion request",
+        "description": "Permanent project deletion requested from LogBrew CLI."
+    })
+}
+
+/// Converts request failures into operation-specific, host-free recovery.
+fn request_error(operation: Operation, error: RuntimeError) -> RuntimeError {
     match error {
         RuntimeError::Unavailable {
             message: "account authentication is required",
             ..
-        } => account_auth_error(),
+        } => failure(operation, Failure::Auth),
         RuntimeError::MissingToken | RuntimeError::Unavailable { .. } => error,
         RuntimeError::Cli(_)
         | RuntimeError::Io(_)
@@ -128,188 +206,182 @@ fn request_error(error: RuntimeError) -> RuntimeError {
         | RuntimeError::AnalyticsSegmentResponseInvalid
         | RuntimeError::NativeDebugArtifactInvalid
         | RuntimeError::NativeDebugResponseInvalid
-        | RuntimeError::NativeDebugVerificationFailed => transport_error(),
+        | RuntimeError::NativeDebugVerificationFailed => failure(operation, Failure::Transport),
     }
 }
 
-/// Validates one typed backend error before replacing all server text.
-fn validate_error(
+/// Accepts only the strict durable support receipt used by the deletion route.
+fn validate_deletion_receipt(body: &str) -> Result<(), RuntimeError> {
+    let receipt = serde_json::from_str::<DeletionReceipt>(body)
+        .map_err(|_| failure(Operation::Delete, Failure::Response))?;
+    if !is_support_ticket_id(receipt.ticket_id.as_str())
+        || receipt.status != "open"
+        || !crate::render::is_rfc3339_utc(receipt.created_at.as_str())
+        || !safe_text(receipt.next.as_str(), 512)
+        || receipt.next_action.code != "review_ticket"
+        || receipt.next_action.target != "support_ticket"
+    {
+        return Err(failure(Operation::Delete, Failure::Response));
+    }
+    Ok(())
+}
+
+/// Validates one typed archive error before replacing all server text.
+fn validate_archive_error(
     status: u16,
     body: &str,
     credential: &AuthCredential,
 ) -> Result<RuntimeError, RuntimeError> {
-    let envelope = serde_json::from_str::<ErrorEnvelope>(body).map_err(|_| invalid_response())?;
-    if !bounded_safe_text(envelope.error.as_str(), 512)
-        || !bounded_safe_text(envelope.code.as_str(), 64)
-        || !bounded_safe_text(envelope.next.as_str(), 512)
-        || !bounded_safe_text(envelope.next_action.code.as_str(), 64)
-        || !bounded_safe_text(envelope.next_action.target.as_str(), 64)
-    {
-        return Err(invalid_response());
-    }
-    let typed = matches!(
-        (
-            status,
-            envelope.code.as_str(),
-            envelope.next_action.code.as_str(),
-            envelope.next_action.target.as_str(),
-        ),
-        (401, "unauthorized", "sign_in", "auth")
-            | (403, "forbidden", "request_access", "auth")
-            | (404, "not_found", "check_resource", "resource")
-            | (
-                405,
-                "method_not_allowed",
-                "use_supported_method",
-                "api_method"
-            )
-            | (
-                500..=599,
-                "storage_error",
-                "retry_or_check_storage",
-                "backend_status",
-            )
-            | (500..=599, "json_error", "send_valid_json", "request")
-            | (
-                500..=599,
-                "internal_error",
-                "retry_or_contact_support",
-                "support",
-            )
+    let envelope = serde_json::from_str::<ErrorEnvelope>(body)
+        .map_err(|_| failure(Operation::Archive, Failure::Response))?;
+    let safe = [
+        (envelope.error.as_str(), 512),
+        (envelope.code.as_str(), 64),
+        (envelope.next.as_str(), 512),
+        (envelope.next_action.code.as_str(), 64),
+        (envelope.next_action.target.as_str(), 64),
+    ]
+    .into_iter()
+    .all(|(value, limit)| safe_text(value, limit));
+    let fields = (
+        envelope.code.as_str(),
+        envelope.next_action.code.as_str(),
+        envelope.next_action.target.as_str(),
     );
-    if !typed {
-        return Err(invalid_response());
+    let typed = match status {
+        401 => fields == ("unauthorized", "sign_in", "auth"),
+        403 => fields == ("forbidden", "request_access", "auth"),
+        404 => fields == ("not_found", "check_resource", "resource"),
+        405 => fields == ("method_not_allowed", "use_supported_method", "api_method"),
+        500..=599 => matches!(
+            fields,
+            ("storage_error", "retry_or_check_storage", "backend_status")
+                | ("json_error", "send_valid_json", "request")
+                | ("internal_error", "retry_or_contact_support", "support")
+        ),
+        _ => false,
+    };
+    if !safe || !typed {
+        return Err(failure(Operation::Archive, Failure::Response));
     }
-    Ok(RuntimeError::Api {
-        status,
-        body: safe_error_body(status),
-        auth_source: credential.source(),
-        auth_label: credential.label(),
-    })
+    Ok(api_error(Operation::Archive, status, credential))
 }
 
-/// Writes a deterministic archive confirmation without server-provided text.
+/// Writes deterministic local output without server-controlled prose.
 fn write_success<W: std::io::Write>(
+    operation: Operation,
     project_id: &str,
     json: bool,
     output: &mut W,
 ) -> Result<(), RuntimeError> {
     if json {
-        let result = ArchiveSuccess {
-            ok: true,
-            project_id,
-            status: "archived",
-            next: "run logbrew projects --json",
+        let (project_active, status) = match operation {
+            Operation::Archive => (None, "archived"),
+            Operation::Delete => (Some(false), "deletion_scheduled"),
         };
-        serde_json::to_writer(&mut *output, &result).map_err(|_| output_error())?;
+        serde_json::to_writer(
+            &mut *output,
+            &Success {
+                ok: true,
+                project_id,
+                project_active,
+                status,
+                next: "run logbrew projects --json",
+            },
+        )
+        .map_err(|_| std::io::Error::other("project lifecycle output could not be written"))?;
         writeln!(output)?;
-        return Ok(());
+    } else {
+        match operation {
+            Operation::Archive => {
+                writeln!(output, "Project archived: {project_id}")?;
+                writeln!(output, "Project ingest keys: disabled")?;
+            }
+            Operation::Delete => {
+                writeln!(output, "Project deletion accepted: {project_id}")?;
+                writeln!(output, "Project status: inactive")?;
+                writeln!(output, "Permanent deletion: scheduled automatically")?;
+            }
+        }
+        writeln!(output, "Next: run logbrew projects")?;
     }
-    writeln!(output, "Project archived: {project_id}")?;
-    writeln!(output, "Project ingest keys: disabled")?;
-    writeln!(output, "Next: run logbrew projects")?;
     Ok(())
 }
 
-/// Normalizes an HTTP(S) API origin without credentials, query, or fragment.
-fn normalized_origin(value: &str) -> Result<String, RuntimeError> {
-    let mut parsed = reqwest::Url::parse(value).map_err(|_| transport_error())?;
-    if !matches!(parsed.scheme(), "http" | "https")
-        || parsed.host_str().is_none()
-        || !parsed.username().is_empty()
-        || parsed.password().is_some()
-        || !matches!(parsed.path(), "" | "/")
-        || parsed.query().is_some()
-        || parsed.fragment().is_some()
-    {
-        return Err(transport_error());
-    }
-    parsed.set_path("");
-    Ok(parsed.to_string().trim_end_matches('/').to_owned())
-}
-
-/// Returns whether text is non-empty, bounded, and display-safe.
-fn bounded_safe_text(value: &str, limit: usize) -> bool {
+/// Returns whether server text is non-empty, bounded, and display-safe.
+fn safe_text(value: &str, limit: usize) -> bool {
     !value.trim().is_empty()
         && value.len() <= limit
         && !value.chars().any(|character| {
             character.is_control()
                 || matches!(
                     character,
-                    '\u{061c}'
-                        | '\u{200b}'..='\u{200f}'
-                        | '\u{2028}'..='\u{202e}'
-                        | '\u{2060}'..='\u{206f}'
-                        | '\u{feff}'
-                        | '\u{fff9}'..='\u{fffb}'
+                    '\u{061c}' | '\u{200b}'..='\u{200f}' | '\u{2028}'..='\u{202e}'
+                        | '\u{2060}'..='\u{206f}' | '\u{feff}' | '\u{fff9}'..='\u{fffb}'
                 )
         })
 }
 
-/// Returns a synthetic allowlisted API error body.
-fn safe_error_body(status: u16) -> String {
-    let value = match status {
-        401 => serde_json::json!({
-            "error": "account authentication is invalid",
-            "code": "unauthorized",
-            "next": "run logbrew login",
-            "next_action": {"code": "sign_in", "target": "auth"}
-        }),
-        403 => serde_json::json!({
-            "error": "project archive access is forbidden",
-            "code": "forbidden",
-            "next": "use an account that owns the project",
-            "next_action": {"code": "request_access", "target": "auth"}
-        }),
-        404 => serde_json::json!({
-            "error": "active project was not found",
-            "code": "not_found",
-            "next": "refresh the active project list and check project_id",
-            "next_action": {"code": "check_resource", "target": "resource"}
-        }),
-        405 => serde_json::json!({
-            "error": "project archive method is not supported",
-            "code": "method_not_allowed",
-            "next": "retry with logbrew projects archive",
-            "next_action": {"code": "use_supported_method", "target": "api_method"}
-        }),
-        _ => serde_json::json!({
-            "error": "project archive could not be confirmed",
-            "code": "server_error",
-            "next": "retry the same project archive command later",
-            "next_action": {"code": "retry", "target": "request"}
-        }),
+/// Creates one synthetic API error from allowlisted status metadata.
+fn api_error(operation: Operation, status: u16, credential: &AuthCredential) -> RuntimeError {
+    let error = match operation {
+        Operation::Archive => "project archive could not be confirmed",
+        Operation::Delete => "project deletion could not be confirmed",
     };
-    value.to_string()
-}
-
-/// Returns stable account-auth recovery for this command.
-const fn account_auth_error() -> RuntimeError {
-    RuntimeError::Unavailable {
-        message: "account authentication is required",
-        next: "run logbrew login and retry the project archive command",
+    let (code, next) = match (operation, status) {
+        (_, 401) => ("unauthorized", "run logbrew login"),
+        (_, 403) => ("forbidden", "use an account that owns the project"),
+        (_, 404) => ("not_found", "refresh the active project list"),
+        (Operation::Archive, 405) => ("method_not_allowed", "retry with logbrew projects archive"),
+        (Operation::Delete, 400 | 422) => {
+            ("validation_failed", "confirm the exact active project id")
+        }
+        (Operation::Delete, 409) => (
+            "idempotency_conflict",
+            "retry the exact same deletion command",
+        ),
+        _ => ("server_error", "retry the same command later"),
+    };
+    RuntimeError::Api {
+        status,
+        body: serde_json::json!({
+            "error": error,
+            "code": code,
+            "next": next
+        })
+        .to_string(),
+        auth_source: credential.source(),
+        auth_label: credential.label(),
     }
 }
 
-/// Returns fixed archive response recovery without retaining server content.
-const fn invalid_response() -> RuntimeError {
-    RuntimeError::Unavailable {
-        message: "project archive response was invalid",
-        next: "refresh the active project list before retrying the archive command",
-    }
-}
-
-/// Returns fixed archive network recovery without a URL.
-const fn transport_error() -> RuntimeError {
-    RuntimeError::Unavailable {
-        message: "project archive request could not be completed",
-        next: "check network connectivity and retry the same archive command",
-    }
-}
-
-/// Returns a fixed output serialization failure.
-fn output_error() -> RuntimeError {
-    RuntimeError::Io(std::io::Error::other(
-        "project archive output could not be written",
-    ))
+/// Returns fixed local recovery for an operation failure boundary.
+const fn failure(operation: Operation, kind: Failure) -> RuntimeError {
+    let (message, next) = match (operation, kind) {
+        (Operation::Archive, Failure::Auth) => (
+            "account authentication is required",
+            "run logbrew login and retry the project archive command",
+        ),
+        (Operation::Delete, Failure::Auth) => (
+            "account authentication is required",
+            "run logbrew login and retry the project deletion command",
+        ),
+        (Operation::Archive, Failure::Response) => (
+            "project archive response was invalid",
+            "refresh the active project list before retrying the archive command",
+        ),
+        (Operation::Delete, Failure::Response) => (
+            "project deletion response was invalid",
+            "refresh the active project list before retrying the deletion command",
+        ),
+        (Operation::Archive, Failure::Transport) => (
+            "project archive request could not be completed",
+            "check network connectivity and retry the same archive command",
+        ),
+        (Operation::Delete, Failure::Transport) => (
+            "project deletion request could not be completed",
+            "check network connectivity and retry the same deletion command",
+        ),
+    };
+    RuntimeError::Unavailable { message, next }
 }

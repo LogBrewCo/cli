@@ -189,7 +189,8 @@ pub(crate) async fn execute<W: std::io::Write>(
     output: &mut W,
 ) -> Result<(), RuntimeError> {
     let normalized = normalize(options)?;
-    let origin = normalized_origin(env.base_url.as_str())?;
+    let origin =
+        crate::http::normalized_origin(env.base_url.as_str()).ok_or_else(transport_error)?;
     let client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .timeout(std::time::Duration::from_secs(30))
@@ -214,7 +215,12 @@ pub(crate) async fn execute<W: std::io::Write>(
     if status != 200 {
         return Err(safe_api_error(status, &credential));
     }
-    let body = bounded_body(response).await?;
+    let body = crate::http::bounded_body(response, RESPONSE_LIMIT)
+        .await
+        .map_err(|error| match error {
+            crate::http::BodyError::Invalid => invalid_response(),
+            crate::http::BodyError::Transport => transport_error(),
+        })?;
     let response = validated_response(&normalized, body.as_str())?;
     if json {
         writeln!(output, "{body}")?;
@@ -346,23 +352,6 @@ fn validated_response(
     valid.then_some(response).ok_or_else(invalid_response)
 }
 
-/// Reads a successful response incrementally and rejects oversized content.
-async fn bounded_body(mut response: reqwest::Response) -> Result<String, RuntimeError> {
-    if response.content_length().is_some_and(|length| {
-        usize::try_from(length).map_or(true, |length| length > RESPONSE_LIMIT)
-    }) {
-        return Err(invalid_response());
-    }
-    let mut body = Vec::new();
-    while let Some(chunk) = response.chunk().await.map_err(|_error| transport_error())? {
-        if body.len().saturating_add(chunk.len()) > RESPONSE_LIMIT {
-            return Err(invalid_response());
-        }
-        body.extend_from_slice(&chunk);
-    }
-    String::from_utf8(body).map_err(|_error| invalid_response())
-}
-
 /// Writes a deterministic human receipt from validated fields only.
 fn write_human<W: std::io::Write>(
     response: &DeploymentResponse,
@@ -448,23 +437,6 @@ const fn safe_error_body(status: u16) -> &'static str {
             r#"{"error":"deployment capture returned an unexpected status","code":"unexpected_response","next":"retry the same deployment id or check API compatibility"}"#
         }
     }
-}
-
-/// Normalizes an HTTP(S) API origin without credentials, query, or fragment.
-fn normalized_origin(value: &str) -> Result<String, RuntimeError> {
-    let mut parsed = reqwest::Url::parse(value).map_err(|_error| transport_error())?;
-    if !matches!(parsed.scheme(), "http" | "https")
-        || parsed.host_str().is_none()
-        || !parsed.username().is_empty()
-        || parsed.password().is_some()
-        || !matches!(parsed.path(), "" | "/")
-        || parsed.query().is_some()
-        || parsed.fragment().is_some()
-    {
-        return Err(transport_error());
-    }
-    parsed.set_path("");
-    Ok(parsed.to_string().trim_end_matches('/').to_owned())
 }
 
 /// Rejects controls and display-direction characters in bounded text.

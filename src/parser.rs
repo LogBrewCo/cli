@@ -745,37 +745,20 @@ fn parse_setup_create_project(args: &[String]) -> Result<Command, CliError> {
 
 /// Parses backend-owned project commands.
 fn parse_project(args: &[String]) -> Result<Command, CliError> {
-    let normalized = move_leading_json_to_tail(args);
-    if let Some((namespace, tail)) = normalized.split_first()
-        && matches!(namespace.as_str(), "key" | "keys")
-    {
-        let Some((subcommand, create_args)) = tail.split_first() else {
-            return Err(CliError::InvalidProjectsCommand);
-        };
-        if subcommand == "create" {
-            return parse_project_ingest_key_create(create_args);
-        }
-        return Err(CliError::InvalidProjectsCommand);
-    }
-    if let Some((subcommand, tail)) = normalized.split_first()
-        && subcommand == "create"
-    {
-        return parse_project_create(tail);
-    }
-    if let Some((subcommand, tail)) = normalized.split_first()
-        && subcommand == "archive"
-    {
-        return parse_project_archive(tail);
-    }
-    if let Some((subcommand, tail)) = normalized.split_first()
-        && subcommand == "setup"
-        && has_position_candidate(tail)
-    {
-        return parse_project_setup_seen(tail);
-    }
-    match normalized.as_slice() {
+    match move_leading_json_to_tail(args).as_slice() {
         [] => Ok(Command::Projects { json: false }),
         [flag] if flag == "--json" => Ok(Command::Projects { json: true }),
+        [namespace, subcommand, tail @ ..]
+            if matches!(namespace.as_str(), "key" | "keys") && subcommand == "create" =>
+        {
+            parse_project_ingest_key_create(tail)
+        }
+        [subcommand, tail @ ..] if subcommand == "create" => parse_project_create(tail),
+        [subcommand, tail @ ..] if subcommand == "archive" => parse_project_archive(tail),
+        [subcommand, tail @ ..] if subcommand == "delete" => parse_project_deletion(tail),
+        [subcommand, tail @ ..] if subcommand == "setup" && has_position_candidate(tail) => {
+            parse_project_setup_seen(tail)
+        }
         [_, ..] => Err(CliError::InvalidProjectsCommand),
     }
 }
@@ -871,27 +854,49 @@ fn project_ingest_key_create_flag_value<'a>(
 /// Parses the closed, explicitly confirmed project archival grammar.
 fn parse_project_archive(args: &[String]) -> Result<Command, CliError> {
     let normalized = move_leading_json_to_tail(args);
-    let Some((project_id, flags)) = normalized.split_first() else {
+    let json_count = normalized.iter().filter(|value| *value == "--json").count();
+    let values = normalized
+        .iter()
+        .map(String::as_str)
+        .filter(|value| *value != "--json")
+        .collect::<Vec<_>>();
+    let [project_id, confirmation] = values.as_slice() else {
         return Err(CliError::InvalidProjectArchiveCommand);
     };
-    if !is_uuid(project_id) {
-        return Err(CliError::InvalidProjectArchiveCommand);
-    }
-    let mut yes = false;
-    let mut json = false;
-    for flag in flags {
-        match flag.as_str() {
-            "--yes" if !yes => yes = true,
-            "--json" if !json => json = true,
-            _ => return Err(CliError::InvalidProjectArchiveCommand),
-        }
-    }
-    if !yes {
+    if confirmation != &"--yes" || json_count > 1 || !is_uuid(project_id) {
         return Err(CliError::InvalidProjectArchiveCommand);
     }
     Ok(Command::ProjectArchive {
         project_id: project_id.to_ascii_lowercase(),
-        json,
+        json: json_count == 1,
+    })
+}
+
+/// Parses irreversible deletion only after the caller repeats the exact project UUID.
+fn parse_project_deletion(args: &[String]) -> Result<Command, CliError> {
+    let normalized = move_leading_json_to_tail(args);
+    let json_count = normalized.iter().filter(|value| *value == "--json").count();
+    let values = normalized
+        .iter()
+        .map(String::as_str)
+        .filter(|value| *value != "--json")
+        .collect::<Vec<_>>();
+    let (project_id, confirmation) = match values.as_slice() {
+        [project_id, "--confirm", confirmation] => (*project_id, *confirmation),
+        [project_id, inline] => (
+            *project_id,
+            inline
+                .strip_prefix("--confirm=")
+                .ok_or(CliError::InvalidProjectDeletionCommand)?,
+        ),
+        _ => return Err(CliError::InvalidProjectDeletionCommand),
+    };
+    if json_count > 1 || !is_uuid(project_id) || !project_id.eq_ignore_ascii_case(confirmation) {
+        return Err(CliError::InvalidProjectDeletionCommand);
+    }
+    Ok(Command::ProjectDeletion {
+        project_id: project_id.to_ascii_lowercase(),
+        json: json_count == 1,
     })
 }
 

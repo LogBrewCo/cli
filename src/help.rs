@@ -57,6 +57,7 @@ Usage:
   logbrew projects keys create <project_id> --ingest-key-file <path> [--label <label>] \
                          [--kind sdk|browser|server|cli] [--json]
   logbrew projects archive <project_id> --yes [--json]
+  logbrew projects delete <project_id> --confirm <project_id> [--json]
   logbrew usage [--json]
   logbrew status [--json]
   logbrew health [--json]
@@ -328,6 +329,7 @@ Usage:
   logbrew projects keys create <project_id> --ingest-key-file <path> [--label <label>] \
                            [--kind sdk|browser|server|cli] [--abandon-retry] [--json]
   logbrew projects archive <project_id> --yes [--json]
+  logbrew projects delete <project_id> --confirm <project_id> [--json]
   logbrew setup --create-project [--json]
   logbrew projects setup <project_id> [--runtime <runtime>] [--source api|cli|sdk] \
 [--environment <environment>] [--json]
@@ -351,6 +353,8 @@ Project archival requires explicit --yes, removes it from the active project cat
 success only for an empty 204 response.
 Project-scoped ingest keys stop authorizing new ingestion after archival.
 This soft-archive command does not claim hard deletion or restoration.
+Permanent deletion requires repeating the exact project_id. An accepted request immediately makes \
+the project inactive and schedules permanent deletion automatically; it cannot be restored.
 Project-scoped SDK/ingest credentials are shown only when backend returns one-time credentials.
 Never use an account bearer token as SDK or ingest configuration.
 Next: run logbrew setup for the current non-mutating local plan.";
