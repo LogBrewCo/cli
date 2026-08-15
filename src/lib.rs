@@ -12,6 +12,7 @@ mod analytics_lifecycle;
 mod analytics_overview;
 mod analytics_properties;
 mod analytics_property_contract;
+mod analytics_request;
 mod analytics_retention;
 mod analytics_segments;
 #[doc(hidden)]
