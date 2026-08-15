@@ -53,7 +53,7 @@ const ISSUE_OCCURRENCE_CANDIDATE_LIMIT: u64 = 50;
 const ISSUE_OCCURRENCE_FRAME_LIMIT: u64 = 32;
 /// Largest integer accepted from JSON-number investigation contracts.
 const MAX_SAFE_JSON_INTEGER: u64 = 9_007_199_254_740_991;
-/// Exact top-level vocabulary for the schema-version-9 issue response.
+/// Exact top-level vocabulary for the schema-version-10 issue response.
 const ISSUE_RESPONSE_FIELDS: &[&str] = &[
     "schema_version",
     "subject",
@@ -64,6 +64,7 @@ const ISSUE_RESPONSE_FIELDS: &[&str] = &[
     "grouping",
     "cause",
     "fix",
+    "source_locator",
     "impact",
     "correlations",
     "evidence",
@@ -98,6 +99,19 @@ const DEPLOYMENT_EVIDENCE_FIELDS: [&str; 4] = [
     "deployment.commit_sha",
     "deployment.lookup",
     "deployment.timing",
+];
+/// Exact receipts emitted while resolving a customer-source locator.
+const SOURCE_LOCATOR_EVIDENCE_FIELDS: [&str; 10] = [
+    "source.service",
+    "source.lookup",
+    "source.component",
+    "source.component.unique",
+    "source.repository",
+    "source.repository.unique",
+    "source.deployment_revision",
+    "source.setup_snapshot_revision",
+    "source.revision",
+    "source.repository_relative_file",
 ];
 
 /// Duplicate-aware JSON value.
@@ -317,9 +331,8 @@ fn validate_issue_response(
     expected_id: &str,
     expected_occurrence: &IssueOccurrenceSelection,
 ) -> Result<(), RuntimeError> {
-    let response = response_object(value, ISSUE_RESPONSE_FIELDS)?;
-    require_exact_fields(response, ISSUE_RESPONSE_FIELDS)?;
-    validate_schema_version_value(response, 9)?;
+    let response = exact_response_object(value, ISSUE_RESPONSE_FIELDS)?;
+    validate_schema_version_value(response, 10)?;
     let subject = required_object(response, "subject")?;
     require_string_equals(subject, "kind", "issue")?;
     require_string_equals(subject, "id", expected_id)?;
@@ -384,6 +397,7 @@ fn validate_issue_response(
     validate_nullable_object(fix, "location")?;
     let _fix_provenance = optional_string(fix, "provenance")?;
     issue_exception_chain::validate(event, evidence, cause, fix)?;
+    validate_issue_source_locator(required_object(response, "source_locator")?, evidence, fix)?;
 
     let impact = required_object(response, "impact")?;
     let impact_occurrence_count = require_safe_positive_u64(impact, "occurrence_count")?;
@@ -409,6 +423,175 @@ fn validate_issue_response(
     validate_selected_occurrence_correlations(selected_occurrence, event, correlations)?;
     validate_next_actions(response.get("next_actions"))?;
     issue_lifecycle::validate_next_action(response.get("next_actions"), regression_detected)
+}
+
+/// Validates exact repository, component, revision, and source-path evidence.
+fn validate_issue_source_locator(
+    locator: &Map<String, Value>,
+    overall: &Map<String, Value>,
+    fix: &Map<String, Value>,
+) -> Result<(), RuntimeError> {
+    require_exact_fields(
+        locator,
+        &[
+            "status",
+            "repository_provider",
+            "repository_full_name",
+            "component_path",
+            "revision",
+            "revision_source",
+            "repository_relative_file",
+            "evidence",
+        ],
+    )?;
+    let status = validate_availability(locator, "status")?;
+    let provider = optional_string(locator, "repository_provider")?;
+    let repository = optional_string(locator, "repository_full_name")?;
+    let component = optional_string(locator, "component_path")?;
+    let revision = optional_string(locator, "revision")?;
+    let revision_source = optional_string(locator, "revision_source")?;
+    let file = optional_string(locator, "repository_relative_file")?;
+    let evidence = required_object(locator, "evidence")?;
+    validate_evidence(evidence)?;
+    if provider.is_some() != repository.is_some()
+        || (status == "available") != repository.is_some()
+        || provider.is_some() && component.is_none()
+        || status == "not_linked" && component.is_some()
+        || component.is_none() && (revision.is_some() || file.is_some())
+        || provider.is_some_and(|value| !matches!(value, "github" | "gitlab" | "bitbucket"))
+        || repository.is_some_and(|value| !safe_repository_name(value))
+        || component.is_some_and(|value| !safe_source_path(value, true))
+        || revision.is_some() != revision_source.is_some()
+        || revision.is_some_and(|value| {
+            value.len() > 128
+                || !value
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || b"-._".contains(&byte))
+        })
+        || revision_source
+            .is_some_and(|value| !matches!(value, "deployment_commit" | "setup_snapshot"))
+        || file.is_some_and(|value| !value.contains('/') || !safe_source_path(value, false))
+        || file.is_some_and(|value| {
+            component.is_none_or(|root| {
+                root != "."
+                    && !value
+                        .strip_prefix(root)
+                        .is_some_and(|tail| tail.starts_with('/'))
+            })
+        })
+        || file.is_some_and(|value| {
+            fix.get("location")
+                .and_then(|location| location.get("file"))
+                .and_then(Value::as_str)
+                != Some(value)
+        })
+    {
+        return Err(invalid_response());
+    }
+    let incomplete = validate_source_locator_evidence(locator, evidence, status)?;
+    validate_evidence_vocabulary(
+        overall,
+        "source_locator",
+        &["source_locator", "source_locator.complete"],
+    )?;
+    validate_field_receipts(overall, "source_locator", [true, false, false, false])?;
+    validate_field_receipts(
+        overall,
+        "source_locator.complete",
+        [false, incomplete, false, false],
+    )
+}
+
+/// Validates one exact phased source-linkage receipt and returns whether it is partial.
+fn validate_source_locator_evidence(
+    locator: &Map<String, Value>,
+    evidence: &Map<String, Value>,
+    status: &str,
+) -> Result<bool, RuntimeError> {
+    let provider = optional_string(locator, "repository_provider")?;
+    let component = optional_string(locator, "component_path")?;
+    let revision_source = optional_string(locator, "revision_source")?;
+    let file = optional_string(locator, "repository_relative_file")?;
+    let (mut captured, mut missing) = match (status, component) {
+        ("not_linked", None) => (vec![], vec!["source.service"]),
+        ("not_found", None) => (vec!["source.service"], vec!["source.component"]),
+        ("unavailable", None)
+            if evidence_has_field(evidence, "missing_fields", "source.lookup")? =>
+        {
+            (vec!["source.service"], vec!["source.lookup"])
+        }
+        ("unavailable", None) => (vec!["source.service"], vec!["source.component.unique"]),
+        (_, Some(_)) => (vec!["source.service", "source.component"], vec![]),
+        _ => return Err(invalid_response()),
+    };
+    if component.is_some() {
+        if provider.is_some() {
+            captured.push("source.repository");
+        } else if status == "unavailable"
+            && evidence_has_field(evidence, "missing_fields", "source.repository.unique")?
+        {
+            missing.push("source.repository.unique");
+        } else {
+            missing.push("source.repository");
+        }
+        match revision_source {
+            Some("deployment_commit") => captured.push("source.deployment_revision"),
+            Some("setup_snapshot") => {
+                captured.push("source.setup_snapshot_revision");
+                missing.push("source.deployment_revision");
+            }
+            None => missing.push("source.revision"),
+            _ => return Err(invalid_response()),
+        }
+        if file.is_some() {
+            captured.push("source.repository_relative_file");
+        } else {
+            missing.push("source.repository_relative_file");
+        }
+    }
+    if EVIDENCE_CATEGORIES.iter().any(|category| {
+        evidence[*category].as_array().is_none_or(|fields| {
+            fields.iter().any(|field| {
+                field
+                    .as_str()
+                    .is_none_or(|field| !SOURCE_LOCATOR_EVIDENCE_FIELDS.contains(&field))
+            })
+        })
+    }) || (require_string(evidence, "status")? == "complete") != missing.is_empty()
+    {
+        return Err(invalid_response());
+    }
+    for field in SOURCE_LOCATOR_EVIDENCE_FIELDS {
+        validate_field_receipts(
+            evidence,
+            field,
+            [
+                captured.contains(&field),
+                missing.contains(&field),
+                false,
+                false,
+            ],
+        )?;
+    }
+    Ok(!missing.is_empty())
+}
+
+/// Accepts one bounded owner-qualified repository name.
+fn safe_repository_name(value: &str) -> bool {
+    value.len() <= 255 && value.split('/').count() >= 2 && safe_source_path(value, false)
+}
+
+/// Accepts a normalized repository-relative path, optionally including the root marker.
+fn safe_source_path(value: &str, allow_root: bool) -> bool {
+    (allow_root && value == ".")
+        || value.len() <= 512
+            && !value.starts_with('/')
+            && !value.contains('\\')
+            && value.split('/').all(|part| {
+                !part.is_empty()
+                    && !matches!(part, "." | "..")
+                    && !part.chars().any(char::is_control)
+            })
 }
 
 /// Validates only normalized, low-cardinality request evidence and its omission receipts.
@@ -2490,6 +2673,7 @@ fn validate_timeline(value: &Map<String, Value>) -> Result<(), RuntimeError> {
 
 /// Validates common evidence coverage.
 fn validate_evidence(evidence: &Map<String, Value>) -> Result<(), RuntimeError> {
+    require_known_fields(evidence, &["status"], &EVIDENCE_CATEGORIES)?;
     if !matches!(require_string(evidence, "status")?, "complete" | "partial") {
         return Err(invalid_response());
     }
@@ -2498,7 +2682,15 @@ fn validate_evidence(evidence: &Map<String, Value>) -> Result<(), RuntimeError> 
             .get(name)
             .and_then(Value::as_array)
             .ok_or_else(invalid_response)?;
-        if fields.len() > 256 || fields.iter().any(|field| field.as_str().is_none()) {
+        if fields.len() > 256
+            || fields.iter().any(|field| field.as_str().is_none())
+            || fields
+                .iter()
+                .filter_map(Value::as_str)
+                .collect::<BTreeSet<_>>()
+                .len()
+                != fields.len()
+        {
             return Err(invalid_response());
         }
     }
@@ -2591,6 +2783,15 @@ fn response_object<'a>(
         return Err(invalid_response());
     }
     Ok(object)
+}
+
+/// Returns a response object only when its top-level vocabulary is exact.
+fn exact_response_object<'a>(
+    value: &'a Value,
+    fields: &[&str],
+) -> Result<&'a Map<String, Value>, RuntimeError> {
+    let object = response_object(value, fields)?;
+    require_exact_fields(object, fields).map(|()| object)
 }
 
 /// Requires one exact object vocabulary so privacy-sensitive contracts fail closed on additions.
@@ -2810,11 +3011,29 @@ fn render_issue(value: &Value) -> Option<String> {
     }
     append_issue_cause(&mut output, value.get("cause"));
     append_issue_fix(&mut output, value.get("fix"));
+    append_issue_source_locator(&mut output, value.get("source_locator"));
     append_issue_impact(&mut output, value.get("impact"));
     append_issue_correlations(&mut output, value.get("correlations"));
     append_evidence(&mut output, value.get("evidence"));
     append_actions(&mut output, value.get("next_actions"));
     Some(output)
+}
+
+/// Appends one compact, provenance-labeled customer-source locator.
+fn append_issue_source_locator(output: &mut String, locator: Option<&Value>) {
+    let Some(locator) = locator else { return };
+    output.push_str("Source locator:");
+    append_labeled_text(output, "status", locator, "status", 40);
+    append_labeled_text(output, "provider", locator, "repository_provider", 24);
+    append_labeled_text(output, "repository", locator, "repository_full_name", 255);
+    append_labeled_text(output, "component", locator, "component_path", 512);
+    append_labeled_text(output, "revision", locator, "revision", 128);
+    append_labeled_text(output, "revision_source", locator, "revision_source", 32);
+    append_labeled_text(output, "file", locator, "repository_relative_file", 512);
+    if let Some(evidence) = locator.get("evidence") {
+        append_labeled_text(output, "evidence", evidence, "status", 32);
+    }
+    output.push('\n');
 }
 
 /// Appends the proven grouping rule without repeating captured values.
@@ -3210,17 +3429,7 @@ fn append_issue_correlations(output: &mut String, correlations: Option<&Value>) 
         output.push('\n');
     }
     if let Some(trace) = correlations.get("trace") {
-        output.push_str("Trace:");
-        append_labeled_text(output, "status", trace, "status", 40);
-        append_labeled_text(output, "trace", trace, "trace_id", 80);
-        if let Some(summary) = trace.get("summary").filter(|value| !value.is_null()) {
-            append_labeled_integer(output, "spans", summary, "span_count");
-            append_labeled_integer(output, "errors", summary, "error_span_count");
-            append_labeled_integer(output, "services", summary, "service_count");
-            append_labeled_integer(output, "duration_ms", summary, "duration_ms");
-        }
-        append_labeled_bool(output, "truncated", trace, "truncated");
-        output.push('\n');
+        append_trace_receipt(output, trace, true);
     }
     append_related_collections(
         output,
@@ -3343,17 +3552,7 @@ fn append_log_correlations(output: &mut String, correlations: Option<&Value>) {
         return;
     };
     if let Some(trace) = correlations.get("trace") {
-        output.push_str("Trace:");
-        append_labeled_text(output, "status", trace, "status", 40);
-        append_labeled_text(output, "trace", trace, "trace_id", 80);
-        append_labeled_text(output, "span", trace, "span_id", 40);
-        if let Some(summary) = trace.get("summary").filter(|value| !value.is_null()) {
-            append_labeled_integer(output, "spans", summary, "span_count");
-            append_labeled_integer(output, "errors", summary, "error_span_count");
-            append_labeled_integer(output, "duration_ms", summary, "duration_ms");
-        }
-        append_labeled_bool(output, "truncated", trace, "truncated");
-        output.push('\n');
+        append_trace_receipt(output, trace, false);
     }
     append_related_collections(
         output,
@@ -3366,6 +3565,24 @@ fn append_log_correlations(output: &mut String, correlations: Option<&Value>) {
             ("metrics", "Related metrics"),
         ],
     );
+}
+
+/// Appends the shared exact-trace receipt used by issue and log investigations.
+fn append_trace_receipt(output: &mut String, trace: &Value, include_services: bool) {
+    output.push_str("Trace:");
+    append_labeled_text(output, "status", trace, "status", 40);
+    append_labeled_text(output, "trace", trace, "trace_id", 80);
+    append_labeled_text(output, "span", trace, "span_id", 40);
+    if let Some(summary) = trace.get("summary").filter(|value| !value.is_null()) {
+        append_labeled_integer(output, "spans", summary, "span_count");
+        append_labeled_integer(output, "errors", summary, "error_span_count");
+        if include_services {
+            append_labeled_integer(output, "services", summary, "service_count");
+        }
+        append_labeled_integer(output, "duration_ms", summary, "duration_ms");
+    }
+    append_labeled_bool(output, "truncated", trace, "truncated");
+    output.push('\n');
 }
 
 /// Builds a detailed trace failure and latency investigation.

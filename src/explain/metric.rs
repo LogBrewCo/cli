@@ -12,10 +12,10 @@ use super::{
     DeploymentExpectation, METRIC_POINT_LIMIT, METRIC_SERIES_LIMIT, NEXT_ACTION_LIMIT,
     append_actions, append_evidence, append_labeled_bool, append_labeled_integer,
     append_labeled_number, append_labeled_text, append_named_text, append_runtime_context,
-    collect_scalar_fields, display_text, field_text, invalid_response, optional_finite_number,
-    optional_string, require_bool, require_exact_fields, require_finite_number,
-    require_known_fields, require_safe_positive_u64, require_safe_u64, require_string,
-    require_string_equals, require_timestamp, require_u64, required_object, response_object,
+    collect_scalar_fields, display_text, exact_response_object, field_text, invalid_response,
+    optional_finite_number, optional_string, require_bool, require_exact_fields,
+    require_finite_number, require_known_fields, require_safe_positive_u64, require_safe_u64,
+    require_string, require_string_equals, require_timestamp, require_u64, required_object,
     validate_deployment_boundary, validate_evidence, validate_name_version,
     validate_schema_version_value,
 };
@@ -493,8 +493,7 @@ fn validate_metric_envelope<'a>(
     value: &'a Value,
     expected: &ExplainMetricTarget,
 ) -> Result<&'a Map<String, Value>, RuntimeError> {
-    let response = response_object(value, METRIC_RESPONSE_FIELDS)?;
-    require_exact_fields(response, METRIC_RESPONSE_FIELDS)?;
+    let response = exact_response_object(value, METRIC_RESPONSE_FIELDS)?;
     validate_schema_version_value(response, 2)?;
     let _purpose = require_string(response, "purpose")?;
     require_string_equals(response, "content_trust", "untrusted_telemetry")?;
