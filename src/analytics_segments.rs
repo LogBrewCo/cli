@@ -2,6 +2,7 @@
 
 use serde::Deserialize;
 
+use crate::analytics_request::insert_optional;
 use crate::auth::{AuthCredential, send_authenticated_with_refresh};
 use crate::{
     AnalyticsSegment, AnalyticsSegmentComparisonOptions, AnalyticsSegmentEventKind,
@@ -40,12 +41,7 @@ pub(super) fn request_body(options: &AnalyticsSegmentComparisonOptions) -> serde
         "since".to_owned(),
         serde_json::Value::String(options.since.clone()),
     ));
-    if let Some(until) = options.until.as_deref() {
-        drop(body.insert(
-            "until".to_owned(),
-            serde_json::Value::String(until.to_owned()),
-        ));
-    }
+    insert_optional(&mut body, "until", options.until.as_deref());
     drop(body.insert(
         "interval".to_owned(),
         serde_json::Value::String(options.interval.clone()),
@@ -102,17 +98,6 @@ fn segment_body(segment: &AnalyticsSegment) -> serde_json::Value {
         );
     }
     serde_json::Value::Object(body)
-}
-
-/// Adds one optional exact context filter without sending null placeholders.
-fn insert_optional(
-    body: &mut serde_json::Map<String, serde_json::Value>,
-    key: &str,
-    value: Option<&str>,
-) {
-    if let Some(value) = value {
-        drop(body.insert(key.to_owned(), serde_json::Value::String(value.to_owned())));
-    }
 }
 
 /// Executes one bounded, identity-safe segment comparison request.

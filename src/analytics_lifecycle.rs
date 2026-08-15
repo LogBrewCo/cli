@@ -2,6 +2,7 @@
 
 use serde::Deserialize;
 
+use crate::analytics_request::insert_optional;
 use crate::auth::{AuthCredential, send_authenticated_with_refresh};
 use crate::{
     AnalyticsLifecycleEventKind, AnalyticsLifecycleInterval, AnalyticsLifecycleOptions,
@@ -58,17 +59,6 @@ pub(super) fn request_body(options: &AnalyticsLifecycleOptions) -> serde_json::V
         options.history_period_count.into(),
     ));
     serde_json::Value::Object(body)
-}
-
-/// Adds one optional exact context filter without sending null placeholders.
-fn insert_optional(
-    body: &mut serde_json::Map<String, serde_json::Value>,
-    key: &str,
-    value: Option<&str>,
-) {
-    if let Some(value) = value {
-        drop(body.insert(key.to_owned(), serde_json::Value::String(value.to_owned())));
-    }
 }
 
 /// Executes one aggregate, identity-safe lifecycle request.
