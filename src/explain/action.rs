@@ -11,15 +11,15 @@ use super::projection::{
 use super::{
     append_actions, append_evidence, append_labeled_bool, append_labeled_integer,
     append_labeled_text, append_log_analysis, append_log_correlations, append_named_pair,
-    append_named_text, append_runtime_context, append_timeline, collect_scalar_fields, field_text,
-    invalid_response, is_w3c_id, nullable_w3c_id, optional_object_value, optional_string,
-    require_bool, require_exact_fields, require_safe_u64, require_string, require_string_equals,
-    require_timestamp, require_u64, require_uuid, required_object, response_object,
-    validate_availability, validate_correlated_collection, validate_correlated_log,
-    validate_correlated_signal, validate_evidence, validate_exact_release_scope,
-    validate_name_version, validate_next_actions, validate_schema_version,
-    validate_schema_version_value, validate_shared_span_summary, validate_shared_trace_summary,
-    validate_timeline,
+    append_named_text, append_runtime_context, append_timeline, collect_scalar_fields,
+    exact_response_object, field_text, invalid_response, is_w3c_id, nullable_w3c_id,
+    optional_object_value, optional_string, require_bool, require_exact_fields, require_safe_u64,
+    require_string, require_string_equals, require_timestamp, require_u64, require_uuid,
+    required_object, validate_availability, validate_correlated_collection,
+    validate_correlated_log, validate_correlated_signal, validate_evidence,
+    validate_exact_release_scope, validate_name_version, validate_next_actions,
+    validate_schema_version, validate_schema_version_value, validate_shared_span_summary,
+    validate_shared_trace_summary, validate_timeline,
 };
 use crate::RuntimeError;
 use crate::ids::is_uuid;
@@ -35,22 +35,8 @@ const ACTION_CONTEXT_TAG_VALUE_LIMIT: usize = 256;
 
 /// Validates one versioned privacy-bounded product-action investigation.
 pub(super) fn validate_response(value: &Value, expected_id: &str) -> Result<(), RuntimeError> {
-    let response = response_object(
+    let response = exact_response_object(
         value,
-        &[
-            "schema_version",
-            "subject",
-            "context",
-            "properties",
-            "analysis",
-            "correlations",
-            "timeline",
-            "evidence",
-            "next_actions",
-        ],
-    )?;
-    require_exact_fields(
-        response,
         &[
             "schema_version",
             "subject",

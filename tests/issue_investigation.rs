@@ -52,7 +52,7 @@ fn parses_only_the_explicit_issue_investigation_grammar() {
         exact.http_path().as_deref(),
         Some(
             "/api/telemetry/issues/11111111-1111-4111-8111-111111111111/investigation?\
-             response_version=9&occurrence_id=22222222-2222-4222-8222-222222222222"
+             response_version=10&occurrence_id=22222222-2222-4222-8222-222222222222"
         )
     );
     assert!(exact.wants_json());
@@ -69,7 +69,7 @@ fn parses_only_the_explicit_issue_investigation_grammar() {
         latest.http_path().as_deref(),
         Some(
             "/api/telemetry/issues/11111111-1111-4111-8111-111111111111/investigation?\
-             response_version=9&selection=latest"
+             response_version=10&selection=latest"
         )
     );
 }
@@ -125,9 +125,9 @@ fn help_describes_the_complete_versioned_bundle() {
     assert!(text.contains("approximate affected-user coverage and limitations"));
     assert!(text.contains("trace, sibling issues, related logs, actions, metric exemplars"));
     assert!(text.contains("same contract as logbrew explain issue"));
-    assert!(text.contains("exact validated schema-version-9 response"));
+    assert!(text.contains("exact validated schema-version-10 response"));
     assert!(text.contains("deterministic grouping"));
-    assert!(text.contains("exact preceding-deployment evidence"));
+    assert!(text.contains("exact preceding-deployment and customer-source locator evidence"));
     assert!(text.contains("explicit selected, first, latest, and recommended occurrence"));
     assert!(text.contains("status activity and server-observed regression evidence"));
     assert!(text.contains("zero-filled occurrence trend"));
@@ -191,13 +191,14 @@ async fn captured_native_frame_count_accepts_a_receipted_safe_projection()
 }
 
 #[tokio::test]
-async fn complete_and_unavailable_user_impact_states_preserve_exact_json()
+async fn coverage_and_source_locator_states_preserve_exact_json()
 -> Result<(), Box<dyn std::error::Error>> {
-    for (bundle, status) in [
-        (complete_user_impact_bundle(), "complete"),
-        (unavailable_user_impact_bundle(), "unavailable"),
+    for (bundle, impact, locator) in [
+        (complete_user_impact_bundle(), "complete", "available"),
+        (unavailable_user_impact_bundle(), "unavailable", "not_found"),
     ] {
-        assert_eq!(bundle["impact"]["user_impact"]["status"], status);
+        assert_eq!(bundle["impact"]["user_impact"]["status"], impact);
+        assert_eq!(bundle["source_locator"]["status"], locator);
         assert_json_bundle(bundle).await?;
     }
     Ok(())
@@ -238,12 +239,15 @@ async fn human_output_surfaces_failure_fix_timeline_correlations_and_limits()
         "Exception frame node=1 index=0 module=checkout.provider function=requestPayment \
          file=provider_client.ts line=142 column=9 in_app=true",
         "Request: method=POST route=/checkout/{cart_id} status=503",
-        "Frame: module=checkout function=capturePayment file=payment_gateway.ts line=87",
+        "Frame: module=checkout function=capturePayment file=apps/checkout/payment_gateway.ts line=87",
         "Breadcrumb: at=2026-08-04T07:59:58Z category=checkout.submit",
         "Runtime: service=checkout-api@1.2.3 runtime=node@24",
         "Cause assessment: status=reported_hypothesis provenance=application_reported",
         "Reported hypothesis (unverified): The provider returned 503 after retries.",
         "Fix area: status=reported_location provenance=application_reported",
+        "Source locator: status=available provider=github repository=example/checkout \
+         component=apps/checkout revision=0123456789abcdef \
+         revision_source=deployment_commit file=apps/checkout/payment_gateway.ts evidence=complete",
         "Known affected users: ~2 status=partial method=approximate_uniq_combined64",
         "User-impact coverage: retained=3 indexed=3 identified=2 anonymous=0 missing=0 \
          privacy_filtered=1 historical_unindexed=0 index=100.00% identified_share=66.66%",
@@ -288,7 +292,7 @@ async fn underlying_exception_fix_is_bound_to_its_exact_node_and_frame()
         underlying_exception_fix_bundle(),
         &[
             "Fix area: status=observed_underlying_exception_frame provenance=backend_observed \
-         module=checkout.provider function=requestPayment file=provider_client.ts line=142 \
+         module=checkout.provider function=requestPayment file=apps/checkout/provider_client.ts line=142 \
          column=9 in_app=true source_exception=1",
         ],
     )
@@ -574,7 +578,7 @@ async fn mount_bundle(server: &MockServer, bundle: serde_json::Value, expected_r
         .and(path(format!(
             "/api/telemetry/issues/{ISSUE_ID}/investigation"
         )))
-        .and(query_param("response_version", "9"))
+        .and(query_param("response_version", "10"))
         .and(query_param("selection", "recommended"))
         .and(header("authorization", "Bearer test-token"))
         .respond_with(ResponseTemplate::new(200).set_body_json(bundle))
@@ -592,7 +596,7 @@ async fn mount_exact_bundle(
         .and(path(format!(
             "/api/telemetry/issues/{ISSUE_ID}/investigation"
         )))
-        .and(query_param("response_version", "9"))
+        .and(query_param("response_version", "10"))
         .and(query_param("occurrence_id", OCCURRENCE_ID))
         .and(header("authorization", "Bearer test-token"))
         .respond_with(ResponseTemplate::new(200).set_body_json(bundle))
@@ -688,7 +692,7 @@ fn rich_investigation_bundle() -> serde_json::Value {
         "0.1.4",
     );
     serde_json::json!({
-        "schema_version": 9,
+        "schema_version": 10,
         "subject": {
             "kind": "issue",
             "id": ISSUE_ID,
@@ -747,7 +751,7 @@ fn rich_investigation_bundle() -> serde_json::Value {
                             "index": 0,
                             "module": "checkout",
                             "function": "capturePayment",
-                            "file": "payment_gateway.ts",
+                            "file": "apps/checkout/payment_gateway.ts",
                             "line": 87,
                             "column": 12,
                             "in_app": true,
@@ -788,7 +792,7 @@ fn rich_investigation_bundle() -> serde_json::Value {
                 "index": 0,
                 "module": "checkout",
                 "function": "capturePayment",
-                "file": "payment_gateway.ts",
+                "file": "apps/checkout/payment_gateway.ts",
                 "line": 87,
                 "column": 12,
                 "in_app": true,
@@ -857,12 +861,31 @@ fn rich_investigation_bundle() -> serde_json::Value {
                 "component": "payment.gateway",
                 "module": "checkout",
                 "function": "capturePayment",
-                "file": "payment_gateway.ts",
+                "file": "apps/checkout/payment_gateway.ts",
                 "line": 87,
                 "column": 12,
                 "in_app": true
             },
             "provenance": "application_reported"
+        },
+        "source_locator": {
+            "status": "available",
+            "repository_provider": "github",
+            "repository_full_name": "example/checkout",
+            "component_path": "apps/checkout",
+            "revision": "0123456789abcdef",
+            "revision_source": "deployment_commit",
+            "repository_relative_file": "apps/checkout/payment_gateway.ts",
+            "evidence": {
+                "status": "complete",
+                "captured_fields": [
+                    "source.component", "source.deployment_revision", "source.repository",
+                    "source.repository_relative_file", "source.service"
+                ],
+                "missing_fields": [],
+                "redacted_fields": [],
+                "truncated_fields": []
+            }
         },
         "impact": {
             "occurrence_count": 3,
@@ -1026,6 +1049,7 @@ fn rich_investigation_bundle() -> serde_json::Value {
                 "request.response_status_code",
                 "request.route_template",
                 "stack_frames",
+                "source_locator",
                 "trace",
                 "affected_users.known"
             ],
@@ -1368,13 +1392,15 @@ fn invalid_exception_chain_bundle() -> serde_json::Value {
 
 fn underlying_exception_fix_bundle() -> serde_json::Value {
     let mut bundle = rich_investigation_bundle();
+    bundle["event"]["exception_chain"]["entries"][1]["stack_frames"][0]["file"] =
+        serde_json::json!("apps/checkout/provider_client.ts");
     bundle["fix"] = serde_json::json!({
         "status": "observed_underlying_exception_frame",
         "location": {
             "component": null,
             "module": "checkout.provider",
             "function": "requestPayment",
-            "file": "provider_client.ts",
+            "file": "apps/checkout/provider_client.ts",
             "line": 142,
             "column": 9,
             "in_app": true,
@@ -1382,6 +1408,8 @@ fn underlying_exception_fix_bundle() -> serde_json::Value {
         },
         "provenance": "backend_observed"
     });
+    bundle["source_locator"]["repository_relative_file"] =
+        serde_json::json!("apps/checkout/provider_client.ts");
     bundle
 }
 
@@ -1590,7 +1618,25 @@ fn invalid_occurrence_selection_bundles() -> Vec<serde_json::Value> {
             "/correlations/related_issues/truncated",
             serde_json::json!(true),
         ),
+        ("/source_locator/status", serde_json::json!("not_found")),
+        (
+            "/source_locator/repository_provider",
+            serde_json::json!("unknown"),
+        ),
+        (
+            "/source_locator/revision_source",
+            serde_json::json!("setup_snapshot"),
+        ),
+        (
+            "/source_locator/repository_relative_file",
+            serde_json::json!("../payment_gateway.ts"),
+        ),
     ]);
+
+    let mut unknown_source_receipt = rich_investigation_bundle();
+    unknown_source_receipt["source_locator"]["evidence"]["captured_fields"] =
+        serde_json::json!(["source.raw_url"]);
+    cases.push(mark_invalid(unknown_source_receipt));
 
     let mut duplicate_issue = rich_investigation_bundle();
     let mut sibling = duplicate_issue["correlations"]["related_issues"]["items"][0].clone();
@@ -1810,6 +1856,16 @@ fn complete_user_impact_bundle() -> serde_json::Value {
         },
         "limitations": ["approximate_distinct_count"]
     });
+    bundle["source_locator"]["revision"] = serde_json::json!("setup-snapshot-123");
+    bundle["source_locator"]["revision_source"] = serde_json::json!("setup_snapshot");
+    bundle["source_locator"]["repository_relative_file"] = serde_json::Value::Null;
+    bundle["source_locator"]["evidence"] = serde_json::json!({
+        "status": "partial",
+        "captured_fields": ["source.component", "source.repository", "source.service", "source.setup_snapshot_revision"],
+        "missing_fields": ["source.deployment_revision", "source.repository_relative_file"],
+        "redacted_fields": [], "truncated_fields": []
+    });
+    add_evidence_field(&mut bundle, "missing_fields", "source_locator.complete");
     bundle
 }
 
@@ -1822,5 +1878,15 @@ fn unavailable_user_impact_bundle() -> serde_json::Value {
         "coverage": null,
         "limitations": ["user_impact_read_unavailable"]
     });
+    bundle["source_locator"] = serde_json::json!({
+        "status": "not_found",
+        "repository_provider": null, "repository_full_name": null, "component_path": null,
+        "revision": null, "revision_source": null, "repository_relative_file": null,
+        "evidence": {
+            "status": "partial", "captured_fields": ["source.service"],
+            "missing_fields": ["source.component"], "redacted_fields": [], "truncated_fields": []
+        }
+    });
+    add_evidence_field(&mut bundle, "missing_fields", "source_locator.complete");
     bundle
 }
