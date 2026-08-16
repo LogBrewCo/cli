@@ -4192,26 +4192,7 @@ fn display_text(value: &str, limit: usize) -> String {
 
 /// Converts transport and refresh failures into fixed path-free recovery.
 fn request_error(error: RuntimeError) -> RuntimeError {
-    match error {
-        RuntimeError::MissingToken | RuntimeError::Unavailable { .. } => error,
-        RuntimeError::Cli(_)
-        | RuntimeError::Io(_)
-        | RuntimeError::Http(_)
-        | RuntimeError::Api { .. }
-        | RuntimeError::StatusUnavailable { .. }
-        | RuntimeError::InvestigationResponseInvalid
-        | RuntimeError::ExplainResponseInvalid
-        | RuntimeError::AnalyticsOverviewResponseInvalid
-        | RuntimeError::AnalyticsPropertiesResponseInvalid
-        | RuntimeError::AnalyticsResponseInvalid
-        | RuntimeError::AnalyticsFunnelResponseInvalid
-        | RuntimeError::AnalyticsRetentionResponseInvalid
-        | RuntimeError::AnalyticsLifecycleResponseInvalid
-        | RuntimeError::AnalyticsSegmentResponseInvalid
-        | RuntimeError::NativeDebugArtifactInvalid
-        | RuntimeError::NativeDebugResponseInvalid
-        | RuntimeError::NativeDebugVerificationFailed => transport_error(),
-    }
+    error.auth_or(transport_error())
 }
 
 /// Returns one fixed path-free transport failure.
