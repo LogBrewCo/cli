@@ -16,6 +16,7 @@ use serde::{Deserialize, Deserializer};
 use serde_json::{Map, Value};
 
 use crate::auth::{AuthCredential, send_authenticated_with_refresh};
+use crate::http::terminal_safe;
 use crate::ids::{is_trace_id, is_uuid};
 use crate::time;
 use crate::{
@@ -4185,29 +4186,6 @@ fn display_text(value: &str, limit: usize) -> String {
     let mut output = characters.by_ref().take(limit).collect::<String>();
     if characters.next().is_some() {
         output.push_str("...");
-    }
-    output
-}
-
-/// Escapes terminal controls and bidirectional-display characters in untrusted telemetry.
-fn terminal_safe(value: &str) -> String {
-    let mut output = String::with_capacity(value.len());
-    for character in value.chars() {
-        if character.is_control() {
-            output.extend(character.escape_default());
-        } else if matches!(
-            character,
-            '\u{061c}'
-                | '\u{200b}'..='\u{200f}'
-                | '\u{2028}'..='\u{202e}'
-                | '\u{2060}'..='\u{206f}'
-                | '\u{feff}'
-                | '\u{fff9}'..='\u{fffb}'
-        ) {
-            output.extend(character.escape_unicode());
-        } else {
-            output.push(character);
-        }
     }
     output
 }

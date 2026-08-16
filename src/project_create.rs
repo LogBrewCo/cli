@@ -182,10 +182,10 @@ pub(super) async fn execute<W: std::io::Write>(
         options.ingest_key_file.as_str(),
         home_owner(home.as_path()).map_err(|_| operation.retry_state_unavailable())?,
     )?;
-    let origin =
-        normalized_origin(env.base_url.as_str()).map_err(|_| operation.invalid_request())?;
-    let body =
-        serde_json::to_string(&project_body(options)).map_err(|_| operation.invalid_request())?;
+    let origin = crate::http::normalized_origin(env.base_url.as_str())
+        .ok_or_else(|| operation.invalid_request())?;
+    let body = serde_json::to_string(&crate::project_create_body(options))
+        .map_err(|_| operation.invalid_request())?;
     let lock =
         tokio::task::spawn_blocking(move || BootstrapLock::exclusive(home.as_path(), operation))
             .await
@@ -256,8 +256,8 @@ pub(super) async fn execute_ingest_key_create<W: std::io::Write>(
         options.ingest_key_file.as_str(),
         home_owner(home.as_path()).map_err(|_| operation.retry_state_unavailable())?,
     )?;
-    let origin =
-        normalized_origin(env.base_url.as_str()).map_err(|_| operation.invalid_request())?;
+    let origin = crate::http::normalized_origin(env.base_url.as_str())
+        .ok_or_else(|| operation.invalid_request())?;
     let body = serde_json::to_string(&project_ingest_key_body(options))
         .map_err(|_| operation.invalid_request())?;
     let lock =
@@ -362,32 +362,6 @@ fn credential_client(operation: CredentialOperation) -> Result<reqwest::Client, 
         .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(|_| operation.transport_unavailable())
-}
-
-/// Builds the canonical request object with a fixed source.
-fn project_body(options: &ProjectCreateOptions) -> serde_json::Value {
-    let mut body = serde_json::Map::new();
-    drop(body.insert(
-        "name".to_owned(),
-        serde_json::Value::String(options.name.clone()),
-    ));
-    if let Some(runtime) = options.runtime.as_ref() {
-        drop(body.insert(
-            "runtime".to_owned(),
-            serde_json::Value::String(runtime.clone()),
-        ));
-    }
-    if let Some(environment) = options.environment.as_ref() {
-        drop(body.insert(
-            "environment".to_owned(),
-            serde_json::Value::String(environment.clone()),
-        ));
-    }
-    drop(body.insert(
-        "source".to_owned(),
-        serde_json::Value::String(String::from("cli")),
-    ));
-    serde_json::Value::Object(body)
 }
 
 /// Builds the byte-stable existing-project ingest-key request.
@@ -1342,7 +1316,7 @@ fn required_safe(
     object
         .get(key)
         .and_then(serde_json::Value::as_str)
-        .filter(|value| safe_text(value, limit) && !value.is_empty())
+        .filter(|value| crate::http::display_safe(value, limit) && !value.is_empty())
         .map(ToOwned::to_owned)
         .ok_or_else(invalid_response)
 }
@@ -1355,7 +1329,7 @@ fn optional_safe(
 ) -> Result<(), RuntimeError> {
     match object.get(key) {
         Some(serde_json::Value::Null) => Ok(()),
-        Some(serde_json::Value::String(value)) if safe_text(value, limit) => Ok(()),
+        Some(serde_json::Value::String(value)) if crate::http::display_safe(value, limit) => Ok(()),
         Some(_) | None => Err(invalid_response()),
     }
 }
@@ -1398,7 +1372,8 @@ fn required_timestamp(
     key: &str,
 ) -> Result<String, RuntimeError> {
     let value = required_safe(object, key, 64)?;
-    is_rfc3339(value.as_str())
+    crate::time::parse_rfc3339(value.as_str())
+        .is_some()
         .then_some(value)
         .ok_or_else(invalid_response)
 }
@@ -1410,7 +1385,9 @@ fn optional_timestamp(
 ) -> Result<(), RuntimeError> {
     match object.get(key) {
         Some(serde_json::Value::Null) => Ok(()),
-        Some(serde_json::Value::String(value)) if is_rfc3339(value) => Ok(()),
+        Some(serde_json::Value::String(value)) if crate::time::parse_rfc3339(value).is_some() => {
+            Ok(())
+        }
         Some(_) | None => Err(invalid_response()),
     }
 }
@@ -1422,7 +1399,9 @@ fn nullable_timestamp(
 ) -> Result<Option<String>, RuntimeError> {
     match object.get(key) {
         Some(serde_json::Value::Null) => Ok(None),
-        Some(serde_json::Value::String(value)) if is_rfc3339(value) => Ok(Some(value.clone())),
+        Some(serde_json::Value::String(value)) if crate::time::parse_rfc3339(value).is_some() => {
+            Ok(Some(value.clone()))
+        }
         Some(_) | None => Err(invalid_response()),
     }
 }
@@ -1498,129 +1477,6 @@ fn state_string(
         })
         .map(ToOwned::to_owned)
         .ok_or_else(retry_state_invalid)
-}
-
-/// Rejects control and display-direction characters in server text.
-fn safe_text(value: &str, limit: usize) -> bool {
-    value.chars().count() <= limit
-        && !value.chars().any(|character| {
-            character.is_control()
-                || matches!(
-                    character,
-                    '\u{061c}'
-                        | '\u{200b}'..='\u{200f}'
-                        | '\u{2028}'..='\u{202e}'
-                        | '\u{2060}'..='\u{206f}'
-                        | '\u{feff}'
-                        | '\u{fff9}'..='\u{fffb}'
-                )
-        })
-}
-
-/// Validates an RFC3339 timestamp without adding a time dependency.
-fn is_rfc3339(value: &str) -> bool {
-    let bytes = value.as_bytes();
-    if bytes.len() < 20
-        || bytes.get(4) != Some(&b'-')
-        || bytes.get(7) != Some(&b'-')
-        || bytes.get(10) != Some(&b'T')
-        || bytes.get(13) != Some(&b':')
-        || bytes.get(16) != Some(&b':')
-    {
-        return false;
-    }
-    let Some(year) = bytes.get(0..4).and_then(digits_u32) else {
-        return false;
-    };
-    let Some(month) = bytes.get(5..7).and_then(digits_u32) else {
-        return false;
-    };
-    let Some(day) = bytes.get(8..10).and_then(digits_u32) else {
-        return false;
-    };
-    let Some(hour) = bytes.get(11..13).and_then(digits_u32) else {
-        return false;
-    };
-    let Some(minute) = bytes.get(14..16).and_then(digits_u32) else {
-        return false;
-    };
-    let Some(second) = bytes.get(17..19).and_then(digits_u32) else {
-        return false;
-    };
-    if !(1..=12).contains(&month)
-        || day == 0
-        || day > days_in_month(year, month)
-        || hour > 23
-        || minute > 59
-        || second > 59
-    {
-        return false;
-    }
-    let mut index = 19;
-    if bytes.get(index) == Some(&b'.') {
-        index += 1;
-        let start = index;
-        while bytes.get(index).is_some_and(u8::is_ascii_digit) {
-            index += 1;
-        }
-        if index == start {
-            return false;
-        }
-    }
-    match bytes.get(index) {
-        Some(b'Z') => index + 1 == bytes.len(),
-        Some(b'+' | b'-') => {
-            let Some(offset_hour) = bytes.get(index + 1..index + 3).and_then(digits_u32) else {
-                return false;
-            };
-            let Some(offset_minute) = bytes.get(index + 4..index + 6).and_then(digits_u32) else {
-                return false;
-            };
-            bytes.get(index + 3) == Some(&b':')
-                && index + 6 == bytes.len()
-                && offset_hour <= 23
-                && offset_minute <= 59
-        }
-        Some(_) | None => false,
-    }
-}
-
-/// Parses an ASCII digit slice as an unsigned integer.
-fn digits_u32(bytes: &[u8]) -> Option<u32> {
-    bytes.iter().try_fold(0_u32, |value, byte| {
-        byte.is_ascii_digit()
-            .then(|| value * 10 + u32::from(*byte - b'0'))
-    })
-}
-
-/// Returns the number of days in one Gregorian month.
-const fn days_in_month(year: u32, month: u32) -> u32 {
-    match month {
-        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
-        4 | 6 | 9 | 11 => 30,
-        2 if year.is_multiple_of(400) || (year.is_multiple_of(4) && !year.is_multiple_of(100)) => {
-            29
-        }
-        2 => 28,
-        _ => 0,
-    }
-}
-
-/// Normalizes and validates the configured HTTP API origin.
-fn normalized_origin(base_url: &str) -> Result<String, RuntimeError> {
-    let mut url = reqwest::Url::parse(base_url).map_err(|_| invalid_request())?;
-    if !matches!(url.scheme(), "http" | "https")
-        || url.host_str().is_none()
-        || !url.username().is_empty()
-        || url.password().is_some()
-        || url.query().is_some()
-        || url.fragment().is_some()
-    {
-        return Err(invalid_request());
-    }
-    let path = url.path().trim_end_matches('/').to_owned();
-    url.set_path(path.as_str());
-    Ok(url.as_str().trim_end_matches('/').to_owned())
 }
 
 /// Rejects symlinks before the first non-caller-owned ancestor.
@@ -1818,14 +1674,6 @@ const fn retry_state_invalid() -> RuntimeError {
     RuntimeError::Unavailable {
         message: "pending project creation state is invalid",
         next: "inspect local permissions, then use --abandon-retry to start a new attempt",
-    }
-}
-
-/// Fixed recovery for an invalid API origin or request serialization.
-const fn invalid_request() -> RuntimeError {
-    RuntimeError::Unavailable {
-        message: "project creation request is invalid",
-        next: "check project create arguments and retry",
     }
 }
 

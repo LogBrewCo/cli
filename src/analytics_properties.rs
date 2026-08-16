@@ -3,6 +3,7 @@
 use serde::Deserialize;
 
 use crate::auth::{AuthCredential, send_authenticated_with_refresh};
+use crate::http::{nonempty_control_safe as bounded_contract_text, terminal_safe as display_text};
 use crate::{AnalyticsPropertyOptions, CliEnvironment, RuntimeError};
 
 /// Public response version implemented by this CLI.
@@ -422,63 +423,7 @@ fn ratio_matches(value: Option<f64>, numerator: u64, denominator: u64) -> bool {
 
 /// Validates the UTC RFC 3339 shape emitted by the versioned API.
 fn bounded_timestamp(value: &str) -> bool {
-    let bytes = value.as_bytes();
-    if !(20..=35).contains(&bytes.len())
-        || !bytes.is_ascii()
-        || !ascii_digits(bytes, 0, 4)
-        || bytes.get(4) != Some(&b'-')
-        || !ascii_digits(bytes, 5, 7)
-        || bytes.get(7) != Some(&b'-')
-        || !ascii_digits(bytes, 8, 10)
-        || bytes.get(10) != Some(&b'T')
-        || !ascii_digits(bytes, 11, 13)
-        || bytes.get(13) != Some(&b':')
-        || !ascii_digits(bytes, 14, 16)
-        || bytes.get(16) != Some(&b':')
-        || !ascii_digits(bytes, 17, 19)
-        || !bounded_pair(bytes, 5, 1, 12)
-        || !bounded_pair(bytes, 8, 1, 31)
-        || !bounded_pair(bytes, 11, 0, 23)
-        || !bounded_pair(bytes, 14, 0, 59)
-        || !bounded_pair(bytes, 17, 0, 59)
-    {
-        return false;
-    }
-    let mut suffix = 19;
-    if bytes.get(suffix) == Some(&b'.') {
-        suffix += 1;
-        let fraction_start = suffix;
-        while bytes.get(suffix).is_some_and(u8::is_ascii_digit) {
-            suffix += 1;
-        }
-        if suffix == fraction_start {
-            return false;
-        }
-    }
-    matches!(bytes.get(suffix..), Some([b'Z']))
-}
-
-/// Returns whether one half-open byte range contains only ASCII digits.
-fn ascii_digits(bytes: &[u8], start: usize, end: usize) -> bool {
-    bytes
-        .get(start..end)
-        .is_some_and(|digits| digits.iter().all(u8::is_ascii_digit))
-}
-
-/// Parses one two-digit timestamp field and applies inclusive bounds.
-fn bounded_pair(bytes: &[u8], start: usize, minimum: u8, maximum: u8) -> bool {
-    let Some([left, right]) = bytes.get(start..start.saturating_add(2)) else {
-        return false;
-    };
-    let value = (*left - b'0') * 10 + (*right - b'0');
-    (minimum..=maximum).contains(&value)
-}
-
-/// Validates one backend-authored, non-telemetry contract string.
-fn bounded_contract_text(value: &str, limit: usize) -> bool {
-    !value.trim().is_empty()
-        && value.chars().count() <= limit
-        && !value.chars().any(char::is_control)
+    crate::time::parse_utc_timestamp(value).is_some()
 }
 
 /// Renders a progressive key-only catalog without reflecting backend prose.
@@ -583,29 +528,6 @@ fn next_step(code: &str) -> &'static str {
         }
         _ => "retry the bounded analytics property query",
     }
-}
-
-/// Escapes terminal controls and bidirectional-display characters in echoed values.
-fn display_text(value: &str) -> String {
-    let mut output = String::with_capacity(value.len());
-    for character in value.chars() {
-        if character.is_control() {
-            output.extend(character.escape_default());
-        } else if matches!(
-            character,
-            '\u{061c}'
-                | '\u{200b}'..='\u{200f}'
-                | '\u{2028}'..='\u{202e}'
-                | '\u{2060}'..='\u{206f}'
-                | '\u{feff}'
-                | '\u{fff9}'..='\u{fffb}'
-        ) {
-            output.extend(character.escape_unicode());
-        } else {
-            output.push(character);
-        }
-    }
-    output
 }
 
 /// Converts transport and refresh failures into fixed property-safe recovery.

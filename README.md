@@ -97,6 +97,8 @@ logbrew login
 logbrew login --provider gitlab
 logbrew whoami
 logbrew logout
+logbrew projects repositories --json
+logbrew projects repositories discover --provider github --repository <repository_id> --json
 logbrew logs --release checkout@1 --environment production
 logbrew issues open --json
 logbrew explain issue issue_123
@@ -152,6 +154,27 @@ authentication for this plan.
 After `logbrew login`, the same authenticated CLI session can create an
 account-owned project and its first project-scoped ingest key. No additional
 dashboard or browser sign-in is required.
+
+For a connected source-control provider, list repository candidates and run
+bounded component discovery only for the repository you select:
+
+```bash
+logbrew projects repositories --json
+logbrew projects repositories discover \
+  --provider github --repository <repository_id> --json
+```
+
+Discovery reports its separate read-only contents authorization state and
+never grants permission silently. A complete response supplies one expiring
+discovery ID and component IDs. Repeat `--component` to create the selected
+services under one project:
+
+```bash
+logbrew projects create "Checkout Platform" \
+  --provider github --repository <repository_id> \
+  --discovery <discovery_id> --component <component_id> \
+  --ingest-key-file "$HOME/.logbrew/checkout-platform.key" --json
+```
 
 Choose a new file inside an existing owner-only directory. On macOS and Linux,
 the owner-only directory created by CLI login is a suitable destination:

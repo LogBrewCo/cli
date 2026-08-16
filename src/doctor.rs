@@ -524,7 +524,9 @@ fn validate_last_signal(value: &serde_json::Value) -> Option<()> {
     {
         return None;
     }
-    is_rfc3339(safe_string(object, "occurred_at")?).then_some(())
+    crate::time::parse_rfc3339(safe_string(object, "occurred_at")?)
+        .is_some()
+        .then_some(())
 }
 
 /// Validates the bare legacy logs array enough to determine visibility safely.
@@ -598,7 +600,7 @@ fn safe_string<'a>(
     object
         .get(key)?
         .as_str()
-        .filter(|value| !value.trim().is_empty() && safe_text(value))
+        .filter(|value| !value.trim().is_empty() && crate::http::display_safe(value, 512))
 }
 
 /// Returns whether one required key is null or a bounded control-safe string.
@@ -608,7 +610,7 @@ fn valid_optional_safe_string(
 ) -> bool {
     match object.get(key) {
         Some(serde_json::Value::Null) => true,
-        Some(serde_json::Value::String(value)) => safe_text(value),
+        Some(serde_json::Value::String(value)) => crate::http::display_safe(value, 512),
         Some(
             serde_json::Value::Bool(_)
             | serde_json::Value::Number(_)
@@ -619,23 +621,6 @@ fn valid_optional_safe_string(
     }
 }
 
-/// Returns whether a server string is bounded and free of display controls.
-fn safe_text(value: &str) -> bool {
-    value.chars().count() <= 512
-        && !value.chars().any(|character| {
-            character.is_control()
-                || matches!(
-                    character,
-                    '\u{061c}'
-                        | '\u{200b}'..='\u{200f}'
-                        | '\u{2028}'..='\u{202e}'
-                        | '\u{2060}'..='\u{206f}'
-                        | '\u{feff}'
-                        | '\u{fff9}'..='\u{fffb}'
-                )
-        })
-}
-
 /// Validates one optional RFC3339 timestamp and reports whether it is present.
 fn optional_timestamp(
     object: &serde_json::Map<String, serde_json::Value>,
@@ -643,102 +628,17 @@ fn optional_timestamp(
 ) -> Option<bool> {
     match object.get(key)? {
         serde_json::Value::Null => Some(false),
-        serde_json::Value::String(value) if safe_text(value) && is_rfc3339(value) => Some(true),
+        serde_json::Value::String(value)
+            if crate::http::display_safe(value, 512)
+                && crate::time::parse_rfc3339(value).is_some() =>
+        {
+            Some(true)
+        }
         serde_json::Value::String(_)
         | serde_json::Value::Bool(_)
         | serde_json::Value::Number(_)
         | serde_json::Value::Array(_)
         | serde_json::Value::Object(_) => None,
-    }
-}
-
-/// Validates RFC3339 calendar, time, fraction, and offset syntax.
-fn is_rfc3339(value: &str) -> bool {
-    let bytes = value.as_bytes();
-    if bytes.len() < 20
-        || bytes.get(4) != Some(&b'-')
-        || bytes.get(7) != Some(&b'-')
-        || bytes.get(10) != Some(&b'T')
-        || bytes.get(13) != Some(&b':')
-        || bytes.get(16) != Some(&b':')
-    {
-        return false;
-    }
-    let Some(year) = bytes.get(0..4).and_then(digits_u32) else {
-        return false;
-    };
-    let Some(month) = bytes.get(5..7).and_then(digits_u32) else {
-        return false;
-    };
-    let Some(day) = bytes.get(8..10).and_then(digits_u32) else {
-        return false;
-    };
-    let Some(hour) = bytes.get(11..13).and_then(digits_u32) else {
-        return false;
-    };
-    let Some(minute) = bytes.get(14..16).and_then(digits_u32) else {
-        return false;
-    };
-    let Some(second) = bytes.get(17..19).and_then(digits_u32) else {
-        return false;
-    };
-    if !(1..=12).contains(&month)
-        || day == 0
-        || day > days_in_month(year, month)
-        || hour > 23
-        || minute > 59
-        || second > 59
-    {
-        return false;
-    }
-
-    let mut index = 19;
-    if bytes.get(index) == Some(&b'.') {
-        index += 1;
-        let fraction_start = index;
-        while bytes.get(index).is_some_and(u8::is_ascii_digit) {
-            index += 1;
-        }
-        if index == fraction_start {
-            return false;
-        }
-    }
-    match bytes.get(index) {
-        Some(b'Z') => index + 1 == bytes.len(),
-        Some(b'+' | b'-') => {
-            let Some(offset_hour) = bytes.get(index + 1..index + 3).and_then(digits_u32) else {
-                return false;
-            };
-            let Some(offset_minute) = bytes.get(index + 4..index + 6).and_then(digits_u32) else {
-                return false;
-            };
-            bytes.get(index + 3) == Some(&b':')
-                && index + 6 == bytes.len()
-                && offset_hour <= 23
-                && offset_minute <= 59
-        }
-        Some(_) | None => false,
-    }
-}
-
-/// Parses an all-digit ASCII byte slice.
-fn digits_u32(bytes: &[u8]) -> Option<u32> {
-    bytes.iter().try_fold(0_u32, |value, byte| {
-        byte.is_ascii_digit()
-            .then(|| value * 10 + u32::from(*byte - b'0'))
-    })
-}
-
-/// Returns the number of days in a Gregorian calendar month.
-const fn days_in_month(year: u32, month: u32) -> u32 {
-    match month {
-        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
-        4 | 6 | 9 | 11 => 30,
-        2 if year.is_multiple_of(400) || (year.is_multiple_of(4) && !year.is_multiple_of(100)) => {
-            29
-        }
-        2 => 28,
-        _ => 0,
     }
 }
 

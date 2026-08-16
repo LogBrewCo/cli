@@ -52,8 +52,11 @@ Usage:
   logbrew logout [--json]
   logbrew setup [--auto] [--yes] [--json]
   logbrew projects [--json]
+  logbrew projects repositories [--json]
+  logbrew projects repositories discover --provider github|gitlab|bitbucket --repository <id> [--json]
   logbrew projects create <name> --ingest-key-file <path> [--runtime <runtime>] \
-                         [--environment <environment>] [--json]
+                         [--environment <environment>] [--provider <provider> --repository <id>] \
+                         [--discovery <uuid> --component <uuid>]... [--json]
   logbrew projects keys create <project_id> --ingest-key-file <path> [--label <label>] \
                          [--kind sdk|browser|server|cli] [--json]
   logbrew projects archive <project_id> --yes [--json]
@@ -148,6 +151,8 @@ Popular terms: auth, status, health, setup, projects, usage, logs, issues, error
 Health aliases: logbrew status, logbrew health, logbrew ping, logbrew doctor.
 Setup aliases (non-mutating plan): logbrew init, logbrew install, logbrew configure, logbrew sdk.
 Authenticated project creation: logbrew projects create <name> --ingest-key-file <path>.
+Repository setup: list candidates with logbrew projects repositories, then discover one selected \
+repository before choosing components.
 After CLI authentication, project creation requires no dashboard sign-in; the one-time ingest key \
 is stored in the chosen owner-only file and never printed.
 Existing-project key creation: logbrew projects keys create <project_id> --ingest-key-file <path>.
@@ -206,7 +211,8 @@ JavaScript planning detects exact @sveltejs/kit and mixed React + Express depend
 released packages, detected install commands, compatibility, key scopes, and service-name requirements.
 Authenticated project creation (no dashboard sign-in):
   logbrew projects create <name> --ingest-key-file <path> [--runtime <runtime>] \
-                           [--environment <environment>] [--json]
+                           [--environment <environment>] [--provider <provider> \
+                           --repository <id>] [--discovery <uuid> --component <uuid>]... [--json]
 Existing-project key creation (no dashboard sign-in):
   logbrew projects keys create <project_id> --ingest-key-file <path> [--label <label>] \
                            [--kind sdk|browser|server|cli] [--json]
@@ -324,8 +330,13 @@ const PROJECTS_HELP: &str = "\
 Usage:
   logbrew projects [--json]
   logbrew project [--json]
+  logbrew projects repositories [--json]
+  logbrew projects repositories discover --provider github|gitlab|bitbucket --repository <id> \
+                           [--json]
   logbrew projects create <name> --ingest-key-file <path> [--runtime <runtime>] \
-                           [--environment <environment>] [--abandon-retry] [--json]
+                           [--environment <environment>] [--provider <provider> \
+                           --repository <id>] [--discovery <uuid> --component <uuid>]... \
+                           [--abandon-retry] [--json]
   logbrew projects keys create <project_id> --ingest-key-file <path> [--label <label>] \
                            [--kind sdk|browser|server|cli] [--abandon-retry] [--json]
   logbrew projects archive <project_id> --yes [--json]
@@ -337,6 +348,9 @@ Usage:
 Reads the authenticated active project catalog without mutating project state.
 Human output is bounded to project identity, setup status, and latest activity. JSON preserves the \
 exact validated bare array.
+Repository catalog reads use existing metadata authorization. Component discovery is on demand for \
+one selected repository and reports the separate read-only contents authorization state without \
+granting it. Selected component IDs bind project services to one expiring discovery snapshot.
 Project creation, setup status, and project-scoped ingest credentials are backend-owned.
 An authenticated CLI can create a project without dashboard sign-in or additional browser auth.
 It can also issue a key for an existing project without creating a duplicate project or opening \

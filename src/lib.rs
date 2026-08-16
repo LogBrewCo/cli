@@ -39,6 +39,7 @@ mod project_create;
 mod projects;
 #[doc(hidden)]
 pub mod render;
+mod repositories;
 #[doc(hidden)]
 pub mod setup;
 #[doc(hidden)]
@@ -195,6 +196,13 @@ pub enum Command {
         /// Canonical lowercase project UUID.
         project_id: String,
         /// Emit machine-readable JSON.
+        json: bool,
+    },
+    /// Lists repository candidates or discovers components for one candidate.
+    ProjectRepositories {
+        /// Read-only repository setup operation.
+        target: RepositorySetupTarget,
+        /// Emit the exact validated response as JSON.
         json: bool,
     },
     /// Lists active account-owned projects.
@@ -666,10 +674,43 @@ pub struct ProjectCreateOptions {
     pub runtime: Option<String>,
     /// Optional trimmed environment.
     pub environment: Option<String>,
+    /// Optional repository and component selection.
+    pub repository: Option<ProjectRepositoryOptions>,
     /// Owner-selected destination for the one-time ingest key.
     pub ingest_key_file: String,
     /// Explicitly discard a mismatched pending retry before creating.
     pub abandon_retry: bool,
+}
+
+/// Provider repository selected for project creation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectRepositoryOptions {
+    /// Source-control provider.
+    pub provider: LoginProvider,
+    /// Provider-owned repository identifier.
+    pub id: String,
+    /// Optional backend-issued component discovery snapshot.
+    pub discovery_id: Option<String>,
+    /// Selected snapshot-scoped component identifiers.
+    pub component_ids: Vec<String>,
+}
+
+/// Read-only repository setup operation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RepositorySetupTarget {
+    /// Lists provider states and repositories not yet represented by a project.
+    Catalog,
+    /// Discovers bounded components for one selected repository.
+    Discover(RepositoryDiscoveryOptions),
+}
+
+/// Exact repository component-discovery request fields.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RepositoryDiscoveryOptions {
+    /// Source-control provider.
+    pub provider: LoginProvider,
+    /// Provider-owned repository identifier.
+    pub repository_id: String,
 }
 
 /// Fields accepted by secure existing-project ingest-key creation.
@@ -1467,6 +1508,12 @@ impl Command {
             }
             Self::ProjectArchive { project_id, .. } => Some(format!("/api/projects/{project_id}")),
             Self::ProjectDeletion { .. } => Some(String::from("/api/support/tickets")),
+            Self::ProjectRepositories { target, .. } => Some(String::from(match target {
+                RepositorySetupTarget::Catalog => "/api/projects/repositories",
+                RepositorySetupTarget::Discover(_) => {
+                    "/api/projects/repositories/components/discover"
+                }
+            })),
             Self::ProjectIngestKeyCreate { options, .. } => {
                 Some(format!("/api/projects/{}/ingest-keys", options.project_id))
             }
@@ -1503,6 +1550,7 @@ impl Command {
             | Self::ProjectIngestKeyCreate { json, .. }
             | Self::ProjectArchive { json, .. }
             | Self::ProjectDeletion { json, .. }
+            | Self::ProjectRepositories { json, .. }
             | Self::Projects { json }
             | Self::Usage { json }
             | Self::Version { json }
@@ -1533,6 +1581,10 @@ impl Command {
             Self::Deploy { .. } => Some(HttpMethod::Put),
             Self::ProjectCreate { .. }
             | Self::ProjectIngestKeyCreate { .. }
+            | Self::ProjectRepositories {
+                target: RepositorySetupTarget::Discover(_),
+                ..
+            }
             | Self::ProjectSetupSeen { .. }
             | Self::AnalyticsPaths { .. }
             | Self::AnalyticsCompare { .. }
@@ -1551,6 +1603,10 @@ impl Command {
             | Self::Set { .. } => Some(HttpMethod::Patch),
             Self::ProjectArchive { .. } => Some(HttpMethod::Delete),
             Self::Projects { .. }
+            | Self::ProjectRepositories {
+                target: RepositorySetupTarget::Catalog,
+                ..
+            }
             | Self::Read { .. }
             | Self::Explain { .. }
             | Self::AnalyticsOverview { .. }
@@ -1599,6 +1655,13 @@ impl Command {
             }
             Self::ProjectSetupSeen { options, .. } => Some(project_setup_seen_body(options, token)),
             Self::ProjectCreate { options, .. } => Some(project_create_body(options)),
+            Self::ProjectRepositories {
+                target: RepositorySetupTarget::Discover(options),
+                ..
+            } => Some(serde_json::json!({
+                "provider": options.provider.as_str(),
+                "repository_id": options.repository_id,
+            })),
             Self::ProjectIngestKeyCreate { options, .. } => {
                 Some(project_ingest_key_create_body(options))
             }
@@ -1625,6 +1688,10 @@ impl Command {
             | Self::WhoAmI { .. }
             | Self::Doctor { .. }
             | Self::ProjectArchive { .. }
+            | Self::ProjectRepositories {
+                target: RepositorySetupTarget::Catalog,
+                ..
+            }
             | Self::Projects { .. }
             | Self::Usage { .. }
             | Self::Version { .. }
@@ -1674,6 +1741,7 @@ impl Command {
             | Self::ProjectIngestKeyCreate { .. }
             | Self::ProjectArchive { .. }
             | Self::ProjectDeletion { .. }
+            | Self::ProjectRepositories { .. }
             | Self::Projects { .. }
             | Self::Support { .. } => None,
         }
@@ -1720,7 +1788,7 @@ fn project_setup_seen_body(
 }
 
 /// Builds the byte-stable project creation request surface.
-fn project_create_body(options: &ProjectCreateOptions) -> serde_json::Value {
+pub(crate) fn project_create_body(options: &ProjectCreateOptions) -> serde_json::Value {
     let mut body = serde_json::Map::new();
     drop(body.insert(
         "name".to_owned(),
@@ -1736,6 +1804,17 @@ fn project_create_body(options: &ProjectCreateOptions) -> serde_json::Value {
         drop(body.insert(
             "environment".to_owned(),
             serde_json::Value::String(environment.clone()),
+        ));
+    }
+    if let Some(repository) = options.repository.as_ref() {
+        drop(body.insert(
+            "repository".to_owned(),
+            serde_json::json!({
+                "provider": repository.provider.as_str(),
+                "id": repository.id,
+                "discovery_id": repository.discovery_id,
+                "component_ids": repository.component_ids,
+            }),
         ));
     }
     drop(body.insert(
@@ -1834,6 +1913,7 @@ pub async fn execute_command<W: std::io::Write>(
         }
         Command::Read { .. }
         | Command::Set { .. }
+        | Command::ProjectRepositories { .. }
         | Command::ProjectSetupSeen { .. }
         | Command::Support { .. } => execute_http(command, env, output).await,
         Command::Watch {
@@ -1883,13 +1963,24 @@ async fn execute_http<W: std::io::Write>(
     output: &mut W,
 ) -> Result<(), RuntimeError> {
     let path = command.http_path().ok_or(CliError::UnknownCommand)?;
-    let url = format!("{}{}", env.base_url.trim_end_matches('/'), path);
+    let support_command = matches!(command, Command::Support { .. });
+    let origin = http::normalized_origin(env.base_url.as_str()).ok_or_else(|| {
+        if support_command {
+            support_transport_error()
+        } else {
+            RuntimeError::Unavailable {
+                message: "the configured API URL is invalid",
+                next: "set LOGBREW_API_URL to an http or https API origin and retry",
+            }
+        }
+    })?;
+    let url = format!("{origin}{path}");
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
         .connect_timeout(std::time::Duration::from_secs(10))
+        .redirect(reqwest::redirect::Policy::none())
         .build()?;
 
-    let support_command = matches!(command, Command::Support { .. });
     let response_result = send_authenticated_with_refresh(&client, env, |client, credential| {
         build_command_request(client, command, url.as_str(), credential)
     })
@@ -1900,15 +1991,26 @@ async fn execute_http<W: std::io::Write>(
         Err(error) => return Err(error),
     };
     let status = response.status();
-    let body = match response.text().await {
+    let body = match http::bounded_body(response, 8 * 1024 * 1024).await {
         Ok(body) => body,
         Err(_) if support_command => return Err(support_transport_error()),
-        Err(error) => return Err(RuntimeError::Http(error)),
+        Err(_) => {
+            return Err(RuntimeError::Unavailable {
+                message: "API response was invalid",
+                next: "retry the command; if it repeats, report the public response contract",
+            });
+        }
     };
 
     if !status.is_success() {
         let body = if let Command::Support { target, .. } = command {
             support::safe_error_body(target, status.as_u16())
+        } else if matches!(command, Command::ProjectRepositories { .. }) {
+            return Err(repositories::validate_error(
+                status.as_u16(),
+                body.as_str(),
+                &credential,
+            )?);
         } else {
             credential.redact_response_body(body.as_str())
         };

@@ -50,6 +50,11 @@ pub(crate) fn is_uuid(value: &str) -> bool {
     })
 }
 
+/// Returns whether a value is a non-nil dashed UUID.
+pub(crate) fn is_non_nil_uuid(value: &str) -> bool {
+    is_uuid(value) && value.bytes().any(|byte| !matches!(byte, b'0' | b'-'))
+}
+
 /// Returns whether a value is a canonical public support-ticket identifier.
 pub(crate) fn is_support_ticket_id(value: &str) -> bool {
     value.strip_prefix("sup_").is_some_and(|raw| {

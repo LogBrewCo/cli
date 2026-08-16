@@ -48,3 +48,55 @@ pub(crate) async fn bounded_body(
     }
     String::from_utf8(body).map_err(|_| BodyError::Invalid)
 }
+
+/// Rejects controls and display-direction characters in bounded server text.
+pub(crate) fn display_safe(value: &str, limit: usize) -> bool {
+    value.chars().count() <= limit
+        && !value.chars().any(|character| {
+            character.is_control()
+                || matches!(
+                    character,
+                    '\u{061c}'
+                        | '\u{200b}'..='\u{200f}'
+                        | '\u{2028}'..='\u{202e}'
+                        | '\u{2060}'..='\u{206f}'
+                        | '\u{feff}'
+                        | '\u{fff9}'..='\u{fffb}'
+                )
+        })
+}
+
+/// Rejects empty or display-unsafe bounded server text.
+pub(crate) fn nonempty_display_safe(value: &str, limit: usize) -> bool {
+    !value.trim().is_empty() && display_safe(value, limit)
+}
+
+/// Rejects empty, oversized, or control-bearing server text before escaping.
+pub(crate) fn nonempty_control_safe(value: &str, limit: usize) -> bool {
+    !value.trim().is_empty()
+        && value.chars().count() <= limit
+        && !value.chars().any(char::is_control)
+}
+
+/// Escapes terminal controls and bidirectional-display characters.
+pub(crate) fn terminal_safe(value: &str) -> String {
+    let mut output = String::with_capacity(value.len());
+    for character in value.chars() {
+        if character.is_control() {
+            output.extend(character.escape_default());
+        } else if matches!(
+            character,
+            '\u{061c}'
+                | '\u{200b}'..='\u{200f}'
+                | '\u{2028}'..='\u{202e}'
+                | '\u{2060}'..='\u{206f}'
+                | '\u{feff}'
+                | '\u{fff9}'..='\u{fffb}'
+        ) {
+            output.extend(character.escape_unicode());
+        } else {
+            output.push(character);
+        }
+    }
+    output
+}

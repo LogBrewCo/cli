@@ -64,7 +64,7 @@ fn project_catalog_grammar_failures_are_fixed_and_value_safe() {
         assert_eq!(body["message"], "invalid projects command");
         assert_eq!(
             body["next"],
-            "use logbrew projects with optional --json, or logbrew projects --help"
+            "use logbrew projects [--json], logbrew projects repositories [discover --provider <provider> --repository <id>] [--json], or logbrew projects --help"
         );
         assert!(!text.contains("hostile-secret"));
         assert!(!text.contains("hostile-private-value"));

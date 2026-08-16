@@ -6,7 +6,7 @@
 )]
 
 /// Parsed RFC 3339 instant at nanosecond precision.
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct ParsedTimestamp {
     /// Whole UTC seconds since the Unix epoch.
     epoch_seconds: i64,
@@ -15,6 +15,14 @@ pub(crate) struct ParsedTimestamp {
 }
 
 impl ParsedTimestamp {
+    /// Adds whole seconds without changing fractional precision.
+    pub(crate) fn checked_add_seconds<T: TryInto<i64>>(self, seconds: T) -> Option<Self> {
+        Some(Self {
+            epoch_seconds: self.epoch_seconds.checked_add(seconds.try_into().ok()?)?,
+            nanoseconds: self.nanoseconds,
+        })
+    }
+
     /// Returns the instant at the API's truncating millisecond precision.
     pub(super) fn epoch_millis(self) -> i128 {
         i128::from(self.epoch_seconds) * 1_000 + i128::from(self.nanoseconds / 1_000_000)
@@ -23,6 +31,11 @@ impl ParsedTimestamp {
     /// Returns whether no precision below milliseconds is present.
     pub(super) const fn is_millisecond_normalized(self) -> bool {
         self.nanoseconds.is_multiple_of(1_000_000)
+    }
+
+    /// Returns the exact nanosecond offset used by analytics contracts.
+    pub(crate) fn epoch_nanos(self) -> i128 {
+        i128::from(self.epoch_seconds) * 1_000_000_000 + i128::from(self.nanoseconds)
     }
 }
 
@@ -87,6 +100,34 @@ pub(crate) fn parse_rfc3339(value: &str) -> Option<ParsedTimestamp> {
         epoch_seconds: seconds,
         nanoseconds,
     })
+}
+
+/// Parses the canonical UTC `Z` timestamps emitted by analytics contracts.
+pub(crate) fn parse_utc_timestamp(value: &str) -> Option<ParsedTimestamp> {
+    ((20..=30).contains(&value.len()) && value.ends_with('Z'))
+        .then_some(value)
+        .and_then(parse_rfc3339)
+}
+
+/// Adds whole seconds without changing fractional precision.
+pub(crate) fn add_seconds<T: TryInto<i64>>(
+    timestamp: ParsedTimestamp,
+    seconds: T,
+) -> Option<ParsedTimestamp> {
+    timestamp.checked_add_seconds(seconds)
+}
+
+/// Returns one exact timestamp as a nanosecond offset.
+pub(crate) fn timestamp_nanos(timestamp: ParsedTimestamp) -> i128 {
+    timestamp.epoch_nanos()
+}
+
+/// Subtracts whole positive seconds without changing fractional precision.
+pub(crate) fn subtract_seconds(
+    timestamp: ParsedTimestamp,
+    seconds: u64,
+) -> Option<ParsedTimestamp> {
+    timestamp.checked_add_seconds(i64::try_from(seconds).ok()?.checked_neg()?)
 }
 
 /// Parses one already validated UTC timestamp into exact whole milliseconds.

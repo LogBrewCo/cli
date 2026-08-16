@@ -5,6 +5,7 @@
 )]
 
 use crate::auth::{AuthCredential, send_account_authenticated_with_refresh};
+use crate::http::nonempty_display_safe as safe_text;
 use crate::ids::{is_support_ticket_id, is_uuid};
 use crate::{CliEnvironment, CliError, RuntimeError};
 use serde::{Deserialize, Serialize};
@@ -217,6 +218,7 @@ fn validate_deletion_receipt(body: &str) -> Result<(), RuntimeError> {
     if !is_support_ticket_id(receipt.ticket_id.as_str())
         || receipt.status != "open"
         || !crate::render::is_rfc3339_utc(receipt.created_at.as_str())
+        || receipt.next.len() > 512
         || !safe_text(receipt.next.as_str(), 512)
         || receipt.next_action.code != "review_ticket"
         || receipt.next_action.target != "support_ticket"
@@ -242,7 +244,7 @@ fn validate_archive_error(
         (envelope.next_action.target.as_str(), 64),
     ]
     .into_iter()
-    .all(|(value, limit)| safe_text(value, limit));
+    .all(|(value, limit)| value.len() <= limit && safe_text(value, limit));
     let fields = (
         envelope.code.as_str(),
         envelope.next_action.code.as_str(),
@@ -306,20 +308,6 @@ fn write_success<W: std::io::Write>(
         writeln!(output, "Next: run logbrew projects")?;
     }
     Ok(())
-}
-
-/// Returns whether server text is non-empty, bounded, and display-safe.
-fn safe_text(value: &str, limit: usize) -> bool {
-    !value.trim().is_empty()
-        && value.len() <= limit
-        && !value.chars().any(|character| {
-            character.is_control()
-                || matches!(
-                    character,
-                    '\u{061c}' | '\u{200b}'..='\u{200f}' | '\u{2028}'..='\u{202e}'
-                        | '\u{2060}'..='\u{206f}' | '\u{feff}' | '\u{fff9}'..='\u{fffb}'
-                )
-        })
 }
 
 /// Creates one synthetic API error from allowlisted status metadata.
