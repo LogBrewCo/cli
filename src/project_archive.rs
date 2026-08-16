@@ -185,29 +185,16 @@ pub(crate) fn deletion_body(project_id: &str) -> serde_json::Value {
 
 /// Converts request failures into operation-specific, host-free recovery.
 fn request_error(operation: Operation, error: RuntimeError) -> RuntimeError {
-    match error {
+    if matches!(
+        &error,
         RuntimeError::Unavailable {
             message: "account authentication is required",
             ..
-        } => failure(operation, Failure::Auth),
-        RuntimeError::MissingToken | RuntimeError::Unavailable { .. } => error,
-        RuntimeError::Cli(_)
-        | RuntimeError::Io(_)
-        | RuntimeError::Http(_)
-        | RuntimeError::Api { .. }
-        | RuntimeError::StatusUnavailable { .. }
-        | RuntimeError::InvestigationResponseInvalid
-        | RuntimeError::ExplainResponseInvalid
-        | RuntimeError::AnalyticsOverviewResponseInvalid
-        | RuntimeError::AnalyticsPropertiesResponseInvalid
-        | RuntimeError::AnalyticsResponseInvalid
-        | RuntimeError::AnalyticsFunnelResponseInvalid
-        | RuntimeError::AnalyticsRetentionResponseInvalid
-        | RuntimeError::AnalyticsLifecycleResponseInvalid
-        | RuntimeError::AnalyticsSegmentResponseInvalid
-        | RuntimeError::NativeDebugArtifactInvalid
-        | RuntimeError::NativeDebugResponseInvalid
-        | RuntimeError::NativeDebugVerificationFailed => failure(operation, Failure::Transport),
+        }
+    ) {
+        failure(operation, Failure::Auth)
+    } else {
+        error.auth_or(failure(operation, Failure::Transport))
     }
 }
 

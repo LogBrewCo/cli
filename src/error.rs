@@ -257,6 +257,17 @@ pub enum RuntimeError {
     NativeDebugVerificationFailed,
 }
 
+impl RuntimeError {
+    /// Preserves actionable authentication or typed local recovery and replaces every other error.
+    pub(crate) fn auth_or(self, fallback: Self) -> Self {
+        if matches!(&self, Self::MissingToken | Self::Unavailable { .. }) {
+            self
+        } else {
+            fallback
+        }
+    }
+}
+
 /// Writes a command-line parsing error for humans or agents.
 ///
 /// # Errors

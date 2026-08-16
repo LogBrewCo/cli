@@ -1,4 +1,8 @@
 //! Strict authenticated project catalog reads.
+#![expect(
+    clippy::redundant_pub_crate,
+    reason = "the parent command modules consume these private-module helpers"
+)]
 
 use crate::auth::{AuthCredential, send_authenticated_with_refresh};
 use crate::{CliEnvironment, RuntimeError};
@@ -28,6 +32,8 @@ struct ProjectShape {
     _provider: serde_json::Value,
     #[serde(rename = "is_active")]
     _is_active: serde_json::Value,
+    #[serde(rename = "access")]
+    _access: ProjectAccessShape,
     #[serde(rename = "language")]
     _language: serde_json::Value,
     #[serde(rename = "setup_status")]
@@ -44,6 +50,26 @@ struct ProjectShape {
     _last_environment: serde_json::Value,
     #[serde(rename = "created_at")]
     _created_at: serde_json::Value,
+}
+
+/// Duplicate-aware exact effective-access shape.
+#[expect(
+    clippy::missing_docs_in_private_items,
+    reason = "field names intentionally mirror the validated public JSON contract"
+)]
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProjectAccessShape {
+    #[serde(rename = "kind")]
+    _kind: serde_json::Value,
+    #[serde(rename = "organization_id")]
+    _organization_id: serde_json::Value,
+    #[serde(rename = "role_id")]
+    _role_id: serde_json::Value,
+    #[serde(rename = "role_name")]
+    _role_name: serde_json::Value,
+    #[serde(rename = "permissions")]
+    _permissions: serde_json::Value,
 }
 
 /// Duplicate-aware standard API error envelope.
@@ -91,10 +117,6 @@ struct ProjectView<'a> {
 }
 
 /// Executes one strict authenticated project catalog read.
-#[expect(
-    clippy::redundant_pub_crate,
-    reason = "the parent command executor consumes this private-module helper"
-)]
 pub(crate) async fn execute<W: std::io::Write>(
     env: &CliEnvironment,
     json: bool,
@@ -141,26 +163,7 @@ pub(crate) async fn execute<W: std::io::Write>(
 
 /// Converts request failures into fixed, host-free project recovery.
 fn request_error(error: RuntimeError) -> RuntimeError {
-    match error {
-        RuntimeError::MissingToken | RuntimeError::Unavailable { .. } => error,
-        RuntimeError::Cli(_)
-        | RuntimeError::Io(_)
-        | RuntimeError::Http(_)
-        | RuntimeError::Api { .. }
-        | RuntimeError::StatusUnavailable { .. }
-        | RuntimeError::InvestigationResponseInvalid
-        | RuntimeError::ExplainResponseInvalid
-        | RuntimeError::AnalyticsOverviewResponseInvalid
-        | RuntimeError::AnalyticsPropertiesResponseInvalid
-        | RuntimeError::AnalyticsResponseInvalid
-        | RuntimeError::AnalyticsFunnelResponseInvalid
-        | RuntimeError::AnalyticsRetentionResponseInvalid
-        | RuntimeError::AnalyticsLifecycleResponseInvalid
-        | RuntimeError::AnalyticsSegmentResponseInvalid
-        | RuntimeError::NativeDebugArtifactInvalid
-        | RuntimeError::NativeDebugResponseInvalid
-        | RuntimeError::NativeDebugVerificationFailed => transport_error(),
-    }
+    error.auth_or(transport_error())
 }
 
 /// Validates every project before any JSON or human output is emitted.
@@ -183,6 +186,7 @@ fn validate_project(value: &serde_json::Value) -> Result<ProjectView<'_>, Runtim
     if object.get("is_active").and_then(serde_json::Value::as_bool) != Some(true) {
         return Err(invalid_response());
     }
+    validate_project_access(object.get("access"), false)?;
     let _language = nullable_string(object.get("language"), 64)?;
     let setup_status = enum_string(
         object.get("setup_status"),
@@ -206,6 +210,67 @@ fn validate_project(value: &serde_json::Value) -> Result<ProjectView<'_>, Runtim
         setup_status,
         last_seen_at,
     })
+}
+
+/// Validates exact owner or organization-role access without exposing it in human output.
+pub(crate) fn validate_project_access(
+    value: Option<&serde_json::Value>,
+    owner_only: bool,
+) -> Result<(), RuntimeError> {
+    const PERMISSIONS: [&str; 3] = ["project_read", "issue_manage", "project_access_manage"];
+    let object = value
+        .and_then(serde_json::Value::as_object)
+        .filter(|object| {
+            object.len() == 5
+                && [
+                    "kind",
+                    "organization_id",
+                    "role_id",
+                    "role_name",
+                    "permissions",
+                ]
+                .iter()
+                .all(|key| object.contains_key(*key))
+        })
+        .ok_or_else(invalid_response)?;
+    let kind = enum_string(object.get("kind"), &["owner", "organization_role"])?;
+    let organization_id = nullable_string(object.get("organization_id"), 64)?;
+    let role_id = nullable_string(object.get("role_id"), 64)?;
+    let role_name = nullable_string(object.get("role_name"), 64)?;
+    let values = object
+        .get("permissions")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(invalid_response)?;
+    let positions = values
+        .iter()
+        .map(|value| {
+            let permission = safe_string(Some(value), 32, false)?;
+            PERMISSIONS
+                .iter()
+                .position(|known| *known == permission)
+                .ok_or_else(invalid_response)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let canonical = !positions.is_empty()
+        && positions.first() == Some(&0)
+        && positions.windows(2).all(|pair| pair[0] < pair[1]);
+    let valid = match kind {
+        "owner" => {
+            organization_id.is_none()
+                && role_id.is_none()
+                && role_name.is_none()
+                && positions == [0, 1, 2]
+        }
+        "organization_role" => {
+            !owner_only
+                && organization_id.is_some_and(crate::ids::is_uuid)
+                && role_id.is_some_and(crate::ids::is_uuid)
+                && role_name.is_some_and(|name| !name.trim().is_empty())
+                && canonical
+        }
+        _ => false,
+    };
+    valid.then_some(()).ok_or_else(invalid_response)
 }
 
 /// Validates a duplicate-aware standard error before replacing its text.

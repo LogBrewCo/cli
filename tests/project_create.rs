@@ -1265,6 +1265,13 @@ fn success_response_with_name(name: &str) -> serde_json::Value {
             "provider_project_slug": null,
             "provider": "logbrew",
             "is_active": true,
+            "access": {
+                "kind": "owner",
+                "organization_id": null,
+                "role_id": null,
+                "role_name": null,
+                "permissions": ["project_read", "issue_manage", "project_access_manage"]
+            },
             "language": null,
             "setup_status": "created",
             "setup_started_at": null,
