@@ -457,35 +457,21 @@ pub(super) async fn bounded_body(mut response: reqwest::Response) -> Result<Stri
 
 /// Converts auth, refresh, transport, and body errors to fixed local recovery.
 fn request_error(error: RuntimeError) -> RuntimeError {
-    match error {
-        RuntimeError::MissingToken | RuntimeError::Unavailable { .. } => error,
+    if let RuntimeError::Api {
+        status,
+        auth_source,
+        auth_label,
+        ..
+    } = error
+    {
         RuntimeError::Api {
-            status,
-            auth_source,
-            auth_label,
-            ..
-        } => RuntimeError::Api {
             status,
             body: safe_api_body(status),
             auth_source,
             auth_label,
-        },
-        RuntimeError::Cli(_)
-        | RuntimeError::Io(_)
-        | RuntimeError::Http(_)
-        | RuntimeError::StatusUnavailable { .. }
-        | RuntimeError::InvestigationResponseInvalid
-        | RuntimeError::ExplainResponseInvalid
-        | RuntimeError::AnalyticsOverviewResponseInvalid
-        | RuntimeError::AnalyticsPropertiesResponseInvalid
-        | RuntimeError::AnalyticsResponseInvalid
-        | RuntimeError::AnalyticsFunnelResponseInvalid
-        | RuntimeError::AnalyticsRetentionResponseInvalid
-        | RuntimeError::AnalyticsLifecycleResponseInvalid
-        | RuntimeError::AnalyticsSegmentResponseInvalid
-        | RuntimeError::NativeDebugArtifactInvalid
-        | RuntimeError::NativeDebugResponseInvalid
-        | RuntimeError::NativeDebugVerificationFailed => transport_error(),
+        }
+    } else {
+        error.auth_or(transport_error())
     }
 }
 

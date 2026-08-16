@@ -378,26 +378,7 @@ fn write_human<W: std::io::Write>(
 
 /// Converts request failures into fixed, host-free deployment recovery.
 fn request_error(error: RuntimeError) -> RuntimeError {
-    match error {
-        RuntimeError::MissingToken | RuntimeError::Unavailable { .. } => error,
-        RuntimeError::Cli(_)
-        | RuntimeError::Io(_)
-        | RuntimeError::Http(_)
-        | RuntimeError::Api { .. }
-        | RuntimeError::StatusUnavailable { .. }
-        | RuntimeError::InvestigationResponseInvalid
-        | RuntimeError::ExplainResponseInvalid
-        | RuntimeError::AnalyticsOverviewResponseInvalid
-        | RuntimeError::AnalyticsPropertiesResponseInvalid
-        | RuntimeError::AnalyticsResponseInvalid
-        | RuntimeError::AnalyticsFunnelResponseInvalid
-        | RuntimeError::AnalyticsRetentionResponseInvalid
-        | RuntimeError::AnalyticsLifecycleResponseInvalid
-        | RuntimeError::AnalyticsSegmentResponseInvalid
-        | RuntimeError::NativeDebugArtifactInvalid
-        | RuntimeError::NativeDebugResponseInvalid
-        | RuntimeError::NativeDebugVerificationFailed => transport_error(),
-    }
+    error.auth_or(transport_error())
 }
 
 /// Produces a fixed API error without reflecting backend or request content.

@@ -147,10 +147,14 @@ async fn projects_rejects_envelopes_partial_rows_and_hostile_text()
                 serde_json::json!("hostile-secret"),
             ),
     );
+    let mut invalid_access = project_catalog();
+    invalid_access[0]["access"]["permissions"] =
+        serde_json::json!(["issue_manage", "project_read"]);
     let cases = [
         serde_json::json!({"projects": project_catalog()}),
         partial,
         extra,
+        invalid_access,
         serde_json::json!([{
             "id": PROJECT_ID,
             "name": "hostile\ncontrol",
@@ -317,6 +321,13 @@ fn project_catalog() -> serde_json::Value {
         "provider_project_slug": null,
         "provider": "logbrew",
         "is_active": true,
+        "access": {
+            "kind": "organization_role",
+            "organization_id": "223e4567-e89b-12d3-a456-426614174000",
+            "role_id": "323e4567-e89b-12d3-a456-426614174000",
+            "role_name": "Read only",
+            "permissions": ["project_read"]
+        },
         "language": "swift",
         "setup_status": "sdk_seen",
         "setup_started_at": "2026-07-25T08:00:00Z",

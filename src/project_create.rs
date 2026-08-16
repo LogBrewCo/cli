@@ -332,25 +332,10 @@ async fn bounded_response_body(
 
 /// Preserves fixed auth recovery while redacting transport and storage errors.
 fn request_error(error: RuntimeError, operation: CredentialOperation) -> RuntimeError {
-    match error {
-        RuntimeError::MissingToken | RuntimeError::Unavailable { .. } => error,
-        RuntimeError::Io(_) => local_auth_unavailable(),
-        RuntimeError::Cli(_)
-        | RuntimeError::Http(_)
-        | RuntimeError::Api { .. }
-        | RuntimeError::StatusUnavailable { .. }
-        | RuntimeError::InvestigationResponseInvalid
-        | RuntimeError::ExplainResponseInvalid
-        | RuntimeError::AnalyticsOverviewResponseInvalid
-        | RuntimeError::AnalyticsPropertiesResponseInvalid
-        | RuntimeError::AnalyticsResponseInvalid
-        | RuntimeError::AnalyticsFunnelResponseInvalid
-        | RuntimeError::AnalyticsRetentionResponseInvalid
-        | RuntimeError::AnalyticsLifecycleResponseInvalid
-        | RuntimeError::AnalyticsSegmentResponseInvalid
-        | RuntimeError::NativeDebugArtifactInvalid
-        | RuntimeError::NativeDebugResponseInvalid
-        | RuntimeError::NativeDebugVerificationFailed => operation.transport_unavailable(),
+    if matches!(&error, RuntimeError::Io(_)) {
+        local_auth_unavailable()
+    } else {
+        error.auth_or(operation.transport_unavailable())
     }
 }
 
@@ -516,6 +501,7 @@ fn parse_created_project(
             "provider_project_slug",
             "provider",
             "is_active",
+            "access",
             "language",
             "setup_status",
             "setup_started_at",
@@ -540,6 +526,7 @@ fn parse_created_project(
     {
         return Err(invalid_response());
     }
+    crate::projects::validate_project_access(project.get("access"), true)?;
     let setup_status =
         validated_setup_status(required_safe(project, "setup_status", 32)?.as_str())?;
     optional_timestamp(project, "setup_started_at")?;
