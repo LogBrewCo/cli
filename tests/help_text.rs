@@ -42,6 +42,7 @@ fn root_help_surfaces_release_environment_pairing() {
          logbrew sdk."
     ));
     assert!(text.contains("logbrew projects [--json]"));
+    assert!(text.contains("logbrew projects repositories [--json]"));
     assert!(
         text.contains(
             "logbrew projects create <name> --ingest-key-file <path> [--runtime <runtime>]"
@@ -97,6 +98,8 @@ fn project_and_usage_help_are_honest_about_supported_behavior() {
         )
     );
     assert!(projects.contains("logbrew projects archive <project_id> --yes [--json]"));
+    assert!(projects.contains("logbrew projects repositories discover --provider"));
+    assert!(projects.contains("separate read-only contents authorization state"));
     assert!(projects.contains("logbrew setup --create-project [--json]"));
     assert!(projects.contains("Project creation, setup status"));
     assert!(projects.contains(

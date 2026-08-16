@@ -700,7 +700,7 @@ const fn cli_error_next_step(error: &CliError) -> &'static str {
             "use logbrew doctor --project <project_id> with optional --json"
         }
         CliError::InvalidProjectCreateCommand => {
-            "use logbrew projects create <name> --ingest-key-file <path> with optional --runtime, --environment, --abandon-retry, and --json"
+            "use logbrew projects create <name> --ingest-key-file <path> with optional runtime, environment, repository, discovery components, --abandon-retry, and --json"
         }
         CliError::InvalidProjectIngestKeyCreateCommand => {
             "use logbrew projects keys create <project_id> --ingest-key-file <path> with optional --label, --kind sdk|browser|server|cli, --abandon-retry, and --json"
@@ -713,7 +713,7 @@ const fn cli_error_next_step(error: &CliError) -> &'static str {
         }
         CliError::InvalidDeploymentCommand => crate::deployment::DEPLOYMENT_NEXT_STEP,
         CliError::InvalidProjectsCommand => {
-            "use logbrew projects with optional --json, or logbrew projects --help"
+            "use logbrew projects [--json], logbrew projects repositories [discover --provider <provider> --repository <id>] [--json], or logbrew projects --help"
         }
         CliError::InvalidLoginProvider => "use --provider github, gitlab, or bitbucket",
         CliError::InvalidUsageCommand => "use logbrew usage with optional --json",

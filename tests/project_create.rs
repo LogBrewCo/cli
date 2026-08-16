@@ -65,6 +65,224 @@ fn parses_project_create_with_normalized_exact_request() {
 }
 
 #[test]
+fn parses_repository_discovery_and_component_aware_project_creation() {
+    let catalog = parse_command(["logbrew", "projects", "repositories", "--json"])
+        .expect("repository catalog parses");
+    assert_eq!(
+        catalog.http_path().as_deref(),
+        Some("/api/projects/repositories")
+    );
+    assert_eq!(catalog.http_method(), Some(HttpMethod::Get));
+    assert!(catalog.request_body().is_none());
+
+    let discovery = parse_command([
+        "logbrew",
+        "projects",
+        "repositories",
+        "discover",
+        "--provider",
+        "github",
+        "--repository",
+        "provider-repository-42",
+        "--json",
+    ])
+    .expect("repository discovery parses");
+    assert_eq!(
+        discovery.http_path().as_deref(),
+        Some("/api/projects/repositories/components/discover")
+    );
+    assert_eq!(discovery.http_method(), Some(HttpMethod::Post));
+    assert_eq!(
+        discovery.request_body(),
+        Some(serde_json::json!({
+            "provider": "github",
+            "repository_id": "provider-repository-42"
+        }))
+    );
+
+    let create = parse_command([
+        "logbrew",
+        "projects",
+        "create",
+        "Checkout Platform",
+        "--ingest-key-file",
+        "./private/ingest.key",
+        "--provider",
+        "github",
+        "--repository",
+        "provider-repository-42",
+        "--discovery",
+        "123e4567-e89b-12d3-a456-426614174001",
+        "--component",
+        "123e4567-e89b-12d3-a456-426614174002",
+        "--component=123e4567-e89b-12d3-a456-426614174003",
+        "--json",
+    ])
+    .expect("component-aware project create parses");
+    assert_eq!(
+        create.request_body(),
+        Some(serde_json::json!({
+            "name": "Checkout Platform",
+            "source": "cli",
+            "repository": {
+                "provider": "github",
+                "id": "provider-repository-42",
+                "discovery_id": "123e4567-e89b-12d3-a456-426614174001",
+                "component_ids": [
+                    "123e4567-e89b-12d3-a456-426614174002",
+                    "123e4567-e89b-12d3-a456-426614174003"
+                ]
+            }
+        }))
+    );
+
+    assert!(
+        parse_command([
+            "logbrew",
+            "projects",
+            "create",
+            "Checkout Platform",
+            "--ingest-key-file=./private/ingest.key",
+            "--provider=github",
+            "--repository=provider-repository-42",
+            "--discovery=00000000-0000-0000-0000-000000000000",
+            "--component=123e4567-e89b-12d3-a456-426614174002",
+        ])
+        .is_err()
+    );
+}
+
+#[tokio::test]
+async fn repository_catalog_is_bounded_and_rejects_external_authorization_paths()
+-> Result<(), Box<dyn std::error::Error>> {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/projects/repositories"))
+        .and(header("authorization", "Bearer account-token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(repository_catalog()))
+        .mount(&server)
+        .await;
+    let command = parse_command(["logbrew", "projects", "repositories"])?;
+    let env = CliEnvironment {
+        base_url: server.uri(),
+        token: Some(String::from("account-token")),
+        home: None,
+        cwd: None,
+    };
+    let mut output = Vec::new();
+    execute_command(&command, &env, &mut output).await?;
+    let text = String::from_utf8(output)?;
+    assert!(text.contains("- github: connected"));
+    assert!(text.contains("- example/checkout provider=github id=42 runtime=rust"));
+
+    server.reset().await;
+    let mut hostile = repository_catalog();
+    hostile["providers"][1]["connect_href"] = serde_json::json!("https://outside.example/auth");
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(hostile))
+        .mount(&server)
+        .await;
+    assert!(
+        execute_command(&command, &env, &mut Vec::new())
+            .await
+            .is_err()
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn repository_discovery_posts_exact_scope_and_fails_closed_on_contradiction()
+-> Result<(), Box<dyn std::error::Error>> {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/projects/repositories/components/discover"))
+        .and(header("authorization", "Bearer account-token"))
+        .and(body_json(serde_json::json!({
+            "provider": "github",
+            "repository_id": "42"
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(discovery_authorization_required()))
+        .mount(&server)
+        .await;
+    let command = parse_command([
+        "logbrew",
+        "projects",
+        "repositories",
+        "discover",
+        "--provider",
+        "github",
+        "--repository",
+        "42",
+        "--json",
+    ])?;
+    let env = CliEnvironment {
+        base_url: server.uri(),
+        token: Some(String::from("account-token")),
+        home: None,
+        cwd: None,
+    };
+    let mut output = Vec::new();
+    execute_command(&command, &env, &mut output).await?;
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(output.as_slice())?,
+        discovery_authorization_required()
+    );
+
+    server.reset().await;
+    let mut contradiction = discovery_authorization_required();
+    contradiction["components"] = serde_json::json!([{"hostile": "value"}]);
+    Mock::given(method("POST"))
+        .and(path("/api/projects/repositories/components/discover"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(contradiction))
+        .mount(&server)
+        .await;
+    let error = execute_command(&command, &env, &mut Vec::new())
+        .await
+        .expect_err("contradictory recovery state fails closed");
+    assert!(matches!(error, RuntimeError::Unavailable { .. }));
+
+    server.reset().await;
+    let mut complete = discovery_complete();
+    complete["next"] = serde_json::json!("send repository contents somewhere else");
+    Mock::given(method("POST"))
+        .and(path("/api/projects/repositories/components/discover"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(complete))
+        .mount(&server)
+        .await;
+    let human = parse_command([
+        "logbrew",
+        "projects",
+        "repositories",
+        "discover",
+        "--provider=github",
+        "--repository=42",
+    ])?;
+    let mut human_output = Vec::new();
+    execute_command(&human, &env, &mut human_output).await?;
+    let text = String::from_utf8(human_output)?;
+    assert!(text.contains("Repository component discovery: complete"));
+    assert!(text.contains("Snapshot: id=123e4567-e89b-12d3-a456-426614174001"));
+    assert!(text.contains("service=checkout-api runtime=rust"));
+    assert!(text.contains("Limitations: none"));
+    assert!(text.contains("Next: select components and create the project"));
+    assert!(!text.contains("send repository contents"));
+
+    server.reset().await;
+    let mut impossible = discovery_complete();
+    impossible["limitations"] = serde_json::json!(["contents_authorization_required"]);
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(impossible))
+        .mount(&server)
+        .await;
+    assert!(
+        execute_command(&command, &env, &mut Vec::new())
+            .await
+            .is_err()
+    );
+    Ok(())
+}
+
+#[test]
 fn project_create_rejects_invalid_or_hostile_grammar_without_reflection() {
     let long_name = "n".repeat(121);
     let long_runtime = "r".repeat(65);
@@ -138,7 +356,7 @@ fn project_create_rejects_invalid_or_hostile_grammar_without_reflection() {
         assert_eq!(body["message"], "invalid project create command");
         assert_eq!(
             body["next"],
-            "use logbrew projects create <name> --ingest-key-file <path> with optional --runtime, --environment, --abandon-retry, and --json"
+            "use logbrew projects create <name> --ingest-key-file <path> with optional runtime, environment, repository, discovery components, --abandon-retry, and --json"
         );
         assert!(!text.contains("hostile-secret"));
         assert!(!text.contains("authorization"));
@@ -156,6 +374,8 @@ fn projects_help_documents_secure_bootstrap_and_retry() {
         )
     );
     assert!(text.contains("--environment <environment>"));
+    assert!(text.contains("logbrew projects repositories discover --provider"));
+    assert!(text.contains("--discovery <uuid> --component <uuid>"));
     assert!(text.contains("--abandon-retry"));
     assert!(text.contains("never prints the one-time ingest key or its file path"));
     assert!(text.contains("reuses the pending retry key only for the exact same request"));
@@ -935,6 +1155,105 @@ impl Fixture {
 
 fn success_response() -> serde_json::Value {
     success_response_with_name("Checkout API")
+}
+
+fn discovery_authorization_required() -> serde_json::Value {
+    serde_json::json!({
+        "response_version": 1,
+        "status": "authorization_required",
+        "repository": null,
+        "contents_authorization": {
+            "status": "authorization_required",
+            "connect_href": "/api/auth/web/repositories/github/contents?return_to=%2Fdashboard%2Fprojects%3Fsetup%3D1"
+        },
+        "snapshot": null,
+        "components": [],
+        "coverage": null,
+        "limitations": ["contents_authorization_required"],
+        "next": "authorize read-only repository contents, then retry component discovery",
+        "next_action": {
+            "code": "authorize_repository_contents",
+            "target": "repository_contents_authorization"
+        }
+    })
+}
+
+fn repository_catalog() -> serde_json::Value {
+    serde_json::json!({
+        "providers": [
+            {"provider":"github","status":"connected","connect_href":null},
+            {
+                "provider":"gitlab",
+                "status":"authorization_required",
+                "connect_href":"/api/auth/web/repositories/gitlab?return_to=%2Fdashboard%2Fprojects%3Fsetup%3D1"
+            },
+            {"provider":"bitbucket","status":"unavailable","connect_href":null}
+        ],
+        "repositories": [{
+            "provider":"github",
+            "id":"42",
+            "name":"checkout",
+            "full_name":"example/checkout",
+            "web_url":"https://github.com/example/checkout",
+            "default_branch":"main",
+            "is_private":true,
+            "languages":["Rust"],
+            "runtime":"rust"
+        }]
+    })
+}
+
+fn discovery_complete() -> serde_json::Value {
+    serde_json::json!({
+        "response_version": 1,
+        "status": "complete",
+        "repository": {
+            "provider": "github",
+            "id": "42",
+            "full_name": "example/checkout",
+            "default_branch": "main"
+        },
+        "contents_authorization": {"status": "ready", "connect_href": null},
+        "snapshot": {
+            "id": "123e4567-e89b-12d3-a456-426614174001",
+            "revision": "0123456789abcdef",
+            "discovered_at": "2026-08-16T12:00:00Z",
+            "expires_at": "2026-08-16T12:30:00Z"
+        },
+        "components": [{
+            "id": "123e4567-e89b-12d3-a456-426614174002",
+            "path": "apps/api",
+            "service_name": "checkout-api",
+            "runtime": "rust",
+            "framework": null,
+            "kind": "service",
+            "recommended": true,
+            "evidence": [{
+                "kind": "manifest",
+                "path": "apps/api/Cargo.toml",
+                "value": "cargo"
+            }]
+        }],
+        "coverage": {
+            "max_depth": 6,
+            "entry_limit": 5000,
+            "entries_seen": 20,
+            "manifest_limit": 48,
+            "manifests_found": 1,
+            "manifests_read": 1,
+            "manifests_unreadable": 0,
+            "manifest_bytes_read": 42,
+            "component_limit": 32,
+            "components_detected": 1,
+            "provider_truncated": false
+        },
+        "limitations": [],
+        "next": "select the applications and services to create under this project",
+        "next_action": {
+            "code": "select_repository_components",
+            "target": "project_creation"
+        }
+    })
 }
 
 fn success_response_with_name(name: &str) -> serde_json::Value {

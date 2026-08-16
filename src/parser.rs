@@ -28,12 +28,14 @@ use crate::flags::{
     FlagScope, is_read_filter_word, is_simple_flag, normalize_log_level, normalize_status,
     parse_flags, validate_min_duration,
 };
-use crate::ids::{infer_explain_target, is_issue_id, is_pasted_detail_id, is_trace_id, is_uuid};
+use crate::ids::{
+    infer_explain_target, is_issue_id, is_non_nil_uuid, is_pasted_detail_id, is_trace_id, is_uuid,
+};
 use crate::{
     CliError, Command, ExplainMetricTarget, ExplainReleaseTarget, ExplainSpanTarget, ExplainTarget,
     HelpTopic, ISSUE_STATUS_ARGUMENT_NEXT_STEP, IssueOccurrenceSelection, ProjectCreateOptions,
-    ProjectIngestKeyCreateOptions, ProjectSetupSeenOptions, ReadOptions, ReadTarget, SetTarget,
-    auth_namespace,
+    ProjectIngestKeyCreateOptions, ProjectRepositoryOptions, ProjectSetupSeenOptions, ReadOptions,
+    ReadTarget, RepositoryDiscoveryOptions, RepositorySetupTarget, SetTarget, auth_namespace,
 };
 
 /// Standard next step for malformed help invocations.
@@ -756,11 +758,73 @@ fn parse_project(args: &[String]) -> Result<Command, CliError> {
         [subcommand, tail @ ..] if subcommand == "create" => parse_project_create(tail),
         [subcommand, tail @ ..] if subcommand == "archive" => parse_project_archive(tail),
         [subcommand, tail @ ..] if subcommand == "delete" => parse_project_deletion(tail),
+        [subcommand, tail @ ..] if subcommand == "repositories" => parse_project_repositories(tail),
         [subcommand, tail @ ..] if subcommand == "setup" && has_position_candidate(tail) => {
             parse_project_setup_seen(tail)
         }
         [_, ..] => Err(CliError::InvalidProjectsCommand),
     }
+}
+
+/// Parses repository catalog and bounded component-discovery reads.
+fn parse_project_repositories(args: &[String]) -> Result<Command, CliError> {
+    let normalized = move_leading_json_to_tail(args);
+    match normalized.as_slice() {
+        [] => Ok(Command::ProjectRepositories {
+            target: RepositorySetupTarget::Catalog,
+            json: false,
+        }),
+        [json] if json == "--json" => Ok(Command::ProjectRepositories {
+            target: RepositorySetupTarget::Catalog,
+            json: true,
+        }),
+        [discover, tail @ ..] if discover == "discover" => parse_repository_discovery(tail),
+        [_, ..] => Err(CliError::InvalidProjectsCommand),
+    }
+}
+
+/// Parses one explicit provider repository component-discovery request.
+fn parse_repository_discovery(args: &[String]) -> Result<Command, CliError> {
+    let mut provider = None;
+    let mut repository_id = None;
+    let mut json = false;
+    let mut index = 0;
+    while let Some(argument) = args.get(index) {
+        let (flag, inline) = argument
+            .split_once('=')
+            .map_or((argument.as_str(), None), |(flag, value)| {
+                (flag, Some(value))
+            });
+        match flag {
+            "--provider" if provider.is_none() => {
+                let value =
+                    flag_value(args, &mut index, inline).ok_or(CliError::InvalidProjectsCommand)?;
+                provider = Some(
+                    value
+                        .parse()
+                        .map_err(|_| CliError::InvalidProjectsCommand)?,
+                );
+            }
+            "--repository" if repository_id.is_none() => {
+                let value =
+                    flag_value(args, &mut index, inline).ok_or(CliError::InvalidProjectsCommand)?;
+                repository_id = bounded_project_create_value(value, 256, false);
+                if repository_id.is_none() {
+                    return Err(CliError::InvalidProjectsCommand);
+                }
+            }
+            "--json" if inline.is_none() && !json => json = true,
+            _ => return Err(CliError::InvalidProjectsCommand),
+        }
+        index += 1;
+    }
+    Ok(Command::ProjectRepositories {
+        target: RepositorySetupTarget::Discover(RepositoryDiscoveryOptions {
+            provider: provider.ok_or(CliError::InvalidProjectsCommand)?,
+            repository_id: repository_id.ok_or(CliError::InvalidProjectsCommand)?,
+        }),
+        json,
+    })
 }
 
 /// Parses the closed secure existing-project ingest-key creation grammar.
@@ -786,14 +850,16 @@ fn parse_project_ingest_key_create(args: &[String]) -> Result<Command, CliError>
             });
         match flag {
             "--label" if label.is_none() => {
-                let value = project_ingest_key_create_flag_value(tail, &mut index, inline_value)?;
+                let value = flag_value(tail, &mut index, inline_value)
+                    .ok_or(CliError::InvalidProjectIngestKeyCreateCommand)?;
                 label = Some(
                     bounded_project_create_value(value, 120, false)
                         .ok_or(CliError::InvalidProjectIngestKeyCreateCommand)?,
                 );
             }
             "--kind" if kind.is_none() => {
-                let value = project_ingest_key_create_flag_value(tail, &mut index, inline_value)?;
+                let value = flag_value(tail, &mut index, inline_value)
+                    .ok_or(CliError::InvalidProjectIngestKeyCreateCommand)?;
                 kind = Some(match value.trim() {
                     "sdk" => String::from("sdk"),
                     "browser" => String::from("browser"),
@@ -803,7 +869,8 @@ fn parse_project_ingest_key_create(args: &[String]) -> Result<Command, CliError>
                 });
             }
             "--ingest-key-file" if ingest_key_file.is_none() => {
-                let value = project_ingest_key_create_flag_value(tail, &mut index, inline_value)?;
+                let value = flag_value(tail, &mut index, inline_value)
+                    .ok_or(CliError::InvalidProjectIngestKeyCreateCommand)?;
                 let trimmed = value.trim();
                 if trimmed.is_empty()
                     || trimmed.len() > 4096
@@ -833,22 +900,6 @@ fn parse_project_ingest_key_create(args: &[String]) -> Result<Command, CliError>
         },
         json,
     })
-}
-
-/// Takes one existing-project key-create flag value without reflection.
-fn project_ingest_key_create_flag_value<'a>(
-    args: &'a [String],
-    index: &mut usize,
-    inline: Option<&'a str>,
-) -> Result<&'a str, CliError> {
-    if let Some(value) = inline {
-        return Ok(value);
-    }
-    *index += 1;
-    args.get(*index)
-        .map(String::as_str)
-        .filter(|value| !value.starts_with('-'))
-        .ok_or(CliError::InvalidProjectIngestKeyCreateCommand)
 }
 
 /// Parses the closed, explicitly confirmed project archival grammar.
@@ -901,6 +952,10 @@ fn parse_project_deletion(args: &[String]) -> Result<Command, CliError> {
 }
 
 /// Parses the closed secure project creation grammar.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one closed grammar keeps mutually dependent project creation flags visible"
+)]
 fn parse_project_create(args: &[String]) -> Result<Command, CliError> {
     let Some((name, tail)) = args.split_first() else {
         return Err(CliError::InvalidProjectCreateCommand);
@@ -915,6 +970,10 @@ fn parse_project_create(args: &[String]) -> Result<Command, CliError> {
     }
     let mut runtime = None;
     let mut environment = None;
+    let mut provider = None;
+    let mut repository_id = None;
+    let mut discovery_id = None;
+    let mut component_ids = Vec::new();
     let mut ingest_key_file = None;
     let mut abandon_retry = false;
     let mut json = false;
@@ -928,15 +987,51 @@ fn parse_project_create(args: &[String]) -> Result<Command, CliError> {
             });
         match flag {
             "--runtime" if runtime.is_none() => {
-                let value = project_create_flag_value(tail, &mut index, inline_value)?;
+                let value = flag_value(tail, &mut index, inline_value)
+                    .ok_or(CliError::InvalidProjectCreateCommand)?;
                 runtime = optional_project_create_value(value, 64)?;
             }
             "--environment" if environment.is_none() => {
-                let value = project_create_flag_value(tail, &mut index, inline_value)?;
+                let value = flag_value(tail, &mut index, inline_value)
+                    .ok_or(CliError::InvalidProjectCreateCommand)?;
                 environment = optional_project_create_value(value, 64)?;
             }
+            "--provider" if provider.is_none() => {
+                let value = flag_value(tail, &mut index, inline_value)
+                    .ok_or(CliError::InvalidProjectCreateCommand)?;
+                provider = Some(
+                    value
+                        .parse()
+                        .map_err(|_| CliError::InvalidProjectCreateCommand)?,
+                );
+            }
+            "--repository" if repository_id.is_none() => {
+                let value = flag_value(tail, &mut index, inline_value)
+                    .ok_or(CliError::InvalidProjectCreateCommand)?;
+                repository_id = bounded_project_create_value(value, 256, false);
+                if repository_id.is_none() {
+                    return Err(CliError::InvalidProjectCreateCommand);
+                }
+            }
+            "--discovery" if discovery_id.is_none() => {
+                let value = flag_value(tail, &mut index, inline_value)
+                    .ok_or(CliError::InvalidProjectCreateCommand)?;
+                if !is_non_nil_uuid(value) {
+                    return Err(CliError::InvalidProjectCreateCommand);
+                }
+                discovery_id = Some(value.to_ascii_lowercase());
+            }
+            "--component" if component_ids.len() < 32 => {
+                let value = flag_value(tail, &mut index, inline_value)
+                    .ok_or(CliError::InvalidProjectCreateCommand)?;
+                if !is_non_nil_uuid(value) {
+                    return Err(CliError::InvalidProjectCreateCommand);
+                }
+                component_ids.push(value.to_ascii_lowercase());
+            }
             "--ingest-key-file" if ingest_key_file.is_none() => {
-                let value = project_create_flag_value(tail, &mut index, inline_value)?;
+                let value = flag_value(tail, &mut index, inline_value)
+                    .ok_or(CliError::InvalidProjectCreateCommand)?;
                 let trimmed = value.trim();
                 if trimmed.is_empty()
                     || trimmed.len() > 4096
@@ -955,12 +1050,29 @@ fn parse_project_create(args: &[String]) -> Result<Command, CliError> {
         index += 1;
     }
 
+    component_ids.sort_unstable();
+    if component_ids.windows(2).any(|pair| pair[0] == pair[1])
+        || provider.is_some() != repository_id.is_some()
+        || discovery_id.is_some() == component_ids.is_empty()
+        || repository_id.is_none() && discovery_id.is_some()
+    {
+        return Err(CliError::InvalidProjectCreateCommand);
+    }
+    let repository = provider
+        .zip(repository_id)
+        .map(|(provider, id)| ProjectRepositoryOptions {
+            provider,
+            id,
+            discovery_id,
+            component_ids,
+        });
     let ingest_key_file = ingest_key_file.ok_or(CliError::InvalidProjectCreateCommand)?;
     Ok(Command::ProjectCreate {
         options: ProjectCreateOptions {
             name,
             runtime,
             environment,
+            repository,
             ingest_key_file,
             abandon_retry,
         },
@@ -968,20 +1080,19 @@ fn parse_project_create(args: &[String]) -> Result<Command, CliError> {
     })
 }
 
-/// Takes an inline or following project-create flag value without reflection.
-fn project_create_flag_value<'a>(
+/// Takes an inline or following flag value without reflecting invalid input.
+fn flag_value<'a>(
     args: &'a [String],
     index: &mut usize,
     inline: Option<&'a str>,
-) -> Result<&'a str, CliError> {
+) -> Option<&'a str> {
     if let Some(value) = inline {
-        return Ok(value);
+        return Some(value);
     }
     *index += 1;
     args.get(*index)
         .map(String::as_str)
         .filter(|value| !value.starts_with('-'))
-        .ok_or(CliError::InvalidProjectCreateCommand)
 }
 
 /// Trims one bounded control-safe project-create field.

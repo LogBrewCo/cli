@@ -648,7 +648,7 @@ fn required(value: Option<&serde_json::Value>) -> Result<&serde_json::Value, Run
 fn safe_string(value: Option<&serde_json::Value>, limit: usize) -> Result<&str, RuntimeError> {
     value
         .and_then(serde_json::Value::as_str)
-        .filter(|value| !value.is_empty() && safe_text(value, limit))
+        .filter(|value| !value.is_empty() && crate::http::display_safe(value, limit))
         .ok_or_else(invalid_response)
 }
 
@@ -712,115 +712,10 @@ fn finite_number(value: Option<&serde_json::Value>) -> Result<f64, RuntimeError>
 /// Returns one valid RFC3339 timestamp.
 fn timestamp(value: Option<&serde_json::Value>) -> Result<&str, RuntimeError> {
     let value = safe_string(value, 64)?;
-    is_rfc3339(value)
+    crate::time::parse_rfc3339(value)
+        .is_some()
         .then_some(value)
         .ok_or_else(invalid_response)
-}
-
-/// Rejects controls and display-direction characters in server text.
-fn safe_text(value: &str, limit: usize) -> bool {
-    value.chars().count() <= limit
-        && !value.chars().any(|character| {
-            character.is_control()
-                || matches!(
-                    character,
-                    '\u{061c}'
-                        | '\u{200b}'..='\u{200f}'
-                        | '\u{2028}'..='\u{202e}'
-                        | '\u{2060}'..='\u{206f}'
-                        | '\u{feff}'
-                        | '\u{fff9}'..='\u{fffb}'
-                )
-        })
-}
-
-/// Validates RFC3339 calendar, time, fraction, and offset syntax.
-fn is_rfc3339(value: &str) -> bool {
-    let bytes = value.as_bytes();
-    if bytes.len() < 20
-        || bytes.get(4) != Some(&b'-')
-        || bytes.get(7) != Some(&b'-')
-        || bytes.get(10) != Some(&b'T')
-        || bytes.get(13) != Some(&b':')
-        || bytes.get(16) != Some(&b':')
-    {
-        return false;
-    }
-    let Some(year) = bytes.get(0..4).and_then(digits_u32) else {
-        return false;
-    };
-    let Some(month) = bytes.get(5..7).and_then(digits_u32) else {
-        return false;
-    };
-    let Some(day) = bytes.get(8..10).and_then(digits_u32) else {
-        return false;
-    };
-    let Some(hour) = bytes.get(11..13).and_then(digits_u32) else {
-        return false;
-    };
-    let Some(minute) = bytes.get(14..16).and_then(digits_u32) else {
-        return false;
-    };
-    let Some(second) = bytes.get(17..19).and_then(digits_u32) else {
-        return false;
-    };
-    if !(1..=12).contains(&month)
-        || day == 0
-        || day > days_in_month(year, month)
-        || hour > 23
-        || minute > 59
-        || second > 59
-    {
-        return false;
-    }
-    let mut index = 19;
-    if bytes.get(index) == Some(&b'.') {
-        index += 1;
-        let start = index;
-        while bytes.get(index).is_some_and(u8::is_ascii_digit) {
-            index += 1;
-        }
-        if index == start {
-            return false;
-        }
-    }
-    match bytes.get(index) {
-        Some(b'Z') => index + 1 == bytes.len(),
-        Some(b'+' | b'-') => {
-            let Some(offset_hour) = bytes.get(index + 1..index + 3).and_then(digits_u32) else {
-                return false;
-            };
-            let Some(offset_minute) = bytes.get(index + 4..index + 6).and_then(digits_u32) else {
-                return false;
-            };
-            bytes.get(index + 3) == Some(&b':')
-                && index + 6 == bytes.len()
-                && offset_hour <= 23
-                && offset_minute <= 59
-        }
-        Some(_) | None => false,
-    }
-}
-
-/// Parses an ASCII digit slice as an unsigned integer.
-fn digits_u32(bytes: &[u8]) -> Option<u32> {
-    bytes.iter().try_fold(0_u32, |value, byte| {
-        byte.is_ascii_digit()
-            .then(|| value * 10 + u32::from(*byte - b'0'))
-    })
-}
-
-/// Returns the number of days in one Gregorian month.
-const fn days_in_month(year: u32, month: u32) -> u32 {
-    match month {
-        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
-        4 | 6 | 9 | 11 => 30,
-        2 if year.is_multiple_of(400) || (year.is_multiple_of(4) && !year.is_multiple_of(100)) => {
-            29
-        }
-        2 => 28,
-        _ => 0,
-    }
 }
 
 /// Fixed recovery for malformed or oversized account-usage responses.

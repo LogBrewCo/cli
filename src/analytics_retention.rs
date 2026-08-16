@@ -4,6 +4,10 @@ use serde::Deserialize;
 
 use crate::analytics_request::insert_optional;
 use crate::auth::{AuthCredential, send_authenticated_with_refresh};
+use crate::http::{nonempty_control_safe as bounded_contract_text, terminal_safe as display_text};
+use crate::time::{
+    ParsedTimestamp as UtcTimestamp, add_seconds, parse_utc_timestamp, timestamp_nanos,
+};
 use crate::{
     AnalyticsRetentionCohortMode, AnalyticsRetentionEventKind, AnalyticsRetentionInterval,
     AnalyticsRetentionMode, AnalyticsRetentionOptions, CliEnvironment, RuntimeError,
@@ -286,15 +290,6 @@ struct NextAction {
     code: String,
     target: String,
     reason: String,
-}
-
-/// Parsed canonical UTC timestamp used only for contract validation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-struct UtcTimestamp {
-    /// Whole seconds from the Unix epoch.
-    epoch_seconds: i64,
-    /// Fractional nanoseconds inside the second.
-    nanoseconds: u32,
 }
 
 /// Parses and proves the complete schema-version-1 response.
@@ -674,115 +669,6 @@ const fn expected_next_action(response: &RetentionResponse) -> (&'static str, &'
     }
 }
 
-/// Parses the canonical UTC `Z` timestamp emitted by the API.
-fn parse_utc_timestamp(value: &str) -> Option<UtcTimestamp> {
-    let bytes = value.as_bytes();
-    if !(20..=30).contains(&bytes.len())
-        || !bytes.is_ascii()
-        || bytes.last() != Some(&b'Z')
-        || bytes.get(4) != Some(&b'-')
-        || bytes.get(7) != Some(&b'-')
-        || bytes.get(10) != Some(&b'T')
-        || bytes.get(13) != Some(&b':')
-        || bytes.get(16) != Some(&b':')
-    {
-        return None;
-    }
-    let year = decimal(bytes.get(0..4)?)?;
-    let month = decimal(bytes.get(5..7)?)?;
-    let day = decimal(bytes.get(8..10)?)?;
-    let hour = decimal(bytes.get(11..13)?)?;
-    let minute = decimal(bytes.get(14..16)?)?;
-    let second = decimal(bytes.get(17..19)?)?;
-    if year == 0
-        || !(1..=12).contains(&month)
-        || day == 0
-        || day > days_in_month(year, month)
-        || hour > 23
-        || minute > 59
-        || second > 59
-    {
-        return None;
-    }
-    let nanoseconds = parse_fraction(bytes.get(19..bytes.len().saturating_sub(1))?)?;
-    let days = days_from_civil(i64::from(year), i64::from(month), i64::from(day));
-    let epoch_seconds = days
-        .checked_mul(86_400)?
-        .checked_add(i64::from(hour).checked_mul(3_600)?)?
-        .checked_add(i64::from(minute).checked_mul(60)?)?
-        .checked_add(i64::from(second))?;
-    Some(UtcTimestamp {
-        epoch_seconds,
-        nanoseconds,
-    })
-}
-
-/// Parses one fixed-width ASCII decimal field.
-fn decimal(bytes: &[u8]) -> Option<u32> {
-    bytes.iter().try_fold(0_u32, |value, byte| {
-        byte.is_ascii_digit()
-            .then(|| value.checked_mul(10)?.checked_add(u32::from(*byte - b'0')))
-            .flatten()
-    })
-}
-
-/// Parses an absent or one-to-nine-digit timestamp fraction.
-fn parse_fraction(bytes: &[u8]) -> Option<u32> {
-    if bytes.is_empty() {
-        return Some(0);
-    }
-    let digits = bytes.strip_prefix(b".")?;
-    if digits.is_empty() || digits.len() > 9 || !digits.iter().all(u8::is_ascii_digit) {
-        return None;
-    }
-    let value = decimal(digits)?;
-    value.checked_mul(10_u32.checked_pow(u32::try_from(9_usize.checked_sub(digits.len())?).ok()?)?)
-}
-
-/// Returns the valid day count for one Gregorian month.
-const fn days_in_month(year: u32, month: u32) -> u32 {
-    match month {
-        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
-        4 | 6 | 9 | 11 => 30,
-        2 if is_leap_year(year) => 29,
-        2 => 28,
-        _ => 0,
-    }
-}
-
-/// Returns whether one Gregorian year is a leap year.
-const fn is_leap_year(year: u32) -> bool {
-    year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400))
-}
-
-/// Converts one civil date to days relative to the Unix epoch.
-fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
-    let adjusted_year = year - i64::from(month <= 2);
-    let era = if adjusted_year >= 0 {
-        adjusted_year
-    } else {
-        adjusted_year - 399
-    } / 400;
-    let year_of_era = adjusted_year - era * 400;
-    let adjusted_month = month + if month > 2 { -3 } else { 9 };
-    let day_of_year = (153 * adjusted_month + 2) / 5 + day - 1;
-    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
-    era * 146_097 + day_of_era - 719_468
-}
-
-/// Adds whole seconds without changing the fractional component.
-fn add_seconds(timestamp: UtcTimestamp, seconds: i64) -> Option<UtcTimestamp> {
-    Some(UtcTimestamp {
-        epoch_seconds: timestamp.epoch_seconds.checked_add(seconds)?,
-        nanoseconds: timestamp.nanoseconds,
-    })
-}
-
-/// Returns one timestamp as a checked nanosecond offset.
-fn timestamp_nanos(timestamp: UtcTimestamp) -> i128 {
-    i128::from(timestamp.epoch_seconds) * NANOS_PER_SECOND + i128::from(timestamp.nanoseconds)
-}
-
 /// Sums bounded counts without silent overflow.
 fn checked_sum(mut values: impl Iterator<Item = u64>) -> Option<u64> {
     values.try_fold(0_u64, u64::checked_add)
@@ -821,13 +707,6 @@ fn optional_float_matches(actual: Option<f64>, expected: Option<f64>) -> bool {
         }
         (None, Some(_)) | (Some(_), None) => false,
     }
-}
-
-/// Validates one backend-authored, non-telemetry contract string.
-fn bounded_contract_text(value: &str, limit: usize) -> bool {
-    !value.trim().is_empty()
-        && value.chars().count() <= limit
-        && !value.chars().any(char::is_control)
 }
 
 /// Renders a useful human interpretation without reflecting backend prose.
@@ -1066,29 +945,6 @@ fn next_step(code: &str) -> &'static str {
         }
         _ => "retry the bounded analytics retention query",
     }
-}
-
-/// Escapes terminal controls and bidirectional-display characters in event names.
-fn display_text(value: &str) -> String {
-    let mut output = String::with_capacity(value.len());
-    for character in value.chars() {
-        if character.is_control() {
-            output.extend(character.escape_default());
-        } else if matches!(
-            character,
-            '\u{061c}'
-                | '\u{200b}'..='\u{200f}'
-                | '\u{2028}'..='\u{202e}'
-                | '\u{2060}'..='\u{206f}'
-                | '\u{feff}'
-                | '\u{fff9}'..='\u{fffb}'
-        ) {
-            output.extend(character.escape_unicode());
-        } else {
-            output.push(character);
-        }
-    }
-    output
 }
 
 /// Converts transport and refresh failures into fixed retention-safe recovery.

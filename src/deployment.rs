@@ -1,6 +1,7 @@
 //! Strict completed-deployment capture for release comparison.
 
 use crate::auth::{AuthCredential, send_account_authenticated_with_refresh};
+use crate::http::nonempty_display_safe as safe_text;
 use crate::time::parse_rfc3339;
 use crate::{
     CliEnvironment, CliError, Command, DeploymentRecordOptions, DeploymentStatus, RuntimeError,
@@ -437,24 +438,6 @@ const fn safe_error_body(status: u16) -> &'static str {
             r#"{"error":"deployment capture returned an unexpected status","code":"unexpected_response","next":"retry the same deployment id or check API compatibility"}"#
         }
     }
-}
-
-/// Rejects controls and display-direction characters in bounded text.
-fn safe_text(value: &str, limit: usize) -> bool {
-    !value.is_empty()
-        && value.chars().count() <= limit
-        && !value.chars().any(|character| {
-            character.is_control()
-                || matches!(
-                    character,
-                    '\u{061c}'
-                        | '\u{200b}'..='\u{200f}'
-                        | '\u{2028}'..='\u{202e}'
-                        | '\u{2060}'..='\u{206f}'
-                        | '\u{feff}'
-                        | '\u{fff9}'..='\u{fffb}'
-                )
-        })
 }
 
 /// Returns a fixed transport failure without host or request details.

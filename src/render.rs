@@ -38,6 +38,9 @@ pub(crate) fn write_api_success<W: std::io::Write>(
     body: &str,
     output: &mut W,
 ) -> Result<(), RuntimeError> {
+    if let Command::ProjectRepositories { target, json } = command {
+        return crate::repositories::write_success(target, *json, body, output);
+    }
     if command.wants_json() {
         writeln!(output, "{body}")?;
         return Ok(());
@@ -90,6 +93,7 @@ fn cursor_response_title(command: &Command) -> Option<&'static str> {
         | Command::ProjectIngestKeyCreate { .. }
         | Command::ProjectArchive { .. }
         | Command::ProjectDeletion { .. }
+        | Command::ProjectRepositories { .. }
         | Command::Projects { .. }
         | Command::Usage { .. }
         | Command::Version { .. }
@@ -315,6 +319,7 @@ fn human_summary(command: &Command, value: &serde_json::Value) -> Option<String>
         | Command::ProjectIngestKeyCreate { .. }
         | Command::ProjectArchive { .. }
         | Command::ProjectDeletion { .. }
+        | Command::ProjectRepositories { .. }
         | Command::Projects { .. }
         | Command::Help { .. }
         | Command::Login { .. }
