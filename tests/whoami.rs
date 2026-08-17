@@ -80,7 +80,13 @@ async fn whoami_human_output_is_bounded_and_identity_oriented()
 #[tokio::test]
 async fn whoami_rejects_partial_extra_duplicate_or_hostile_identity_responses()
 -> Result<(), Box<dyn std::error::Error>> {
+    let mut invalid_avatar = account();
+    invalid_avatar["avatar_data_url"] = serde_json::json!("https://hostile.example/avatar.png");
+    let mut invalid_name = account();
+    invalid_name["first_name"] = serde_json::json!(" hostile");
     let cases = [
+        serde_json::to_string(&invalid_avatar)?,
+        serde_json::to_string(&invalid_name)?,
         String::from(
             r#"{"id":"123e4567-e89b-42d3-a456-426614174000","email":"owner@example.com","display_name":"Example Owner"}"#,
         ),
@@ -318,6 +324,9 @@ fn account() -> serde_json::Value {
         "id": ACCOUNT_ID,
         "email": "owner@example.com",
         "display_name": "Example Owner",
+        "first_name": "",
+        "last_name": "",
+        "avatar_data_url": format!("data:image/png;base64,{}", "A".repeat(20 * 1024)),
         "tier": "free"
     })
 }
