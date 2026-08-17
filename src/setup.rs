@@ -340,8 +340,8 @@ fn svelte_plan_json(package_manager: &str) -> serde_json::Value {
             "requires_framework": "Svelte >=5",
         },
         "surfaces": [
-            {"surface": "browser", "integration": "svelte", "credential_kind": "browser", "service_name_required": true},
-            {"surface": "server", "integration": "sveltekit", "credential_kind": "server", "service_name_required": true},
+            {"surface": "browser", "integration": "svelte", "credential_kind": "browser", "service_name_required": true, "deployment_context_required": ["environment", "release"]},
+            {"surface": "server", "integration": "sveltekit", "credential_kind": "server", "service_name_required": true, "deployment_context_required": ["environment", "release"]},
         ],
         "install_command": javascript_install_command(package_manager, SVELTE_PACKAGES),
         "next_action": package_next_action(),
@@ -361,8 +361,8 @@ fn react_express_plan_json(package_manager: &str) -> serde_json::Value {
             "requires_frameworks": ["React >=18", "Express >=4"],
         },
         "surfaces": [
-            {"surface": "browser", "integration": "react", "credential_kind": "browser", "service_name_required": true},
-            {"surface": "server", "integration": "express", "credential_kind": "server", "service_name_required": true},
+            {"surface": "browser", "integration": "react", "credential_kind": "browser", "service_name_required": true, "deployment_context_required": ["environment", "release"]},
+            {"surface": "server", "integration": "express", "credential_kind": "server", "service_name_required": true, "deployment_context_required": ["environment", "release"]},
         ],
         "install_command": javascript_install_command(package_manager, REACT_EXPRESS_PACKAGES),
         "next_action": package_next_action(),
@@ -410,12 +410,12 @@ fn write_package_human<W: std::io::Write>(
         ),
         PackageIntegration::SvelteKit => writeln!(
             output,
-            "Package manager: {package_manager}\nIntegration: SvelteKit\nPackages: {SVELTE_PACKAGES}\nCompatibility review: Node >=18; Svelte >=5\nSurfaces:\n- browser: Svelte; key kind: browser; stable service name required\n- server: SvelteKit; key kind: server; stable service name required\nCommand: {}",
+            "Package manager: {package_manager}\nIntegration: SvelteKit\nPackages: {SVELTE_PACKAGES}\nCompatibility review: Node >=18; Svelte >=5\nSurfaces:\n- browser: Svelte; key kind: browser; stable service name, environment, and release required\n- server: SvelteKit; key kind: server; stable service name, environment, and release required\nCommand: {}",
             javascript_install_command(package_manager, SVELTE_PACKAGES),
         ),
         PackageIntegration::ReactExpress => writeln!(
             output,
-            "Package manager: {package_manager}\nIntegration: React + Express\nPackages: {REACT_EXPRESS_PACKAGES}\nCompatibility review: Node >=18; React >=18; Express >=4\nSurfaces:\n- browser: React; key kind: browser; stable service name required\n- server: Express; key kind: server; stable service name required\nCommand: {}",
+            "Package manager: {package_manager}\nIntegration: React + Express\nPackages: {REACT_EXPRESS_PACKAGES}\nCompatibility review: Node >=18; React >=18; Express >=4\nSurfaces:\n- browser: React; key kind: browser; stable service name, environment, and release required\n- server: Express; key kind: server; stable service name, environment, and release required\nCommand: {}",
             javascript_install_command(package_manager, REACT_EXPRESS_PACKAGES),
         ),
     }

@@ -9,8 +9,8 @@ type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
 fn javascript_surfaces(browser: &str, server: &str) -> serde_json::Value {
     serde_json::json!([
-        {"surface": "browser", "integration": browser, "credential_kind": "browser", "service_name_required": true},
-        {"surface": "server", "integration": server, "credential_kind": "server", "service_name_required": true},
+        {"surface": "browser", "integration": browser, "credential_kind": "browser", "service_name_required": true, "deployment_context_required": ["environment", "release"]},
+        {"surface": "server", "integration": server, "credential_kind": "server", "service_name_required": true, "deployment_context_required": ["environment", "release"]},
     ])
 }
 
@@ -287,8 +287,7 @@ async fn sveltekit_emits_a_truthful_non_mutating_plan() -> TestResult {
     );
     assert_eq!(body["detected"][0]["runtime"], "sveltekit");
     let human = setup_text(&root, &["logbrew", "setup"]).await?;
-    assert!(human.contains("Integration: SvelteKit"));
-    assert!(human.contains("Compatibility review: Node >=18; Svelte >=5\nSurfaces:\n- browser: Svelte; key kind: browser; stable service name required\n- server: SvelteKit; key kind: server; stable service name required"));
+    assert!(human.contains("Integration: SvelteKit\nPackages: @logbrew/sdk @logbrew/browser @logbrew/svelte\nCompatibility review: Node >=18; Svelte >=5\nSurfaces:\n- browser: Svelte; key kind: browser; stable service name, environment, and release required\n- server: SvelteKit; key kind: server; stable service name, environment, and release required"));
     assert!(!human.contains(root.to_string_lossy().as_ref()));
     Ok(())
 }
@@ -329,8 +328,8 @@ async fn mixed_react_express_emits_scoped_surface_plan() -> TestResult {
         &[
             "Integration: React + Express",
             "Compatibility review: Node >=18; React >=18; Express >=4",
-            "browser: React; key kind: browser; stable service name required",
-            "server: Express; key kind: server; stable service name required",
+            "browser: React; key kind: browser; stable service name, environment, and release required",
+            "server: Express; key kind: server; stable service name, environment, and release required",
         ],
     );
     assert!(!human.contains(root.to_string_lossy().as_ref()));
