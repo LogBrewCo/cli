@@ -48,19 +48,15 @@ class InstalledReleaseAttestationWorkflowTests(unittest.TestCase):
         self.assertEqual(workflow.count(token_binding), 1)
         self.assertEqual(workflow.count("${{ github.token }}"), 1)
 
-    def test_dispatch_inputs_bind_the_exact_release(self) -> None:
-        workflow = self.workflow()
-        for name, value in [
-            ("tag", "v0.1.44"),
-            ("version", "0.1.44"),
-            ("source_commit", "2ae7c5f363e0a8a31fe14a607838beab7cb9c82b"),
-            ("release_run", "31627146810"),
-        ]:
+    def test_dispatch_inputs_are_required_without_stale_defaults(self) -> None:
+        inputs = self.workflow().split("permissions:", 1)[0]
+        for name in ["tag", "version", "source_commit", "release_run"]:
             with self.subTest(name=name):
                 self.assertRegex(
-                    workflow,
-                    rf"(?ms)^      {name}:\n.*?^        default: [\"']?{re.escape(value)}[\"']?$",
+                    inputs,
+                    rf"(?m)^      {name}:\n        description: [^\n]+\n        required: true\n        type: string$",
                 )
+        self.assertNotIn("        default:", inputs)
 
     def test_matrix_always_contains_all_six_real_platform_receipts(self) -> None:
         workflow = self.workflow()
@@ -141,7 +137,7 @@ class InstalledReleaseAttestationWorkflowTests(unittest.TestCase):
             workflow.count("actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"),
             2,
         )
-        self.assertIn("ref: 2ae7c5f363e0a8a31fe14a607838beab7cb9c82b", workflow)
+        self.assertIn("ref: ${{ inputs.source_commit }}", workflow)
         self.assertIn("path: released-source", workflow)
         self.assertEqual(workflow.count("persist-credentials: false"), 2)
         self.assertIn(
@@ -179,7 +175,9 @@ class InstalledReleaseAttestationWorkflowTests(unittest.TestCase):
                 self.assertIn(f"          {variable}: {expression}", workflow)
                 self.assertIn(f'{option} "${variable}"', command)
                 self.assertNotIn(expression, command)
-                self.assertEqual(workflow.count(expression), 1)
+                self.assertEqual(
+                    workflow.count(expression), 2 if option == "--source-commit" else 1
+                )
 
         for forbidden in [
             "GITHUB_OUTPUT",
