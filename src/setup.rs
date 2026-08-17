@@ -339,6 +339,10 @@ fn svelte_plan_json(package_manager: &str) -> serde_json::Value {
             "requires_node": ">=18",
             "requires_framework": "Svelte >=5",
         },
+        "surfaces": [
+            {"surface": "browser", "integration": "svelte", "credential_kind": "browser", "service_name_required": true},
+            {"surface": "server", "integration": "sveltekit", "credential_kind": "server", "service_name_required": true},
+        ],
         "install_command": javascript_install_command(package_manager, SVELTE_PACKAGES),
         "next_action": package_next_action(),
     })
@@ -406,7 +410,7 @@ fn write_package_human<W: std::io::Write>(
         ),
         PackageIntegration::SvelteKit => writeln!(
             output,
-            "Package manager: {package_manager}\nIntegration: SvelteKit\nPackages: {SVELTE_PACKAGES}\nCompatibility review: Node >=18; Svelte >=5\nCommand: {}",
+            "Package manager: {package_manager}\nIntegration: SvelteKit\nPackages: {SVELTE_PACKAGES}\nCompatibility review: Node >=18; Svelte >=5\nSurfaces:\n- browser: Svelte; key kind: browser; stable service name required\n- server: SvelteKit; key kind: server; stable service name required\nCommand: {}",
             javascript_install_command(package_manager, SVELTE_PACKAGES),
         ),
         PackageIntegration::ReactExpress => writeln!(

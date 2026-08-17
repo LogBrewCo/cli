@@ -7,6 +7,13 @@ const REACT_EXPRESS_PACKAGES: &str =
     "@logbrew/sdk @logbrew/browser @logbrew/react @logbrew/node @logbrew/express";
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
+fn javascript_surfaces(browser: &str, server: &str) -> serde_json::Value {
+    serde_json::json!([
+        {"surface": "browser", "integration": browser, "credential_kind": "browser", "service_name_required": true},
+        {"surface": "server", "integration": server, "credential_kind": "server", "service_name_required": true},
+    ])
+}
+
 #[tokio::test]
 async fn swiftpm_emits_exact_non_mutating_install_plan() -> TestResult {
     let root = fixture_root("swift-ready")?;
@@ -270,6 +277,7 @@ async fn sveltekit_emits_a_truthful_non_mutating_plan() -> TestResult {
                 "requires_node": ">=18",
                 "requires_framework": "Svelte >=5",
             },
+            "surfaces": javascript_surfaces("svelte", "sveltekit"),
             "install_command": "pnpm add @logbrew/sdk @logbrew/browser @logbrew/svelte",
             "next_action": {
                 "code": "review_compatibility_and_install",
@@ -280,7 +288,7 @@ async fn sveltekit_emits_a_truthful_non_mutating_plan() -> TestResult {
     assert_eq!(body["detected"][0]["runtime"], "sveltekit");
     let human = setup_text(&root, &["logbrew", "setup"]).await?;
     assert!(human.contains("Integration: SvelteKit"));
-    assert!(human.contains("Compatibility review: Node >=18; Svelte >=5"));
+    assert!(human.contains("Compatibility review: Node >=18; Svelte >=5\nSurfaces:\n- browser: Svelte; key kind: browser; stable service name required\n- server: SvelteKit; key kind: server; stable service name required"));
     assert!(!human.contains(root.to_string_lossy().as_ref()));
     Ok(())
 }
@@ -311,20 +319,7 @@ async fn mixed_react_express_emits_scoped_surface_plan() -> TestResult {
                 "code": "review_compatibility_and_install",
                 "target": "project_environment",
             },
-            "surfaces": [
-                {
-                    "surface": "browser",
-                    "integration": "react",
-                    "credential_kind": "browser",
-                    "service_name_required": true,
-                },
-                {
-                    "surface": "server",
-                    "integration": "express",
-                    "credential_kind": "server",
-                    "service_name_required": true,
-                },
-            ],
+            "surfaces": javascript_surfaces("react", "express"),
         })
     );
     assert_eq!(body["detected"][0]["runtime"], "react-express");
