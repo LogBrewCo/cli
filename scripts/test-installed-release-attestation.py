@@ -105,7 +105,7 @@ def release_fixture(policy, receipt) -> dict[str, object]:
             "browser_download_url": f"{base}/{receipt.asset_name}",
         }
     ]
-    if receipt.checksum_required:
+    if receipt.mode == "native":
         assets.append(
             {
                 "id": policy.checksum_asset_id,
@@ -149,50 +149,50 @@ class InstalledReleaseAttestationTests(unittest.TestCase):
             ),
             (
                 "LogBrewCo/cli",
-                "v0.1.44",
-                "0.1.44",
-                "2ae7c5f363e0a8a31fe14a607838beab7cb9c82b",
-                "94d70d5e3b862416b7859c410bbf7497a8abd445",
-                31627146810,
+                "v0.1.51",
+                "0.1.51",
+                "16c3d4797332f4796d058e248ebc078a554c67da",
+                "05478bd96512d2cfa04d8ea9527a8a93207133e2",
+                32058535082,
                 289984708,
-                369446971,
-                "2026-08-12T18:26:37Z",
+                371894673,
+                "2026-08-17T19:12:14Z",
                 "sha256.sum",
-                511921852,
+                518391646,
                 820,
-                "093cc1df98d30330630a49c5828b5207acb3a55480a9a3f6f72b2a6897d2c83f",
+                "ad6753aa72fe9b96c866175265fb1b66400ffb9fa71242e165fc854f59917ff0",
             ),
         )
         expected_receipts = {
             "shell-linux-x64": (
-                511921829,
+                518391599,
                 54183,
-                "557abae52ea7386eda5dcf4b79a4770b4a90c8c668be88f79d107cf55e8dd096",
+                "b6fc704c7c7ae046888d87fd42ffc043acbedaf9e541518eb476267f9a42e951",
             ),
             "native-linux-arm64": (
-                511921821,
-                2365396,
-                "a2eb7edd5f98851365fb53d7e755b166d401430566c5bd8d0d7cb9994368a3f2",
+                518391578,
+                2400244,
+                "be5fa1384f518f046eee683a67b402f12b6b792a5bd6e4ee2a855e8a61ac9511",
             ),
             "native-linux-x64": (
-                511921845,
-                2669024,
-                "600c199ae407333f44d15a5c34c9623981da503a559520614e7cd1662b02381e",
+                518391640,
+                2710444,
+                "ad9452ff333b990b1bf7eb03850e5ea56d33209dc04916b305e1882f2a20845c",
             ),
             "powershell-windows-x64": (
-                511921827,
+                518391595,
                 22325,
-                "42c3d389f3f2f382ea09fca8941e1d11851b423c4d16cd0645559817ccdb01a0",
+                "029d133748a411b008655294e06177e05a46505fba90a04b2cead4aea8647a25",
             ),
             "native-windows-x64": (
-                511921840,
-                3436862,
-                "b73da42a85a9d3128eebc9cef5a11c99cce5ce1eed23bb0d853bb87b2b735266",
+                518391628,
+                3503012,
+                "92436b85eb4c22662b4587e9574f1c6bc51b189a2f87bbafcf0e87013bf8d57d",
             ),
             "native-macos-x64": (
-                511921833,
-                2619492,
-                "e723f64c87d25ffbee63f0e574562a52e6b3a34ee9086ea6d3a043c71ae4ea6e",
+                518391616,
+                2661860,
+                "684ddd1fc5cbe3f0c0080b07918107e1417c021d4f36b08deed8eac81103830d",
             ),
         }
         self.assertEqual(
