@@ -141,7 +141,8 @@ packages with the detected npm, pnpm, yarn, or bun command. Detection requires
 an exact `@sveltejs/kit` dependency in a standard `package.json` dependency map.
 React and Express dependencies receive the released browser/React or
 Node/Express packages. Mixed projects receive one deduplicated install command
-plus separate browser and server key scopes and service-name requirements.
+plus separate browser and server key scopes and explicit service, environment,
+and release requirements on both surfaces.
 
 Python plans report the public package compatibility requirements separately.
 Review them before running the command, especially when a library supports

@@ -24,7 +24,7 @@ from unittest import mock
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 VERIFIER = ROOT / "scripts" / "real_user_public_install_smoke.py"
-VERSION = "0.1.51"
+VERSION = "0.1.52"
 sys.dont_write_bytecode = True
 
 
@@ -173,7 +173,7 @@ def write_fake_installer_command(path: pathlib.Path, kind: str) -> None:
                 install(os.environ["FAKE_BREW_PREFIX"])
                 raise SystemExit(0)
             if args[:2] == ["list", "--versions"] and len(args) == 3:
-                print("logbrew 0.1.51")
+                print("logbrew 0.1.52")
                 raise SystemExit(0)
             if len(args) == 2 and args[0] == "--prefix":
                 print(os.environ["FAKE_BREW_PREFIX"])
@@ -268,12 +268,12 @@ class PublicInstallVerifierTests(unittest.TestCase):
             create_tar(
                 artifact,
                 {
-                    "logbrew-cli-0.1.51/Cargo.toml": (
-                        b'[package]\nname = "logbrew-cli"\nversion = "0.1.51"\n',
+                    "logbrew-cli-0.1.52/Cargo.toml": (
+                        b'[package]\nname = "logbrew-cli"\nversion = "0.1.52"\n',
                         0o644,
                     ),
-                    "logbrew-cli-0.1.51/Cargo.lock": (b"# fixture\n", 0o644),
-                    "logbrew-cli-0.1.51/src/main.rs": (b"fn main() {}\n", 0o644),
+                    "logbrew-cli-0.1.52/Cargo.lock": (b"# fixture\n", 0o644),
+                    "logbrew-cli-0.1.52/src/main.rs": (b"fn main() {}\n", 0o644),
                 },
             )
             return "crates:logbrew-cli", artifact
@@ -285,10 +285,10 @@ class PublicInstallVerifierTests(unittest.TestCase):
                     class Logbrew < Formula
                       if OS.mac?
                         if Hardware::CPU.arm?
-                          url "https://github.com/LogBrewCo/cli/releases/download/v0.1.51/logbrew-cli-aarch64-apple-darwin.tar.xz"
+                          url "https://github.com/LogBrewCo/cli/releases/download/v0.1.52/logbrew-cli-aarch64-apple-darwin.tar.xz"
                         end
                         if Hardware::CPU.intel?
-                          url "https://github.com/LogBrewCo/cli/releases/download/v0.1.51/logbrew-cli-x86_64-apple-darwin.tar.xz"
+                          url "https://github.com/LogBrewCo/cli/releases/download/v0.1.52/logbrew-cli-x86_64-apple-darwin.tar.xz"
                         end
                       end
                       BINARY_ALIASES = {
@@ -340,7 +340,7 @@ class PublicInstallVerifierTests(unittest.TestCase):
             artifact = artifact.with_suffix(".tar.gz")
             create_tar(
                 artifact,
-                {"logbrew-0.1.51/logbrew": (cli_source(VERSION).encode(), 0o755)},
+                {"logbrew-0.1.52/logbrew": (cli_source(VERSION).encode(), 0o755)},
             )
             return "native:linux-x64", artifact
         if mode == "npm":
@@ -349,7 +349,7 @@ class PublicInstallVerifierTests(unittest.TestCase):
                 artifact,
                 {
                     "package/package.json": (
-                        b'{"name":"logbrew-cli","version":"0.1.51",'
+                        b'{"name":"logbrew-cli","version":"0.1.52",'
                         b'"bin":{"logbrew":"run-logbrew.js"}}\n',
                         0o644,
                     ),
@@ -364,7 +364,7 @@ class PublicInstallVerifierTests(unittest.TestCase):
         source = artifact.read_text(encoding="utf-8")
         artifact.write_text(
             source.replace(
-                "v0.1.51/logbrew-cli-x86_64",
+                "v0.1.52/logbrew-cli-x86_64",
                 "v0.1.28/logbrew-cli-x86_64",
             ),
             encoding="utf-8",
@@ -385,11 +385,11 @@ class PublicInstallVerifierTests(unittest.TestCase):
         matcher = getattr(module, "homebrew_formula_matches_version", None)
         self.assertIsNotNone(matcher)
 
-        self.assertTrue(matcher('version "0.1.51"\n', VERSION))
+        self.assertTrue(matcher('version "0.1.52"\n', VERSION))
         self.assertFalse(matcher('version "0.1.28"\n', VERSION))
         self.assertFalse(
             matcher(
-                'version "0.1.51"\nversion "0.1.51"\n',
+                'version "0.1.52"\nversion "0.1.52"\n',
                 VERSION,
             )
         )
