@@ -125,10 +125,9 @@ fn request_error(error: RuntimeError) -> RuntimeError {
             ..
         }
     ) {
-        account_auth_error()
-    } else {
-        error.auth_or(transport_error())
+        return account_auth_error();
     }
+    error.auth_or(transport_error())
 }
 
 /// Validates the exact account identity contract before any output.
