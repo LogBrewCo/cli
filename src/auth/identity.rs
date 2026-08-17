@@ -4,24 +4,20 @@ use super::{AuthCredential, send_account_authenticated_with_refresh};
 use crate::{CliEnvironment, RuntimeError};
 
 /// Maximum accepted account identity response body.
-const RESPONSE_LIMIT: usize = 16 * 1024;
+const RESPONSE_LIMIT: usize = 768 * 1024;
+const MAX_AVATAR_ENCODED_BYTES: usize = 512 * 1024 * 4 / 3 + 4;
 
-/// Duplicate-aware exact authenticated account shape.
+/// Duplicate-aware exact deployed account shape.
 #[derive(Debug, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct IdentityShape {
-    /// Account identifier field.
-    #[serde(rename = "id")]
-    _id: serde_json::Value,
-    /// Account email field.
-    #[serde(rename = "email")]
-    _email: serde_json::Value,
-    /// Account display-name field.
-    #[serde(rename = "display_name")]
-    _display_name: serde_json::Value,
-    /// Account tier field.
-    #[serde(rename = "tier")]
-    _tier: serde_json::Value,
+    id: String,
+    email: String,
+    display_name: String,
+    first_name: String,
+    last_name: String,
+    avatar_data_url: Option<String>,
+    tier: String,
 }
 
 /// Duplicate-aware standard API error envelope.
@@ -78,18 +74,6 @@ struct RecoveryErrorShape {
     _recovery_token: serde_json::Value,
 }
 
-/// Fully validated fields used for human identity output.
-struct IdentityView<'a> {
-    /// Stable account UUID.
-    id: &'a str,
-    /// Primary account email.
-    email: &'a str,
-    /// Human-readable account name.
-    display_name: &'a str,
-    /// Current product tier.
-    tier: &'a str,
-}
-
 /// Executes one strict authenticated account identity read.
 pub(super) async fn execute<W: std::io::Write>(
     env: &CliEnvironment,
@@ -111,39 +95,25 @@ pub(super) async fn execute<W: std::io::Write>(
     .map_err(request_error)?;
     let (response, credential) = response;
     let status = response.status().as_u16();
-    let body = bounded_body(response).await?;
+    let body = crate::http::bounded_body(response, RESPONSE_LIMIT)
+        .await
+        .map_err(|error| match error {
+            crate::http::BodyError::Invalid => invalid_response(),
+            crate::http::BodyError::Transport => transport_error(),
+        })?;
 
     if status != 200 {
         return Err(validate_error(status, body.as_str(), &credential)?);
     }
-    let _shape =
+    let identity =
         serde_json::from_str::<IdentityShape>(body.as_str()).map_err(|_| invalid_response())?;
-    let value =
-        serde_json::from_str::<serde_json::Value>(body.as_str()).map_err(|_| invalid_response())?;
-    let identity = validate_identity(&value)?;
+    validate_identity(&identity)?;
     if json {
         writeln!(output, "{body}")?;
     } else {
         write_human(&identity, output)?;
     }
     Ok(())
-}
-
-/// Reads a bounded response without retaining oversized server content.
-async fn bounded_body(mut response: reqwest::Response) -> Result<String, RuntimeError> {
-    if response.content_length().is_some_and(|length| {
-        usize::try_from(length).map_or(true, |length| length > RESPONSE_LIMIT)
-    }) {
-        return Err(invalid_response());
-    }
-    let mut body = Vec::new();
-    while let Some(chunk) = response.chunk().await.map_err(|_| transport_error())? {
-        if body.len().saturating_add(chunk.len()) > RESPONSE_LIMIT {
-            return Err(invalid_response());
-        }
-        body.extend_from_slice(&chunk);
-    }
-    String::from_utf8(body).map_err(|_| invalid_response())
 }
 
 /// Converts auth and transport failures into fixed, value-safe recovery.
@@ -175,21 +145,16 @@ fn request_error(error: RuntimeError) -> RuntimeError {
 }
 
 /// Validates the exact account identity contract before any output.
-fn validate_identity(value: &serde_json::Value) -> Result<IdentityView<'_>, RuntimeError> {
-    let object = value.as_object().ok_or_else(invalid_response)?;
-    let id = safe_string(object.get("id"), 64)?;
-    if !crate::ids::is_uuid(id) {
-        return Err(invalid_response());
-    }
-    let email = safe_string(object.get("email"), 320)?;
-    let display_name = safe_string(object.get("display_name"), 200)?;
-    let tier = safe_string(object.get("tier"), 64)?;
-    Ok(IdentityView {
-        id,
-        email,
-        display_name,
-        tier,
-    })
+fn validate_identity(identity: &IdentityShape) -> Result<(), RuntimeError> {
+    (crate::ids::is_uuid(identity.id.as_str())
+        && safe_text(identity.email.as_str(), 320, false)
+        && safe_text(identity.display_name.as_str(), 200, false)
+        && safe_text(identity.first_name.as_str(), 200, true)
+        && safe_text(identity.last_name.as_str(), 200, true)
+        && safe_avatar(identity.avatar_data_url.as_deref())
+        && safe_text(identity.tier.as_str(), 64, false))
+    .then_some(())
+    .ok_or_else(invalid_response)
 }
 
 /// Validates a duplicate-aware standard error before replacing its text.
@@ -280,7 +245,7 @@ fn validate_recovery_error(
 
 /// Writes bounded human account identity output.
 fn write_human<W: std::io::Write>(
-    identity: &IdentityView<'_>,
+    identity: &IdentityShape,
     output: &mut W,
 ) -> Result<(), std::io::Error> {
     writeln!(output, "Account")?;
@@ -291,14 +256,38 @@ fn write_human<W: std::io::Write>(
     writeln!(output, "Next: run logbrew projects")
 }
 
-/// Returns one required bounded, trimmed, control-free string.
+fn safe_text(value: &str, limit: usize, allow_empty: bool) -> bool {
+    value.len() <= limit
+        && value.trim() == value
+        && (allow_empty || !value.is_empty())
+        && value.chars().all(|character| !character.is_control())
+}
+
 fn safe_string(value: Option<&serde_json::Value>, limit: usize) -> Result<&str, RuntimeError> {
     value
         .and_then(serde_json::Value::as_str)
-        .filter(|value| !value.is_empty() && value.len() <= limit)
-        .filter(|value| value.trim() == *value)
-        .filter(|value| value.chars().all(|character| !character.is_control()))
+        .filter(|value| safe_text(value, limit, false))
         .ok_or_else(invalid_response)
+}
+
+fn safe_avatar(value: Option<&str>) -> bool {
+    let Some(value) = value else { return true };
+    let encoded = [
+        "data:image/png;base64,",
+        "data:image/jpeg;base64,",
+        "data:image/webp;base64,",
+    ]
+    .into_iter()
+    .find_map(|prefix| value.strip_prefix(prefix));
+    let Some(encoded) = encoded else { return false };
+    let unpadded = encoded.trim_end_matches('=');
+    !encoded.is_empty()
+        && encoded.len() <= MAX_AVATAR_ENCODED_BYTES
+        && encoded.len().is_multiple_of(4)
+        && encoded.len() - unpadded.len() <= 2
+        && unpadded
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'/'))
 }
 
 /// Returns a fixed local API error body based only on validated status.
