@@ -41,8 +41,8 @@ jobs:
         shell: bash
         run: |
           [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || exit 1
-          target="$(gh release view "$RELEASE_TAG" --json targetCommitish,isDraft,isPrerelease --jq 'select(.isDraft == false and .isPrerelease == false) | .targetCommitish')"
-          run="$(gh run view "$ARTIFACTS_RUN_ID" --json name,event,headBranch,headSha,conclusion)"
+          target="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json targetCommitish,isDraft,isPrerelease --jq 'select(.isDraft == false and .isPrerelease == false) | .targetCommitish')"
+          run="$(gh run view "$ARTIFACTS_RUN_ID" --repo "$GITHUB_REPOSITORY" --json name,event,headBranch,headSha,conclusion)"
           [[ "$target" =~ ^[0-9a-f]{40}$ ]] || exit 1
           [[ "$(jq -r '.name' <<<"$run")" == "Release" ]] || exit 1
           [[ "$(jq -r '.event' <<<"$run")" == "workflow_dispatch" ]] || exit 1

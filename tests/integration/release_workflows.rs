@@ -60,7 +60,7 @@ fn release_workflows_prebuild_publish_and_recover_safely() {
             "workflow_dispatch:",
             "actions: read",
             "release_tag:",
-            "artifacts_run_id:",
+            "--repo \"$GITHUB_REPOSITORY\"",
             "[[ \"$(jq -r '.headSha' <<<\"$run\")\" == \"$target\" ]]",
             "run-id: ${{ inputs.artifacts_run_id }}",
             "pattern: artifacts-build-global",
@@ -104,6 +104,5 @@ fn release_workflows_prebuild_publish_and_recover_safely() {
     assert!(!HOMEBREW.contains("brew update") && !HOMEBREW.contains("--except-cops"));
     assert!(!HOMEBREW.contains("for release in $("));
     assert!(!HOMEBREW.contains("echo \"$PLAN\""));
-    assert!(!HOMEBREW.contains("pull_request_target"));
-    assert!(!HOMEBREW.contains("schedule:"));
+    assert!(!HOMEBREW.contains("pull_request_target") && !HOMEBREW.contains("schedule:"));
 }
