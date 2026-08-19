@@ -50,7 +50,6 @@ jobs:
 
           export PATH="/home/linuxbrew/.linuxbrew/bin:${PATH}"
           command -v brew >/dev/null
-          brew update
 
           audit_tap="logbrew-release-verifier/formula"
           if brew tap | grep -Fxq "${audit_tap}"; then

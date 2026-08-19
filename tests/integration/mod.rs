@@ -36,6 +36,7 @@ mod project_create;
 mod project_doctor;
 mod project_ingest_key_create;
 mod projects;
+mod release_workflows;
 mod runtime_errors;
 mod search_commands;
 mod setup_readiness;

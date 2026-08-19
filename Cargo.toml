@@ -1,6 +1,6 @@
 [package]
 name = "logbrew-cli"
-version = "0.1.52"
+version = "0.1.53"
 edition = "2024"
 rust-version = "1.87"
 description = "Developer-first observability command-line interface"
@@ -153,8 +153,8 @@ redundant_feature_names = "deny"
 wildcard_dependencies = "deny"
 
 [profile.release]
-lto = true
-codegen-units = 1
+lto = false
+codegen-units = 16
 strip = true
 opt-level = 3
 panic = "abort"
@@ -180,4 +180,3 @@ product-icon = "wix/Product.ico"
 # The profile that 'dist' will build with
 [profile.dist]
 inherits = "release"
-lto = "thin"
