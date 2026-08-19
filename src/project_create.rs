@@ -341,7 +341,7 @@ fn request_error(error: RuntimeError, operation: CredentialOperation) -> Runtime
 
 /// Builds one bounded client that never follows credential-issuing redirects.
 fn credential_client(operation: CredentialOperation) -> Result<reqwest::Client, RuntimeError> {
-    reqwest::Client::builder()
+    crate::http::client_builder()
         .timeout(std::time::Duration::from_secs(30))
         .connect_timeout(std::time::Duration::from_secs(10))
         .redirect(reqwest::redirect::Policy::none())

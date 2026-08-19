@@ -195,18 +195,7 @@ async fn run_binary(
     if json {
         args.push("--json");
     }
-    let base_url = server.uri();
-    let process = tokio::task::spawn_blocking(move || {
-        std::process::Command::new(env!("CARGO_BIN_EXE_logbrew"))
-            .env_clear()
-            .env("HOME", std::env::temp_dir())
-            .env("LOGBREW_API_URL", base_url)
-            .env("LOGBREW_TOKEN", "account-token")
-            .args(args)
-            .output()
-    })
-    .await??;
-    Ok(process)
+    super::run_cli(server, args).await
 }
 
 /// Stable schema-version-1 fixture matching the private API contract.

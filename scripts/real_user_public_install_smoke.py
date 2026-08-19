@@ -794,7 +794,9 @@ def verify_cli(
         raise VerificationError
 
     server = HealthServer()
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread = threading.Thread(
+        target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True
+    )
     thread.start()
     try:
         status_environment = dict(environment)

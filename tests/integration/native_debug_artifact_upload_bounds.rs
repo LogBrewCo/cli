@@ -26,7 +26,7 @@ use support::{
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-const IMPLEMENTATION: &str = include_str!("../src/native_debug_artifacts.rs");
+const IMPLEMENTATION: &str = include_str!("../../src/native_debug_artifacts.rs");
 
 #[test]
 fn native_debug_transport_has_explicit_request_and_overall_bounds_without_hidden_retries() {

@@ -2,7 +2,7 @@
 
 use std::process::Output;
 
-use crate::support::*;
+use super::support::*;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, Request, ResponseTemplate};
 

@@ -2,7 +2,7 @@
 
 use std::ffi::{OsStr, OsString};
 
-use crate::support::upload_args;
+use super::support::upload_args;
 
 pub(crate) fn dsym_upload_args(path: &OsStr, image_uuids: &[&str], dry_run: bool) -> Vec<OsString> {
     let mut args = upload_args(path);

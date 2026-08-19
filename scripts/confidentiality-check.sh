@@ -11,14 +11,11 @@ fi
 
 scan_pattern() {
     local pattern="$1"
-    local status
+    local status=0
 
-    set +e
     rg -n --hidden --glob '!target/**' --glob '!.git/**' \
         --glob '!scripts/confidentiality-check.sh' \
-        --glob '!.logbrew-confidential-denylist.local' "$pattern" .
-    status="$?"
-    set -e
+        --glob '!.logbrew-confidential-denylist.local' "$pattern" . || status="$?"
 
     if [[ "$status" -eq 0 ]]; then
         printf 'Confidentiality check failed. Remove private/backend-only details before committing.\n' >&2
@@ -34,12 +31,9 @@ scan_pattern() {
 scan_file_pattern() {
     local pattern="$1"
     local file="$2"
-    local status
+    local status=0
 
-    set +e
-    rg -n --hidden --ignore-case "$pattern" "$file"
-    status="$?"
-    set -e
+    rg -n --hidden --ignore-case "$pattern" "$file" || status="$?"
 
     if [[ "$status" -eq 0 ]]; then
         printf 'Confidentiality check failed. Remove private/backend-only details before committing.\n' >&2

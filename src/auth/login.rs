@@ -96,6 +96,10 @@ where
         redirect_uri.as_str(),
         state.as_str(),
     )?;
+    let client = crate::http::client_builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .build()?;
 
     if !open_browser(auth_url.as_str()) {
         return Err(login_unavailable("could not open the browser for login"));
@@ -103,10 +107,6 @@ where
     writeln!(output, "Waiting for browser login...")?;
 
     let code = wait_for_callback(&listener, provider, state.as_str()).await?;
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .connect_timeout(std::time::Duration::from_secs(10))
-        .build()?;
     let exchange_url = format!(
         "{}/api/auth/{}",
         origin.trim_end_matches('/'),

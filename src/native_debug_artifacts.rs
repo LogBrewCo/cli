@@ -452,7 +452,7 @@ fn retry_delay(attempt: usize, retry_after: Option<std::time::Duration>) -> std:
 
 /// Builds one redirect-refusing client with operation-specific request timeout.
 fn build_client(timeout: std::time::Duration) -> Result<reqwest::Client, RuntimeError> {
-    reqwest::Client::builder()
+    crate::http::client_builder()
         .redirect(reqwest::redirect::Policy::none())
         .retry(reqwest::retry::never())
         .timeout(timeout)
