@@ -29,8 +29,9 @@ jobs:
           components: rustfmt, clippy
           targets: x86_64-pc-windows-msvc
 
-      - name: Install cargo-audit
-        run: cargo install cargo-audit --version "$(bash scripts/cargo-audit-version.sh)" --locked
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit@0.22.2
 
       - name: Check
         run: bash scripts/check-all.sh

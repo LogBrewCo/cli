@@ -37,7 +37,9 @@ python3 scripts/test-installed-release-attestation.py
 python3 scripts/test-installed-release-attestation-workflow.py
 ) &
 portable_checks_pid=$!
-cargo audit --no-fetch &
+audit_args=()
+[[ -d "${CARGO_HOME:-$HOME/.cargo}/advisory-db/crates" ]] && audit_args+=(--no-fetch)
+cargo audit "${audit_args[@]}" &
 audit_pid=$!
 trap 'kill "$portable_checks_pid" "$audit_pid" 2>/dev/null || true' EXIT
 cargo fmt --all -- --check
