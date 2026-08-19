@@ -77,7 +77,7 @@ jobs:
             manifest="$(tar -xOf "${packages[0]}" package/package.json)"
             [[ "$(jq -r '.name' <<<"$manifest")" == "logbrew-cli" ]] || exit 1
             [[ "$(jq -r '.version' <<<"$manifest")" == "$EXPECTED_VERSION" ]] || exit 1
-            npm publish --access public "${packages[0]}"
+            npm publish --access public "./${packages[0]}"
             exit
           fi
           while IFS= read -r release; do
