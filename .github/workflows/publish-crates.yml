@@ -6,32 +6,14 @@ on:
       - '**[0-9]+.[0-9]+.[0-9]+*'
 
 permissions:
+  actions: read
   contents: read
 
-env:
-  CARGO_HTTP_MULTIPLEXING: "false"
-
 jobs:
-  windows-release-build:
-    runs-on: windows-2022
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: stable
-
-      - name: Build Windows release binary
-        run: cargo build --release --locked --bin logbrew
-
   publish:
-    needs: windows-release-build
     runs-on: ubuntu-24.04
     permissions:
+      actions: read
       contents: read
       id-token: write
     steps:
@@ -39,6 +21,26 @@ jobs:
         uses: actions/checkout@v7
         with:
           persist-credentials: false
+
+      - name: Require exact protected-main artifact prebuild
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          run_id="$(gh run list \
+            --repo "$GITHUB_REPOSITORY" \
+            --workflow release.yml \
+            --event workflow_dispatch \
+            --branch main \
+            --commit "$GITHUB_SHA" \
+            --status success \
+            --limit 1 \
+            --json databaseId \
+            --jq '.[0].databaseId // empty')"
+          [[ "$run_id" =~ ^[0-9]+$ ]] || {
+            printf 'No successful exact-main release artifact prebuild exists for %s.\n' "$GITHUB_SHA" >&2
+            exit 1
+          }
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -63,4 +65,4 @@ jobs:
       - name: Publish crate
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
-        run: cargo publish --locked
+        run: cargo publish --locked --no-verify

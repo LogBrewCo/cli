@@ -79,9 +79,7 @@ fail_missing_command() {
 }
 
 require_command() {
-  if ! command -v "$1" >/dev/null 2>&1; then
-    fail_missing_command "$1"
-  fi
+  command -v "$1" >/dev/null 2>&1 || fail_missing_command "$1"
 }
 
 require_command cargo
