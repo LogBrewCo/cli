@@ -1975,7 +1975,7 @@ async fn execute_http<W: std::io::Write>(
         }
     })?;
     let url = format!("{origin}{path}");
-    let client = reqwest::Client::builder()
+    let client = http::client_builder()
         .timeout(std::time::Duration::from_secs(30))
         .connect_timeout(std::time::Duration::from_secs(10))
         .redirect(reqwest::redirect::Policy::none())
@@ -2196,7 +2196,7 @@ fn websocket_error_is_auth(error: &WebSocketError) -> bool {
 /// Requests a short-lived WebSocket feed ticket from the public API.
 async fn request_feed_ticket(env: &CliEnvironment) -> Result<String, RuntimeError> {
     let url = format!("{}/api/feed/ticket", env.base_url.trim_end_matches('/'));
-    let client = reqwest::Client::builder()
+    let client = http::client_builder()
         .timeout(std::time::Duration::from_secs(30))
         .connect_timeout(std::time::Duration::from_secs(10))
         .build()?;

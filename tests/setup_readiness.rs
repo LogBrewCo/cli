@@ -208,13 +208,13 @@ async fn released_python_frameworks_use_the_detected_package_manager() -> TestRe
             "uv add logbrew-sdk logbrew-flask",
         ),
         (
-            "FastAPI>=0.111.1",
+            "FastAPI>=0.111.1\", \"celery>=5.3.6",
             "poetry.lock",
             "poetry",
             "fastapi",
             "logbrew-fastapi",
             "FastAPI>=0.111.1",
-            "poetry add logbrew-sdk logbrew-fastapi",
+            "poetry add \"logbrew-sdk[celery]\" logbrew-fastapi",
         ),
         (
             "requests",
@@ -562,7 +562,7 @@ fn python_plan(
     framework_requirement: Option<&str>,
     install_command: &str,
 ) -> serde_json::Value {
-    let packages = std::iter::once(("logbrew-sdk", "core"))
+    let mut packages = std::iter::once(("logbrew-sdk", "core"))
         .chain(framework_package.map(|name| (name, "framework")))
         .map(|(name, role)| {
             serde_json::json!({
@@ -572,6 +572,9 @@ fn python_plan(
             })
         })
         .collect::<Vec<_>>();
+    if install_command.contains("[celery]") {
+        packages[0]["extras"] = serde_json::json!(["celery"]);
+    }
     serde_json::json!({
         "mode": "non_mutating",
         "ecosystem": "pypi",

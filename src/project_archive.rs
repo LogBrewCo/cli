@@ -121,7 +121,7 @@ async fn execute_lifecycle<W: std::io::Write>(
         .into());
     }
     let project_id = project_id.to_ascii_lowercase();
-    let client = reqwest::Client::builder()
+    let client = crate::http::client_builder()
         .redirect(reqwest::redirect::Policy::none())
         .timeout(std::time::Duration::from_secs(30))
         .connect_timeout(std::time::Duration::from_secs(10))

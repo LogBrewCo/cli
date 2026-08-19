@@ -81,7 +81,7 @@ pub(super) async fn execute<W: std::io::Write>(
     output: &mut W,
 ) -> Result<(), RuntimeError> {
     let origin = super::normalized_api_base(env.base_url.as_str())?;
-    let client = reqwest::Client::builder()
+    let client = crate::http::client_builder()
         .redirect(reqwest::redirect::Policy::none())
         .timeout(std::time::Duration::from_secs(30))
         .connect_timeout(std::time::Duration::from_secs(10))

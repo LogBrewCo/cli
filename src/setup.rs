@@ -74,59 +74,38 @@ const EMPTY_NEXT_STEP: &str = "run logbrew setup from a project containing packa
                                project.yaml, .xcodeproj, .xcworkspace, CMakeLists.txt, go.mod, \
                                composer.json, or Gemfile.";
 
-/// Released Python integration selected from local project evidence.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-enum PythonIntegration {
-    /// Framework-neutral Python client.
-    Core,
-    /// Django request and exception middleware.
-    Django,
-    /// Flask request and exception middleware.
-    Flask,
-    /// `FastAPI` request and exception middleware.
-    FastApi,
-}
-
-type PythonDetails = (
+/// Stable key, display name, and optional framework package requirement.
+type PythonIntegration = (
     &'static str,
     &'static str,
     Option<(&'static str, &'static str)>,
 );
-const PYTHON_DETAILS: [PythonDetails; 4] = [
-    ("python", "Python", None),
-    (
-        "django",
-        "Django",
-        Some(("logbrew-django", DJANGO_VERSION_REQUIREMENT)),
-    ),
-    (
-        "flask",
-        "Flask",
-        Some(("logbrew-flask", FLASK_MINIMUM_VERSION)),
-    ),
-    (
-        "fastapi",
-        "FastAPI",
-        Some(("logbrew-fastapi", FASTAPI_MINIMUM_VERSION)),
-    ),
-];
+const PYTHON_CORE: PythonIntegration = ("python", "Python", None);
+const PYTHON_DJANGO: PythonIntegration = (
+    "django",
+    "Django",
+    Some(("logbrew-django", DJANGO_VERSION_REQUIREMENT)),
+);
+const PYTHON_FLASK: PythonIntegration = (
+    "flask",
+    "Flask",
+    Some(("logbrew-flask", FLASK_MINIMUM_VERSION)),
+);
+const PYTHON_FASTAPI: PythonIntegration = (
+    "fastapi",
+    "FastAPI",
+    Some(("logbrew-fastapi", FASTAPI_MINIMUM_VERSION)),
+);
+type PythonSetup = (PythonIntegration, bool);
 
 /// Released package-registry integration selected from local project evidence.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PackageIntegration {
-    Python(PythonIntegration),
+    Python(PythonSetup),
     Php(bool),
     Ruby(bool),
     SvelteKit,
     ReactExpress,
-}
-
-impl PythonIntegration {
-    /// Returns stable key, display name, and optional framework package requirement.
-    const fn details(self) -> PythonDetails {
-        PYTHON_DETAILS[self as usize]
-    }
 }
 
 /// A truthful, non-mutating install plan for one released SDK family.
@@ -265,11 +244,15 @@ fn package_next_action() -> serde_json::Value {
     })
 }
 
-fn python_plan_json(package_manager: &str, integration: PythonIntegration) -> serde_json::Value {
-    let (key, _, framework) = integration.details();
-    let packages = std::iter::once(("logbrew-sdk", "core"))
-        .chain(framework.map(|(name, _)| (name, "framework")))
-        .map(|(name, role)| npm_package(name, role))
+fn python_plan_json(package_manager: &str, setup: PythonSetup) -> serde_json::Value {
+    let (integration, celery) = setup;
+    let (key, _, framework) = integration;
+    let mut core = npm_package("logbrew-sdk", "core");
+    if celery {
+        core["extras"] = serde_json::json!(["celery"]);
+    }
+    let packages = std::iter::once(core)
+        .chain(framework.map(|(name, _)| npm_package(name, "framework")))
         .collect::<Vec<_>>();
     serde_json::json!({
         "mode": "non_mutating",
@@ -282,7 +265,7 @@ fn python_plan_json(package_manager: &str, integration: PythonIntegration) -> se
             "requires_python": PYTHON_MINIMUM_VERSION,
             "requires_framework": framework.map(|(_, requirement)| requirement),
         },
-        "install_command": python_install_command(package_manager, integration),
+        "install_command": python_install_command(package_manager, setup),
         "next_action": package_next_action(),
     })
 }
@@ -383,14 +366,14 @@ fn write_package_human<W: std::io::Write>(
     output: &mut W,
 ) -> Result<(), std::io::Error> {
     match integration {
-        PackageIntegration::Python(integration) => {
-            let (_, display, framework) = integration.details();
+        PackageIntegration::Python(setup @ (integration, _)) => {
+            let (_, display, framework) = integration;
             let requirement = framework.map_or(String::new(), |(_, value)| format!("; {value}"));
             writeln!(
                 output,
                 "Package manager: {package_manager}\nIntegration: {display}\nPackages: {}\nCompatibility review: Python {PYTHON_MINIMUM_VERSION}{requirement}\nCommand: {}",
-                python_package_names(integration),
-                python_install_command(package_manager, integration),
+                python_package_names(setup),
+                python_install_command(package_manager, setup),
             )
         }
         PackageIntegration::Php(symfony) => writeln!(
@@ -497,19 +480,23 @@ fn cmake_dependency_declaration() -> String {
 }
 
 /// Returns the space-separated public Python package names.
-fn python_package_names(integration: PythonIntegration) -> String {
-    match integration.details().2 {
-        Some((name, _)) => format!("logbrew-sdk {name}"),
-        None => "logbrew-sdk".to_owned(),
+fn python_package_names((integration, celery): PythonSetup) -> String {
+    let core = if celery {
+        "\"logbrew-sdk[celery]\""
+    } else {
+        "logbrew-sdk"
+    };
+    match integration.2 {
+        Some((name, _)) => format!("{core} {name}"),
+        None => core.to_owned(),
     }
 }
 
 /// Builds a copyable package-manager command from public package names.
-fn python_install_command(package_manager: &str, integration: PythonIntegration) -> String {
-    let packages = python_package_names(integration);
+fn python_install_command(package_manager: &str, setup: PythonSetup) -> String {
+    let packages = python_package_names(setup);
     match package_manager {
-        "uv" => format!("uv add {packages}"),
-        "poetry" => format!("poetry add {packages}"),
+        "uv" | "poetry" => format!("{package_manager} add {packages}"),
         "pipenv" => format!("pipenv install {packages}"),
         _ => format!("python3 -m pip install --upgrade {packages}"),
     }
@@ -795,36 +782,38 @@ fn python_package_manager(pyproject: &Path) -> &'static str {
 }
 
 /// Detects a released Python framework integration from bounded project metadata.
-fn detect_python_integration(manifest: &Path) -> PythonIntegration {
+fn detect_python_integration(manifest: &Path) -> PythonSetup {
     let Some(directory) = manifest.parent() else {
-        return PythonIntegration::Core;
+        return (PYTHON_CORE, false);
     };
-    if has_project_file(manifest, "manage.py") {
-        return PythonIntegration::Django;
-    }
-
-    let mut text = read_framework_manifest(manifest).unwrap_or_default();
-    for file in [
-        "requirements.txt",
-        "requirements.in",
-        "setup.cfg",
-        "setup.py",
-    ] {
-        if let Some(candidate_text) = read_framework_manifest(&directory.join(file)) {
-            text.push('\n');
-            text.push_str(candidate_text.as_str());
-        }
-    }
-    [
-        ("django", PythonIntegration::Django),
-        ("fastapi", PythonIntegration::FastApi),
-        ("flask", PythonIntegration::Flask),
-    ]
-    .into_iter()
-    .find_map(|(name, integration)| {
-        mentions_python_distribution(&text, name).then_some(integration)
-    })
-    .unwrap_or(PythonIntegration::Core)
+    let text = std::iter::once(manifest.to_path_buf())
+        .chain(
+            [
+                "requirements.txt",
+                "requirements.in",
+                "setup.cfg",
+                "setup.py",
+            ]
+            .map(|file| directory.join(file)),
+        )
+        .filter_map(|path| read_framework_manifest(&path))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let integration = if has_project_file(manifest, "manage.py") {
+        PYTHON_DJANGO
+    } else {
+        [
+            ("django", PYTHON_DJANGO),
+            ("fastapi", PYTHON_FASTAPI),
+            ("flask", PYTHON_FLASK),
+        ]
+        .into_iter()
+        .find_map(|(name, integration)| {
+            mentions_python_distribution(&text, name).then_some(integration)
+        })
+        .unwrap_or(PYTHON_CORE)
+    };
+    (integration, mentions_python_distribution(&text, "celery"))
 }
 
 /// Checks framework evidence without following a metadata symlink.

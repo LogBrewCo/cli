@@ -57,7 +57,7 @@ pub(super) async fn execute<W: std::io::Write>(
 ) -> Result<(), RuntimeError> {
     let origin =
         crate::http::normalized_origin(env.base_url.as_str()).ok_or_else(transport_error)?;
-    let client = reqwest::Client::builder()
+    let client = crate::http::client_builder()
         .redirect(reqwest::redirect::Policy::none())
         .timeout(std::time::Duration::from_secs(30))
         .connect_timeout(std::time::Duration::from_secs(10))

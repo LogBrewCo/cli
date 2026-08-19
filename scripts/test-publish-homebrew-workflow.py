@@ -100,7 +100,7 @@ class PublishHomebrewWorkflowTests(unittest.TestCase):
             "Developer-first observability command-line interface",
         )
         check_all = CHECK_ALL.read_text(encoding="utf-8")
-        self.assertIn("require_command ruby", check_all)
+        self.assertIn("for dependency in cargo-audit python3 ruby", check_all)
         self.assertIn(
             "ruby scripts/test-prepare-homebrew-formula.rb",
             check_all,

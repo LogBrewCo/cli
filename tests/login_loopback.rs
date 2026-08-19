@@ -9,6 +9,7 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 #[tokio::test]
 async fn built_binary_completes_loopback_login_without_exposing_credentials()
 -> Result<(), Box<dyn std::error::Error>> {
+    drop(rustls::crypto::ring::default_provider().install_default());
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path("/api/auth/gitlab"))

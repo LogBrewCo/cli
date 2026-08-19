@@ -188,7 +188,7 @@ pub async fn execute<W: std::io::Write>(
     json: bool,
     output: &mut W,
 ) -> Result<(), RuntimeError> {
-    let Ok(client) = reqwest::Client::builder()
+    let Ok(client) = crate::http::client_builder()
         .timeout(std::time::Duration::from_secs(30))
         .connect_timeout(std::time::Duration::from_secs(10))
         .build()

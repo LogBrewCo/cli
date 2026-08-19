@@ -12,6 +12,12 @@ pub(crate) enum BodyError {
     Transport,
 }
 
+/// Returns a client builder after installing the process-wide TLS provider.
+pub(crate) fn client_builder() -> reqwest::ClientBuilder {
+    drop(rustls::crypto::ring::default_provider().install_default());
+    reqwest::Client::builder()
+}
+
 /// Normalizes an HTTP(S) API origin without credentials, path, query, or fragment.
 pub(crate) fn normalized_origin(value: &str) -> Option<String> {
     let parsed = reqwest::Url::parse(value).ok()?;
