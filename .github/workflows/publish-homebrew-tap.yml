@@ -6,8 +6,22 @@ on:
       plan:
         required: true
         type: string
+      artifacts_run_id:
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing public release tag to recover
+        required: true
+        type: string
+      artifacts_run_id:
+        description: Successful exact-commit prebuild run
+        required: true
+        type: string
 
 permissions:
+  actions: read
   contents: read
 
 jobs:
@@ -15,9 +29,27 @@ jobs:
     runs-on: ubuntu-latest
     env:
       PLAN: ${{ inputs.plan }}
+      RELEASE_TAG: ${{ inputs.release_tag }}
+      ARTIFACTS_RUN_ID: ${{ inputs.artifacts_run_id }}
       GITHUB_USER: "LogBrew release bot"
       GITHUB_EMAIL: "41898282+github-actions[bot]@users.noreply.github.com"
     steps:
+      - name: Validate manual recovery boundary
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || exit 1
+          target="$(gh release view "$RELEASE_TAG" --json targetCommitish,isDraft,isPrerelease --jq 'select(.isDraft == false and .isPrerelease == false) | .targetCommitish')"
+          run="$(gh run view "$ARTIFACTS_RUN_ID" --json name,event,headBranch,headSha,conclusion)"
+          [[ "$target" =~ ^[0-9a-f]{40}$ ]] || exit 1
+          [[ "$(jq -r '.name' <<<"$run")" == "Release" ]] || exit 1
+          [[ "$(jq -r '.event' <<<"$run")" == "workflow_dispatch" ]] || exit 1
+          [[ "$(jq -r '.headBranch' <<<"$run")" == "main" ]] || exit 1
+          [[ "$(jq -r '.headSha' <<<"$run")" == "$target" ]] || exit 1
+          [[ "$(jq -r '.conclusion' <<<"$run")" == "success" ]] || exit 1
+          printf 'EXPECTED_VERSION=%s\n' "${RELEASE_TAG#v}" >> "$GITHUB_ENV"
       - name: Checkout release tooling
         uses: actions/checkout@v7
         with:
@@ -35,7 +67,10 @@ jobs:
       - name: Fetch Homebrew formulae
         uses: actions/download-artifact@v8
         with:
-          pattern: artifacts-*
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.artifacts_run_id }}
+          pattern: artifacts-build-global
           path: tap/Formula/
           merge-multiple: true
 
@@ -44,6 +79,11 @@ jobs:
         run: |
           set -euo pipefail
           cd tap
+
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            [[ -f Formula/logbrew.rb ]] || exit 1
+            PLAN="$(jq -cn --arg version "$EXPECTED_VERSION" '{releases:[{app_version:$version,artifacts:["logbrew.rb"]}]}')"
+          fi
 
           git config --local user.name "${GITHUB_USER}"
           git config --local user.email "${GITHUB_EMAIL}"
