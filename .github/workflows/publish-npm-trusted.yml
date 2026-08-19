@@ -6,8 +6,22 @@ on:
       plan:
         required: true
         type: string
+      artifacts_run_id:
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing public release tag to recover
+        required: true
+        type: string
+      artifacts_run_id:
+        description: Successful exact-commit prebuild run
+        required: true
+        type: string
 
 permissions:
+  actions: read
   contents: read
   id-token: write
 
@@ -16,11 +30,32 @@ jobs:
     runs-on: ubuntu-latest
     env:
       PLAN: ${{ inputs.plan }}
+      RELEASE_TAG: ${{ inputs.release_tag }}
+      ARTIFACTS_RUN_ID: ${{ inputs.artifacts_run_id }}
     steps:
-      - name: Fetch npm packages
+      - name: Validate manual recovery boundary
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || exit 1
+          target="$(gh release view "$RELEASE_TAG" --json targetCommitish,isDraft,isPrerelease --jq 'select(.isDraft == false and .isPrerelease == false) | .targetCommitish')"
+          run="$(gh run view "$ARTIFACTS_RUN_ID" --json name,event,headBranch,headSha,conclusion)"
+          [[ "$target" =~ ^[0-9a-f]{40}$ ]] || exit 1
+          [[ "$(jq -r '.name' <<<"$run")" == "Release" ]] || exit 1
+          [[ "$(jq -r '.event' <<<"$run")" == "workflow_dispatch" ]] || exit 1
+          [[ "$(jq -r '.headBranch' <<<"$run")" == "main" ]] || exit 1
+          [[ "$(jq -r '.headSha' <<<"$run")" == "$target" ]] || exit 1
+          [[ "$(jq -r '.conclusion' <<<"$run")" == "success" ]] || exit 1
+          printf 'EXPECTED_VERSION=%s\n' "${RELEASE_TAG#v}" >> "$GITHUB_ENV"
+      - name: Fetch exact-main npm package
         uses: actions/download-artifact@v8
         with:
-          pattern: artifacts-*
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.artifacts_run_id }}
+          pattern: artifacts-build-global
           path: npm/
           merge-multiple: true
 
@@ -36,7 +71,17 @@ jobs:
       - name: Publish npm packages with OIDC
         shell: bash
         run: |
-          for release in $(echo "$PLAN" | jq --compact-output '.releases[] | select([.artifacts[] | endswith("-npm-package.tar.gz")] | any)'); do
-            pkg=$(echo "$release" | jq '.artifacts[] | select(endswith("-npm-package.tar.gz"))' --raw-output)
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            packages=(npm/*-npm-package.tar.gz)
+            [[ "${#packages[@]}" -eq 1 ]] || exit 1
+            manifest="$(tar -xOf "${packages[0]}" package/package.json)"
+            [[ "$(jq -r '.name' <<<"$manifest")" == "logbrew-cli" ]] || exit 1
+            [[ "$(jq -r '.version' <<<"$manifest")" == "$EXPECTED_VERSION" ]] || exit 1
+            npm publish --access public "${packages[0]}"
+            exit
+          fi
+          while IFS= read -r release; do
+            pkg="$(jq -r '.artifacts[] | select(endswith("-npm-package.tar.gz"))' <<<"$release")"
+            [[ "$pkg" =~ ^[a-z0-9][a-z0-9._+-]*-npm-package\.tar\.gz$ ]] || exit 1
             npm publish --access public "./npm/${pkg}"
-          done
+          done < <(jq -c '.releases[] | select([.artifacts[] | endswith("-npm-package.tar.gz")] | any)' <<<"$PLAN")

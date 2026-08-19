@@ -232,12 +232,14 @@ jobs:
     needs:
       - plan
       - host
-    if: ${{ !fromJson(needs.plan.outputs.val).announcement_is_prerelease || fromJson(needs.plan.outputs.val).publish_prereleases }}
+    if: ${{ always() && needs.plan.result == 'success' && needs.host.result == 'success' && (!fromJson(needs.plan.outputs.val).announcement_is_prerelease || fromJson(needs.plan.outputs.val).publish_prereleases) }}
     uses: ./.github/workflows/publish-npm-trusted.yml
     with:
       plan: ${{ needs.plan.outputs.val }}
+      artifacts_run_id: ${{ needs.plan.outputs.prebuild-run-id }}
     secrets: inherit
     permissions:
+      actions: read
       contents: read
       id-token: write
       packages: write
@@ -246,10 +248,12 @@ jobs:
     needs:
       - plan
       - host
-    if: ${{ !fromJson(needs.plan.outputs.val).announcement_is_prerelease || fromJson(needs.plan.outputs.val).publish_prereleases }}
+    if: ${{ always() && needs.plan.result == 'success' && needs.host.result == 'success' && (!fromJson(needs.plan.outputs.val).announcement_is_prerelease || fromJson(needs.plan.outputs.val).publish_prereleases) }}
     uses: ./.github/workflows/publish-homebrew-tap.yml
     with:
       plan: ${{ needs.plan.outputs.val }}
+      artifacts_run_id: ${{ needs.plan.outputs.prebuild-run-id }}
     secrets: inherit
     permissions:
+      actions: read
       contents: read
