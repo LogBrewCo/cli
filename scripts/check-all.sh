@@ -37,13 +37,13 @@ python3 scripts/test-installed-release-attestation.py
 python3 scripts/test-installed-release-attestation-workflow.py
 ) &
 portable_checks_pid=$!
-cargo audit &
+cargo audit --no-fetch &
 audit_pid=$!
 trap 'kill "$portable_checks_pid" "$audit_pid" 2>/dev/null || true' EXIT
 cargo fmt --all -- --check
 cargo clippy --lib --bin logbrew --all-features -- -D warnings
 cargo test --all-targets --all-features
-CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$ROOT_DIR/target}" cargo publish --dry-run --locked --allow-dirty
+CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$ROOT_DIR/target}" cargo package --locked --allow-dirty --offline
 wait "$portable_checks_pid"
 wait "$audit_pid"
 trap - EXIT

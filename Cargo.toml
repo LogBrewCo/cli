@@ -12,6 +12,7 @@ readme = "README.md"
 keywords = ["logbrew", "cli", "observability", "logs"]
 categories = ["command-line-utilities", "development-tools"]
 publish = ["crates-io"]
+autotests = false
 include = [
   "Cargo.lock",
   "Cargo.toml",
@@ -24,6 +25,10 @@ include = [
 [[bin]]
 name = "logbrew"
 path = "src/main.rs"
+
+[[test]]
+name = "integration"
+path = "tests/integration/mod.rs"
 
 [dependencies]
 atomic-write-file = "0.3.0"

@@ -332,18 +332,7 @@ async fn run_binary_args(
     server: &MockServer,
     args: Vec<String>,
 ) -> Result<std::process::Output, Box<dyn std::error::Error>> {
-    let base_url = server.uri();
-    let process = tokio::task::spawn_blocking(move || {
-        std::process::Command::new(env!("CARGO_BIN_EXE_logbrew"))
-            .env_clear()
-            .env("HOME", std::env::temp_dir())
-            .env("LOGBREW_API_URL", base_url)
-            .env("LOGBREW_TOKEN", "account-token")
-            .args(args.into_iter().skip(1))
-            .output()
-    })
-    .await??;
-    Ok(process)
+    super::run_cli(server, args.into_iter().skip(1)).await
 }
 
 /// Builds one property-based comparison with values known only by the caller.
