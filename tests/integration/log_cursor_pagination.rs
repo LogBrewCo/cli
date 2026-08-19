@@ -1,8 +1,8 @@
 //! Log cursor pagination command, response, and recovery contracts.
 
+use super::{authenticated_env, run_command};
 use logbrew_cli::{
-    CliEnvironment, Command, execute_command, help, parse_command, write_cli_error,
-    write_runtime_error,
+    Command, execute_command, help, parse_command, write_cli_error, write_runtime_error,
 };
 use wiremock::matchers::{header, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -398,7 +398,7 @@ async fn log_cursor_preserves_backend_validation_without_echoing_values()
         CURSOR_ID,
         "--json",
     ])?;
-    let env = authenticated_env(&server, "log-cursor-invalid");
+    let env = authenticated_env(&server, "test-token", Some("log-cursor-invalid"));
     let mut output = Vec::new();
 
     let error = execute_command(&command, &env, &mut output)
@@ -424,26 +424,4 @@ fn log_value(message: &str) -> serde_json::Value {
         "release": "checkout@1.2.3",
         "environment": "production"
     })
-}
-
-async fn run_command<const N: usize>(
-    server: &MockServer,
-    args: [&'static str; N],
-    home_name: &str,
-) -> Result<String, Box<dyn std::error::Error>> {
-    let command = parse_command(args)?;
-    let env = authenticated_env(server, home_name);
-    let mut output = Vec::new();
-
-    execute_command(&command, &env, &mut output).await?;
-    Ok(String::from_utf8(output)?)
-}
-
-fn authenticated_env(server: &MockServer, home_name: &str) -> CliEnvironment {
-    CliEnvironment {
-        base_url: server.uri(),
-        token: Some("test-token".to_owned()),
-        home: Some(std::env::temp_dir().join(format!("logbrew-{home_name}"))),
-        cwd: None,
-    }
 }

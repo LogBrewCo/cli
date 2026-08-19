@@ -1,5 +1,6 @@
 //! Privacy-safe support context history and reply contracts.
 
+use super::{authenticated_env, run_command};
 use logbrew_cli::{
     CliEnvironment, HttpMethod, execute_command, parse_command, write_cli_error,
     write_runtime_error,
@@ -399,7 +400,7 @@ async fn support_context_conflicts_use_local_recovery_without_backend_text()
         RETRY_KEY,
         "--json",
     ])?;
-    let env = authenticated_env(&server, "support-context-conflict");
+    let env = authenticated_env(&server, "test-token", Some("support-context-conflict"));
     let mut output = Vec::new();
     let error = execute_command(&command, &env, &mut output)
         .await
@@ -603,25 +604,4 @@ async fn support_context_transport_errors_are_fixed_and_value_safe()
         assert!(!text.contains(hidden));
     }
     Ok(())
-}
-
-async fn run_command<const N: usize>(
-    server: &MockServer,
-    args: [&'static str; N],
-    home_name: &str,
-) -> Result<String, Box<dyn std::error::Error>> {
-    let command = parse_command(args)?;
-    let env = authenticated_env(server, home_name);
-    let mut output = Vec::new();
-    execute_command(&command, &env, &mut output).await?;
-    Ok(String::from_utf8(output)?)
-}
-
-fn authenticated_env(server: &MockServer, home_name: &str) -> CliEnvironment {
-    CliEnvironment {
-        base_url: server.uri(),
-        token: Some("test-token".to_owned()),
-        home: Some(std::env::temp_dir().join(format!("logbrew-{home_name}"))),
-        cwd: None,
-    }
 }

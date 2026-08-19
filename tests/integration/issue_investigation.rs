@@ -669,12 +669,7 @@ async fn run(
 }
 
 fn authenticated_env(server: &MockServer) -> CliEnvironment {
-    CliEnvironment {
-        base_url: server.uri(),
-        token: Some(String::from("test-token")),
-        home: Some(std::env::temp_dir().join("logbrew-issue-investigation-test")),
-        cwd: None,
-    }
+    super::authenticated_env(server, "test-token", Some("issue-investigation-test"))
 }
 
 fn rich_investigation_bundle() -> serde_json::Value {

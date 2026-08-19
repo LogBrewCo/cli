@@ -13,7 +13,10 @@ const SDK_NEXT_STEP: &str = "use the released SDK guidance for this runtime; thi
                              not yet provide a structured install plan";
 /// Next step when a public package-registry plan is available.
 const PACKAGE_NEXT_STEP: &str =
-    "review the compatibility requirements, then run the install command; no files were changed";
+    "review the compatibility requirements, then add the dependency; no files were changed";
+/// Current released Java SDK coordinate and compatibility floor.
+const JAVA_SDK_VERSION: &str = "0.1.4";
+const JAVA_MINIMUM_VERSION: &str = ">=11";
 /// Minimum Python version required by the current public Python SDK family.
 const PYTHON_MINIMUM_VERSION: &str = ">=3.10";
 /// Supported Django range for the current public Django integration.
@@ -70,9 +73,9 @@ const CPP_HTTP_OPTION: &str = "LOGBREW_BUILD_HTTP_TRANSPORT";
 const CMAKE_NEXT_STEP: &str = "add the pinned LogBrew C++ FetchContent block and link the required target; no files were changed";
 /// Next step when setup cannot find a supported project.
 const EMPTY_NEXT_STEP: &str = "run logbrew setup from a project containing package.json, \
-                               pyproject.toml, Pipfile, Cargo.toml, Package.swift, project.yml, \
-                               project.yaml, .xcodeproj, .xcworkspace, CMakeLists.txt, go.mod, \
-                               composer.json, or Gemfile.";
+                               pyproject.toml, Pipfile, pom.xml, build.gradle, build.gradle.kts, \
+                               Cargo.toml, Package.swift, project.yml, project.yaml, .xcodeproj, \
+                               .xcworkspace, CMakeLists.txt, go.mod, composer.json, or Gemfile.";
 
 /// Stable key, display name, and optional framework package requirement.
 type PythonIntegration = (
@@ -101,6 +104,7 @@ type PythonSetup = (PythonIntegration, bool);
 /// Released package-registry integration selected from local project evidence.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PackageIntegration {
+    Java(bool),
     Python(PythonSetup),
     Php(bool),
     Ruby(bool),
@@ -189,6 +193,7 @@ impl InstallPlan {
                 integration,
             } => match integration {
                 PackageIntegration::Python(value) => python_plan_json(package_manager, value),
+                PackageIntegration::Java(value) => java_plan_json(package_manager, value),
                 PackageIntegration::Php(value) => composer_plan_json(package_manager, value),
                 PackageIntegration::Ruby(value) => ruby_plan_json(package_manager, value),
                 PackageIntegration::SvelteKit => svelte_plan_json(package_manager),
@@ -241,6 +246,27 @@ fn package_next_action() -> serde_json::Value {
     serde_json::json!({
         "code": "review_compatibility_and_install",
         "target": "project_environment",
+    })
+}
+
+fn java_plan_json(package_manager: &str, spring: bool) -> serde_json::Value {
+    serde_json::json!({
+        "mode": "non_mutating",
+        "ecosystem": package_manager,
+        "package_manager": package_manager,
+        "integration": if spring { "spring" } else { "java" },
+        "package": {
+            "group_id": "co.logbrew",
+            "artifact_id": "logbrew-sdk",
+            "version": JAVA_SDK_VERSION,
+        },
+        "compatibility": {
+            "status": "review_required",
+            "requires_java": JAVA_MINIMUM_VERSION,
+            "requires_framework": spring.then_some("Spring Boot 3+"),
+        },
+        "dependency_declaration": java_dependency_declaration(package_manager),
+        "next_action": package_next_action(),
     })
 }
 
@@ -366,6 +392,13 @@ fn write_package_human<W: std::io::Write>(
     output: &mut W,
 ) -> Result<(), std::io::Error> {
     match integration {
+        PackageIntegration::Java(spring) => writeln!(
+            output,
+            "Package manager: {package_manager}\nIntegration: {}\nPackage: co.logbrew:logbrew-sdk:{JAVA_SDK_VERSION}\nCompatibility review: Java {JAVA_MINIMUM_VERSION}{}\nDependency: {}",
+            if spring { "Spring" } else { "Java" },
+            if spring { "; Spring Boot 3+" } else { "" },
+            java_dependency_declaration(package_manager),
+        ),
         PackageIntegration::Python(setup @ (integration, _)) => {
             let (_, display, framework) = integration;
             let requirement = framework.map_or(String::new(), |(_, value)| format!("; {value}"));
@@ -408,6 +441,16 @@ fn javascript_install_command(package_manager: &str, packages: &str) -> String {
     match package_manager {
         "pnpm" | "yarn" | "bun" => format!("{package_manager} add {packages}"),
         _ => format!("npm install {packages}"),
+    }
+}
+
+fn java_dependency_declaration(package_manager: &str) -> String {
+    match package_manager {
+        "maven" => format!(
+            "<dependency>\n  <groupId>co.logbrew</groupId>\n  <artifactId>logbrew-sdk</artifactId>\n  <version>{JAVA_SDK_VERSION}</version>\n</dependency>"
+        ),
+        "gradle-kotlin" => format!("implementation(\"co.logbrew:logbrew-sdk:{JAVA_SDK_VERSION}\")"),
+        _ => format!("implementation 'co.logbrew:logbrew-sdk:{JAVA_SDK_VERSION}'"),
     }
 }
 
@@ -511,12 +554,13 @@ fn install_plan(detected: &[ProjectDetection]) -> Option<InstallPlan> {
                 "objective-c" => (0, InstallPlan::ObjectiveC),
                 "swift" | "swift-ios" => (1, InstallPlan::Swift),
                 "cpp" => (2, InstallPlan::Cmake),
-                "python" | "php" | "ruby" | "sveltekit" | "react-express" => (
+                "java" | "python" | "php" | "ruby" | "sveltekit" | "react-express" => (
                     match detection.runtime {
-                        "python" => 3,
-                        "php" => 4,
-                        "ruby" => 5,
-                        _ => 6,
+                        "java" => 3,
+                        "python" => 4,
+                        "php" => 5,
+                        "ruby" => 6,
+                        _ => 7,
                     },
                     InstallPlan::Package {
                         package_manager: detection.package_manager,
@@ -622,6 +666,13 @@ fn manifest_detection(root: &Path, path: &Path) -> Option<ProjectDetection> {
         return None;
     }
     let package_integration = match runtime {
+        "java" => Some(PackageIntegration::Java(
+            read_framework_manifest(path).is_some_and(|text| {
+                ["org.springframework", "spring-boot", "spring-kafka"]
+                    .iter()
+                    .any(|marker| text.contains(marker))
+            }),
+        )),
         "node" => detect_javascript_integration(path),
         "python" => Some(PackageIntegration::Python(detect_python_integration(path))),
         "php" => Some(PackageIntegration::Php(has_project_file(
@@ -696,11 +747,14 @@ fn manifest_runtime(path: &Path) -> Option<(&'static str, &'static str)> {
     match file_name {
         "Cargo.toml" => Some(("rust", "cargo")),
         "CMakeLists.txt" => Some(("cpp", "cmake")),
+        "build.gradle" => Some(("java", "gradle")),
+        "build.gradle.kts" => Some(("java", "gradle-kotlin")),
         "Package.swift" => Some(("swift", "swift package manager")),
         "composer.json" => Some(("php", "composer")),
         "Gemfile" => Some(("ruby", "bundler")),
         "go.mod" => Some(("go", "go")),
         "package.json" => Some(("node", node_package_manager(path))),
+        "pom.xml" => Some(("java", "maven")),
         "Pipfile" => Some(("python", "pipenv")),
         "project.yml" | "project.yaml" => Some((xcodegen_runtime(path), "xcodegen")),
         "pyproject.toml" => Some(("python", python_package_manager(path))),
@@ -886,6 +940,7 @@ fn relative_path(root: &Path, path: &Path) -> Option<String> {
 fn display_runtime(runtime: &str) -> &'static str {
     match runtime {
         "go" => "Go",
+        "java" => "Java",
         "cpp" => "C++",
         "node" => "Node",
         "objective-c" => "Objective-C",

@@ -811,12 +811,7 @@ fn release_command(json: bool) -> Result<logbrew_cli::Command, logbrew_cli::CliE
 }
 
 fn authenticated_env(server: &MockServer) -> CliEnvironment {
-    CliEnvironment {
-        base_url: server.uri(),
-        token: Some("test-token".to_owned()),
-        home: Some(std::env::temp_dir().join("logbrew-versioned-explain-test")),
-        cwd: None,
-    }
+    super::authenticated_env(server, "test-token", Some("versioned-explain-test"))
 }
 
 fn metric_response() -> serde_json::Value {

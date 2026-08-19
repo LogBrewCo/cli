@@ -508,12 +508,7 @@ async fn requests(server: &MockServer) -> Result<Vec<wiremock::Request>, &'stati
 }
 
 fn environment(server: &MockServer, token: &str) -> CliEnvironment {
-    CliEnvironment {
-        base_url: server.uri(),
-        token: Some(token.into()),
-        home: None,
-        cwd: None,
-    }
+    super::authenticated_env(server, token, None)
 }
 
 fn cli_error(error: &logbrew_cli::CliError) -> TestResult<serde_json::Value> {

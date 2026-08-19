@@ -1,8 +1,8 @@
 //! Privacy-safe support-ticket create, history, and detail contracts.
 
+use super::{authenticated_env, run_command};
 use logbrew_cli::{
-    CliEnvironment, Command, HttpMethod, execute_command, help, parse_command, write_cli_error,
-    write_runtime_error,
+    Command, HttpMethod, execute_command, help, parse_command, write_cli_error, write_runtime_error,
 };
 use std::collections::BTreeMap;
 use wiremock::matchers::{body_json, header, method, path, query_param};
@@ -499,7 +499,7 @@ async fn support_lifecycle_uses_local_safe_404_and_422_recovery()
             .mount(&server)
             .await;
         let command = parse_command(["logbrew", "support", action, TICKET_ID, "--json"])?;
-        let env = authenticated_env(&server, "support-lifecycle-error");
+        let env = authenticated_env(&server, "test-token", Some("support-lifecycle-error"));
         let mut output = Vec::new();
         let error = execute_command(&command, &env, &mut output)
             .await
@@ -888,7 +888,7 @@ async fn support_errors_never_print_raw_backend_bodies_or_sensitive_fields()
         .mount(&server)
         .await;
     let command = parse_command(["logbrew", "support", "list", "--json"])?;
-    let env = authenticated_env(&server, "support-error");
+    let env = authenticated_env(&server, "test-token", Some("support-error"));
     let mut output = Vec::new();
     let error = execute_command(&command, &env, &mut output)
         .await
@@ -966,7 +966,7 @@ async fn non_json_support_errors_are_replaced_instead_of_printed()
         .mount(&server)
         .await;
     let command = parse_command(["logbrew", "support", "list", "--json"])?;
-    let env = authenticated_env(&server, "support-non-json-error");
+    let env = authenticated_env(&server, "test-token", Some("support-non-json-error"));
     let mut output = Vec::new();
     let error = execute_command(&command, &env, &mut output)
         .await
@@ -1026,25 +1026,4 @@ fn ticket_value() -> serde_json::Value {
         "next": "inspect this ticket",
         "next_action": {"code": "inspect_support_ticket", "target": "support_ticket"}
     })
-}
-
-async fn run_command<const N: usize>(
-    server: &MockServer,
-    args: [&'static str; N],
-    home_name: &str,
-) -> Result<String, Box<dyn std::error::Error>> {
-    let command = parse_command(args)?;
-    let env = authenticated_env(server, home_name);
-    let mut output = Vec::new();
-    execute_command(&command, &env, &mut output).await?;
-    Ok(String::from_utf8(output)?)
-}
-
-fn authenticated_env(server: &MockServer, home_name: &str) -> CliEnvironment {
-    CliEnvironment {
-        base_url: server.uri(),
-        token: Some("test-token".to_owned()),
-        home: Some(std::env::temp_dir().join(format!("logbrew-{home_name}"))),
-        cwd: None,
-    }
 }
