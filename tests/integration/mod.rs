@@ -72,3 +72,33 @@ where
     .await??;
     Ok(process)
 }
+
+/// Executes one parsed command against isolated authenticated loopback state.
+fn authenticated_env(
+    server: &wiremock::MockServer,
+    token: &str,
+    home_name: Option<&str>,
+) -> logbrew_cli::CliEnvironment {
+    logbrew_cli::CliEnvironment {
+        base_url: server.uri(),
+        token: Some(token.to_owned()),
+        home: home_name.map(|name| std::env::temp_dir().join(format!("logbrew-{name}"))),
+        cwd: None,
+    }
+}
+
+async fn run_command<const N: usize>(
+    server: &wiremock::MockServer,
+    args: [&str; N],
+    home_name: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let command = logbrew_cli::parse_command(args)?;
+    let mut output = Vec::new();
+    logbrew_cli::execute_command(
+        &command,
+        &authenticated_env(server, "test-token", Some(home_name)),
+        &mut output,
+    )
+    .await?;
+    Ok(String::from_utf8(output)?)
+}

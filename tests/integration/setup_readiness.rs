@@ -251,6 +251,71 @@ async fn released_python_frameworks_use_the_detected_package_manager() -> TestRe
 }
 
 #[tokio::test]
+async fn java_builds_emit_exact_released_dependency_plans() -> TestResult {
+    for (manifest, manager, contents, integration, declaration) in [
+        (
+            "pom.xml",
+            "maven",
+            "<project><dependency><groupId>org.springframework.kafka</groupId></dependency></project>",
+            "spring",
+            "<dependency>\n  <groupId>co.logbrew</groupId>\n  <artifactId>logbrew-sdk</artifactId>\n  <version>0.1.4</version>\n</dependency>",
+        ),
+        (
+            "build.gradle",
+            "gradle",
+            "plugins { id 'java' }",
+            "java",
+            "implementation 'co.logbrew:logbrew-sdk:0.1.4'",
+        ),
+        (
+            "build.gradle.kts",
+            "gradle-kotlin",
+            "plugins { java }",
+            "java",
+            "implementation(\"co.logbrew:logbrew-sdk:0.1.4\")",
+        ),
+    ] {
+        let root = fixture_root(manager)?;
+        std::fs::write(root.join(manifest), contents)?;
+        let body = setup_json(&root).await?;
+        assert_eq!(
+            body["install_plan"],
+            serde_json::json!({
+                "mode": "non_mutating",
+                "ecosystem": manager,
+                "package_manager": manager,
+                "integration": integration,
+                "package": {"group_id": "co.logbrew", "artifact_id": "logbrew-sdk", "version": "0.1.4"},
+                "compatibility": {
+                    "status": "review_required",
+                    "requires_java": ">=11",
+                    "requires_framework": (integration == "spring").then_some("Spring Boot 3+"),
+                },
+                "dependency_declaration": declaration,
+                "next_action": {"code": "review_compatibility_and_install", "target": "project_environment"},
+            })
+        );
+        assert_eq!(
+            body["detected"],
+            serde_json::json!([{
+                "runtime": "java", "package_manager": manager, "manifest": manifest
+            }])
+        );
+        if manager == "maven" {
+            assert_contains_all(
+                &setup_text(&root, &["logbrew", "setup"]).await?,
+                &[
+                    "Integration: Spring",
+                    "co.logbrew:logbrew-sdk:0.1.4",
+                    declaration,
+                ],
+            );
+        }
+    }
+    Ok(())
+}
+
+#[tokio::test]
 async fn sveltekit_emits_a_truthful_non_mutating_plan() -> TestResult {
     let root = fixture_root("sveltekit-pnpm")?;
     std::fs::write(root.join("pnpm-lock.yaml"), "lockfileVersion: '9.0'\n")?;
@@ -528,8 +593,9 @@ async fn runtimes_without_structured_plans_get_truthful_recovery() -> TestResult
         human,
         "LogBrew setup plan\nMode: non-mutating plan\nNo files changed.\nInstall: not ready\nNo \
          supported project manifest found.\nNext: run logbrew setup from a project containing \
-         package.json, pyproject.toml, Pipfile, Cargo.toml, Package.swift, project.yml, project.yaml, \
-         .xcodeproj, .xcworkspace, CMakeLists.txt, go.mod, composer.json, or Gemfile.\n"
+         package.json, pyproject.toml, Pipfile, pom.xml, build.gradle, build.gradle.kts, Cargo.toml, \
+         Package.swift, project.yml, project.yaml, .xcodeproj, .xcworkspace, CMakeLists.txt, go.mod, \
+         composer.json, or Gemfile.\n"
     );
     Ok(())
 }

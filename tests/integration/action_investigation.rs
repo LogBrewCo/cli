@@ -258,12 +258,7 @@ async fn run_binary(
 }
 
 fn authenticated_env(server: &MockServer) -> CliEnvironment {
-    CliEnvironment {
-        base_url: server.uri(),
-        token: Some("account-token".to_owned()),
-        home: Some(std::env::temp_dir().join("logbrew-action-investigation-test")),
-        cwd: None,
-    }
+    super::authenticated_env(server, "account-token", Some("action-investigation-test"))
 }
 
 fn action_response() -> serde_json::Value {

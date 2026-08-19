@@ -534,12 +534,7 @@ fn span_command(json: bool) -> Result<Command, logbrew_cli::CliError> {
 }
 
 fn authenticated_env(server: &MockServer) -> CliEnvironment {
-    CliEnvironment {
-        base_url: server.uri(),
-        token: Some("account-token".to_owned()),
-        home: Some(std::env::temp_dir().join("logbrew-span-investigation-test")),
-        cwd: None,
-    }
+    super::authenticated_env(server, "account-token", Some("span-investigation-test"))
 }
 
 fn span_response() -> serde_json::Value {

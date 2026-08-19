@@ -332,12 +332,7 @@ fn account() -> serde_json::Value {
 }
 
 fn environment(server: &MockServer, token: &str) -> CliEnvironment {
-    CliEnvironment {
-        base_url: server.uri(),
-        token: Some(token.to_owned()),
-        home: None,
-        cwd: None,
-    }
+    super::authenticated_env(server, token, None)
 }
 
 fn temporary_home(label: &str) -> Result<std::path::PathBuf, std::io::Error> {

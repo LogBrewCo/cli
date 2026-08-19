@@ -525,10 +525,5 @@ fn deployment_response() -> Value {
 
 /// Returns an isolated account-authenticated CLI environment.
 fn environment(server: &MockServer, token: &str) -> CliEnvironment {
-    CliEnvironment {
-        base_url: server.uri(),
-        token: Some(token.to_owned()),
-        home: None,
-        cwd: None,
-    }
+    super::authenticated_env(server, token, None)
 }
