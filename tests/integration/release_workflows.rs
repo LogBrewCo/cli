@@ -7,9 +7,7 @@ const DIST: &str = include_str!("../../dist-workspace.toml");
 fn ordered(source: &str, required: &[&str]) {
     let mut cursor = 0;
     for value in required {
-        cursor += source[cursor..]
-            .find(value)
-            .unwrap_or_else(|| panic!("missing {value}"));
+        cursor += source[cursor..].find(value).expect("missing ordered step");
     }
 }
 
@@ -68,6 +66,7 @@ fn release_workflows_prebuild_publish_and_recover_safely() {
             assert!(source.contains(required), "missing {required}");
         }
     }
+    assert!(NPM.contains("npm publish --access public \"./${packages[0]}\""));
 
     for required in [
         "workflow_call:",
@@ -102,7 +101,6 @@ fn release_workflows_prebuild_publish_and_recover_safely() {
     assert_eq!(HOMEBREW.matches("secrets.HOMEBREW_TAP_TOKEN").count(), 1);
     assert_eq!(HOMEBREW.matches("uses: actions/checkout@v7").count(), 2);
     assert!(!HOMEBREW.contains("brew update") && !HOMEBREW.contains("--except-cops"));
-    assert!(!HOMEBREW.contains("for release in $("));
-    assert!(!HOMEBREW.contains("echo \"$PLAN\""));
+    assert!(!HOMEBREW.contains("for release in $(") && !HOMEBREW.contains("echo \"$PLAN\""));
     assert!(!HOMEBREW.contains("pull_request_target") && !HOMEBREW.contains("schedule:"));
 }
