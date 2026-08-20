@@ -221,12 +221,7 @@ fn setup_aliases_are_non_mutating_setup() {
 #[tokio::test]
 async fn version_human_output_is_short() -> TestResult {
     let command = parse_command(["logbrew", "version"])?;
-    let env = CliEnvironment {
-        base_url: "https://example.test".to_owned(),
-        token: None,
-        home: None,
-        cwd: None,
-    };
+    let env = environment(None, None);
     let mut output = Vec::new();
 
     execute_command(&command, &env, &mut output).await?;
@@ -239,12 +234,7 @@ async fn version_human_output_is_short() -> TestResult {
 #[tokio::test]
 async fn version_json_output_is_stable() -> TestResult {
     let command = parse_command(["logbrew", "version", "--json"])?;
-    let env = CliEnvironment {
-        base_url: "https://example.test".to_owned(),
-        token: None,
-        home: None,
-        cwd: None,
-    };
+    let env = environment(None, None);
     let mut output = Vec::new();
 
     execute_command(&command, &env, &mut output).await?;
@@ -278,12 +268,7 @@ async fn logout_json_removes_legacy_local_credentials_without_leaking_them() -> 
         std::fs::create_dir_all(token_path.parent().expect("token path has parent"))?;
         std::fs::write(token_path.as_path(), "fixture-token\n")?;
         let command = parse_command(args.iter().copied())?;
-        let env = CliEnvironment {
-            base_url: "https://example.test".to_owned(),
-            token: None,
-            home: Some(home),
-            cwd: None,
-        };
+        let env = environment(None, Some(home));
         let mut output = Vec::new();
 
         execute_command(&command, &env, &mut output).await?;
@@ -309,12 +294,7 @@ async fn logout_json_removes_legacy_local_credentials_without_leaking_them() -> 
 async fn logout_human_is_idempotent_without_local_token() -> TestResult {
     let home = local_command_home("logout-empty")?;
     let command = parse_command(["logbrew", "logout"])?;
-    let env = CliEnvironment {
-        base_url: "https://example.test".to_owned(),
-        token: None,
-        home: Some(home),
-        cwd: None,
-    };
+    let env = environment(None, Some(home));
     let mut output = Vec::new();
 
     execute_command(&command, &env, &mut output).await?;
@@ -334,12 +314,7 @@ async fn logout_warns_when_env_token_still_authenticates() -> TestResult {
     std::fs::create_dir_all(token_path.parent().expect("token path has parent"))?;
     std::fs::write(token_path.as_path(), "file-token\n")?;
     let command = parse_command(["logbrew", "logout"])?;
-    let env = CliEnvironment {
-        base_url: "https://example.test".to_owned(),
-        token: Some("env-token".to_owned()),
-        home: Some(home),
-        cwd: None,
-    };
+    let env = environment(Some("env-token"), Some(home));
     let mut output = Vec::new();
 
     execute_command(&command, &env, &mut output).await?;
@@ -365,6 +340,15 @@ fn local_command_home(name: &str) -> Result<std::path::PathBuf, std::io::Error> 
     }
     std::fs::create_dir_all(dir.as_path())?;
     Ok(dir)
+}
+
+fn environment(token: Option<&str>, home: Option<std::path::PathBuf>) -> CliEnvironment {
+    CliEnvironment {
+        base_url: "https://example.test".to_owned(),
+        token: token.map(str::to_owned),
+        home,
+        cwd: None,
+    }
 }
 
 fn assert_contains_all(text: &str, expected: &[&str]) {

@@ -1,8 +1,8 @@
 //! Completed deployment capture contract tests.
 
 use logbrew_cli::{
-    CliEnvironment, Command, DeploymentRecordOptions, DeploymentStatus, HelpTopic, HttpMethod,
-    RuntimeError, execute_command, help, parse_command, write_cli_error, write_runtime_error,
+    Command, DeploymentRecordOptions, DeploymentStatus, HelpTopic, HttpMethod, RuntimeError,
+    execute_command, help, parse_command, write_cli_error, write_runtime_error,
 };
 use serde_json::{Value, json};
 use wiremock::matchers::{body_json, header, method, path};
@@ -292,7 +292,7 @@ async fn deployment_revalidates_constructed_values_before_network()
     options.deployment_id = String::from("../hostile-private-value?authorization=secret");
     let error = execute_command(
         &command,
-        &environment(&server, "account-token"),
+        &super::authenticated_env(&server, "account-token", None),
         &mut Vec::new(),
     )
     .await
@@ -338,7 +338,7 @@ async fn deployment_sends_one_put_and_validates_human_and_json_receipts()
     let mut human_output = Vec::new();
     execute_command(
         &deployment_command(false),
-        &environment(&server, "account-token"),
+        &super::authenticated_env(&server, "account-token", None),
         &mut human_output,
     )
     .await?;
@@ -359,7 +359,7 @@ async fn deployment_sends_one_put_and_validates_human_and_json_receipts()
     let mut json_output = Vec::new();
     execute_command(
         &deployment_command(true),
-        &environment(&server, "account-token"),
+        &super::authenticated_env(&server, "account-token", None),
         &mut json_output,
     )
     .await?;
@@ -391,7 +391,7 @@ async fn deployment_rejects_malformed_or_contradictory_success_before_output()
         let mut output = Vec::new();
         let error = execute_command(
             &deployment_command(true),
-            &environment(&server, "account-token"),
+            &super::authenticated_env(&server, "account-token", None),
             &mut output,
         )
         .await
@@ -424,7 +424,7 @@ async fn deployment_conflict_uses_fixed_retry_without_reflecting_server_content(
         .await;
     let error = execute_command(
         &deployment_command(true),
-        &environment(&server, "account-token"),
+        &super::authenticated_env(&server, "account-token", None),
         &mut Vec::new(),
     )
     .await
@@ -452,7 +452,7 @@ async fn deployment_rejects_project_ingest_keys_before_network()
     let server = MockServer::start().await;
     let error = execute_command(
         &deployment_command(true),
-        &environment(&server, "lbw_ingest_hostile-private-value"),
+        &super::authenticated_env(&server, "lbw_ingest_hostile-private-value", None),
         &mut Vec::new(),
     )
     .await
@@ -521,9 +521,4 @@ fn deployment_response() -> Value {
         "commit_sha": "abcdef1234567890",
         "recorded_at": "2026-08-10T10:02:01.000Z",
     })
-}
-
-/// Returns an isolated account-authenticated CLI environment.
-fn environment(server: &MockServer, token: &str) -> CliEnvironment {
-    super::authenticated_env(server, token, None)
 }

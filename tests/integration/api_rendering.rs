@@ -36,12 +36,7 @@ async fn authenticated_read_logs_sends_bearer_token_and_prints_api_body() {
         "--json",
     ])
     .expect("command parses");
-    let env = CliEnvironment {
-        base_url: server.uri(),
-        token: Some("test-token".to_owned()),
-        home: Some(std::env::temp_dir().join("logbrew-authenticated-read-test")),
-        cwd: None,
-    };
+    let env = super::authenticated_env(&server, "test-token", Some("authenticated-read-test"));
     let mut output = Vec::new();
 
     execute_command(&command, &env, &mut output)
@@ -804,12 +799,8 @@ async fn project_setup_seen_omits_source_for_ingest_key_auth()
         "node",
         "--json",
     ])?;
-    let env = CliEnvironment {
-        base_url: server.uri(),
-        token: Some("lbw_ingest_test".to_owned()),
-        home: Some(std::env::temp_dir().join("logbrew-project-setup-ingest-key")),
-        cwd: None,
-    };
+    let env =
+        super::authenticated_env(&server, "lbw_ingest_test", Some("project-setup-ingest-key"));
     let mut output = Vec::new();
 
     execute_command(&command, &env, &mut output).await?;
@@ -893,12 +884,7 @@ async fn local_auth_refreshes_once_and_persists_replacement_credentials()
         "old-refresh",
         server.uri().as_str(),
     )?;
-    let env = CliEnvironment {
-        base_url: server.uri(),
-        token: None,
-        home: Some(home),
-        cwd: None,
-    };
+    let env = super::test_env(&server, None, Some(home));
     let mut output = Vec::new();
 
     execute_command(&command, &env, &mut output).await?;
@@ -965,12 +951,7 @@ async fn concurrent_local_401s_share_one_refresh_rotation() -> Result<(), Box<dy
         "shared-refresh",
         server.uri().as_str(),
     )?;
-    let env = CliEnvironment {
-        base_url: server.uri(),
-        token: None,
-        home: Some(home),
-        cwd: None,
-    };
+    let env = super::test_env(&server, None, Some(home));
     let command = parse_command(["logbrew", "logs", "--json"])?;
     let mut first_output = Vec::new();
     let mut second_output = Vec::new();
@@ -1023,12 +1004,7 @@ async fn env_auth_401_never_reads_or_rotates_local_refresh_credentials()
     std::fs::write(auth_dir.join("token"), "local-access\n")?;
     std::fs::write(auth_dir.join("refresh-token"), "local-refresh\n")?;
     let command = parse_command(["logbrew", "logs", "--json"])?;
-    let env = CliEnvironment {
-        base_url: server.uri(),
-        token: Some("env-expired".to_owned()),
-        home: Some(home),
-        cwd: None,
-    };
+    let env = super::test_env(&server, Some("env-expired"), Some(home));
     let mut output = Vec::new();
 
     let error = execute_command(&command, &env, &mut output)
@@ -1076,12 +1052,7 @@ async fn persisted_refresh_session_never_authenticates_to_a_different_api_origin
         "https://trusted.example",
     )?;
     let command = parse_command(["logbrew", "logs", "--json"])?;
-    let env = CliEnvironment {
-        base_url: server.uri(),
-        token: None,
-        home: Some(home),
-        cwd: None,
-    };
+    let env = super::test_env(&server, None, Some(home));
     let mut output = Vec::new();
 
     let error = execute_command(&command, &env, &mut output)
@@ -1114,12 +1085,7 @@ async fn api_auth_error_reports_token_file_source_without_leaking_token()
     let token_path = home.join(".logbrew").join("token");
     std::fs::create_dir_all(token_path.parent().expect("token path has parent"))?;
     std::fs::write(token_path.as_path(), "expired\n")?;
-    let env = CliEnvironment {
-        base_url: server.uri(),
-        token: None,
-        home: Some(home),
-        cwd: None,
-    };
+    let env = super::test_env(&server, None, Some(home));
     let mut output = Vec::new();
 
     let error = execute_command(&command, &env, &mut output)
@@ -1157,12 +1123,7 @@ async fn human_api_auth_error_reports_env_source_without_leaking_token()
     let token_path = home.join(".logbrew").join("token");
     std::fs::create_dir_all(token_path.parent().expect("token path has parent"))?;
     std::fs::write(token_path.as_path(), "file-token\n")?;
-    let env = CliEnvironment {
-        base_url: server.uri(),
-        token: Some("env-token".to_owned()),
-        home: Some(home),
-        cwd: None,
-    };
+    let env = super::test_env(&server, Some("env-token"), Some(home));
     let mut output = Vec::new();
 
     let error = execute_command(&command, &env, &mut output)
@@ -1218,14 +1179,11 @@ async fn mount_authenticated_json<I>(
 }
 
 fn authenticated_env(server: &MockServer, home_name: &str) -> CliEnvironment {
-    CliEnvironment {
-        base_url: server.uri(),
-        token: Some("test-token".to_owned()),
-        home: Some(
-            std::env::temp_dir().join(format!("logbrew-{home_name}-{}", std::process::id())),
-        ),
-        cwd: None,
-    }
+    super::test_env(
+        server,
+        Some("test-token"),
+        Some(std::env::temp_dir().join(format!("logbrew-{home_name}-{}", std::process::id()))),
+    )
 }
 
 fn api_rendering_home(name: &str) -> Result<std::path::PathBuf, std::io::Error> {

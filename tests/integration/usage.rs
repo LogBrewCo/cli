@@ -357,12 +357,7 @@ async fn malformed_typed_errors_and_missing_auth_fail_closed()
     assert_safe_usage_error(&error, "usage response is invalid", "retry logbrew usage")?;
 
     let no_auth_server = MockServer::start().await;
-    let no_auth = CliEnvironment {
-        base_url: no_auth_server.uri(),
-        token: None,
-        home: None,
-        cwd: None,
-    };
+    let no_auth = super::test_env(&no_auth_server, None, None);
     let error = execute_command(&command, &no_auth, &mut Vec::new())
         .await
         .expect_err("missing auth fails locally");
@@ -508,12 +503,7 @@ async fn usage_rejects_non_root_api_origins_before_io() -> Result<(), Box<dyn st
 }
 
 fn environment(server: &MockServer) -> CliEnvironment {
-    CliEnvironment {
-        base_url: server.uri(),
-        token: Some(String::from("account-token")),
-        home: None,
-        cwd: None,
-    }
+    super::authenticated_env(server, "account-token", None)
 }
 
 fn usage_response() -> serde_json::Value {

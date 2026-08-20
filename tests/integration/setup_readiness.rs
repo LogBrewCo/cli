@@ -16,11 +16,7 @@ fn javascript_surfaces(browser: &str, server: &str) -> serde_json::Value {
 
 #[tokio::test]
 async fn swiftpm_emits_exact_non_mutating_install_plan() -> TestResult {
-    let root = fixture_root("swift-ready")?;
-    std::fs::write(
-        root.join("Package.swift"),
-        "// deterministic public Swift package fixture\n",
-    )?;
+    let root = fixture("swift-ready", &[("Package.swift", "// public fixture\n")])?;
     let body = setup_json(root.as_path()).await?;
     assert_eq!(
         body,
@@ -62,16 +58,15 @@ async fn swiftpm_emits_exact_non_mutating_install_plan() -> TestResult {
             r#"Dependency: .package(url: "https://github.com/LogBrewCo/sdk.git", from: "0.1.6")"#,
         ],
     );
-    assert!(!human.contains(root.to_string_lossy().as_ref()));
     Ok(())
 }
 
 #[tokio::test]
 async fn cmake_emits_exact_pinned_cpp_install_plan() -> TestResult {
-    let root = fixture_root("cmake-ready")?;
-    std::fs::write(
-        root.join("CMakeLists.txt"),
-        "cmake_minimum_required(VERSION 3.16)\nproject(Fixture LANGUAGES CXX)\n",
+    let root = fixture_file(
+        "cmake-ready",
+        "CMakeLists.txt",
+        "project(Fixture LANGUAGES CXX)\n",
     )?;
 
     let body = setup_json(root.as_path()).await?;
@@ -113,7 +108,6 @@ async fn cmake_emits_exact_pinned_cpp_install_plan() -> TestResult {
         body["next"],
         "add the pinned LogBrew C++ FetchContent block and link the required target; no files were changed"
     );
-    assert!(!body.to_string().contains(root.to_string_lossy().as_ref()));
     let human = setup_text(root.as_path(), &["logbrew", "setup"]).await?;
     assert_contains_all(
         &human,
@@ -126,18 +120,19 @@ async fn cmake_emits_exact_pinned_cpp_install_plan() -> TestResult {
             "No files changed.",
         ],
     );
-    assert!(!human.contains(root.to_string_lossy().as_ref()));
     Ok(())
 }
 
 #[tokio::test]
 async fn xcodegen_prefers_the_objective_c_app_plan() -> TestResult {
-    let root = fixture_root("xcodegen-objective-c")?;
-    std::fs::create_dir_all(root.join("App/Sources"))?;
-    std::fs::create_dir_all(root.join("Packages/Helper"))?;
-    std::fs::write(root.join("App/project.yml"), "name: Checkout\n")?;
-    std::fs::write(root.join("App/Sources/main.m"), "")?;
-    std::fs::write(root.join("Packages/Helper/Package.swift"), "")?;
+    let root = fixture(
+        "xcodegen-objective-c",
+        &[
+            ("App/project.yml", "name: Checkout\n"),
+            ("App/Sources/main.m", ""),
+            ("Packages/Helper/Package.swift", ""),
+        ],
+    )?;
     let body = setup_json(&root).await?;
     assert_eq!(
         body["install_plan"],
@@ -226,25 +221,81 @@ async fn released_python_frameworks_use_the_detected_package_manager() -> TestRe
             "pipenv install logbrew-sdk",
         ),
     ] {
-        let root = fixture_root(integration)?;
-        std::fs::write(
-            root.join("pyproject.toml"),
-            format!("[project]\nname = \"fixture\"\ndependencies = [\"{dependency}\"]\n"),
-        )?;
+        let manifest =
+            format!("[project]\nname = \"fixture\"\ndependencies = [\"{dependency}\"]\n");
+        let root = fixture(integration, &[("pyproject.toml", &manifest)])?;
         if !lockfile.is_empty() {
             std::fs::write(root.join(lockfile), "")?;
         }
         let body = setup_json(&root).await?;
+        let plan = &body["install_plan"];
+        assert_eq!(plan.as_object().map(serde_json::Map::len), Some(8));
+        assert_eq!(plan["mode"], "non_mutating");
+        assert_eq!(plan["ecosystem"], "pypi");
+        assert_eq!(plan["package_manager"], package_manager);
+        assert_eq!(plan["integration"], integration);
+        assert_eq!(plan["compatibility"]["status"], "review_required");
         assert_eq!(
-            body["install_plan"],
-            python_plan(
-                package_manager,
-                integration,
-                (!framework_package.is_empty()).then_some(framework_package),
-                (!framework_requirement.is_empty()).then_some(framework_requirement),
-                install_command,
-            )
+            plan["compatibility"].as_object().map(serde_json::Map::len),
+            Some(3)
         );
+        assert_eq!(plan["compatibility"]["requires_python"], ">=3.10");
+        assert_eq!(
+            plan["compatibility"]["requires_framework"],
+            serde_json::json!((!framework_requirement.is_empty()).then_some(framework_requirement))
+        );
+        assert_eq!(plan["install_command"], install_command);
+        assert_eq!(plan["packages"][0]["name"], "logbrew-sdk");
+        assert_eq!(plan["packages"][0]["role"], "core");
+        assert_eq!(
+            plan["packages"][0].as_object().map(serde_json::Map::len),
+            Some(if install_command.contains("[celery]") {
+                4
+            } else {
+                3
+            })
+        );
+        assert_eq!(
+            plan["packages"][0]["extras"],
+            serde_json::json!(install_command.contains("[celery]").then_some(["celery"]))
+        );
+        assert_eq!(
+            plan["packages"][0]["version_requirement"]["kind"],
+            "latest_compatible"
+        );
+        assert_eq!(
+            plan["packages"][0]["version_requirement"]
+                .as_object()
+                .map(serde_json::Map::len),
+            Some(1)
+        );
+        assert_eq!(
+            plan["packages"].as_array().map(Vec::len),
+            Some(if framework_package.is_empty() { 1 } else { 2 })
+        );
+        if !framework_package.is_empty() {
+            assert_eq!(plan["packages"][1]["name"], framework_package);
+            assert_eq!(plan["packages"][1]["role"], "framework");
+            assert_eq!(
+                plan["packages"][1].as_object().map(serde_json::Map::len),
+                Some(3)
+            );
+            assert_eq!(
+                plan["packages"][1]["version_requirement"]["kind"],
+                "latest_compatible"
+            );
+            assert_eq!(
+                plan["packages"][1]["version_requirement"]
+                    .as_object()
+                    .map(serde_json::Map::len),
+                Some(1)
+            );
+        }
+        assert_eq!(
+            plan["next_action"]["code"],
+            "review_compatibility_and_install"
+        );
+        assert_eq!(plan["next_action"]["target"], "project_environment");
         assert_eq!(body["detected"][0]["runtime"], "python");
     }
     Ok(())
@@ -275,8 +326,7 @@ async fn java_builds_emit_exact_released_dependency_plans() -> TestResult {
             "implementation(\"co.logbrew:logbrew-sdk:0.1.5\")",
         ),
     ] {
-        let root = fixture_root(manager)?;
-        std::fs::write(root.join(manifest), contents)?;
+        let root = fixture(manager, &[(manifest, contents)])?;
         let body = setup_json(&root).await?;
         assert_eq!(
             body["install_plan"],
@@ -317,11 +367,15 @@ async fn java_builds_emit_exact_released_dependency_plans() -> TestResult {
 
 #[tokio::test]
 async fn sveltekit_emits_a_truthful_non_mutating_plan() -> TestResult {
-    let root = fixture_root("sveltekit-pnpm")?;
-    std::fs::write(root.join("pnpm-lock.yaml"), "lockfileVersion: '9.0'\n")?;
-    std::fs::write(
-        root.join("package.json"),
-        r#"{"devDependencies":{"@sveltejs/kit":"2.5.27"}}"#,
+    let root = fixture(
+        "sveltekit-pnpm",
+        &[
+            ("pnpm-lock.yaml", "lockfileVersion: '9.0'\n"),
+            (
+                "package.json",
+                r#"{"devDependencies":{"@sveltejs/kit":"2.5.27"}}"#,
+            ),
+        ],
     )?;
     let body = setup_json(&root).await?;
     let plan = &body["install_plan"];
@@ -353,16 +407,15 @@ async fn sveltekit_emits_a_truthful_non_mutating_plan() -> TestResult {
     assert_eq!(body["detected"][0]["runtime"], "sveltekit");
     let human = setup_text(&root, &["logbrew", "setup"]).await?;
     assert!(human.contains("Integration: SvelteKit\nPackages: @logbrew/sdk @logbrew/browser @logbrew/svelte\nCompatibility review: Node >=18; Svelte >=5\nSurfaces:\n- browser: Svelte; key kind: browser; stable service name, environment, and release required\n- server: SvelteKit; key kind: server; stable service name, environment, and release required"));
-    assert!(!human.contains(root.to_string_lossy().as_ref()));
     Ok(())
 }
 
 #[tokio::test]
 async fn mixed_react_express_emits_scoped_surface_plan() -> TestResult {
-    let root = fixture_root("react-express")?;
-    std::fs::write(
-        root.join("package.json"),
-        r#"{"dependencies":{"react":"18.3.1","express":"4.21.2"},"devDependencies":{"vite":"6.0.7"}}"#,
+    let root = fixture_file(
+        "react-express",
+        "package.json",
+        r#"{"dependencies":{"react":"18.3.1","express":"4.21.2"}}"#,
     )?;
     let body = setup_json(&root).await?;
     assert_eq!(
@@ -397,17 +450,94 @@ async fn mixed_react_express_emits_scoped_surface_plan() -> TestResult {
             "server: Express; key kind: server; stable service name, environment, and release required",
         ],
     );
-    assert!(!human.contains(root.to_string_lossy().as_ref()));
+    Ok(())
+}
+
+#[tokio::test]
+async fn aspnetcore_wins_a_mixed_repo_without_claiming_plain_dotnet() -> TestResult {
+    let root = fixture(
+        "aspnetcore-react",
+        &[
+            (
+                "package.json",
+                r#"{"dependencies":{"react":"18","express":"4"}}"#,
+            ),
+            (
+                "src/Web/Web.csproj",
+                r#"<Project Sdk="Microsoft.NET.Sdk.Web" />"#,
+            ),
+        ],
+    )?;
+    let body = setup_json(&root).await?;
+    assert_eq!(
+        body["install_plan"],
+        serde_json::json!({
+            "mode": "non_mutating",
+            "ecosystem": "nuget",
+            "package_manager": "dotnet",
+            "integration": "aspnetcore",
+            "package": {"id": "LogBrew.AspNetCore", "version": "0.1.2"},
+            "compatibility": {
+                "status": "review_required",
+                "requires_dotnet": ">=10",
+                "requires_framework": "ASP.NET Core 10+",
+            },
+            "surfaces": [{
+                "surface": "server",
+                "integration": "aspnetcore",
+                "credential_kind": "server",
+                "service_name_required": true,
+                "deployment_context_required": ["environment", "release"],
+            }],
+            "install_command": "dotnet add package LogBrew.AspNetCore --version 0.1.2",
+            "next_action": {"code": "review_compatibility_and_install", "target": "project_environment"},
+        })
+    );
+    assert_eq!(
+        body["detected"],
+        serde_json::json!([
+            {
+                "runtime": "react-express",
+                "package_manager": "npm",
+                "manifest": "package.json",
+            },
+            {
+                "runtime": "aspnetcore",
+                "package_manager": "dotnet",
+                "manifest": "src/Web/Web.csproj",
+            },
+        ])
+    );
+    assert_contains_all(
+        &setup_text(&root, &["logbrew", "setup"]).await?,
+        &[
+            "Integration: ASP.NET Core",
+            "Package: LogBrew.AspNetCore:0.1.2",
+            "Surface: server; key kind: server",
+        ],
+    );
+
+    let plain = fixture_file(
+        "plain-dotnet",
+        "Library.csproj",
+        r#"<Project Sdk="Microsoft.NET.Sdk" />"#,
+    )?;
+    let body = setup_json(&plain).await?;
+    assert_eq!(body["detected"][0]["runtime"], "dotnet");
+    assert_eq!(body["install_plan"], serde_json::Value::Null);
     Ok(())
 }
 
 #[tokio::test]
 async fn scanner_prefers_nearby_manifests_and_package_managers() -> TestResult {
-    let root = fixture_root("scanner-nearest")?;
-    std::fs::write(root.join("Cargo.toml"), "")?;
-    std::fs::write(root.join("package.json"), "{}")?;
-    std::fs::create_dir_all(root.join("crates/nested"))?;
-    std::fs::write(root.join("crates/nested/Cargo.toml"), "")?;
+    let root = fixture(
+        "scanner-nearest",
+        &[
+            ("Cargo.toml", ""),
+            ("package.json", "{}"),
+            ("crates/nested/Cargo.toml", ""),
+        ],
+    )?;
     assert_eq!(
         setup_json(&root).await?["detected"],
         serde_json::json!([
@@ -416,30 +546,24 @@ async fn scanner_prefers_nearby_manifests_and_package_managers() -> TestResult {
         ])
     );
 
-    let cmake = fixture_root("scanner-build-skip")?;
-    std::fs::write(
-        cmake.join("CMakeLists.txt"),
-        "project(Fixture LANGUAGES CXX)\n",
-    )?;
-    std::fs::create_dir_all(cmake.join("build/nested"))?;
-    std::fs::write(
-        cmake.join("build/nested/CMakeLists.txt"),
-        "project(Generated)\n",
+    let cmake = fixture(
+        "scanner-build-skip",
+        &[
+            ("CMakeLists.txt", "project(Fixture LANGUAGES CXX)\n"),
+            ("build/nested/CMakeLists.txt", "project(Generated)\n"),
+        ],
     )?;
     let body = setup_json(&cmake).await?;
     assert_eq!(body["detected"].as_array().map(Vec::len), Some(1));
     assert_eq!(body["detected"][0]["manifest"], "CMakeLists.txt");
 
-    let parent = fixture_root("scanner-parent")?;
-    std::fs::write(parent.join("package.json"), "{}")?;
+    let parent = fixture("scanner-parent", &[("package.json", "{}")])?;
     std::fs::create_dir_all(parent.join("src"))?;
     let body = setup_json(&parent.join("src")).await?;
     assert_eq!(body["detected"][0]["manifest"], "../package.json");
 
     for (lockfile, manager) in [("yarn.lock", "yarn"), ("bun.lockb", "bun")] {
-        let root = fixture_root(manager)?;
-        std::fs::write(root.join("package.json"), "{}")?;
-        std::fs::write(root.join(lockfile), "")?;
+        let root = fixture(manager, &[("package.json", "{}"), (lockfile, "")])?;
         let body = setup_json(&root).await?;
         assert_eq!(body["detected"][0]["package_manager"], manager);
     }
@@ -448,17 +572,21 @@ async fn scanner_prefers_nearby_manifests_and_package_managers() -> TestResult {
 
 #[tokio::test]
 async fn framework_detection_is_bounded_and_exact() -> TestResult {
-    let django = fixture_root("django-requirements")?;
-    std::fs::write(
-        django.join("pyproject.toml"),
-        "[project]\ndynamic = [\"dependencies\"]\n",
+    let django = fixture(
+        "django-requirements",
+        &[
+            (
+                "pyproject.toml",
+                "[project]\ndynamic = [\"dependencies\"]\n",
+            ),
+            ("requirements.txt", "Django>=4.2,<6\n"),
+        ],
     )?;
-    std::fs::write(django.join("requirements.txt"), "Django>=4.2,<6\n")?;
     let body = setup_json(&django).await?;
     assert_eq!(body["install_plan"]["integration"], "django");
 
-    let oversized = fixture_root("oversized-metadata")?;
-    std::fs::write(oversized.join("pyproject.toml"), "Django".repeat(50_000))?;
+    let large_manifest = "Django".repeat(50_000);
+    let oversized = fixture("oversized-metadata", &[("pyproject.toml", &large_manifest)])?;
     let body = setup_json(&oversized).await?;
     assert_eq!(body["install_plan"]["integration"], "python");
 
@@ -466,10 +594,7 @@ async fn framework_detection_is_bounded_and_exact() -> TestResult {
         ("symfony", "composer.json", "config/bundles.php", "symfony"),
         ("rails", "Gemfile", "config/application.rb", "rails"),
     ] {
-        let root = fixture_root(label)?;
-        std::fs::create_dir_all(root.join("config"))?;
-        std::fs::write(root.join(manifest), "")?;
-        std::fs::write(root.join(marker), "framework marker\n")?;
+        let root = fixture(label, &[(manifest, ""), (marker, "framework marker\n")])?;
         let body = setup_json(&root).await?;
         assert_eq!(body["install_plan"]["integration"], integration);
         assert_eq!(body["install_plan"]["framework_manifest"], marker);
@@ -484,10 +609,10 @@ async fn framework_detection_is_bounded_and_exact() -> TestResult {
     .into_iter()
     .enumerate()
     {
-        let root = fixture_root(&format!("unsupported-js-{index}"))?;
-        std::fs::write(
-            root.join("package.json"),
-            format!(r#"{{"dependencies":{{{dependencies}}}}}"#),
+        let manifest = format!(r#"{{"dependencies":{{{dependencies}}}}}"#);
+        let root = fixture(
+            &format!("unsupported-js-{index}"),
+            &[("package.json", &manifest)],
         )?;
         let body = setup_json(&root).await?;
         assert_eq!(body["detected"][0]["runtime"], "node");
@@ -499,9 +624,9 @@ async fn framework_detection_is_bounded_and_exact() -> TestResult {
 #[cfg(unix)]
 #[tokio::test]
 async fn scanner_does_not_follow_manifest_or_metadata_symlinks() -> TestResult {
-    let root = fixture_root("metadata-symlink")?;
-    std::fs::write(
-        root.join("pyproject.toml"),
+    let root = fixture_file(
+        "metadata-symlink",
+        "pyproject.toml",
         "[project]\nname = \"fixture\"\n",
     )?;
     let outside = root.with_extension("outside-requirements");
@@ -569,8 +694,11 @@ async fn scanner_classifies_and_prioritizes_apple_projects() -> TestResult {
 
 #[tokio::test]
 async fn runtimes_without_structured_plans_get_truthful_recovery() -> TestResult {
-    let root = fixture_root("rust-not-ready")?;
-    std::fs::write(root.join("Cargo.toml"), "[package]\nname = \"fixture\"\n")?;
+    let root = fixture_file(
+        "rust-not-ready",
+        "Cargo.toml",
+        "[package]\nname = \"fixture\"\n",
+    )?;
     let body = setup_json(root.as_path()).await?;
     assert_eq!(body["install_ready"], false);
     assert_eq!(body["install_plan"], serde_json::Value::Null);
@@ -594,8 +722,8 @@ async fn runtimes_without_structured_plans_get_truthful_recovery() -> TestResult
         "LogBrew setup plan\nMode: non-mutating plan\nNo files changed.\nInstall: not ready\nNo \
          supported project manifest found.\nNext: run logbrew setup from a project containing \
          package.json, pyproject.toml, Pipfile, pom.xml, build.gradle, build.gradle.kts, Cargo.toml, \
-         Package.swift, project.yml, project.yaml, .xcodeproj, .xcworkspace, CMakeLists.txt, go.mod, \
-         composer.json, or Gemfile.\n"
+         Package.swift, project.yml, project.yaml, .xcodeproj, .xcworkspace, CMakeLists.txt, *.csproj, \
+         go.mod, composer.json, or Gemfile.\n"
     );
     Ok(())
 }
@@ -613,51 +741,14 @@ async fn setup_text(root: &std::path::Path, args: &[&str]) -> TestResult<String>
     let command = parse_command(args.iter().copied())?;
     let mut output = Vec::new();
     execute_command(&command, &environment(root), &mut output).await?;
-    Ok(String::from_utf8(output)?)
+    let text = String::from_utf8(output)?;
+    assert!(!text.contains(root.to_string_lossy().as_ref()));
+    Ok(text)
 }
 
 async fn setup_json(root: &std::path::Path) -> TestResult<serde_json::Value> {
     let text = setup_text(root, &["logbrew", "setup", "--json"]).await?;
     Ok(serde_json::from_str(text.as_str())?)
-}
-
-fn python_plan(
-    package_manager: &str,
-    integration: &str,
-    framework_package: Option<&str>,
-    framework_requirement: Option<&str>,
-    install_command: &str,
-) -> serde_json::Value {
-    let mut packages = std::iter::once(("logbrew-sdk", "core"))
-        .chain(framework_package.map(|name| (name, "framework")))
-        .map(|(name, role)| {
-            serde_json::json!({
-                "name": name,
-                "role": role,
-                "version_requirement": { "kind": "latest_compatible" }
-            })
-        })
-        .collect::<Vec<_>>();
-    if install_command.contains("[celery]") {
-        packages[0]["extras"] = serde_json::json!(["celery"]);
-    }
-    serde_json::json!({
-        "mode": "non_mutating",
-        "ecosystem": "pypi",
-        "package_manager": package_manager,
-        "integration": integration,
-        "packages": packages,
-        "compatibility": {
-            "status": "review_required",
-            "requires_python": ">=3.10",
-            "requires_framework": framework_requirement
-        },
-        "install_command": install_command,
-        "next_action": {
-            "code": "review_compatibility_and_install",
-            "target": "project_environment"
-        }
-    })
 }
 
 fn assert_contains_all(text: &str, expected: &[&str]) {
@@ -676,4 +767,22 @@ fn fixture_root(label: &str) -> Result<std::path::PathBuf, std::io::Error> {
     }
     std::fs::create_dir_all(&root)?;
     Ok(root)
+}
+
+fn fixture(label: &str, files: &[(&str, &str)]) -> Result<std::path::PathBuf, std::io::Error> {
+    let root = fixture_root(label)?;
+    for (name, contents) in files {
+        let path = root.join(name);
+        std::fs::create_dir_all(path.parent().expect("fixture file has parent"))?;
+        std::fs::write(path, contents)?;
+    }
+    Ok(root)
+}
+
+fn fixture_file(
+    label: &str,
+    name: &str,
+    contents: &str,
+) -> Result<std::path::PathBuf, std::io::Error> {
+    fixture(label, &[(name, contents)])
 }

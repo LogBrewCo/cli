@@ -36,6 +36,8 @@ const RUBY_INSTALL_COMMAND: &str = "bundle add logbrew-sdk --version \"~> 0.1.5\
 const SVELTE_PACKAGES: &str = "@logbrew/sdk @logbrew/browser @logbrew/svelte";
 const REACT_EXPRESS_PACKAGES: &str =
     "@logbrew/sdk @logbrew/browser @logbrew/react @logbrew/node @logbrew/express";
+const ASPNETCORE_PACKAGE: &str = "LogBrew.AspNetCore";
+const ASPNETCORE_VERSION: &str = "0.1.2";
 /// Maximum bytes read from a manifest while detecting a framework.
 const MAX_FRAMEWORK_MANIFEST_BYTES: u64 = 256 * 1024;
 /// Public SDK repository used by non-mutating install plans.
@@ -75,7 +77,7 @@ const CMAKE_NEXT_STEP: &str = "add the pinned LogBrew C++ FetchContent block and
 const EMPTY_NEXT_STEP: &str = "run logbrew setup from a project containing package.json, \
                                pyproject.toml, Pipfile, pom.xml, build.gradle, build.gradle.kts, \
                                Cargo.toml, Package.swift, project.yml, project.yaml, .xcodeproj, \
-                               .xcworkspace, CMakeLists.txt, go.mod, composer.json, or Gemfile.";
+                               .xcworkspace, CMakeLists.txt, *.csproj, go.mod, composer.json, or Gemfile.";
 
 /// Stable key, display name, and optional framework package requirement.
 type PythonIntegration = (
@@ -108,6 +110,7 @@ enum PackageIntegration {
     Python(PythonSetup),
     Php(bool),
     Ruby(bool),
+    AspNetCore,
     SvelteKit,
     ReactExpress,
 }
@@ -196,6 +199,7 @@ impl InstallPlan {
                 PackageIntegration::Java(value) => java_plan_json(package_manager, value),
                 PackageIntegration::Php(value) => composer_plan_json(package_manager, value),
                 PackageIntegration::Ruby(value) => ruby_plan_json(package_manager, value),
+                PackageIntegration::AspNetCore => aspnetcore_plan_json(package_manager),
                 PackageIntegration::SvelteKit => svelte_plan_json(package_manager),
                 PackageIntegration::ReactExpress => react_express_plan_json(package_manager),
             },
@@ -249,12 +253,21 @@ fn package_next_action() -> serde_json::Value {
     })
 }
 
+macro_rules! package_plan {
+    ($ecosystem:expr, $manager:expr, $integration:expr, {$($details:tt)*}) => {
+        serde_json::json!({
+            "mode": "non_mutating",
+            "ecosystem": $ecosystem,
+            "package_manager": $manager,
+            "integration": $integration,
+            $($details)*
+            "next_action": package_next_action(),
+        })
+    };
+}
+
 fn java_plan_json(package_manager: &str, spring: bool) -> serde_json::Value {
-    serde_json::json!({
-        "mode": "non_mutating",
-        "ecosystem": package_manager,
-        "package_manager": package_manager,
-        "integration": if spring { "spring" } else { "java" },
+    package_plan!(package_manager, package_manager, if spring { "spring" } else { "java" }, {
         "package": {
             "group_id": "co.logbrew",
             "artifact_id": "logbrew-sdk",
@@ -266,7 +279,6 @@ fn java_plan_json(package_manager: &str, spring: bool) -> serde_json::Value {
             "requires_framework": spring.then_some("Spring Boot 3+"),
         },
         "dependency_declaration": java_dependency_declaration(package_manager),
-        "next_action": package_next_action(),
     })
 }
 
@@ -280,11 +292,7 @@ fn python_plan_json(package_manager: &str, setup: PythonSetup) -> serde_json::Va
     let packages = std::iter::once(core)
         .chain(framework.map(|(name, _)| npm_package(name, "framework")))
         .collect::<Vec<_>>();
-    serde_json::json!({
-        "mode": "non_mutating",
-        "ecosystem": "pypi",
-        "package_manager": package_manager,
-        "integration": key,
+    package_plan!("pypi", package_manager, key, {
         "packages": packages,
         "compatibility": {
             "status": "review_required",
@@ -292,16 +300,11 @@ fn python_plan_json(package_manager: &str, setup: PythonSetup) -> serde_json::Va
             "requires_framework": framework.map(|(_, requirement)| requirement),
         },
         "install_command": python_install_command(package_manager, setup),
-        "next_action": package_next_action(),
     })
 }
 
 fn composer_plan_json(package_manager: &str, symfony: bool) -> serde_json::Value {
-    serde_json::json!({
-        "mode": "non_mutating",
-        "ecosystem": "composer",
-        "package_manager": package_manager,
-        "integration": if symfony { "symfony" } else { "php" },
+    package_plan!("composer", package_manager, if symfony { "symfony" } else { "php" }, {
         "package": "logbrew/sdk",
         "framework_manifest": symfony.then_some("config/bundles.php"),
         "compatibility": {
@@ -310,16 +313,11 @@ fn composer_plan_json(package_manager: &str, symfony: bool) -> serde_json::Value
             "requires_framework": symfony.then_some(SYMFONY_VERSION_REQUIREMENT),
         },
         "install_command": "composer require logbrew/sdk",
-        "next_action": package_next_action(),
     })
 }
 
 fn ruby_plan_json(package_manager: &str, rails: bool) -> serde_json::Value {
-    serde_json::json!({
-        "mode": "non_mutating",
-        "ecosystem": "rubygems",
-        "package_manager": package_manager,
-        "integration": if rails { "rails" } else { "ruby" },
+    package_plan!("rubygems", package_manager, if rails { "rails" } else { "ruby" }, {
         "package": "logbrew-sdk",
         "framework_manifest": rails.then_some("config/application.rb"),
         "compatibility": {
@@ -328,16 +326,33 @@ fn ruby_plan_json(package_manager: &str, rails: bool) -> serde_json::Value {
             "requires_framework": serde_json::Value::Null,
         },
         "install_command": RUBY_INSTALL_COMMAND,
-        "next_action": package_next_action(),
+    })
+}
+
+fn aspnetcore_plan_json(package_manager: &str) -> serde_json::Value {
+    package_plan!("nuget", package_manager, "aspnetcore", {
+        "package": {
+            "id": ASPNETCORE_PACKAGE,
+            "version": ASPNETCORE_VERSION,
+        },
+        "compatibility": {
+            "status": "review_required",
+            "requires_dotnet": ">=10",
+            "requires_framework": "ASP.NET Core 10+",
+        },
+        "surfaces": [{
+            "surface": "server",
+            "integration": "aspnetcore",
+            "credential_kind": "server",
+            "service_name_required": true,
+            "deployment_context_required": ["environment", "release"],
+        }],
+        "install_command": format!("dotnet add package {ASPNETCORE_PACKAGE} --version {ASPNETCORE_VERSION}"),
     })
 }
 
 fn svelte_plan_json(package_manager: &str) -> serde_json::Value {
-    serde_json::json!({
-        "mode": "non_mutating",
-        "ecosystem": "npm",
-        "package_manager": package_manager,
-        "integration": "sveltekit",
+    package_plan!("npm", package_manager, "sveltekit", {
         "packages": [
             npm_package("@logbrew/sdk", "core"),
             npm_package("@logbrew/browser", "delivery"),
@@ -353,16 +368,11 @@ fn svelte_plan_json(package_manager: &str) -> serde_json::Value {
             {"surface": "server", "integration": "sveltekit", "credential_kind": "server", "service_name_required": true, "deployment_context_required": ["environment", "release"]},
         ],
         "install_command": javascript_install_command(package_manager, SVELTE_PACKAGES),
-        "next_action": package_next_action(),
     })
 }
 
 fn react_express_plan_json(package_manager: &str) -> serde_json::Value {
-    serde_json::json!({
-        "mode": "non_mutating",
-        "ecosystem": "npm",
-        "package_manager": package_manager,
-        "integration": "react_express",
+    package_plan!("npm", package_manager, "react_express", {
         "packages": REACT_EXPRESS_PACKAGES.split_whitespace().collect::<Vec<_>>(),
         "compatibility": {
             "status": "review_required",
@@ -374,7 +384,6 @@ fn react_express_plan_json(package_manager: &str) -> serde_json::Value {
             {"surface": "server", "integration": "express", "credential_kind": "server", "service_name_required": true, "deployment_context_required": ["environment", "release"]},
         ],
         "install_command": javascript_install_command(package_manager, REACT_EXPRESS_PACKAGES),
-        "next_action": package_next_action(),
     })
 }
 
@@ -423,6 +432,10 @@ fn write_package_human<W: std::io::Write>(
             output,
             "Package manager: {package_manager}\nIntegration: {}\nPackage: logbrew-sdk\nCompatibility review: Ruby {RUBY_MINIMUM_VERSION}\nCommand: {RUBY_INSTALL_COMMAND}",
             if rails { "Rails" } else { "Ruby" },
+        ),
+        PackageIntegration::AspNetCore => writeln!(
+            output,
+            "Package manager: {package_manager}\nIntegration: ASP.NET Core\nPackage: {ASPNETCORE_PACKAGE}:{ASPNETCORE_VERSION}\nCompatibility review: .NET >=10; ASP.NET Core 10+\nSurface: server; key kind: server; stable service name, environment, and release required\nCommand: dotnet add package {ASPNETCORE_PACKAGE} --version {ASPNETCORE_VERSION}",
         ),
         PackageIntegration::SvelteKit => writeln!(
             output,
@@ -554,13 +567,15 @@ fn install_plan(detected: &[ProjectDetection]) -> Option<InstallPlan> {
                 "objective-c" => (0, InstallPlan::ObjectiveC),
                 "swift" | "swift-ios" => (1, InstallPlan::Swift),
                 "cpp" => (2, InstallPlan::Cmake),
-                "java" | "python" | "php" | "ruby" | "sveltekit" | "react-express" => (
+                "aspnetcore" | "java" | "python" | "php" | "ruby" | "sveltekit"
+                | "react-express" => (
                     match detection.runtime {
-                        "java" => 3,
-                        "python" => 4,
-                        "php" => 5,
-                        "ruby" => 6,
-                        _ => 7,
+                        "aspnetcore" => 3,
+                        "java" => 4,
+                        "python" => 5,
+                        "php" => 6,
+                        "ruby" => 7,
+                        _ => 8,
                     },
                     InstallPlan::Package {
                         package_manager: detection.package_manager,
@@ -682,10 +697,14 @@ fn manifest_detection(root: &Path, path: &Path) -> Option<ProjectDetection> {
             path,
             "config/application.rb",
         ))),
+        "dotnet" => read_framework_manifest(path)
+            .filter(|text| text.contains("Microsoft.NET.Sdk.Web"))
+            .map(|_| PackageIntegration::AspNetCore),
         _ => None,
     };
     Some(ProjectDetection {
         runtime: match package_integration {
+            Some(PackageIntegration::AspNetCore) => "aspnetcore",
             Some(PackageIntegration::SvelteKit) => "sveltekit",
             Some(PackageIntegration::ReactExpress) => "react-express",
             _ => runtime,
@@ -757,6 +776,7 @@ fn manifest_runtime(path: &Path) -> Option<(&'static str, &'static str)> {
         "Pipfile" => Some(("python", "pipenv")),
         "project.yml" | "project.yaml" => Some((xcodegen_runtime(path), "xcodegen")),
         "pyproject.toml" => Some(("python", python_package_manager(path))),
+        _ if file_name.ends_with(".csproj") => Some(("dotnet", "dotnet")),
         _ if file_name.ends_with(".xcodeproj") => Some(("swift-ios", "xcode")),
         _ if file_name.ends_with(".xcworkspace") => Some(("swift-ios", "xcode workspace")),
         _ => None,
@@ -939,6 +959,8 @@ fn relative_path(root: &Path, path: &Path) -> Option<String> {
 fn display_runtime(runtime: &str) -> &'static str {
     match runtime {
         "go" => "Go",
+        "aspnetcore" => "ASP.NET Core",
+        "dotnet" => ".NET",
         "java" => "Java",
         "cpp" => "C++",
         "node" => "Node",

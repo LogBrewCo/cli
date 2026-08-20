@@ -163,12 +163,7 @@ async fn repository_catalog_is_bounded_and_rejects_external_authorization_paths(
         .mount(&server)
         .await;
     let command = parse_command(["logbrew", "projects", "repositories"])?;
-    let env = CliEnvironment {
-        base_url: server.uri(),
-        token: Some(String::from("account-token")),
-        home: None,
-        cwd: None,
-    };
+    let env = super::authenticated_env(&server, "account-token", None);
     let mut output = Vec::new();
     execute_command(&command, &env, &mut output).await?;
     let text = String::from_utf8(output)?;
@@ -215,12 +210,7 @@ async fn repository_discovery_posts_exact_scope_and_fails_closed_on_contradictio
         "42",
         "--json",
     ])?;
-    let env = CliEnvironment {
-        base_url: server.uri(),
-        token: Some(String::from("account-token")),
-        home: None,
-        cwd: None,
-    };
+    let env = super::authenticated_env(&server, "account-token", None);
     let mut output = Vec::new();
     execute_command(&command, &env, &mut output).await?;
     assert_eq!(
