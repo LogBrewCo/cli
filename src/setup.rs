@@ -15,7 +15,7 @@ const SDK_NEXT_STEP: &str = "use the released SDK guidance for this runtime; thi
 const PACKAGE_NEXT_STEP: &str =
     "review the compatibility requirements, then add the dependency; no files were changed";
 /// Current released Java SDK coordinate and compatibility floor.
-const JAVA_SDK_VERSION: &str = "0.1.4";
+const JAVA_SDK_VERSION: &str = "0.1.5";
 const JAVA_MINIMUM_VERSION: &str = ">=11";
 /// Minimum Python version required by the current public Python SDK family.
 const PYTHON_MINIMUM_VERSION: &str = ">=3.10";
@@ -550,7 +550,7 @@ fn install_plan(detected: &[ProjectDetection]) -> Option<InstallPlan> {
     detected
         .iter()
         .filter_map(|detection| {
-            let (priority, plan) = match detection.runtime {
+            Some(match detection.runtime {
                 "objective-c" => (0, InstallPlan::ObjectiveC),
                 "swift" | "swift-ios" => (1, InstallPlan::Swift),
                 "cpp" => (2, InstallPlan::Cmake),
@@ -568,8 +568,7 @@ fn install_plan(detected: &[ProjectDetection]) -> Option<InstallPlan> {
                     },
                 ),
                 _ => return None,
-            };
-            Some((priority, plan))
+            })
         })
         .min_by_key(|(priority, _)| *priority)
         .map(|(_, plan)| plan)
