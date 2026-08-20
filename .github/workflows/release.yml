@@ -108,7 +108,7 @@ jobs:
           persist-credentials: false
       - uses: swatinem/rust-cache@v2
         with:
-          key: ${{ matrix.target }}
+          key: workspace-v1-${{ matrix.target }}
           cache-workspace-crates: true
       - name: Install dist
         run: ${{ matrix.install_dist }}

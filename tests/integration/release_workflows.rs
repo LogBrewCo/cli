@@ -23,6 +23,7 @@ fn release_workflows_prebuild_publish_and_recover_safely() {
         "--commit \"$GITHUB_SHA\"",
         "--status success",
         "if: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag == '' && github.ref == 'refs/heads/main' }}",
+        "key: workspace-v1-${{ matrix.target }}",
         "cache-workspace-crates: true",
         "runner: windows-2025",
         "run-id: ${{ needs.plan.outputs.prebuild-run-id }}",

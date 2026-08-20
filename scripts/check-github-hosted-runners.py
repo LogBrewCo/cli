@@ -42,11 +42,10 @@ def main() -> int:
     for raw in filter(None, tracked.split(b"\0")):
         path = ROOT / raw.decode()
         relative = path.relative_to(ROOT)
-        root = relative.parts[0]
         if relative not in {
             pathlib.Path("README.md"),
             pathlib.Path("dist-workspace.toml"),
-        } and root not in {".github", "docs", "scripts"}:
+        } and relative.parts[0] not in {".github", "docs", "scripts"}:
             continue
         try:
             content = path.read_text(encoding="utf-8")
@@ -60,10 +59,7 @@ def main() -> int:
     if dist_config.count("github-custom-runners") != 1 or custom_runner not in dist_config:
         errors.append("dist-workspace.toml must use the official Windows 2025 runner")
 
-    workflows_dir = ROOT / ".github" / "workflows"
-    for workflow in sorted(
-        {path for suffix in ("*.yml", "*.yaml") for path in workflows_dir.glob(suffix)}
-    ):
+    for workflow in sorted((ROOT / ".github" / "workflows").glob("*.y*ml")):
         for line_number, line in enumerate(
             workflow.read_text(encoding="utf-8").splitlines(), start=1
         ):
