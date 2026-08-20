@@ -18,7 +18,6 @@ for dependency in cargo-audit python3 ruby; do
   exit 1
 done
 
-python3 scripts/test-real-user-public-install-smoke.py
 (
 bash scripts/confidentiality-check.sh
 python3 scripts/brand_assets.py --check
@@ -42,8 +41,14 @@ audit_pid=$!
 trap 'kill "$portable_checks_pid" "$audit_pid" 2>/dev/null || true' EXIT
 cargo fmt --all -- --check
 cargo clippy --lib --bin logbrew --all-features -- -D warnings
+(
 cargo test --all-targets --all-features
 CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$ROOT_DIR/target}" cargo package --locked --allow-dirty --offline
+) &
+rust_checks_pid=$!
+trap 'kill "$portable_checks_pid" "$audit_pid" "$rust_checks_pid" 2>/dev/null || true' EXIT
+python3 scripts/test-real-user-public-install-smoke.py
+wait "$rust_checks_pid"
 wait "$portable_checks_pid"
 wait "$audit_pid"
 trap - EXIT

@@ -748,24 +748,22 @@ fn detect_javascript_integration(manifest: &Path) -> Option<PackageIntegration> 
         .filter_map(|field| value.get(field)?.as_object())
         .any(|dependencies| dependencies.contains_key(package))
     };
-    if has("@sveltejs/kit") {
-        Some(PackageIntegration::SvelteKit)
-    } else if !has("next") && !has("react-native") && has("react") && has("express") {
-        Some(PackageIntegration::ReactExpress)
-    } else if value.get("bin").is_some_and(|bin| {
-        bin.as_str().is_some_and(|path| !path.trim().is_empty())
-            || bin.as_object().is_some_and(|bins| {
-                !bins.is_empty()
-                    && bins.iter().all(|(name, path)| {
-                        !name.trim().is_empty()
-                            && path.as_str().is_some_and(|path| !path.trim().is_empty())
-                    })
-            })
-    }) {
-        Some(PackageIntegration::Node)
-    } else {
-        None
-    }
+    let executable = match value.get("bin") {
+        Some(serde_json::Value::String(path)) => !path.trim().is_empty(),
+        Some(serde_json::Value::Object(bins)) => {
+            !bins.is_empty()
+                && bins.iter().all(|(name, path)| {
+                    !name.trim().is_empty()
+                        && path.as_str().is_some_and(|path| !path.trim().is_empty())
+                })
+        }
+        _ => false,
+    };
+    let react_express = !has("next") && !has("react-native") && has("react") && has("express");
+    has("@sveltejs/kit")
+        .then_some(PackageIntegration::SvelteKit)
+        .or_else(|| react_express.then_some(PackageIntegration::ReactExpress))
+        .or_else(|| executable.then_some(PackageIntegration::Node))
 }
 
 /// Returns whether a directory should be skipped during setup detection.
