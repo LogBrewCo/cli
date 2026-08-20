@@ -80,10 +80,22 @@ fn authenticated_env(
     token: &str,
     home_name: Option<&str>,
 ) -> logbrew_cli::CliEnvironment {
+    test_env(
+        server,
+        Some(token),
+        home_name.map(|name| std::env::temp_dir().join(format!("logbrew-{name}"))),
+    )
+}
+
+fn test_env(
+    server: &wiremock::MockServer,
+    token: Option<&str>,
+    home: Option<std::path::PathBuf>,
+) -> logbrew_cli::CliEnvironment {
     logbrew_cli::CliEnvironment {
         base_url: server.uri(),
-        token: Some(token.to_owned()),
-        home: home_name.map(|name| std::env::temp_dir().join(format!("logbrew-{name}"))),
+        token: token.map(str::to_owned),
+        home,
         cwd: None,
     }
 }

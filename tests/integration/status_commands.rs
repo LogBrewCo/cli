@@ -13,12 +13,7 @@ async fn status_json_reports_api_and_missing_auth_for_agents() {
         .mount(&server)
         .await;
     let command = parse_command(["logbrew", "status", "--json"]).expect("command parses");
-    let env = CliEnvironment {
-        base_url: server.uri(),
-        token: None,
-        home: Some(std::env::temp_dir().join("logbrew-status-json-test")),
-        cwd: None,
-    };
+    let env = environment(&server, None, "json-test");
     let mut output = Vec::new();
 
     execute_command(&command, &env, &mut output)
@@ -53,12 +48,7 @@ async fn status_json_reports_env_auth_without_exposing_token() {
         .mount(&server)
         .await;
     let command = parse_command(["logbrew", "status", "--json"]).expect("command parses");
-    let env = CliEnvironment {
-        base_url: server.uri(),
-        token: Some("fixture-token".to_owned()),
-        home: Some(std::env::temp_dir().join("logbrew-status-env-auth-test")),
-        cwd: None,
-    };
+    let env = environment(&server, Some("fixture-token"), "env-auth-test");
     let mut output = Vec::new();
 
     execute_command(&command, &env, &mut output)
@@ -133,12 +123,7 @@ async fn status_json_reports_expired_token_as_unauthenticated() {
         .mount(&server)
         .await;
     let command = parse_command(["logbrew", "status", "--json"]).expect("command parses");
-    let env = CliEnvironment {
-        base_url: server.uri(),
-        token: Some("expired-token".to_owned()),
-        home: Some(std::env::temp_dir().join("logbrew-status-expired-auth-test")),
-        cwd: None,
-    };
+    let env = environment(&server, Some("expired-token"), "expired-auth-test");
     let mut output = Vec::new();
 
     execute_command(&command, &env, &mut output)
@@ -205,12 +190,7 @@ async fn status_refreshes_expired_local_auth_before_reporting_authenticated()
         .to_string(),
     )?;
     let command = parse_command(["logbrew", "status", "--json"])?;
-    let env = CliEnvironment {
-        base_url: server.uri(),
-        token: None,
-        home: Some(home),
-        cwd: None,
-    };
+    let env = super::test_env(&server, None, Some(home));
     let mut output = Vec::new();
 
     execute_command(&command, &env, &mut output).await?;
@@ -239,12 +219,7 @@ async fn status_human_output_includes_api_and_auth_next_step() {
         .mount(&server)
         .await;
     let command = parse_command(["logbrew", "status"]).expect("command parses");
-    let env = CliEnvironment {
-        base_url: server.uri(),
-        token: None,
-        home: Some(std::env::temp_dir().join("logbrew-status-human-test")),
-        cwd: None,
-    };
+    let env = environment(&server, None, "human-test");
     let mut output = Vec::new();
 
     execute_command(&command, &env, &mut output)
@@ -289,12 +264,7 @@ async fn status_human_authenticated_output_points_to_first_read_without_leaking_
         .mount(&server)
         .await;
     let command = parse_command(["logbrew", "status"]).expect("command parses");
-    let env = CliEnvironment {
-        base_url: server.uri(),
-        token: Some("fixture-token".to_owned()),
-        home: Some(std::env::temp_dir().join("logbrew-status-human-auth-test")),
-        cwd: None,
-    };
+    let env = environment(&server, Some("fixture-token"), "human-auth-test");
     let mut output = Vec::new();
 
     execute_command(&command, &env, &mut output)
@@ -328,12 +298,7 @@ async fn status_json_reports_unreachable_api_without_exposing_token() {
         .mount(&server)
         .await;
     let command = parse_command(["logbrew", "status", "--json"]).expect("command parses");
-    let env = CliEnvironment {
-        base_url: server.uri(),
-        token: Some("fixture-token".to_owned()),
-        home: Some(std::env::temp_dir().join("logbrew-status-json-down-test")),
-        cwd: None,
-    };
+    let env = environment(&server, Some("fixture-token"), "json-down-test");
     let mut output = Vec::new();
 
     let error = execute_command(&command, &env, &mut output)
@@ -363,12 +328,7 @@ async fn status_human_reports_unreachable_api_with_next_step() {
         .mount(&server)
         .await;
     let command = parse_command(["logbrew", "status"]).expect("command parses");
-    let env = CliEnvironment {
-        base_url: server.uri(),
-        token: None,
-        home: Some(std::env::temp_dir().join("logbrew-status-human-down-test")),
-        cwd: None,
-    };
+    let env = environment(&server, None, "human-down-test");
     let mut output = Vec::new();
 
     let error = execute_command(&command, &env, &mut output)
@@ -385,4 +345,12 @@ async fn status_human_reports_unreachable_api_with_next_step() {
             server.uri()
         )
     );
+}
+
+fn environment(server: &MockServer, token: Option<&str>, name: &str) -> CliEnvironment {
+    super::test_env(
+        server,
+        token,
+        Some(std::env::temp_dir().join(format!("logbrew-status-{name}"))),
+    )
 }

@@ -242,12 +242,7 @@ async fn projects_refreshes_local_account_auth_once() -> Result<(), Box<dyn std:
         server.uri().as_str(),
     )?;
     let command = parse_command(["logbrew", "projects", "--json"])?;
-    let env = CliEnvironment {
-        base_url: server.uri(),
-        token: None,
-        home: Some(home.clone()),
-        cwd: None,
-    };
+    let env = super::test_env(&server, None, Some(home.clone()));
     let mut output = Vec::new();
 
     execute_command(&command, &env, &mut output).await?;
@@ -305,12 +300,7 @@ async fn project_errors_use_only_typed_local_recovery() -> Result<(), Box<dyn st
 }
 
 fn environment(server: &MockServer) -> CliEnvironment {
-    CliEnvironment {
-        base_url: server.uri(),
-        token: Some(String::from("account-token")),
-        home: None,
-        cwd: None,
-    }
+    super::authenticated_env(server, "account-token", None)
 }
 
 fn project_catalog() -> serde_json::Value {

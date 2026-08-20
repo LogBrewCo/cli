@@ -1,8 +1,8 @@
 //! Account-owned project lifecycle contract tests.
 
 use logbrew_cli::{
-    CliEnvironment, Command, HttpMethod, RuntimeError, execute_command, parse_command,
-    write_cli_error, write_runtime_error,
+    Command, HttpMethod, RuntimeError, execute_command, parse_command, write_cli_error,
+    write_runtime_error,
 };
 use wiremock::matchers::{body_json, header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -157,7 +157,7 @@ async fn lifecycle_revalidates_public_values_and_rejects_ingest_keys() -> TestRe
     ] {
         let error = execute_command(
             &command,
-            &environment(&server, "account-token"),
+            &super::authenticated_env(&server, "account-token", None),
             &mut Vec::new(),
         )
         .await
@@ -168,7 +168,7 @@ async fn lifecycle_revalidates_public_values_and_rejects_ingest_keys() -> TestRe
     for line in [ARCHIVE, DELETE_JSON] {
         let error = execute_command(
             &parse(line)?,
-            &environment(&server, "lbw_ingest_private-secret"),
+            &super::authenticated_env(&server, "lbw_ingest_private-secret", None),
             &mut Vec::new(),
         )
         .await
@@ -432,12 +432,7 @@ async fn lifecycle_mutations_refresh_account_auth_once() -> TestResult {
             "delete-refresh"
         })?;
         write_session(home.as_path(), server.uri().as_str())?;
-        let env = CliEnvironment {
-            base_url: server.uri(),
-            token: None,
-            home: Some(home.clone()),
-            cwd: None,
-        };
+        let env = super::test_env(&server, None, Some(home.clone()));
         let mut output = Vec::new();
 
         execute_command(&parse(line)?, &env, &mut output).await?;
@@ -474,7 +469,7 @@ async fn run(server: &MockServer, line: &str) -> TestResult<String> {
     let mut output = Vec::new();
     execute_command(
         &parse(line)?,
-        &environment(server, "account-token"),
+        &super::authenticated_env(server, "account-token", None),
         &mut output,
     )
     .await?;
@@ -484,7 +479,7 @@ async fn run(server: &MockServer, line: &str) -> TestResult<String> {
 async fn run_error(server: &MockServer, line: &str) -> RuntimeError {
     execute_command(
         &parse(line).expect("command parses"),
-        &environment(server, "account-token"),
+        &super::authenticated_env(server, "account-token", None),
         &mut Vec::new(),
     )
     .await
@@ -505,10 +500,6 @@ async fn mount_delete(server: &MockServer, response: ResponseTemplate, expected:
 
 async fn requests(server: &MockServer) -> Result<Vec<wiremock::Request>, &'static str> {
     server.received_requests().await.ok_or("requests disabled")
-}
-
-fn environment(server: &MockServer, token: &str) -> CliEnvironment {
-    super::authenticated_env(server, token, None)
 }
 
 fn cli_error(error: &logbrew_cli::CliError) -> TestResult<serde_json::Value> {

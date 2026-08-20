@@ -526,12 +526,7 @@ async fn waiting_for_credential_lock_does_not_block_async_runtime()
 }
 
 fn logout_env(server: &MockServer, home: std::path::PathBuf) -> CliEnvironment {
-    CliEnvironment {
-        base_url: server.uri(),
-        token: None,
-        home: Some(home),
-        cwd: None,
-    }
+    super::test_env(server, None, Some(home))
 }
 
 async fn run_logout_json(

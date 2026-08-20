@@ -1,8 +1,6 @@
 //! Strict authenticated account-identity command tests.
 
-use logbrew_cli::{
-    CliEnvironment, RuntimeError, execute_command, parse_command, write_runtime_error,
-};
+use logbrew_cli::{RuntimeError, execute_command, parse_command, write_runtime_error};
 use wiremock::matchers::{body_json, header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -27,7 +25,7 @@ async fn whoami_json_preserves_the_exact_validated_account_object()
 
         execute_command(
             &command,
-            &environment(&server, "account-token"),
+            &super::authenticated_env(&server, "account-token", None),
             &mut output,
         )
         .await?;
@@ -60,7 +58,7 @@ async fn whoami_human_output_is_bounded_and_identity_oriented()
 
     execute_command(
         &command,
-        &environment(&server, "account-token"),
+        &super::authenticated_env(&server, "account-token", None),
         &mut output,
     )
     .await?;
@@ -116,7 +114,7 @@ async fn whoami_rejects_partial_extra_duplicate_or_hostile_identity_responses()
 
         let error = execute_command(
             &command,
-            &environment(&server, "account-token"),
+            &super::authenticated_env(&server, "account-token", None),
             &mut output,
         )
         .await
@@ -151,7 +149,7 @@ async fn whoami_uses_only_typed_local_recovery_for_auth_errors()
     let command = parse_command(["logbrew", "whoami", "--json"])?;
     let error = execute_command(
         &command,
-        &environment(&server, "account-token"),
+        &super::authenticated_env(&server, "account-token", None),
         &mut Vec::new(),
     )
     .await
@@ -211,7 +209,7 @@ async fn whoami_maps_account_recovery_states_without_exposing_recovery_tokens()
         let command = parse_command(["logbrew", "whoami", "--json"])?;
         let error = execute_command(
             &command,
-            &environment(&server, "account-token"),
+            &super::authenticated_env(&server, "account-token", None),
             &mut Vec::new(),
         )
         .await
@@ -238,7 +236,7 @@ async fn whoami_rejects_project_ingest_keys_before_any_request()
     let command = parse_command(["logbrew", "whoami", "--json"])?;
     let error = execute_command(
         &command,
-        &environment(&server, "lbw_ingest_private-secret"),
+        &super::authenticated_env(&server, "lbw_ingest_private-secret", None),
         &mut Vec::new(),
     )
     .await
@@ -297,12 +295,7 @@ async fn whoami_refreshes_expired_local_account_auth_once() -> Result<(), Box<dy
         server.uri().as_str(),
     )?;
     let command = parse_command(["logbrew", "whoami", "--json"])?;
-    let env = CliEnvironment {
-        base_url: server.uri(),
-        token: None,
-        home: Some(home.clone()),
-        cwd: None,
-    };
+    let env = super::test_env(&server, None, Some(home.clone()));
     let mut output = Vec::new();
 
     execute_command(&command, &env, &mut output).await?;
@@ -329,10 +322,6 @@ fn account() -> serde_json::Value {
         "avatar_data_url": format!("data:image/png;base64,{}", "A".repeat(20 * 1024)),
         "tier": "free"
     })
-}
-
-fn environment(server: &MockServer, token: &str) -> CliEnvironment {
-    super::authenticated_env(server, token, None)
 }
 
 fn temporary_home(label: &str) -> Result<std::path::PathBuf, std::io::Error> {
