@@ -1,8 +1,4 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$ROOT_DIR"
-
-bash scripts/confidentiality-check.sh
-bash scripts/check-all.sh
+exec bash "$(dirname "${BASH_SOURCE[0]}")/check-all.sh"

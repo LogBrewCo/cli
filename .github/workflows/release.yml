@@ -23,7 +23,6 @@ jobs:
       val: ${{ steps.plan.outputs.manifest }}
       tag: ${{ github.event_name == 'push' && github.ref_name || '' }}
       tag-flag: ${{ github.event_name == 'push' && format('--tag={0}', github.ref_name) || '' }}
-      building: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag == '' }}
       publishing: ${{ github.event_name == 'push' }}
       prebuild-run-id: ${{ steps.prebuild.outputs.run-id }}
     env:
@@ -32,7 +31,6 @@ jobs:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
-          submodules: recursive
       - name: Require protected main for artifact prebuilds
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag == '' }}
         shell: bash
@@ -79,46 +77,43 @@ jobs:
           path: plan-dist-manifest.json
 
   build-local-artifacts:
-    name: build-local-artifacts (${{ join(matrix.targets, ', ') }})
-    needs: plan
-    if: ${{ needs.plan.outputs.building == 'true' }}
+    name: build-local-artifacts (${{ matrix.target }})
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag == '' && github.ref == 'refs/heads/main' }}
     strategy:
       fail-fast: false
-      matrix: ${{ fromJson(needs.plan.outputs.val).ci.github.artifacts_matrix }}
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            runner: macos-14
+            install_dist: curl --proto '=https' --tlsv1.2 -LsSf https://github.com/axodotdev/cargo-dist/releases/download/v0.32.0/cargo-dist-installer.sh | sh
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-22.04-arm
+            install_dist: curl --proto '=https' --tlsv1.2 -LsSf https://github.com/axodotdev/cargo-dist/releases/download/v0.32.0/cargo-dist-installer.sh | sh
+          - target: x86_64-apple-darwin
+            runner: macos-15-intel
+            install_dist: curl --proto '=https' --tlsv1.2 -LsSf https://github.com/axodotdev/cargo-dist/releases/download/v0.32.0/cargo-dist-installer.sh | sh
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-22.04
+            install_dist: curl --proto '=https' --tlsv1.2 -LsSf https://github.com/axodotdev/cargo-dist/releases/download/v0.32.0/cargo-dist-installer.sh | sh
+          - target: x86_64-pc-windows-msvc
+            runner: windows-2025
+            install_dist: irm https://github.com/axodotdev/cargo-dist/releases/download/v0.32.0/cargo-dist-installer.ps1 | iex
     runs-on: ${{ matrix.runner }}
-    container: ${{ matrix.container && matrix.container.image || null }}
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      BUILD_MANIFEST_NAME: target/distrib/${{ join(matrix.targets, '-') }}-dist-manifest.json
+      BUILD_MANIFEST_NAME: target/distrib/${{ matrix.target }}-dist-manifest.json
     steps:
-      - run: git config --global core.longpaths true
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
-          submodules: recursive
-      - name: Install Rust in containers
-        if: ${{ matrix.container }}
-        shell: bash
-        run: |
-          if ! command -v cargo >/dev/null 2>&1; then
-            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-          fi
       - uses: swatinem/rust-cache@v2
         with:
-          key: ${{ join(matrix.targets, '-') }}
-          cache-provider: ${{ matrix.cache_provider }}
+          key: ${{ matrix.target }}
+          cache-workspace-crates: true
       - name: Install dist
-        run: ${{ matrix.install_dist.run }}
-      - uses: actions/download-artifact@v8
-        with:
-          pattern: artifacts-*
-          path: target/distrib/
-          merge-multiple: true
-      - name: Install dependencies
-        run: ${{ matrix.packages_install }}
+        run: ${{ matrix.install_dist }}
       - name: Build artifacts
-        run: dist build ${{ needs.plan.outputs.tag-flag }} --print=linkage --output-format=json ${{ matrix.dist_args }} > dist-manifest.json
+        run: dist build --artifacts=local --target=${{ matrix.target }} --output-format=json > dist-manifest.json
       - id: cargo-dist
         shell: bash
         run: |
@@ -130,16 +125,14 @@ jobs:
           cp dist-manifest.json "$BUILD_MANIFEST_NAME"
       - uses: actions/upload-artifact@v7
         with:
-          name: artifacts-build-local-${{ join(matrix.targets, '_') }}
+          name: artifacts-build-local-${{ matrix.target }}
           path: |
             ${{ steps.cargo-dist.outputs.paths }}
             ${{ env.BUILD_MANIFEST_NAME }}
 
   build-global-artifacts:
-    needs:
-      - plan
-      - build-local-artifacts
-    if: ${{ needs.plan.outputs.building == 'true' }}
+    needs: build-local-artifacts
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag == '' && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-22.04
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -148,15 +141,12 @@ jobs:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
-          submodules: recursive
+      - name: Install dist
+        shell: bash
+        run: curl --proto '=https' --tlsv1.2 -LsSf https://github.com/axodotdev/cargo-dist/releases/download/v0.32.0/cargo-dist-installer.sh | sh
       - uses: actions/download-artifact@v8
         with:
-          name: cargo-dist-cache
-          path: ~/.cargo/bin/
-      - run: chmod +x ~/.cargo/bin/dist
-      - uses: actions/download-artifact@v8
-        with:
-          pattern: artifacts-*
+          pattern: artifacts-build-local-*
           path: target/distrib/
           merge-multiple: true
       - id: cargo-dist
@@ -177,11 +167,8 @@ jobs:
             ${{ env.BUILD_MANIFEST_NAME }}
 
   host:
-    needs:
-      - plan
-      - build-local-artifacts
-      - build-global-artifacts
-    if: ${{ always() && needs.plan.result == 'success' && needs.plan.outputs.publishing == 'true' && needs.plan.outputs.prebuild-run-id != '' }}
+    needs: plan
+    if: ${{ needs.plan.outputs.publishing == 'true' && needs.plan.outputs.prebuild-run-id != '' }}
     runs-on: ubuntu-22.04
     outputs:
       val: ${{ steps.host.outputs.manifest }}
@@ -191,7 +178,6 @@ jobs:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
-          submodules: recursive
       - uses: actions/download-artifact@v8
         with:
           name: cargo-dist-cache
