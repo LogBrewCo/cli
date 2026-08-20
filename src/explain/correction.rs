@@ -10,6 +10,7 @@ use serde_json::Value;
 use std::fmt::Write as _;
 
 use super::{MAX_SAFE_JSON_INTEGER, invalid_response, is_w3c_id};
+use crate::http::nonempty_display_safe as safe_text;
 use crate::{IssueCorrectionTarget, RuntimeError};
 
 #[derive(Deserialize)]
@@ -257,10 +258,6 @@ fn availability(value: &str) -> Result<bool, RuntimeError> {
         "unavailable" => Ok(false),
         _ => Err(invalid_response()),
     }
-}
-
-fn safe_text(value: &str, limit: usize) -> bool {
-    crate::http::nonempty_display_safe(value, limit)
 }
 
 fn invalid_commit(value: &str) -> bool {
