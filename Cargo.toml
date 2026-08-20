@@ -177,6 +177,8 @@ license = false
 eula = false
 product-icon = "wix/Product.ico"
 
-# The profile that 'dist' will build with
 [profile.dist]
 inherits = "release"
+[profile.dist.package.logbrew-cli]
+codegen-units = 256
+opt-level = 0
