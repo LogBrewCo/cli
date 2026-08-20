@@ -97,11 +97,12 @@ jobs:
             install_dist: curl --proto '=https' --tlsv1.2 -LsSf https://github.com/axodotdev/cargo-dist/releases/download/v0.32.0/cargo-dist-installer.sh | sh
           - target: x86_64-pc-windows-msvc
             runner: windows-2025
+            linker: lld-link
             install_dist: irm https://github.com/axodotdev/cargo-dist/releases/download/v0.32.0/cargo-dist-installer.ps1 | iex
     runs-on: ${{ matrix.runner }}
     env:
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       BUILD_MANIFEST_NAME: target/distrib/${{ matrix.target }}-dist-manifest.json
+      CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER: ${{ matrix.linker }}
     steps:
       - uses: actions/checkout@v6
         with:
