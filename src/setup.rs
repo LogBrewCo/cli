@@ -33,6 +33,7 @@ const SYMFONY_VERSION_REQUIREMENT: &str = "Symfony^6.4 || ^7.0 || ^8.0";
 const RUBY_MINIMUM_VERSION: &str = ">=2.6";
 /// Copyable Bundler command pinned to the current public Ruby SDK family.
 const RUBY_INSTALL_COMMAND: &str = "bundle add logbrew-sdk --version \"~> 0.1.5\"";
+const NODE_PACKAGES: &str = "@logbrew/sdk @logbrew/node";
 const SVELTE_PACKAGES: &str = "@logbrew/sdk @logbrew/browser @logbrew/svelte";
 const REACT_EXPRESS_PACKAGES: &str =
     "@logbrew/sdk @logbrew/browser @logbrew/react @logbrew/node @logbrew/express";
@@ -111,6 +112,7 @@ enum PackageIntegration {
     Php(bool),
     Ruby(bool),
     AspNetCore,
+    Node,
     SvelteKit,
     ReactExpress,
 }
@@ -200,6 +202,7 @@ impl InstallPlan {
                 PackageIntegration::Php(value) => composer_plan_json(package_manager, value),
                 PackageIntegration::Ruby(value) => ruby_plan_json(package_manager, value),
                 PackageIntegration::AspNetCore => aspnetcore_plan_json(package_manager),
+                PackageIntegration::Node => node_plan_json(package_manager),
                 PackageIntegration::SvelteKit => svelte_plan_json(package_manager),
                 PackageIntegration::ReactExpress => react_express_plan_json(package_manager),
             },
@@ -351,6 +354,15 @@ fn aspnetcore_plan_json(package_manager: &str) -> serde_json::Value {
     })
 }
 
+fn node_plan_json(package_manager: &str) -> serde_json::Value {
+    package_plan!("npm", package_manager, "node", {
+        "packages": NODE_PACKAGES.split_whitespace().collect::<Vec<_>>(),
+        "compatibility": {"status": "review_required", "requires_node": ">=18"},
+        "surfaces": [{"surface": "server", "integration": "node", "credential_kind": "server", "service_name_required": true, "deployment_context_required": ["environment", "release"]}],
+        "install_command": javascript_install_command(package_manager, NODE_PACKAGES),
+    })
+}
+
 fn svelte_plan_json(package_manager: &str) -> serde_json::Value {
     package_plan!("npm", package_manager, "sveltekit", {
         "packages": [
@@ -436,6 +448,11 @@ fn write_package_human<W: std::io::Write>(
         PackageIntegration::AspNetCore => writeln!(
             output,
             "Package manager: {package_manager}\nIntegration: ASP.NET Core\nPackage: {ASPNETCORE_PACKAGE}:{ASPNETCORE_VERSION}\nCompatibility review: .NET >=10; ASP.NET Core 10+\nSurface: server; key kind: server; stable service name, environment, and release required\nCommand: dotnet add package {ASPNETCORE_PACKAGE} --version {ASPNETCORE_VERSION}",
+        ),
+        PackageIntegration::Node => writeln!(
+            output,
+            "Package manager: {package_manager}\nIntegration: Node.js\nPackages: {NODE_PACKAGES}\nCompatibility review: Node >=18\nSurface: server; key kind: server; stable service name, environment, and release required\nCommand: {}",
+            javascript_install_command(package_manager, NODE_PACKAGES),
         ),
         PackageIntegration::SvelteKit => writeln!(
             output,
@@ -567,7 +584,7 @@ fn install_plan(detected: &[ProjectDetection]) -> Option<InstallPlan> {
                 "objective-c" => (0, InstallPlan::ObjectiveC),
                 "swift" | "swift-ios" => (1, InstallPlan::Swift),
                 "cpp" => (2, InstallPlan::Cmake),
-                "aspnetcore" | "java" | "python" | "php" | "ruby" | "sveltekit"
+                "aspnetcore" | "java" | "python" | "php" | "ruby" | "node" | "sveltekit"
                 | "react-express" => (
                     match detection.runtime {
                         "aspnetcore" => 3,
@@ -705,6 +722,7 @@ fn manifest_detection(root: &Path, path: &Path) -> Option<ProjectDetection> {
     Some(ProjectDetection {
         runtime: match package_integration {
             Some(PackageIntegration::AspNetCore) => "aspnetcore",
+            Some(PackageIntegration::Node) => "node",
             Some(PackageIntegration::SvelteKit) => "sveltekit",
             Some(PackageIntegration::ReactExpress) => "react-express",
             _ => runtime,
@@ -732,9 +750,21 @@ fn detect_javascript_integration(manifest: &Path) -> Option<PackageIntegration> 
     };
     if has("@sveltejs/kit") {
         Some(PackageIntegration::SvelteKit)
+    } else if !has("next") && !has("react-native") && has("react") && has("express") {
+        Some(PackageIntegration::ReactExpress)
+    } else if value.get("bin").is_some_and(|bin| {
+        bin.as_str().is_some_and(|path| !path.trim().is_empty())
+            || bin.as_object().is_some_and(|bins| {
+                !bins.is_empty()
+                    && bins.iter().all(|(name, path)| {
+                        !name.trim().is_empty()
+                            && path.as_str().is_some_and(|path| !path.trim().is_empty())
+                    })
+            })
+    }) {
+        Some(PackageIntegration::Node)
     } else {
-        (!has("next") && !has("react-native") && has("react") && has("express"))
-            .then_some(PackageIntegration::ReactExpress)
+        None
     }
 }
 
