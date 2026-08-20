@@ -133,6 +133,8 @@ Usage:
                          --event dashboard_opened [--json]
   logbrew investigate issue <issue_id> [--occurrence <recommended|first|latest|occurrence_id>] \
                          [--json]
+  logbrew investigate issue <issue_id> verify --baseline-occurrence <occurrence_id> \
+                         --candidate-deployment <deployment_id> [--json]
   logbrew debug-artifacts upload <path> --project <project_id> --release <release> --environment \
                          <environment> --service <service> [--expect-image-uuid <uuid>]... \
                          [--dry-run] [--json]
@@ -863,6 +865,8 @@ const INVESTIGATE_HELP: &str = "\
 Usage:
   logbrew investigate issue <issue_id> [--occurrence <recommended|first|latest|occurrence_id>] \
                          [--json]
+  logbrew investigate issue <issue_id> verify --baseline-occurrence <occurrence_id> \
+                         --candidate-deployment <deployment_id> [--json]
 
 Reads one schema-version-10 bounded issue investigation with deterministic grouping, exact preceding-deployment and customer-source locator evidence, and privacy-bounded request evidence, plus explicit selected, first, latest, and \
 recommended occurrence receipts; parent-first runtime exception evidence with per-node message and \
@@ -876,7 +880,10 @@ The default is the bounded context-rich recommendation. --occurrence accepts fir
 recommended, or an exact retained occurrence UUID copied from a previous occurrence receipt.
 The command is read-only and uses the same contract as logbrew explain issue.
 Human output is bounded and marks application telemetry as untrusted evidence. JSON emits the exact \
-validated schema-version-10 response for AI agents.";
+validated schema-version-10 response for AI agents.
+The verify form compares the exact failing occurrence with one successful candidate deployment. It \
+returns schema-version-1 recurrence and candidate-trace evidence, never treats bounded absence as \
+proof, and gives a stable next action for recurrence, observation, traffic, or unavailable evidence.";
 
 /// Apple native debug-artifact command help text.
 const NATIVE_DEBUG_ARTIFACTS_HELP: &str = "\

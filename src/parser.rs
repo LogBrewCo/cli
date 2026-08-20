@@ -33,9 +33,10 @@ use crate::ids::{
 };
 use crate::{
     CliError, Command, ExplainMetricTarget, ExplainReleaseTarget, ExplainSpanTarget, ExplainTarget,
-    HelpTopic, ISSUE_STATUS_ARGUMENT_NEXT_STEP, IssueOccurrenceSelection, ProjectCreateOptions,
-    ProjectIngestKeyCreateOptions, ProjectRepositoryOptions, ProjectSetupSeenOptions, ReadOptions,
-    ReadTarget, RepositoryDiscoveryOptions, RepositorySetupTarget, SetTarget, auth_namespace,
+    HelpTopic, ISSUE_STATUS_ARGUMENT_NEXT_STEP, IssueCorrectionTarget, IssueOccurrenceSelection,
+    ProjectCreateOptions, ProjectIngestKeyCreateOptions, ProjectRepositoryOptions,
+    ProjectSetupSeenOptions, ReadOptions, ReadTarget, RepositoryDiscoveryOptions,
+    RepositorySetupTarget, SetTarget, auth_namespace,
 };
 
 /// Standard next step for malformed help invocations.
@@ -470,13 +471,69 @@ fn parse_investigate(args: &[String]) -> Result<Command, CliError> {
     let [resource, issue_id, tail @ ..] = normalized.as_slice() else {
         return Err(CliError::InvalidInvestigationCommand);
     };
-    if resource != "issue" || !is_safe_investigation_issue_id(issue_id.as_str()) {
+    if resource != "issue" || !is_canonical_lower_uuid(issue_id.as_str()) {
         return Err(CliError::InvalidInvestigationCommand);
+    }
+    if tail.first().is_some_and(|value| value == "verify") {
+        return parse_issue_correction(issue_id, &tail[1..]);
     }
     let (occurrence, json) = parse_issue_investigation_flags(tail)?;
     Ok(Command::InvestigateIssue {
         issue_id: issue_id.clone(),
         occurrence,
+        json,
+    })
+}
+
+/// Parses one exact candidate-correction verification request.
+fn parse_issue_correction(issue_id: &str, args: &[String]) -> Result<Command, CliError> {
+    let mut baseline = None;
+    let mut deployment = None;
+    let mut json = false;
+    let mut index = 0;
+    while let Some(argument) = args.get(index) {
+        if argument == "--json" {
+            if std::mem::replace(&mut json, true) {
+                return Err(CliError::InvalidInvestigationCommand);
+            }
+        } else {
+            let (flag, inline) = argument
+                .split_once('=')
+                .map_or((argument.as_str(), None), |(flag, value)| {
+                    (flag, Some(value))
+                });
+            let slot = match flag {
+                "--baseline-occurrence" => &mut baseline,
+                "--candidate-deployment" => &mut deployment,
+                _ => return Err(CliError::InvalidInvestigationCommand),
+            };
+            if slot.is_some() {
+                return Err(CliError::InvalidInvestigationCommand);
+            }
+            let value = if let Some(value) = inline {
+                value
+            } else {
+                index = index.saturating_add(1);
+                args.get(index)
+                    .map(String::as_str)
+                    .ok_or(CliError::InvalidInvestigationCommand)?
+            };
+            *slot = Some(value.to_owned());
+        }
+        index = index.saturating_add(1);
+    }
+    let baseline_occurrence_id = baseline
+        .filter(|value| is_canonical_lower_uuid(value))
+        .ok_or(CliError::InvalidInvestigationCommand)?;
+    let candidate_deployment_id = deployment
+        .filter(|value| crate::deployment::valid_id(value))
+        .ok_or(CliError::InvalidInvestigationCommand)?;
+    Ok(Command::Explain {
+        target: ExplainTarget::IssueCorrection(IssueCorrectionTarget {
+            issue_id: issue_id.to_owned(),
+            baseline_occurrence_id,
+            candidate_deployment_id,
+        }),
         json,
     })
 }
@@ -534,16 +591,6 @@ fn parse_issue_occurrence(value: &str) -> Result<IssueOccurrenceSelection, CliEr
         }
         _ => Err(CliError::InvalidInvestigationCommand),
     }
-}
-
-/// Restricts investigation IDs to canonical lowercase dashed UUIDs.
-fn is_safe_investigation_issue_id(value: &str) -> bool {
-    value.len() == 36
-        && value.bytes().enumerate().all(|(index, byte)| {
-            matches!(index, 8 | 13 | 18 | 23) && byte == b'-'
-                || !matches!(index, 8 | 13 | 18 | 23)
-                    && (byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
-        })
 }
 
 /// Parses a leading global `--json` flag.

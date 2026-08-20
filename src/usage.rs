@@ -250,7 +250,12 @@ pub(crate) async fn execute<W: std::io::Write>(
     .map_err(request_error)?;
     let (response, credential) = response;
     let status = response.status().as_u16();
-    let body = bounded_body(response).await?;
+    let body = crate::http::bounded_body(response, RESPONSE_LIMIT)
+        .await
+        .map_err(|error| match error {
+            crate::http::BodyError::Invalid => invalid_response(),
+            crate::http::BodyError::Transport => transport_error(),
+        })?;
 
     if status != 200 {
         return Err(validate_error(status, body.as_str(), &credential)?);
@@ -266,23 +271,6 @@ pub(crate) async fn execute<W: std::io::Write>(
         write_human(&view, output)?;
     }
     Ok(())
-}
-
-/// Reads a response incrementally without retaining an oversized body.
-async fn bounded_body(mut response: reqwest::Response) -> Result<String, RuntimeError> {
-    if response.content_length().is_some_and(|length| {
-        usize::try_from(length).map_or(true, |length| length > RESPONSE_LIMIT)
-    }) {
-        return Err(invalid_response());
-    }
-    let mut body = Vec::new();
-    while let Some(chunk) = response.chunk().await.map_err(|_| transport_error())? {
-        if body.len().saturating_add(chunk.len()) > RESPONSE_LIMIT {
-            return Err(invalid_response());
-        }
-        body.extend_from_slice(&chunk);
-    }
-    String::from_utf8(body).map_err(|_| invalid_response())
 }
 
 /// Converts auth and transport failures into fixed, path-free usage recovery.

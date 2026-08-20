@@ -1,9 +1,13 @@
 //! Versioned, bounded product-analytics lifecycle reporting.
 
+#![expect(
+    clippy::missing_docs_in_private_items,
+    reason = "response fields mirror the exact public analytics contract"
+)]
+
 use serde::Deserialize;
 
-use crate::analytics_request::insert_optional;
-use crate::auth::{AuthCredential, send_authenticated_with_refresh};
+use crate::analytics_request::{self, Kind, insert_optional};
 use crate::http::{nonempty_control_safe as bounded_contract_text, terminal_safe as display_text};
 use crate::time::{
     ParsedTimestamp as UtcTimestamp, add_seconds, parse_utc_timestamp, subtract_seconds,
@@ -77,30 +81,15 @@ pub(super) async fn execute<W: std::io::Write>(
     json: bool,
     output: &mut W,
 ) -> Result<(), RuntimeError> {
-    let origin =
-        crate::http::normalized_origin(env.base_url.as_str()).ok_or_else(transport_error)?;
-    let client = crate::http::client_builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .timeout(std::time::Duration::from_secs(30))
-        .connect_timeout(std::time::Duration::from_secs(10))
-        .build()
-        .map_err(|_error| transport_error())?;
-    let url = format!("{origin}/api/telemetry/analytics/lifecycle");
     let request = request_body(options);
-    let response = send_authenticated_with_refresh(&client, env, |client, credential| {
-        client
-            .post(url.as_str())
-            .bearer_auth(credential.token())
-            .json(&request)
-    })
-    .await
-    .map_err(request_error)?;
-    let (response, credential) = response;
-    let status = response.status().as_u16();
-    if status != 200 {
-        return Err(safe_api_error(status, &credential));
-    }
-    let body = bounded_body(response).await?;
+    let body = analytics_request::send(
+        env,
+        "/api/telemetry/analytics/lifecycle",
+        Kind::Lifecycle,
+        Some(&request),
+        RESPONSE_LIMIT,
+    )
+    .await?;
     let response = validated_response(options, body.as_str())?;
     if json {
         writeln!(output, "{body}")?;
@@ -110,28 +99,7 @@ pub(super) async fn execute<W: std::io::Write>(
     Ok(())
 }
 
-/// Reads a successful response incrementally and rejects oversized content.
-async fn bounded_body(mut response: reqwest::Response) -> Result<String, RuntimeError> {
-    if response.content_length().is_some_and(|length| {
-        usize::try_from(length).map_or(true, |length| length > RESPONSE_LIMIT)
-    }) {
-        return Err(invalid_response());
-    }
-    let mut body = Vec::new();
-    while let Some(chunk) = response.chunk().await.map_err(|_error| transport_error())? {
-        if body.len().saturating_add(chunk.len()) > RESPONSE_LIMIT {
-            return Err(invalid_response());
-        }
-        body.extend_from_slice(&chunk);
-    }
-    String::from_utf8(body).map_err(|_error| invalid_response())
-}
-
 /// Complete response with unknown fields rejected at every level.
-#[expect(
-    clippy::missing_docs_in_private_items,
-    reason = "field names intentionally mirror the validated public JSON contract"
-)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct LifecycleResponse {
@@ -145,10 +113,6 @@ struct LifecycleResponse {
 }
 
 /// Normalized effective query echoed by the backend.
-#[expect(
-    clippy::missing_docs_in_private_items,
-    reason = "field names intentionally mirror the validated public JSON contract"
-)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct LifecycleQuery {
@@ -167,10 +131,6 @@ struct LifecycleQuery {
 }
 
 /// One exact classified event selector.
-#[expect(
-    clippy::missing_docs_in_private_items,
-    reason = "field names intentionally mirror the validated public JSON contract"
-)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct LifecycleEvent {
@@ -179,10 +139,6 @@ struct LifecycleEvent {
 }
 
 /// Aggregate identified-subject lifecycle outcome.
-#[expect(
-    clippy::missing_docs_in_private_items,
-    reason = "field names intentionally mirror the validated public JSON contract"
-)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct LifecycleSummary {
@@ -197,10 +153,6 @@ struct LifecycleSummary {
 }
 
 /// Capture coverage qualifying the lifecycle result.
-#[expect(
-    clippy::missing_docs_in_private_items,
-    reason = "field names intentionally mirror the validated public JSON contract"
-)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct LifecycleCoverage {
@@ -225,10 +177,6 @@ struct LifecycleCoverage {
 }
 
 /// One fixed lifecycle bucket.
-#[expect(
-    clippy::missing_docs_in_private_items,
-    reason = "field names intentionally mirror the validated public JSON contract"
-)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct LifecycleBucket {
@@ -250,10 +198,6 @@ struct LifecycleBucket {
 }
 
 /// Stable server-selected follow-up.
-#[expect(
-    clippy::missing_docs_in_private_items,
-    reason = "field names intentionally mirror the validated public JSON contract"
-)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct NextAction {
@@ -267,8 +211,8 @@ fn validated_response(
     options: &AnalyticsLifecycleOptions,
     body: &str,
 ) -> Result<LifecycleResponse, RuntimeError> {
-    let response =
-        serde_json::from_str::<LifecycleResponse>(body).map_err(|_error| invalid_response())?;
+    let response = serde_json::from_str::<LifecycleResponse>(body)
+        .map_err(|_error| Kind::Lifecycle.invalid())?;
     if response.schema_version != SCHEMA_VERSION
         || !bounded_contract_text(response.purpose.as_str(), 4096)
         || !valid_query(options, &response.query)
@@ -276,7 +220,7 @@ fn validated_response(
         || !valid_summary_and_buckets(&response)
         || !valid_next_action(&response)
     {
-        return Err(invalid_response());
+        return Err(Kind::Lifecycle.invalid());
     }
     Ok(response)
 }
@@ -840,76 +784,6 @@ fn next_step(code: &str) -> &'static str {
             "compare the same event across bounded releases, environments, or services"
         }
         _ => "retry the bounded analytics lifecycle query",
-    }
-}
-
-/// Converts transport and refresh failures into fixed lifecycle-safe recovery.
-fn request_error(error: RuntimeError) -> RuntimeError {
-    error.auth_or(transport_error())
-}
-
-/// Returns one fixed path-free transport failure.
-const fn transport_error() -> RuntimeError {
-    RuntimeError::Unavailable {
-        message: "analytics lifecycle request could not be completed",
-        next: "check network connectivity and retry the same analytics lifecycle query",
-    }
-}
-
-/// Returns one fixed response-contract failure.
-const fn invalid_response() -> RuntimeError {
-    RuntimeError::AnalyticsLifecycleResponseInvalid
-}
-
-/// Converts a failed HTTP status into fixed guidance without reflecting its body.
-fn safe_api_error(status: u16, credential: &AuthCredential) -> RuntimeError {
-    let (error, code, next) = match status {
-        400 | 422 => (
-            "analytics lifecycle request rejected",
-            "validation_failed",
-            "check the exact project, time scope, event selector, interval, and history periods",
-        ),
-        401 => (
-            "authentication required",
-            "unauthorized",
-            "run logbrew login",
-        ),
-        403 => (
-            "analytics lifecycle request forbidden",
-            "forbidden",
-            "confirm account access and retry the same analytics lifecycle query",
-        ),
-        404 => (
-            "analytics lifecycle resource not found",
-            "not_found",
-            "check the project and retry the same analytics lifecycle query",
-        ),
-        405 => (
-            "analytics lifecycle method is not supported",
-            "method_not_allowed",
-            "use the POST-backed logbrew analytics lifecycle command",
-        ),
-        429 => (
-            "analytics lifecycle request rate limited",
-            "rate_limited",
-            "retry the same analytics lifecycle query later",
-        ),
-        500..=599 => (
-            "analytics lifecycle service unavailable",
-            "service_unavailable",
-            "retry the same analytics lifecycle query later",
-        ),
-        _ => (
-            "analytics lifecycle request failed",
-            "request_failed",
-            "check account access and retry the same analytics lifecycle query",
-        ),
-    };
-    RuntimeError::Api {
-        status,
-        body: serde_json::json!({"error": error, "code": code, "next": next}).to_string(),
-        auth_source: credential.source(),
-        auth_label: credential.label(),
     }
 }
 

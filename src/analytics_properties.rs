@@ -1,8 +1,13 @@
 //! Versioned, bounded product-analytics property catalog reporting.
 
+#![expect(
+    clippy::missing_docs_in_private_items,
+    reason = "response fields mirror the exact public analytics contract"
+)]
+
 use serde::Deserialize;
 
-use crate::auth::{AuthCredential, send_authenticated_with_refresh};
+use crate::analytics_request::{self, Kind};
 use crate::http::{nonempty_control_safe as bounded_contract_text, terminal_safe as display_text};
 use crate::{AnalyticsPropertyOptions, CliEnvironment, RuntimeError};
 
@@ -53,26 +58,9 @@ pub(super) async fn execute<W: std::io::Write>(
     json: bool,
     output: &mut W,
 ) -> Result<(), RuntimeError> {
-    let origin =
-        crate::http::normalized_origin(env.base_url.as_str()).ok_or_else(transport_error)?;
-    let client = crate::http::client_builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .timeout(std::time::Duration::from_secs(30))
-        .connect_timeout(std::time::Duration::from_secs(10))
-        .build()
-        .map_err(|_error| transport_error())?;
-    let url = format!("{origin}{}", request_path(options));
-    let response = send_authenticated_with_refresh(&client, env, |client, credential| {
-        client.get(url.as_str()).bearer_auth(credential.token())
-    })
-    .await
-    .map_err(request_error)?;
-    let (response, credential) = response;
-    let status = response.status().as_u16();
-    if status != 200 {
-        return Err(safe_api_error(status, &credential));
-    }
-    let body = bounded_body(response).await?;
+    let path = request_path(options);
+    let body =
+        analytics_request::send(env, path.as_str(), Kind::Properties, None, RESPONSE_LIMIT).await?;
     let response = validated_response(options, body.as_str())?;
     if json {
         writeln!(output, "{body}")?;
@@ -82,28 +70,7 @@ pub(super) async fn execute<W: std::io::Write>(
     Ok(())
 }
 
-/// Reads a successful response incrementally and rejects oversized content.
-async fn bounded_body(mut response: reqwest::Response) -> Result<String, RuntimeError> {
-    if response.content_length().is_some_and(|length| {
-        usize::try_from(length).map_or(true, |length| length > RESPONSE_LIMIT)
-    }) {
-        return Err(invalid_response());
-    }
-    let mut body = Vec::new();
-    while let Some(chunk) = response.chunk().await.map_err(|_error| transport_error())? {
-        if body.len().saturating_add(chunk.len()) > RESPONSE_LIMIT {
-            return Err(invalid_response());
-        }
-        body.extend_from_slice(&chunk);
-    }
-    String::from_utf8(body).map_err(|_error| invalid_response())
-}
-
 /// Complete response with unknown fields rejected at every level.
-#[expect(
-    clippy::missing_docs_in_private_items,
-    reason = "field names intentionally mirror the validated public JSON contract"
-)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PropertyCatalogResponse {
@@ -118,10 +85,6 @@ struct PropertyCatalogResponse {
 }
 
 /// Normalized effective scope echoed by the backend.
-#[expect(
-    clippy::missing_docs_in_private_items,
-    reason = "field names intentionally mirror the validated public JSON contract"
-)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PropertyQuery {
@@ -135,10 +98,6 @@ struct PropertyQuery {
 }
 
 /// Aggregate property availability in the selected window.
-#[expect(
-    clippy::missing_docs_in_private_items,
-    reason = "field names intentionally mirror the validated public JSON contract"
-)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PropertySummary {
@@ -148,10 +107,6 @@ struct PropertySummary {
 }
 
 /// Capture, migration, privacy, and result-bound receipts.
-#[expect(
-    clippy::missing_docs_in_private_items,
-    reason = "field names intentionally mirror the validated public JSON contract"
-)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PropertyCoverage {
@@ -197,10 +152,6 @@ enum PropertyValueType {
 }
 
 /// One key-only descriptor and aggregate availability receipt.
-#[expect(
-    clippy::missing_docs_in_private_items,
-    reason = "field names intentionally mirror the validated public JSON contract"
-)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PropertyDescriptor {
@@ -221,10 +172,6 @@ enum CountAccuracy {
 }
 
 /// Cardinality-estimation contract.
-#[expect(
-    clippy::missing_docs_in_private_items,
-    reason = "field names intentionally mirror the validated public JSON contract"
-)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PropertyEstimation {
@@ -234,10 +181,6 @@ struct PropertyEstimation {
 }
 
 /// Stable server-selected follow-up.
-#[expect(
-    clippy::missing_docs_in_private_items,
-    reason = "field names intentionally mirror the validated public JSON contract"
-)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct NextAction {
@@ -252,7 +195,7 @@ fn validated_response(
     body: &str,
 ) -> Result<PropertyCatalogResponse, RuntimeError> {
     let response = serde_json::from_str::<PropertyCatalogResponse>(body)
-        .map_err(|_error| invalid_response())?;
+        .map_err(|_error| Kind::Properties.invalid())?;
     if response.schema_version != SCHEMA_VERSION
         || !valid_query(options, &response.query)
         || !bounded_contract_text(response.purpose.as_str(), 4096)
@@ -261,7 +204,7 @@ fn validated_response(
         || !valid_estimation(&response.estimation)
         || !valid_next_action(&response)
     {
-        return Err(invalid_response());
+        return Err(Kind::Properties.invalid());
     }
     Ok(response)
 }
@@ -527,76 +470,6 @@ fn next_step(code: &str) -> &'static str {
             "use an exact returned key and an application-known value with analytics compare --segment-property"
         }
         _ => "retry the bounded analytics property query",
-    }
-}
-
-/// Converts transport and refresh failures into fixed property-safe recovery.
-fn request_error(error: RuntimeError) -> RuntimeError {
-    error.auth_or(transport_error())
-}
-
-/// Returns one fixed path-free transport failure.
-const fn transport_error() -> RuntimeError {
-    RuntimeError::Unavailable {
-        message: "analytics property request could not be completed",
-        next: "check network connectivity and retry the same analytics property query",
-    }
-}
-
-/// Returns one fixed response-contract failure.
-const fn invalid_response() -> RuntimeError {
-    RuntimeError::AnalyticsPropertiesResponseInvalid
-}
-
-/// Converts a failed HTTP status into fixed guidance without reflecting its body.
-fn safe_api_error(status: u16, credential: &AuthCredential) -> RuntimeError {
-    let (error, code, next) = match status {
-        400 | 422 => (
-            "analytics property request rejected",
-            "validation_failed",
-            "check the exact project, time scope, deployment filters, and limit",
-        ),
-        401 => (
-            "authentication required",
-            "unauthorized",
-            "run logbrew login",
-        ),
-        403 => (
-            "analytics property request forbidden",
-            "forbidden",
-            "confirm account access and retry the same analytics property query",
-        ),
-        404 => (
-            "analytics property resource not found",
-            "not_found",
-            "check the project and retry the same analytics property query",
-        ),
-        405 => (
-            "analytics property method is not supported",
-            "method_not_allowed",
-            "use the GET-backed logbrew analytics properties command",
-        ),
-        429 => (
-            "analytics property request rate limited",
-            "rate_limited",
-            "retry the same analytics property query later",
-        ),
-        500..=599 => (
-            "analytics property service unavailable",
-            "service_unavailable",
-            "retry the same analytics property query later",
-        ),
-        _ => (
-            "analytics property request failed",
-            "request_failed",
-            "check account access and retry the same analytics property query",
-        ),
-    };
-    RuntimeError::Api {
-        status,
-        body: serde_json::json!({"error": error, "code": code, "next": next}).to_string(),
-        auth_source: credential.source(),
-        auth_label: credential.label(),
     }
 }
 

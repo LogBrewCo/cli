@@ -234,12 +234,7 @@ pub(crate) async fn execute<W: std::io::Write>(
 /// Normalizes and proves every request value before network use.
 fn normalize(options: &DeploymentRecordOptions) -> Result<NormalizedDeployment, CliError> {
     let deployment_id = options.deployment_id.trim();
-    if deployment_id.is_empty()
-        || deployment_id.len() > 128
-        || !deployment_id
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b':' | b'-'))
-    {
+    if !valid_id(deployment_id) {
         return Err(CliError::InvalidDeploymentCommand);
     }
     let project_id = options.project_id.trim().to_ascii_lowercase();
@@ -309,6 +304,19 @@ fn normalize(options: &DeploymentRecordOptions) -> Result<NormalizedDeployment, 
         started_at_millis,
         finished_at_millis,
     })
+}
+
+/// Accepts one bounded caller-owned deployment identifier.
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "the sibling parser reuses the deployment identifier contract"
+)]
+pub(crate) fn valid_id(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 128
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b':' | b'-'))
 }
 
 /// Validates and lowercases one optional Git commit identity.

@@ -1,6 +1,7 @@
 //! Versioned, bounded telemetry investigation reads.
 
 mod action;
+mod correction;
 mod issue_exception_chain;
 mod issue_lifecycle;
 mod issue_occurrence_analysis;
@@ -15,7 +16,7 @@ use serde::de::{Error as _, MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer};
 use serde_json::{Map, Value};
 
-use crate::auth::{AuthCredential, send_authenticated_with_refresh};
+use crate::auth::{AuthCredential, send_account_authenticated_with_refresh};
 use crate::http::terminal_safe;
 use crate::ids::{is_trace_id, is_uuid};
 use crate::time;
@@ -243,7 +244,7 @@ pub(super) async fn execute<W: std::io::Write>(
         .map_err(|_error| transport_error())?;
     let path = explain_path(target);
     let url = format!("{origin}{path}");
-    let response = send_authenticated_with_refresh(&client, env, |client, credential| {
+    let response = send_account_authenticated_with_refresh(&client, env, |client, credential| {
         client.get(url.as_str()).bearer_auth(credential.token())
     })
     .await
@@ -253,7 +254,12 @@ pub(super) async fn execute<W: std::io::Write>(
     if status != 200 {
         return Err(safe_api_error(status, &credential));
     }
-    let body = bounded_body(response).await?;
+    let body = crate::http::bounded_body(response, RESPONSE_LIMIT)
+        .await
+        .map_err(|error| match error {
+            crate::http::BodyError::Invalid => invalid_response(),
+            crate::http::BodyError::Transport => transport_error(),
+        })?;
     let value = validated_response(target, body.as_str())?;
     if json {
         writeln!(output, "{body}")?;
@@ -262,23 +268,6 @@ pub(super) async fn execute<W: std::io::Write>(
         write!(output, "{rendered}")?;
     }
     Ok(())
-}
-
-/// Reads a response incrementally without retaining oversized data.
-async fn bounded_body(mut response: reqwest::Response) -> Result<String, RuntimeError> {
-    if response.content_length().is_some_and(|length| {
-        usize::try_from(length).map_or(true, |length| length > RESPONSE_LIMIT)
-    }) {
-        return Err(invalid_response());
-    }
-    let mut body = Vec::new();
-    while let Some(chunk) = response.chunk().await.map_err(|_error| transport_error())? {
-        if body.len().saturating_add(chunk.len()) > RESPONSE_LIMIT {
-            return Err(invalid_response());
-        }
-        body.extend_from_slice(&chunk);
-    }
-    String::from_utf8(body).map_err(|_error| invalid_response())
 }
 
 /// Parses and validates one duplicate-free versioned response.
@@ -291,6 +280,7 @@ fn validated_response(target: &ExplainTarget, body: &str) -> Result<Value, Runti
     }
     match target {
         ExplainTarget::Issue { id, occurrence } => validate_issue_response(&value, id, occurrence),
+        ExplainTarget::IssueCorrection(target) => correction::validate(&value, target),
         ExplainTarget::Log(id) => validate_log_response(&value, id),
         ExplainTarget::Action(id) => action::validate_response(&value, id),
         ExplainTarget::Span(target) => span::validate_response(&value, target),
@@ -2963,6 +2953,7 @@ fn require_timestamp_millis(value: &Map<String, Value>, name: &str) -> Result<i1
 fn render_response(target: &ExplainTarget, value: &Value) -> Option<String> {
     match target {
         ExplainTarget::Issue { .. } => render_issue(value),
+        ExplainTarget::IssueCorrection(_) => correction::render(value),
         ExplainTarget::Log(_) => render_log(value),
         ExplainTarget::Action(_) => action::render(value),
         ExplainTarget::Span(_) => span::render(value),

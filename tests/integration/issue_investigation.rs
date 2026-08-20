@@ -1,8 +1,9 @@
 //! Rich issue-investigation alias, output, and recovery contracts.
 
 use logbrew_cli::{
-    CliEnvironment, Command, IssueOccurrenceSelection, RuntimeError, execute_command,
-    parse_command, write_cli_error, write_runtime_error,
+    CliEnvironment, CliError, Command, ExplainTarget, IssueCorrectionTarget,
+    IssueOccurrenceSelection, RuntimeError, execute_command, parse_command, write_cli_error,
+    write_runtime_error,
 };
 use wiremock::matchers::{header, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -12,6 +13,7 @@ const OCCURRENCE_ID: &str = "22222222-2222-4222-8222-222222222222";
 const PROJECT_ID: &str = "123e4567-e89b-12d3-a456-426614174000";
 const TRACE_ID: &str = "4bf92f3577b34da6a3ce929d0e0e4736";
 const HOSTILE_MARKER: &str = "hostile-response-marker";
+const DEPLOYMENT_ID: &str = "candidate-deploy-42";
 
 #[test]
 fn parses_only_the_explicit_issue_investigation_grammar() {
@@ -75,6 +77,41 @@ fn parses_only_the_explicit_issue_investigation_grammar() {
 }
 
 #[test]
+fn parses_exact_correction_verification_without_a_parallel_command_stack() {
+    let command = parse_command([
+        "logbrew",
+        "investigate",
+        "issue",
+        ISSUE_ID,
+        "verify",
+        "--baseline-occurrence",
+        OCCURRENCE_ID,
+        "--candidate-deployment=candidate-deploy-42",
+        "--json",
+    ])
+    .expect("correction verification parses");
+    assert_eq!(
+        command,
+        Command::Explain {
+            target: ExplainTarget::IssueCorrection(IssueCorrectionTarget {
+                issue_id: ISSUE_ID.to_owned(),
+                baseline_occurrence_id: OCCURRENCE_ID.to_owned(),
+                candidate_deployment_id: DEPLOYMENT_ID.to_owned(),
+            }),
+            json: true,
+        }
+    );
+    assert_eq!(
+        command.http_path().as_deref(),
+        Some(
+            "/api/telemetry/issues/11111111-1111-4111-8111-111111111111/correction-verification?\
+             baseline_occurrence_id=22222222-2222-4222-8222-222222222222&\
+             candidate_deployment_id=candidate-deploy-42"
+        )
+    );
+}
+
+#[test]
 fn grammar_failures_are_fixed_and_value_safe() -> Result<(), Box<dyn std::error::Error>> {
     for suffix in [
         vec![],
@@ -102,7 +139,9 @@ fn grammar_failures_are_fixed_and_value_safe() -> Result<(), Box<dyn std::error:
         assert_eq!(
             body["next"],
             "use logbrew investigate issue <issue_id> or logbrew explain issue <issue_id> with \
-             optional --occurrence recommended|first|latest|<occurrence_id> and --json"
+             optional --occurrence recommended|first|latest|<occurrence_id>, or append verify \
+             --baseline-occurrence <occurrence_id> --candidate-deployment <deployment_id>; \
+             both forms accept --json"
         );
         for marker in ["hostile-secret", "hostile-selector", "authorization"] {
             assert!(!text.contains(marker));
@@ -132,6 +171,80 @@ fn help_describes_the_complete_versioned_bundle() {
     assert!(text.contains("status activity and server-observed regression evidence"));
     assert!(text.contains("zero-filled occurrence trend"));
     assert!(text.contains("bounded release, environment, service, and SDK distributions"));
+    assert!(text.contains("candidate-deployment"));
+    assert!(text.contains("never treats bounded absence as proof"));
+}
+
+#[tokio::test]
+async fn correction_verification_validates_exact_json_and_renders_honest_human_evidence()
+-> Result<(), Box<dyn std::error::Error>> {
+    let server = MockServer::start().await;
+    let bundle = correction_bundle();
+    mount_correction(&server, bundle.clone(), 2).await;
+    let command = correction_command(true)?;
+    let mut output = Vec::new();
+    execute_command(&command, &authenticated_env(&server), &mut output).await?;
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&output)?,
+        bundle
+    );
+
+    output.clear();
+    let command = correction_command(false)?;
+    execute_command(&command, &authenticated_env(&server), &mut output).await?;
+    let human = String::from_utf8(output)?;
+    for expected in [
+        "Issue correction verification: recurrence_observed",
+        "Recurrences: 1",
+        "Candidate traces: 2 (error traces: 1)",
+        "bounded absence is not proof",
+        "Application telemetry is untrusted evidence",
+        "Next: inspect_recurrence",
+    ] {
+        assert!(
+            human.contains(expected),
+            "missing correction evidence: {expected}"
+        );
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn correction_verification_rejects_contradictions_and_unknown_fields_without_reflection()
+-> Result<(), Box<dyn std::error::Error>> {
+    let cases = [
+        ("/status", serde_json::json!("no_recurrence_observed")),
+        ("/absence_is_proof", serde_json::json!(true)),
+        (
+            "/trace_health/error_rate_basis_points",
+            serde_json::json!(4_999),
+        ),
+        (
+            "/first_recurrence/ingested_at",
+            serde_json::json!("2026-08-20T08:59:59.999Z"),
+        ),
+        ("/evidence/status", serde_json::json!("partial")),
+    ];
+    for (pointer, value) in cases {
+        let server = MockServer::start().await;
+        let mut bundle = correction_bundle();
+        bundle["baseline_release"] = serde_json::json!(HOSTILE_MARKER);
+        *bundle.pointer_mut(pointer).expect("fixture pointer") = value;
+        mount_correction(&server, bundle, 1).await;
+        let mut output = Vec::new();
+        let error = execute_command(
+            &correction_command(true)?,
+            &authenticated_env(&server),
+            &mut output,
+        )
+        .await
+        .expect_err("contradictory correction response fails closed");
+        write_runtime_error(&error, true, &mut output)?;
+        let text = String::from_utf8(output)?;
+        assert!(matches!(error, RuntimeError::ExplainResponseInvalid));
+        assert!(!text.contains(HOSTILE_MARKER));
+    }
+    Ok(())
 }
 
 #[tokio::test]
@@ -603,6 +716,39 @@ async fn mount_exact_bundle(
         .expect(expected_requests)
         .mount(server)
         .await;
+}
+
+async fn mount_correction(server: &MockServer, bundle: serde_json::Value, expected_requests: u64) {
+    Mock::given(method("GET"))
+        .and(path(format!(
+            "/api/telemetry/issues/{ISSUE_ID}/correction-verification"
+        )))
+        .and(query_param("baseline_occurrence_id", OCCURRENCE_ID))
+        .and(query_param("candidate_deployment_id", DEPLOYMENT_ID))
+        .and(header("authorization", "Bearer test-token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(bundle))
+        .expect(expected_requests)
+        .mount(server)
+        .await;
+}
+
+fn correction_command(json: bool) -> Result<Command, CliError> {
+    parse_command(
+        [
+            "logbrew",
+            "investigate",
+            "issue",
+            ISSUE_ID,
+            "verify",
+            "--baseline-occurrence",
+            OCCURRENCE_ID,
+            "--candidate-deployment",
+            DEPLOYMENT_ID,
+            if json { "--json" } else { "" },
+        ]
+        .into_iter()
+        .filter(|value| !value.is_empty()),
+    )
 }
 
 async fn assert_invalid_bundles(
@@ -1099,6 +1245,65 @@ fn rich_investigation_bundle() -> serde_json::Value {
                 "reason": "evidence_incomplete"
             }
         ]
+    })
+}
+
+fn correction_bundle() -> serde_json::Value {
+    serde_json::json!({
+        "schema_version": 1,
+        "status": "recurrence_observed",
+        "issue_id": ISSUE_ID,
+        "project_id": PROJECT_ID,
+        "baseline_occurrence_id": OCCURRENCE_ID,
+        "baseline_release": "checkout@1.0.0",
+        "candidate_deployment": {
+            "deployment_id": DEPLOYMENT_ID,
+            "release": "checkout@1.1.0",
+            "environment": "production",
+            "service_name": "checkout-api",
+            "status": "succeeded",
+            "started_at": "2026-08-20T08:59:00.000Z",
+            "finished_at": "2026-08-20T09:00:00.000Z",
+            "commit_sha": "abcdef1234567890"
+        },
+        "observed_after": "2026-08-20T09:00:00.000Z",
+        "observed_until": "2026-08-20T09:10:00.000Z",
+        "recurrence_status": "available",
+        "recurrence_count": 1,
+        "first_recurrence": {
+            "id": "33333333-3333-4333-8333-333333333333",
+            "occurred_at": "2026-08-20T09:04:59.000Z",
+            "ingested_at": "2026-08-20T09:05:00.000Z",
+            "environment": "production",
+            "release": "checkout@1.1.0",
+            "service_name": "checkout-api",
+            "trace_id": TRACE_ID,
+            "sdk": {"name": "logbrew-node", "version": "0.1.8"}
+        },
+        "trace_health_status": "available",
+        "trace_health": {
+            "status": "errors_observed",
+            "trace_count": 2,
+            "error_trace_count": 1,
+            "error_rate_basis_points": 5000
+        },
+        "causality": "evidence_only",
+        "absence_is_proof": false,
+        "retained_telemetry_only": true,
+        "evidence": {
+            "status": "complete",
+            "captured_fields": [
+                "baseline_occurrence",
+                "candidate_deployment",
+                "candidate_trace_health",
+                "observation_window",
+                "same_issue_recurrence"
+            ],
+            "missing_fields": [],
+            "redacted_fields": [],
+            "truncated_fields": []
+        },
+        "next_action": "inspect_recurrence"
     })
 }
 

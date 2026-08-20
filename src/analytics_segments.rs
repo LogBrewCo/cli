@@ -1,9 +1,13 @@
 //! Versioned, bounded product-analytics segment comparison reporting.
 
+#![expect(
+    clippy::missing_docs_in_private_items,
+    reason = "response fields mirror the exact public analytics contract"
+)]
+
 use serde::Deserialize;
 
-use crate::analytics_request::insert_optional;
-use crate::auth::{AuthCredential, send_authenticated_with_refresh};
+use crate::analytics_request::{self, Kind, insert_optional};
 use crate::http::{nonempty_control_safe as bounded_contract_text, terminal_safe as display_text};
 use crate::time::{
     ParsedTimestamp as UtcTimestamp, add_seconds, parse_utc_timestamp, timestamp_nanos,
@@ -115,30 +119,15 @@ pub(super) async fn execute<W: std::io::Write>(
     json: bool,
     output: &mut W,
 ) -> Result<(), RuntimeError> {
-    let origin =
-        crate::http::normalized_origin(env.base_url.as_str()).ok_or_else(transport_error)?;
-    let client = crate::http::client_builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .timeout(std::time::Duration::from_secs(30))
-        .connect_timeout(std::time::Duration::from_secs(10))
-        .build()
-        .map_err(|_error| transport_error())?;
-    let url = format!("{origin}/api/telemetry/analytics/segments/compare");
     let request = request_body(options);
-    let response = send_authenticated_with_refresh(&client, env, |client, credential| {
-        client
-            .post(url.as_str())
-            .bearer_auth(credential.token())
-            .json(&request)
-    })
-    .await
-    .map_err(request_error)?;
-    let (response, credential) = response;
-    let status = response.status().as_u16();
-    if status != 200 {
-        return Err(safe_api_error(status, &credential));
-    }
-    let body = bounded_body(response).await?;
+    let body = analytics_request::send(
+        env,
+        "/api/telemetry/analytics/segments/compare",
+        Kind::Segments,
+        Some(&request),
+        RESPONSE_LIMIT,
+    )
+    .await?;
     let response = validated_response(options, body.as_str())?;
     if json {
         writeln!(output, "{body}")?;
@@ -148,28 +137,7 @@ pub(super) async fn execute<W: std::io::Write>(
     Ok(())
 }
 
-/// Reads a successful response incrementally and rejects oversized content.
-async fn bounded_body(mut response: reqwest::Response) -> Result<String, RuntimeError> {
-    if response.content_length().is_some_and(|length| {
-        usize::try_from(length).map_or(true, |length| length > RESPONSE_LIMIT)
-    }) {
-        return Err(invalid_response());
-    }
-    let mut body = Vec::new();
-    while let Some(chunk) = response.chunk().await.map_err(|_error| transport_error())? {
-        if body.len().saturating_add(chunk.len()) > RESPONSE_LIMIT {
-            return Err(invalid_response());
-        }
-        body.extend_from_slice(&chunk);
-    }
-    String::from_utf8(body).map_err(|_error| invalid_response())
-}
-
 /// Complete response with unknown fields rejected at every level.
-#[expect(
-    clippy::missing_docs_in_private_items,
-    reason = "field names intentionally mirror the validated public JSON contract"
-)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ComparisonResponse {
@@ -183,10 +151,6 @@ struct ComparisonResponse {
 }
 
 /// Normalized effective query echoed by the backend.
-#[expect(
-    clippy::missing_docs_in_private_items,
-    reason = "field names intentionally mirror the validated public JSON contract"
-)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ComparisonQuery {
@@ -262,10 +226,6 @@ impl ComparisonInterval {
 }
 
 /// One exact classified outcome.
-#[expect(
-    clippy::missing_docs_in_private_items,
-    reason = "field names intentionally mirror the validated public JSON contract"
-)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ComparisonTarget {
@@ -274,10 +234,6 @@ struct ComparisonTarget {
 }
 
 /// One normalized exact context segment.
-#[expect(
-    clippy::missing_docs_in_private_items,
-    reason = "field names intentionally mirror the validated public JSON contract"
-)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SegmentScope {
@@ -291,10 +247,6 @@ struct SegmentScope {
 }
 
 /// One normalized exact property predicate echoed by the backend.
-#[expect(
-    clippy::missing_docs_in_private_items,
-    reason = "field names intentionally mirror the validated public JSON contract"
-)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PropertyFilter {
@@ -303,10 +255,6 @@ struct PropertyFilter {
 }
 
 /// High-level comparison state.
-#[expect(
-    clippy::missing_docs_in_private_items,
-    reason = "field names intentionally mirror the validated public JSON contract"
-)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ComparisonSummary {
@@ -318,10 +266,6 @@ struct ComparisonSummary {
 }
 
 /// Accuracy and interpretation boundary.
-#[expect(
-    clippy::missing_docs_in_private_items,
-    reason = "field names intentionally mirror the validated public JSON contract"
-)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ComparisonConfidence {
@@ -367,10 +311,6 @@ enum SegmentOverlap {
 }
 
 /// One complete segment outcome.
-#[expect(
-    clippy::missing_docs_in_private_items,
-    reason = "field names intentionally mirror the validated public JSON contract"
-)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SegmentResult {
@@ -386,10 +326,6 @@ struct SegmentResult {
 }
 
 /// Capture coverage qualifying one segment result.
-#[expect(
-    clippy::missing_docs_in_private_items,
-    reason = "field names intentionally mirror the validated public JSON contract"
-)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SegmentCoverage {
@@ -407,10 +343,6 @@ struct SegmentCoverage {
 }
 
 /// Property-index readiness and exact-value match coverage for one segment.
-#[expect(
-    clippy::missing_docs_in_private_items,
-    reason = "field names intentionally mirror the validated public JSON contract"
-)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PropertyCoverage {
@@ -424,10 +356,6 @@ struct PropertyCoverage {
 }
 
 /// One ordered non-empty comparison bucket.
-#[expect(
-    clippy::missing_docs_in_private_items,
-    reason = "field names intentionally mirror the validated public JSON contract"
-)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SegmentPoint {
@@ -442,10 +370,6 @@ struct SegmentPoint {
 }
 
 /// Descriptive difference from the first requested segment.
-#[expect(
-    clippy::missing_docs_in_private_items,
-    reason = "field names intentionally mirror the validated public JSON contract"
-)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct BaselineComparison {
@@ -457,10 +381,6 @@ struct BaselineComparison {
 }
 
 /// Stable server-selected follow-up.
-#[expect(
-    clippy::missing_docs_in_private_items,
-    reason = "field names intentionally mirror the validated public JSON contract"
-)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct NextAction {
@@ -474,8 +394,8 @@ fn validated_response(
     options: &AnalyticsSegmentComparisonOptions,
     body: &str,
 ) -> Result<ComparisonResponse, RuntimeError> {
-    let response =
-        serde_json::from_str::<ComparisonResponse>(body).map_err(|_error| invalid_response())?;
+    let response = serde_json::from_str::<ComparisonResponse>(body)
+        .map_err(|_error| Kind::Segments.invalid())?;
     if response.schema_version != SCHEMA_VERSION
         || !bounded_contract_text(response.purpose.as_str(), 4096)
         || !valid_query(options, &response.query)
@@ -483,7 +403,7 @@ fn validated_response(
         || !valid_summary_and_segments(options, &response)
         || !valid_next_action(&response)
     {
-        return Err(invalid_response());
+        return Err(Kind::Segments.invalid());
     }
     Ok(response)
 }
@@ -1407,75 +1327,5 @@ fn next_step(code: &str) -> &'static str {
             "inspect paths around the target in the weakest segment, then follow correlated traces"
         }
         _ => "retry the bounded analytics segment comparison",
-    }
-}
-
-/// Converts transport and refresh failures into fixed comparison-safe recovery.
-fn request_error(error: RuntimeError) -> RuntimeError {
-    error.auth_or(transport_error())
-}
-
-/// Returns one fixed path-free transport failure.
-const fn transport_error() -> RuntimeError {
-    RuntimeError::Unavailable {
-        message: "analytics segment comparison request could not be completed",
-        next: "check network connectivity and retry the same analytics segment comparison",
-    }
-}
-
-/// Returns one fixed response-contract failure.
-const fn invalid_response() -> RuntimeError {
-    RuntimeError::AnalyticsSegmentResponseInvalid
-}
-
-/// Converts a failed HTTP status into fixed guidance without reflecting its body.
-fn safe_api_error(status: u16, credential: &AuthCredential) -> RuntimeError {
-    let (error, code, next) = match status {
-        400 | 422 => (
-            "analytics segment comparison rejected",
-            "validation_failed",
-            "check the exact project, time scope, target, segments, property filters, interval, and analysis unit",
-        ),
-        401 => (
-            "authentication required",
-            "unauthorized",
-            "run logbrew login",
-        ),
-        403 => (
-            "analytics segment comparison forbidden",
-            "forbidden",
-            "confirm account access and retry the same analytics segment comparison",
-        ),
-        404 => (
-            "analytics segment comparison resource not found",
-            "not_found",
-            "check the project and retry the same analytics segment comparison",
-        ),
-        405 => (
-            "analytics segment comparison method is not supported",
-            "method_not_allowed",
-            "use the POST-backed logbrew analytics compare command",
-        ),
-        429 => (
-            "analytics segment comparison rate limited",
-            "rate_limited",
-            "retry the same analytics segment comparison later",
-        ),
-        500..=599 => (
-            "analytics segment comparison service unavailable",
-            "service_unavailable",
-            "retry the same analytics segment comparison later",
-        ),
-        _ => (
-            "analytics segment comparison failed",
-            "request_failed",
-            "check account access and retry the same analytics segment comparison",
-        ),
-    };
-    RuntimeError::Api {
-        status,
-        body: serde_json::json!({"error": error, "code": code, "next": next}).to_string(),
-        auth_source: credential.source(),
-        auth_label: credential.label(),
     }
 }
