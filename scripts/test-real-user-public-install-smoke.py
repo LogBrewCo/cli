@@ -24,7 +24,7 @@ from unittest import mock
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 VERIFIER = ROOT / "scripts" / "real_user_public_install_smoke.py"
-VERSION = "0.1.56"
+VERSION = "0.1.57"
 sys.dont_write_bytecode = True
 
 
@@ -173,7 +173,7 @@ def write_fake_installer_command(path: pathlib.Path, kind: str) -> None:
                 install(os.environ["FAKE_BREW_PREFIX"])
                 raise SystemExit(0)
             if args[:2] == ["list", "--versions"] and len(args) == 3:
-                print("logbrew 0.1.56")
+                print("logbrew 0.1.57")
                 raise SystemExit(0)
             if len(args) == 2 and args[0] == "--prefix":
                 print(os.environ["FAKE_BREW_PREFIX"])
@@ -268,12 +268,12 @@ class PublicInstallVerifierTests(unittest.TestCase):
             create_tar(
                 artifact,
                 {
-                    "logbrew-cli-0.1.56/Cargo.toml": (
-                        b'[package]\nname = "logbrew-cli"\nversion = "0.1.56"\n',
+                    "logbrew-cli-0.1.57/Cargo.toml": (
+                        b'[package]\nname = "logbrew-cli"\nversion = "0.1.57"\n',
                         0o644,
                     ),
-                    "logbrew-cli-0.1.56/Cargo.lock": (b"# fixture\n", 0o644),
-                    "logbrew-cli-0.1.56/src/main.rs": (b"fn main() {}\n", 0o644),
+                    "logbrew-cli-0.1.57/Cargo.lock": (b"# fixture\n", 0o644),
+                    "logbrew-cli-0.1.57/src/main.rs": (b"fn main() {}\n", 0o644),
                 },
             )
             return "crates:logbrew-cli", artifact
@@ -285,10 +285,10 @@ class PublicInstallVerifierTests(unittest.TestCase):
                     class Logbrew < Formula
                       if OS.mac?
                         if Hardware::CPU.arm?
-                          url "https://github.com/LogBrewCo/cli/releases/download/v0.1.56/logbrew-cli-aarch64-apple-darwin.tar.xz"
+                          url "https://github.com/LogBrewCo/cli/releases/download/v0.1.57/logbrew-cli-aarch64-apple-darwin.tar.xz"
                         end
                         if Hardware::CPU.intel?
-                          url "https://github.com/LogBrewCo/cli/releases/download/v0.1.56/logbrew-cli-x86_64-apple-darwin.tar.xz"
+                          url "https://github.com/LogBrewCo/cli/releases/download/v0.1.57/logbrew-cli-x86_64-apple-darwin.tar.xz"
                         end
                       end
                       BINARY_ALIASES = {
@@ -340,7 +340,7 @@ class PublicInstallVerifierTests(unittest.TestCase):
             artifact = artifact.with_suffix(".tar.gz")
             create_tar(
                 artifact,
-                {"logbrew-0.1.56/logbrew": (cli_source(VERSION).encode(), 0o755)},
+                {"logbrew-0.1.57/logbrew": (cli_source(VERSION).encode(), 0o755)},
             )
             return "native:linux-x64", artifact
         if mode == "npm":
@@ -349,7 +349,7 @@ class PublicInstallVerifierTests(unittest.TestCase):
                 artifact,
                 {
                     "package/package.json": (
-                        b'{"name":"logbrew-cli","version":"0.1.56",'
+                        b'{"name":"logbrew-cli","version":"0.1.57",'
                         b'"bin":{"logbrew":"run-logbrew.js"}}\n',
                         0o644,
                     ),
@@ -364,7 +364,7 @@ class PublicInstallVerifierTests(unittest.TestCase):
         source = artifact.read_text(encoding="utf-8")
         artifact.write_text(
             source.replace(
-                "v0.1.56/logbrew-cli-x86_64",
+                "v0.1.57/logbrew-cli-x86_64",
                 "v0.1.28/logbrew-cli-x86_64",
             ),
             encoding="utf-8",
@@ -381,18 +381,12 @@ class PublicInstallVerifierTests(unittest.TestCase):
         self.assertFalse(self.command_log.exists())
 
     def test_homebrew_formula_accepts_one_exact_explicit_version(self) -> None:
-        module = load_verifier_module()
-        matcher = getattr(module, "homebrew_formula_matches_version", None)
-        self.assertIsNotNone(matcher)
+        matcher = load_verifier_module().homebrew_formula_matches_version
 
-        self.assertTrue(matcher('version "0.1.56"\n', VERSION))
+        exact = f'version "{VERSION}"\n'
+        self.assertTrue(matcher(exact, VERSION))
         self.assertFalse(matcher('version "0.1.28"\n', VERSION))
-        self.assertFalse(
-            matcher(
-                'version "0.1.56"\nversion "0.1.56"\n',
-                VERSION,
-            )
-        )
+        self.assertFalse(matcher(exact * 2, VERSION))
 
     def run_verifier(
         self,
@@ -622,6 +616,7 @@ class PublicInstallVerifierTests(unittest.TestCase):
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            start_new_session=True,
         )
         try:
             deadline = time.monotonic() + 5
@@ -633,7 +628,7 @@ class PublicInstallVerifierTests(unittest.TestCase):
                 time.sleep(0.05)
             else:
                 self.fail("Homebrew install did not start")
-            process.send_signal(signal.SIGINT)
+            os.killpg(process.pid, signal.SIGINT)
             stdout, stderr = process.communicate(timeout=10)
         finally:
             if process.poll() is None:
