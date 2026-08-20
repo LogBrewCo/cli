@@ -34,7 +34,6 @@ fn release_workflows_prebuild_publish_and_recover_safely() {
     }
     assert_eq!(RELEASE.matches("outputs.building").count(), 2);
     assert_eq!(RELEASE.matches("artifacts_run_id:").count(), 3);
-    assert!(!RELEASE.contains("pull_request_target") && !RELEASE.contains("schedule:"));
     assert!(DIST.contains("allow-dirty = [\"ci\"]") && !DIST.contains("pr-run-mode"));
 
     for required in [
@@ -51,8 +50,6 @@ fn release_workflows_prebuild_publish_and_recover_safely() {
     }
     assert!(!CRATES.contains("cargo build") && !CRATES.contains("windows-release-build"));
     assert_eq!(CRATES.matches("cargo publish").count(), 1);
-    assert!(!CRATES.contains("pull_request_target") && !CRATES.contains("schedule:"));
-
     for source in [NPM, HOMEBREW] {
         for required in [
             "workflow_call:",
@@ -82,7 +79,9 @@ fn release_workflows_prebuild_publish_and_recover_safely() {
         "[[ ! \"${version}\" =~ ^[0-9]+\\.[0-9]+\\.[0-9]+$ ]]",
         "set -euo pipefail",
         "trap cleanup_audit_tap EXIT",
-        "brew untap \"${audit_tap}\"",
+        "HOMEBREW_NO_AUTO_UPDATE: \"1\"",
+        "ln -s \"${GITHUB_WORKSPACE}/tap\" \"${audit_repo}\"",
+        "unlink \"${audit_repo}\"",
     ] {
         assert!(HOMEBREW.contains(required), "missing {required}");
     }
@@ -90,10 +89,8 @@ fn release_workflows_prebuild_publish_and_recover_safely() {
         HOMEBREW,
         &[
             "ruby ../release-tooling/scripts/prepare-homebrew-formula.rb",
-            "brew style --fix \"Formula/${filename}\"",
+            "brew audit --fix --strict --online --formula \"${audit_tap}/${name}\"",
             "ruby -c \"Formula/${filename}\"",
-            "brew style \"Formula/${filename}\"",
-            "brew audit --strict --online --formula \"${audit_tap}/${name}\"",
             "git add \"Formula/${filename}\"",
             "git commit -m \"${name} ${version}\"",
             "git push",
@@ -101,7 +98,10 @@ fn release_workflows_prebuild_publish_and_recover_safely() {
     );
     assert_eq!(HOMEBREW.matches("secrets.HOMEBREW_TAP_TOKEN").count(), 1);
     assert_eq!(HOMEBREW.matches("uses: actions/checkout@v7").count(), 2);
-    assert!(!HOMEBREW.contains("brew update") && !HOMEBREW.contains("--except-cops"));
+    assert!(!HOMEBREW.contains("brew update") && !HOMEBREW.contains("brew style"));
+    assert!(!HOMEBREW.contains("brew tap-new") && !HOMEBREW.contains("--except-cops"));
     assert!(!HOMEBREW.contains("for release in $(") && !HOMEBREW.contains("echo \"$PLAN\""));
-    assert!(!HOMEBREW.contains("pull_request_target") && !HOMEBREW.contains("schedule:"));
+    for source in [RELEASE, CRATES, NPM, HOMEBREW] {
+        assert!(!source.contains("pull_request_target") && !source.contains("schedule:"));
+    }
 }

@@ -33,6 +33,7 @@ jobs:
       ARTIFACTS_RUN_ID: ${{ inputs.artifacts_run_id }}
       GITHUB_USER: "LogBrew release bot"
       GITHUB_EMAIL: "41898282+github-actions[bot]@users.noreply.github.com"
+      HOMEBREW_NO_AUTO_UPDATE: "1"
     steps:
       - name: Validate manual recovery boundary
         if: ${{ github.event_name == 'workflow_dispatch' }}
@@ -92,14 +93,16 @@ jobs:
           command -v brew >/dev/null
 
           audit_tap="logbrew-release-verifier/formula"
-          if brew tap | grep -Fxq "${audit_tap}"; then
-            printf 'Homebrew formula validation failed: temporary tap already exists.\n' >&2
-            exit 1
-          fi
-          brew tap-new --no-git "${audit_tap}" >/dev/null
-          audit_repo="$(brew --repository "${audit_tap}")"
+          audit_parent="$(brew --repository)/Library/Taps/logbrew-release-verifier"
+          audit_repo="${audit_parent}/homebrew-formula"
+          [[ ! -e "${audit_repo}" && ! -L "${audit_repo}" ]] || exit 1
+          mkdir -p "${audit_parent}"
+          ln -s "${GITHUB_WORKSPACE}/tap" "${audit_repo}"
           cleanup_audit_tap() {
-            brew untap "${audit_tap}" >/dev/null 2>&1 || true
+            if [[ -L "${audit_repo}" && "$(readlink "${audit_repo}")" == "${GITHUB_WORKSPACE}/tap" ]]; then
+              unlink "${audit_repo}"
+              rmdir "${audit_parent}" 2>/dev/null || true
+            fi
           }
           trap cleanup_audit_tap EXIT
 
@@ -121,12 +124,8 @@ jobs:
             name="${filename%.rb}"
             ruby ../release-tooling/scripts/prepare-homebrew-formula.rb \
               "Formula/${filename}" "${version}"
-            brew style --fix "Formula/${filename}"
+            brew audit --fix --strict --online --formula "${audit_tap}/${name}"
             ruby -c "Formula/${filename}"
-            brew style "Formula/${filename}"
-
-            cp "Formula/${filename}" "${audit_repo}/Formula/${filename}"
-            brew audit --strict --online --formula "${audit_tap}/${name}"
 
             git add "Formula/${filename}"
             if git diff --cached --quiet -- "Formula/${filename}"; then
@@ -146,7 +145,7 @@ jobs:
           fi
 
           cleanup_audit_tap
-          if brew tap | grep -Fxq "${audit_tap}"; then
+          if [[ -e "${audit_repo}" || -L "${audit_repo}" ]]; then
             printf 'Homebrew formula validation failed: temporary tap remains.\n' >&2
             exit 1
           fi
