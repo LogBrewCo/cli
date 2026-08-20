@@ -10,9 +10,6 @@ publish-jobs = ["./publish-npm-trusted", "./publish-homebrew-tap"]
 github-custom-job-permissions = { "publish-npm-trusted" = { contents = "read", id-token = "write", packages = "write" }, "publish-homebrew-tap" = { contents = "read" } }
 tap = "LogBrewCo/homebrew-tap"
 targets = ["aarch64-apple-darwin", "aarch64-unknown-linux-gnu", "x86_64-apple-darwin", "x86_64-unknown-linux-gnu", "x86_64-pc-windows-msvc"]
-# Path that installers should place binaries in
 install-path = "CARGO_HOME"
-# Where to host releases
 hosting = "github"
-# Whether to install an updater program
 install-updater = false
