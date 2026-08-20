@@ -15,7 +15,6 @@ fn ordered(source: &str, required: &[&str]) {
 fn release_workflows_prebuild_publish_and_recover_safely() {
     for required in [
         "workflow_dispatch:",
-        "building: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag == '' }}",
         "publishing: ${{ github.event_name == 'push' }}",
         "[[ \"$GITHUB_REF\" == \"refs/heads/main\" ]]",
         "--workflow release.yml",
@@ -23,7 +22,9 @@ fn release_workflows_prebuild_publish_and_recover_safely() {
         "--branch main",
         "--commit \"$GITHUB_SHA\"",
         "--status success",
-        "if: ${{ needs.plan.outputs.building == 'true' }}",
+        "if: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag == '' && github.ref == 'refs/heads/main' }}",
+        "cache-workspace-crates: true",
+        "runner: windows-2025",
         "run-id: ${{ needs.plan.outputs.prebuild-run-id }}",
         "pattern: artifacts-build-*",
         "inputs.release_tag != '' && inputs.artifacts_run_id != ''",
@@ -32,9 +33,26 @@ fn release_workflows_prebuild_publish_and_recover_safely() {
     ] {
         assert!(RELEASE.contains(required), "missing {required}");
     }
-    assert_eq!(RELEASE.matches("outputs.building").count(), 2);
+    let prebuilds = RELEASE.matches("github.ref == 'refs/heads/main'").count();
+    assert_eq!(prebuilds, 2);
     assert_eq!(RELEASE.matches("artifacts_run_id:").count(), 3);
+    let targets = DIST
+        .lines()
+        .find(|line| line.starts_with("targets = "))
+        .unwrap();
+    for target in targets.split('"').skip(1).step_by(2) {
+        assert!(RELEASE.contains(target), "missing {target}");
+    }
     assert!(DIST.contains("allow-dirty = [\"ci\"]") && !DIST.contains("pr-run-mode"));
+    assert!(
+        ![
+            "--print=linkage",
+            "submodules: recursive",
+            "Install dependencies"
+        ]
+        .iter()
+        .any(|value| RELEASE.contains(value))
+    );
 
     for required in [
         "actions: read",
