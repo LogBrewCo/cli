@@ -228,74 +228,34 @@ async fn released_python_frameworks_use_the_detected_package_manager() -> TestRe
             std::fs::write(root.join(lockfile), "")?;
         }
         let body = setup_json(&root).await?;
-        let plan = &body["install_plan"];
-        assert_eq!(plan.as_object().map(serde_json::Map::len), Some(8));
-        assert_eq!(plan["mode"], "non_mutating");
-        assert_eq!(plan["ecosystem"], "pypi");
-        assert_eq!(plan["package_manager"], package_manager);
-        assert_eq!(plan["integration"], integration);
-        assert_eq!(plan["compatibility"]["status"], "review_required");
-        assert_eq!(
-            plan["compatibility"].as_object().map(serde_json::Map::len),
-            Some(3)
-        );
-        assert_eq!(plan["compatibility"]["requires_python"], ">=3.10");
-        assert_eq!(
-            plan["compatibility"]["requires_framework"],
-            serde_json::json!((!framework_requirement.is_empty()).then_some(framework_requirement))
-        );
-        assert_eq!(plan["install_command"], install_command);
-        assert_eq!(plan["packages"][0]["name"], "logbrew-sdk");
-        assert_eq!(plan["packages"][0]["role"], "core");
-        assert_eq!(
-            plan["packages"][0].as_object().map(serde_json::Map::len),
-            Some(if install_command.contains("[celery]") {
-                4
-            } else {
-                3
-            })
-        );
-        assert_eq!(
-            plan["packages"][0]["extras"],
-            serde_json::json!(install_command.contains("[celery]").then_some(["celery"]))
-        );
-        assert_eq!(
-            plan["packages"][0]["version_requirement"]["kind"],
-            "latest_compatible"
-        );
-        assert_eq!(
-            plan["packages"][0]["version_requirement"]
-                .as_object()
-                .map(serde_json::Map::len),
-            Some(1)
-        );
-        assert_eq!(
-            plan["packages"].as_array().map(Vec::len),
-            Some(if framework_package.is_empty() { 1 } else { 2 })
-        );
+        let mut core = serde_json::json!({
+            "name": "logbrew-sdk", "role": "core",
+            "version_requirement": {"kind": "latest_compatible"},
+        });
+        if install_command.contains("[celery]") {
+            core["extras"] = serde_json::json!(["celery"]);
+        }
+        let mut packages = vec![core];
         if !framework_package.is_empty() {
-            assert_eq!(plan["packages"][1]["name"], framework_package);
-            assert_eq!(plan["packages"][1]["role"], "framework");
-            assert_eq!(
-                plan["packages"][1].as_object().map(serde_json::Map::len),
-                Some(3)
-            );
-            assert_eq!(
-                plan["packages"][1]["version_requirement"]["kind"],
-                "latest_compatible"
-            );
-            assert_eq!(
-                plan["packages"][1]["version_requirement"]
-                    .as_object()
-                    .map(serde_json::Map::len),
-                Some(1)
-            );
+            packages.push(serde_json::json!({
+                "name": framework_package, "role": "framework",
+                "version_requirement": {"kind": "latest_compatible"},
+            }));
         }
         assert_eq!(
-            plan["next_action"]["code"],
-            "review_compatibility_and_install"
+            body["install_plan"],
+            serde_json::json!({
+                "mode": "non_mutating", "ecosystem": "pypi",
+                "package_manager": package_manager, "integration": integration,
+                "packages": packages,
+                "compatibility": {
+                    "status": "review_required", "requires_python": ">=3.10",
+                    "requires_framework": (!framework_requirement.is_empty()).then_some(framework_requirement),
+                },
+                "install_command": install_command,
+                "next_action": {"code": "review_compatibility_and_install", "target": "project_environment"},
+            })
         );
-        assert_eq!(plan["next_action"]["target"], "project_environment");
         assert_eq!(body["detected"][0]["runtime"], "python");
     }
     Ok(())
@@ -366,90 +326,99 @@ async fn java_builds_emit_exact_released_dependency_plans() -> TestResult {
 }
 
 #[tokio::test]
-async fn sveltekit_emits_a_truthful_non_mutating_plan() -> TestResult {
-    let root = fixture(
-        "sveltekit-pnpm",
-        &[
-            ("pnpm-lock.yaml", "lockfileVersion: '9.0'\n"),
-            (
-                "package.json",
-                r#"{"devDependencies":{"@sveltejs/kit":"2.5.27"}}"#,
-            ),
-        ],
-    )?;
-    let body = setup_json(&root).await?;
-    let plan = &body["install_plan"];
-    assert_eq!(
-        plan,
-        &serde_json::json!({
-            "mode": "non_mutating",
-            "ecosystem": "npm",
-            "package_manager": "pnpm",
-            "integration": "sveltekit",
-            "packages": [
+async fn javascript_executables_and_frameworks_emit_scoped_plans() -> TestResult {
+    let server = serde_json::json!([{
+        "surface": "server", "integration": "node", "credential_kind": "server",
+        "service_name_required": true, "deployment_context_required": ["environment", "release"],
+    }]);
+    for (
+        label,
+        files,
+        manager,
+        runtime,
+        integration,
+        packages,
+        compatibility,
+        surfaces,
+        command,
+        human,
+    ) in [
+        (
+            "node-cli",
+            &[("package.json", r#"{"bin":{"fixture":"dist/cli.js"}}"#)][..],
+            "npm",
+            "node",
+            "node",
+            serde_json::json!(["@logbrew/sdk", "@logbrew/node"]),
+            serde_json::json!({"status": "review_required", "requires_node": ">=18"}),
+            server,
+            "npm install @logbrew/sdk @logbrew/node",
+            &["Integration: Node.js", "Surface: server; key kind: server"][..],
+        ),
+        (
+            "sveltekit-pnpm",
+            &[
+                ("pnpm-lock.yaml", "lockfileVersion: '9.0'\n"),
+                (
+                    "package.json",
+                    r#"{"bin":"cli.js","devDependencies":{"@sveltejs/kit":"2.5.27"}}"#,
+                ),
+            ][..],
+            "pnpm",
+            "sveltekit",
+            "sveltekit",
+            serde_json::json!([
                 {"name": "@logbrew/sdk", "role": "core", "version_requirement": {"kind": "latest_compatible"}},
                 {"name": "@logbrew/browser", "role": "delivery", "version_requirement": {"kind": "latest_compatible"}},
                 {"name": "@logbrew/svelte", "role": "framework", "version_requirement": {"kind": "latest_compatible"}},
-            ],
-            "compatibility": {
-                "status": "review_required",
-                "requires_node": ">=18",
-                "requires_framework": "Svelte >=5",
-            },
-            "surfaces": javascript_surfaces("svelte", "sveltekit"),
-            "install_command": "pnpm add @logbrew/sdk @logbrew/browser @logbrew/svelte",
-            "next_action": {
-                "code": "review_compatibility_and_install",
-                "target": "project_environment",
-            },
-        })
-    );
-    assert_eq!(body["detected"][0]["runtime"], "sveltekit");
-    let human = setup_text(&root, &["logbrew", "setup"]).await?;
-    assert!(human.contains("Integration: SvelteKit\nPackages: @logbrew/sdk @logbrew/browser @logbrew/svelte\nCompatibility review: Node >=18; Svelte >=5\nSurfaces:\n- browser: Svelte; key kind: browser; stable service name, environment, and release required\n- server: SvelteKit; key kind: server; stable service name, environment, and release required"));
-    Ok(())
-}
-
-#[tokio::test]
-async fn mixed_react_express_emits_scoped_surface_plan() -> TestResult {
-    let root = fixture_file(
-        "react-express",
-        "package.json",
-        r#"{"dependencies":{"react":"18.3.1","express":"4.21.2"}}"#,
-    )?;
-    let body = setup_json(&root).await?;
-    assert_eq!(
-        body["install_plan"],
-        serde_json::json!({
-            "mode": "non_mutating",
-            "ecosystem": "npm",
-            "package_manager": "npm",
-            "integration": "react_express",
-            "packages": REACT_EXPRESS_PACKAGES.split_whitespace().collect::<Vec<_>>(),
-            "compatibility": {
-                "status": "review_required",
-                "requires_node": ">=18",
-                "requires_frameworks": ["React >=18", "Express >=4"],
-            },
-            "install_command": "npm install @logbrew/sdk @logbrew/browser @logbrew/react @logbrew/node @logbrew/express",
-            "next_action": {
-                "code": "review_compatibility_and_install",
-                "target": "project_environment",
-            },
-            "surfaces": javascript_surfaces("react", "express"),
-        })
-    );
-    assert_eq!(body["detected"][0]["runtime"], "react-express");
-    let human = setup_text(&root, &["logbrew", "setup"]).await?;
-    assert_contains_all(
-        &human,
-        &[
-            "Integration: React + Express",
-            "Compatibility review: Node >=18; React >=18; Express >=4",
-            "browser: React; key kind: browser; stable service name, environment, and release required",
-            "server: Express; key kind: server; stable service name, environment, and release required",
-        ],
-    );
+            ]),
+            serde_json::json!({"status": "review_required", "requires_node": ">=18", "requires_framework": "Svelte >=5"}),
+            javascript_surfaces("svelte", "sveltekit"),
+            "pnpm add @logbrew/sdk @logbrew/browser @logbrew/svelte",
+            &[
+                "Integration: SvelteKit",
+                "browser: Svelte; key kind: browser",
+                "server: SvelteKit; key kind: server",
+            ][..],
+        ),
+        (
+            "react-express",
+            &[(
+                "package.json",
+                r#"{"bin":"cli.js","dependencies":{"react":"18.3.1","express":"4.21.2"}}"#,
+            )][..],
+            "npm",
+            "react-express",
+            "react_express",
+            serde_json::json!(
+                REACT_EXPRESS_PACKAGES
+                    .split_whitespace()
+                    .collect::<Vec<_>>()
+            ),
+            serde_json::json!({"status": "review_required", "requires_node": ">=18", "requires_frameworks": ["React >=18", "Express >=4"]}),
+            javascript_surfaces("react", "express"),
+            "npm install @logbrew/sdk @logbrew/browser @logbrew/react @logbrew/node @logbrew/express",
+            &[
+                "Integration: React + Express",
+                "browser: React; key kind: browser",
+                "server: Express; key kind: server",
+            ][..],
+        ),
+    ] {
+        let root = fixture(label, files)?;
+        let body = setup_json(&root).await?;
+        assert_eq!(body["detected"][0]["runtime"], runtime);
+        assert_eq!(
+            body["install_plan"],
+            serde_json::json!({
+                "mode": "non_mutating", "ecosystem": "npm", "package_manager": manager,
+                "integration": integration, "packages": packages, "compatibility": compatibility,
+                "surfaces": surfaces, "install_command": command,
+                "next_action": {"code": "review_compatibility_and_install", "target": "project_environment"},
+            })
+        );
+        assert_contains_all(&setup_text(&root, &["logbrew", "setup"]).await?, human);
+    }
     Ok(())
 }
 
@@ -600,20 +569,17 @@ async fn framework_detection_is_bounded_and_exact() -> TestResult {
         assert_eq!(body["install_plan"]["framework_manifest"], marker);
     }
 
-    for (index, dependencies) in [
-        r#""react":"18","next":"1""#,
-        r#""react":"18","react-native":"1""#,
-        r#""react":"18""#,
-        r#""express":"4""#,
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        let manifest = format!(r#"{{"dependencies":{{{dependencies}}}}}"#);
-        let root = fixture(
-            &format!("unsupported-js-{index}"),
-            &[("package.json", &manifest)],
-        )?;
+    for manifest in [
+        r#"{"dependencies":{"react":"18","next":"1"}}"#,
+        r#"{"dependencies":{"react":"18","react-native":"1"}}"#,
+        r#"{"dependencies":{"react":"18"}}"#,
+        r#"{"dependencies":{"express":"4"}}"#,
+        r#"{"bin":""}"#,
+        r#"{"bin":{}}"#,
+        r#"{"bin":{"fixture":""}}"#,
+        r#"{"bin":[]}"#,
+    ] {
+        let root = fixture("unsupported-js", &[("package.json", manifest)])?;
         let body = setup_json(&root).await?;
         assert_eq!(body["detected"][0]["runtime"], "node");
         assert_eq!(body["install_plan"], serde_json::Value::Null);
