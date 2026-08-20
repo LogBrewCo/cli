@@ -439,20 +439,13 @@ fn is_lower_hex(value: &str, length: usize) -> bool {
 }
 
 /// Reads one bounded response without retaining hostile text on failure.
-pub(super) async fn bounded_body(mut response: reqwest::Response) -> Result<String, RuntimeError> {
-    if response.content_length().is_some_and(|length| {
-        usize::try_from(length).map_or(true, |length| length > MAX_RESPONSE_BYTES)
-    }) {
-        return Err(invalid_response());
-    }
-    let mut body = Vec::new();
-    while let Some(chunk) = response.chunk().await.map_err(|_| transport_error())? {
-        if body.len().saturating_add(chunk.len()) > MAX_RESPONSE_BYTES {
-            return Err(invalid_response());
-        }
-        body.extend_from_slice(&chunk);
-    }
-    String::from_utf8(body).map_err(|_| invalid_response())
+pub(super) async fn bounded_body(response: reqwest::Response) -> Result<String, RuntimeError> {
+    crate::http::bounded_body(response, MAX_RESPONSE_BYTES)
+        .await
+        .map_err(|error| match error {
+            crate::http::BodyError::Invalid => invalid_response(),
+            crate::http::BodyError::Transport => transport_error(),
+        })
 }
 
 /// Converts auth, refresh, transport, and body errors to fixed local recovery.

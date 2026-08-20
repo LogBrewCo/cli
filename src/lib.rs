@@ -895,6 +895,8 @@ pub enum ExplainTarget {
         /// Retained occurrence selected for detailed evidence.
         occurrence: IssueOccurrenceSelection,
     },
+    /// Evidence-only verification of one candidate issue correction.
+    IssueCorrection(IssueCorrectionTarget),
     /// One structured log by ID.
     Log(String),
     /// One product action by ID.
@@ -935,6 +937,17 @@ pub enum IssueOccurrenceSelection {
     Latest,
     /// One exact retained occurrence UUID.
     Exact(String),
+}
+
+/// Exact identities required to verify one candidate issue correction.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IssueCorrectionTarget {
+    /// Grouped issue identifier.
+    pub issue_id: String,
+    /// Retained failing occurrence selected from issue investigation.
+    pub baseline_occurrence_id: String,
+    /// Successful candidate deployment recorded by the caller.
+    pub candidate_deployment_id: String,
 }
 
 /// Exact identity required by a release investigation.
@@ -2492,6 +2505,22 @@ fn read_path(target: &ReadTarget, filters: &ReadPathFilters<'_>) -> String {
 fn explain_path(target: &ExplainTarget) -> String {
     match target {
         ExplainTarget::Issue { id, occurrence } => issue_explain_path(id, occurrence),
+        ExplainTarget::IssueCorrection(correction) => path_with_query(
+            &format!(
+                "/api/telemetry/issues/{}/correction-verification",
+                encode_component(correction.issue_id.as_str())
+            ),
+            &[
+                (
+                    "baseline_occurrence_id",
+                    Some(correction.baseline_occurrence_id.as_str()),
+                ),
+                (
+                    "candidate_deployment_id",
+                    Some(correction.candidate_deployment_id.as_str()),
+                ),
+            ],
+        ),
         ExplainTarget::Log(id) => {
             format!("/api/logs/{}/investigation", encode_component(id))
         }
