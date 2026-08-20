@@ -6,17 +6,9 @@ on:
       plan:
         required: true
         type: string
-      artifacts_run_id:
-        required: true
-        type: string
-  workflow_dispatch:
-    inputs:
       release_tag:
-        description: Existing public release tag to recover
-        required: true
         type: string
       artifacts_run_id:
-        description: Successful exact-commit prebuild run
         required: true
         type: string
 

@@ -15,7 +15,7 @@ fn ordered(source: &str, required: &[&str]) {
 fn release_workflows_prebuild_publish_and_recover_safely() {
     for required in [
         "workflow_dispatch:",
-        "building: ${{ github.event_name == 'workflow_dispatch' }}",
+        "building: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag == '' }}",
         "publishing: ${{ github.event_name == 'push' }}",
         "[[ \"$GITHUB_REF\" == \"refs/heads/main\" ]]",
         "--workflow release.yml",
@@ -26,14 +26,14 @@ fn release_workflows_prebuild_publish_and_recover_safely() {
         "if: ${{ needs.plan.outputs.building == 'true' }}",
         "run-id: ${{ needs.plan.outputs.prebuild-run-id }}",
         "pattern: artifacts-build-*",
-        "always() && needs.plan.result == 'success' && needs.host.result == 'success'",
-        "artifacts_run_id: ${{ needs.plan.outputs.prebuild-run-id }}",
+        "inputs.release_tag != '' && inputs.artifacts_run_id != ''",
+        "artifacts_run_id: ${{ inputs.artifacts_run_id || needs.plan.outputs.prebuild-run-id }}",
         "gh release create \"${{ needs.plan.outputs.tag }}\" --target \"$GITHUB_SHA\"",
     ] {
         assert!(RELEASE.contains(required), "missing {required}");
     }
     assert_eq!(RELEASE.matches("outputs.building").count(), 2);
-    assert_eq!(RELEASE.matches("artifacts_run_id:").count(), 2);
+    assert_eq!(RELEASE.matches("artifacts_run_id:").count(), 3);
     assert!(!RELEASE.contains("pull_request_target") && !RELEASE.contains("schedule:"));
     assert!(DIST.contains("allow-dirty = [\"ci\"]") && !DIST.contains("pr-run-mode"));
 
@@ -55,7 +55,7 @@ fn release_workflows_prebuild_publish_and_recover_safely() {
 
     for source in [NPM, HOMEBREW] {
         for required in [
-            "workflow_dispatch:",
+            "workflow_call:",
             "actions: read",
             "release_tag:",
             "--repo \"$GITHUB_REPOSITORY\"",
@@ -67,9 +67,10 @@ fn release_workflows_prebuild_publish_and_recover_safely() {
         }
     }
     assert!(NPM.contains("npm publish --access public \"./${packages[0]}\""));
+    assert!(!NPM.contains("  workflow_dispatch:"));
 
     for required in [
-        "workflow_call:",
+        "  workflow_dispatch:",
         "permissions:\n  actions: read\n  contents: read",
         "persist-credentials: false",
         "persist-credentials: true",
