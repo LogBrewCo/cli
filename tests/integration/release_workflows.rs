@@ -99,7 +99,7 @@ fn release_workflows_prebuild_publish_and_recover_safely() {
         "token: ${{ secrets.HOMEBREW_TAP_TOKEN }}",
         "while IFS= read -r release; do",
         "path: tap/Formula/",
-        "if [[ \"${release_count}\" -eq 0 ]]",
+        "if [[ \"${release_count}\" -ne 1 ]]",
         "[[ ! \"${filename}\" =~ ^[a-z0-9][a-z0-9._+-]*\\.rb$ ]]",
         "[[ ! \"${version}\" =~ ^[0-9]+\\.[0-9]+\\.[0-9]+$ ]]",
         "set -euo pipefail",
@@ -114,10 +114,11 @@ fn release_workflows_prebuild_publish_and_recover_safely() {
         HOMEBREW,
         &[
             "ruby ../release-tooling/scripts/prepare-homebrew-formula.rb",
-            "brew audit --fix --strict --online --formula \"${audit_tap}/${name}\"",
-            "ruby -c \"Formula/${filename}\"",
+            "brew audit --fix --strict --formula \"${audit_tap}/${name}\"",
             "git add \"Formula/${filename}\"",
             "git commit -m \"${name} ${version}\"",
+            "validate-publish-boundary.sh",
+            "brew audit --strict --online --formula \"${audit_tap}/${name}\"",
             "git push",
         ],
     );

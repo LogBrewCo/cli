@@ -62,20 +62,16 @@ jobs:
           path: tap/Formula/
           merge-multiple: true
 
-      - name: Require exact public release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: bash release-tooling/scripts/validate-publish-boundary.sh
-
       - name: Validate and commit formula files
         shell: bash
         run: |
           set -euo pipefail
           cd tap
+          expected_version="${RELEASE_TAG#v}"
 
           if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
             [[ -f Formula/logbrew.rb ]] || exit 1
-            PLAN="$(jq -cn --arg version "$EXPECTED_VERSION" '{releases:[{app_version:$version,artifacts:["logbrew.rb"]}]}')"
+            PLAN="$(jq -cn --arg version "$expected_version" '{releases:[{app_version:$version,artifacts:["logbrew.rb"]}]}')"
           fi
 
           git config --local user.name "${GITHUB_USER}"
@@ -116,8 +112,7 @@ jobs:
             name="${filename%.rb}"
             ruby ../release-tooling/scripts/prepare-homebrew-formula.rb \
               "Formula/${filename}" "${version}"
-            brew audit --fix --strict --online --formula "${audit_tap}/${name}"
-            ruby -c "Formula/${filename}"
+            brew audit --fix --strict --formula "${audit_tap}/${name}"
 
             git add "Formula/${filename}"
             if git diff --cached --quiet -- "Formula/${filename}"; then
@@ -131,11 +126,13 @@ jobs:
               <<<"${PLAN}"
           )
 
-          if [[ "${release_count}" -eq 0 ]]; then
-            printf 'Homebrew formula validation failed: no formula release.\n' >&2
+          if [[ "${release_count}" -ne 1 ]]; then
+            printf 'Homebrew formula validation failed: expected one formula release.\n' >&2
             exit 1
           fi
 
+          GH_TOKEN="${{ github.token }}" bash ../release-tooling/scripts/validate-publish-boundary.sh
+          brew audit --strict --online --formula "${audit_tap}/${name}"
           cleanup_audit_tap
           if [[ -e "${audit_repo}" || -L "${audit_repo}" ]]; then
             printf 'Homebrew formula validation failed: temporary tap remains.\n' >&2
