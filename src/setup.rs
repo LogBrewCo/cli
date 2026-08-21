@@ -15,7 +15,7 @@ const SDK_NEXT_STEP: &str = "use the released SDK guidance for this runtime; thi
 const PACKAGE_NEXT_STEP: &str =
     "review the compatibility requirements, then add the dependency; no files were changed";
 /// Current released Java SDK coordinate and compatibility floor.
-const JAVA_SDK_VERSION: &str = "0.1.5";
+const JAVA_SDK_VERSION: &str = "0.1.6";
 const JAVA_MINIMUM_VERSION: &str = ">=11";
 /// Minimum Python version required by the current public Python SDK family.
 const PYTHON_MINIMUM_VERSION: &str = ">=3.10";
@@ -968,7 +968,7 @@ fn relative_path(root: &Path, path: &Path) -> Option<String> {
         return None;
     }
 
-    let relative = std::iter::repeat_n("..".to_owned(), root_components.len() - common)
+    let mut relative = std::iter::repeat_n("..".to_owned(), root_components.len() - common)
         .chain(
             path_components[common..]
                 .iter()
@@ -976,11 +976,10 @@ fn relative_path(root: &Path, path: &Path) -> Option<String> {
         )
         .collect::<Vec<_>>()
         .join("/");
-    Some(if relative.is_empty() {
-        String::from(".")
-    } else {
-        relative
-    })
+    if relative.is_empty() {
+        relative.push('.');
+    }
+    Some(relative)
 }
 
 /// Returns human-readable runtime names.

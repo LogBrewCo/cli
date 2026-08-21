@@ -89,7 +89,7 @@ pub(super) struct Session {
 /// One request failure plus bounded retry classification.
 pub(super) struct AttemptFailure {
     /// Fixed public-safe runtime error.
-    pub(super) error: RuntimeError,
+    pub(super) error: Box<RuntimeError>,
     /// Phase-specific handling.
     pub(super) kind: FailureKind,
     /// Optional validated server retry delay.
@@ -461,7 +461,7 @@ fn completion_validation_class(envelope: Option<&ErrorEnvelope>) -> (Phase, Fail
 fn request_failure(error: RuntimeError) -> AttemptFailure {
     match error {
         RuntimeError::Http(_) => AttemptFailure {
-            error: transport_error(),
+            error: Box::new(transport_error()),
             kind: FailureKind::Retryable,
             retry_after: None,
         },
@@ -493,12 +493,12 @@ fn phase_failure(
     retry_after: Option<std::time::Duration>,
 ) -> AttemptFailure {
     AttemptFailure {
-        error: RuntimeError::Api {
+        error: Box::new(RuntimeError::Api {
             status,
             body: safe_api_body(status, phase),
             auth_source: credential.source(),
             auth_label: credential.label(),
-        },
+        }),
         kind: if retryable_status(status) {
             FailureKind::Retryable
         } else {
@@ -517,9 +517,9 @@ impl AttemptFailure {
 }
 
 /// Creates one non-retryable failure.
-const fn terminal_failure(error: RuntimeError) -> AttemptFailure {
+fn terminal_failure(error: RuntimeError) -> AttemptFailure {
     AttemptFailure {
-        error,
+        error: Box::new(error),
         kind: FailureKind::Terminal,
         retry_after: None,
     }

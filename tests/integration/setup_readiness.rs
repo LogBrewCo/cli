@@ -269,21 +269,21 @@ async fn java_builds_emit_exact_released_dependency_plans() -> TestResult {
             "maven",
             "<project><dependency><groupId>org.springframework.kafka</groupId></dependency></project>",
             "spring",
-            "<dependency>\n  <groupId>co.logbrew</groupId>\n  <artifactId>logbrew-sdk</artifactId>\n  <version>0.1.5</version>\n</dependency>",
+            "<dependency>\n  <groupId>co.logbrew</groupId>\n  <artifactId>logbrew-sdk</artifactId>\n  <version>0.1.6</version>\n</dependency>",
         ),
         (
             "build.gradle",
             "gradle",
             "plugins { id 'java' }",
             "java",
-            "implementation 'co.logbrew:logbrew-sdk:0.1.5'",
+            "implementation 'co.logbrew:logbrew-sdk:0.1.6'",
         ),
         (
             "build.gradle.kts",
             "gradle-kotlin",
             "plugins { java }",
             "java",
-            "implementation(\"co.logbrew:logbrew-sdk:0.1.5\")",
+            "implementation(\"co.logbrew:logbrew-sdk:0.1.6\")",
         ),
     ] {
         let root = fixture(manager, &[(manifest, contents)])?;
@@ -295,7 +295,7 @@ async fn java_builds_emit_exact_released_dependency_plans() -> TestResult {
                 "ecosystem": manager,
                 "package_manager": manager,
                 "integration": integration,
-                "package": {"group_id": "co.logbrew", "artifact_id": "logbrew-sdk", "version": "0.1.5"},
+                "package": {"group_id": "co.logbrew", "artifact_id": "logbrew-sdk", "version": "0.1.6"},
                 "compatibility": {
                     "status": "review_required",
                     "requires_java": ">=11",
@@ -316,7 +316,7 @@ async fn java_builds_emit_exact_released_dependency_plans() -> TestResult {
                 &setup_text(&root, &["logbrew", "setup"]).await?,
                 &[
                     "Integration: Spring",
-                    "co.logbrew:logbrew-sdk:0.1.5",
+                    "co.logbrew:logbrew-sdk:0.1.6",
                     declaration,
                 ],
             );
