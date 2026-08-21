@@ -25,22 +25,10 @@ jobs:
       RELEASE_TAG: ${{ inputs.release_tag }}
       ARTIFACTS_RUN_ID: ${{ inputs.artifacts_run_id }}
     steps:
-      - name: Validate manual recovery boundary
-        if: ${{ github.event_name == 'workflow_dispatch' }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || exit 1
-          target="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json targetCommitish,isDraft,isPrerelease --jq 'select(.isDraft == false and .isPrerelease == false) | .targetCommitish')"
-          run="$(gh run view "$ARTIFACTS_RUN_ID" --repo "$GITHUB_REPOSITORY" --json name,event,headBranch,headSha,conclusion)"
-          [[ "$target" =~ ^[0-9a-f]{40}$ ]] || exit 1
-          [[ "$(jq -r '.name' <<<"$run")" == "Release" ]] || exit 1
-          [[ "$(jq -r '.event' <<<"$run")" == "workflow_dispatch" ]] || exit 1
-          [[ "$(jq -r '.headBranch' <<<"$run")" == "main" ]] || exit 1
-          [[ "$(jq -r '.headSha' <<<"$run")" == "$target" ]] || exit 1
-          [[ "$(jq -r '.conclusion' <<<"$run")" == "success" ]] || exit 1
-          printf 'EXPECTED_VERSION=%s\n' "${RELEASE_TAG#v}" >> "$GITHUB_ENV"
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          path: release-tooling
       - name: Fetch exact-main npm package
         uses: actions/download-artifact@v8
         with:
@@ -59,6 +47,11 @@ jobs:
 
       - name: Install npm with trusted publishing support
         run: npm install --global "npm@^11.15.0"
+
+      - name: Require exact public release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash release-tooling/scripts/validate-publish-boundary.sh
 
       - name: Publish npm packages with OIDC
         shell: bash

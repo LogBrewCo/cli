@@ -73,6 +73,42 @@ const WATCH_RECONNECT_MAX_DELAY: std::time::Duration = std::time::Duration::from
 /// Maximum jitter added to reconnect delays.
 const WATCH_RECONNECT_JITTER_MAX_MILLIS: u64 = 250;
 
+/// Runs the installed CLI process while keeping the binary target minimal.
+#[doc(hidden)]
+pub async fn run_process() -> std::process::ExitCode {
+    let args = std::env::args().collect::<Vec<_>>();
+    let wants_json = args.iter().any(|arg| arg == "--json");
+    let native_debug_json = wants_json
+        && args
+            .get(1..)
+            .and_then(|args| args.iter().find(|arg| arg.as_str() != "--json"))
+            .is_some_and(|command| command == "debug-artifacts");
+    let command = match parse_command(args) {
+        Ok(command) => command,
+        Err(error) => {
+            let (mut stdout, mut stderr) = (std::io::stdout(), std::io::stderr());
+            let _result = if native_debug_json {
+                write_cli_error(&error, true, &mut stdout)
+            } else {
+                write_cli_error(&error, wants_json, &mut stderr)
+            };
+            return std::process::ExitCode::from(2);
+        }
+    };
+
+    let env = CliEnvironment::from_process();
+    let mut stdout = std::io::stdout();
+    if let Err(error) = execute_command(&command, &env, &mut stdout).await {
+        if matches!(command, Command::NativeDebugArtifacts { json: true, .. }) {
+            let _result = write_native_debug_runtime_error(&error, &mut stdout);
+        } else {
+            let _result = write_runtime_error(&error, command.wants_json(), &mut std::io::stderr());
+        }
+        return std::process::ExitCode::from(1);
+    }
+    std::process::ExitCode::SUCCESS
+}
+
 /// Accepted issue status values for generic recovery text.
 pub(crate) const ISSUE_STATUS_VALUES_NEXT_STEP: &str =
     "use one of unresolved/open, resolved/closed, ignored";

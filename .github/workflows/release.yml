@@ -221,14 +221,12 @@ jobs:
           gh release create "${{ needs.plan.outputs.tag }}" --target "$GITHUB_SHA" "${release_args[@]}" --title "$ANNOUNCEMENT_TITLE" --notes-file "$RUNNER_TEMP/notes.txt" target/distrib/*
 
   custom-publish-npm-trusted:
-    needs:
-      - plan
-      - host
-    if: ${{ always() && needs.plan.result == 'success' && ((needs.host.result == 'success' && (!fromJson(needs.plan.outputs.val).announcement_is_prerelease || fromJson(needs.plan.outputs.val).publish_prereleases)) || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '' && inputs.artifacts_run_id != '')) }}
+    needs: plan
+    if: ${{ needs.plan.result == 'success' && ((github.event_name == 'push' && (!fromJson(needs.plan.outputs.val).announcement_is_prerelease || fromJson(needs.plan.outputs.val).publish_prereleases)) || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '' && inputs.artifacts_run_id != '')) }}
     uses: ./.github/workflows/publish-npm-trusted.yml
     with:
       plan: ${{ needs.plan.outputs.val }}
-      release_tag: ${{ inputs.release_tag }}
+      release_tag: ${{ inputs.release_tag || needs.plan.outputs.tag }}
       artifacts_run_id: ${{ inputs.artifacts_run_id || needs.plan.outputs.prebuild-run-id }}
     secrets: inherit
     permissions:
@@ -238,13 +236,12 @@ jobs:
       packages: write
 
   custom-publish-homebrew-tap:
-    needs:
-      - plan
-      - host
-    if: ${{ always() && needs.plan.result == 'success' && needs.host.result == 'success' && (!fromJson(needs.plan.outputs.val).announcement_is_prerelease || fromJson(needs.plan.outputs.val).publish_prereleases) }}
+    needs: plan
+    if: ${{ github.event_name == 'push' && needs.plan.result == 'success' && (!fromJson(needs.plan.outputs.val).announcement_is_prerelease || fromJson(needs.plan.outputs.val).publish_prereleases) }}
     uses: ./.github/workflows/publish-homebrew-tap.yml
     with:
       plan: ${{ needs.plan.outputs.val }}
+      release_tag: ${{ needs.plan.outputs.tag }}
       artifacts_run_id: ${{ needs.plan.outputs.prebuild-run-id }}
     secrets: inherit
     permissions:
