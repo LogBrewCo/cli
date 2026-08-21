@@ -14,22 +14,8 @@ fn parses_top_level_singular_collection_shortcuts() {
         Command::Read {
             target: ReadTarget::Logs,
             options: Box::new(ReadOptions {
-                name: None,
-                service: None,
-                since: None,
-                user: None,
-                trace: None,
-                level: None,
-                search: None,
-                project: None,
                 release: Some("checkout@1".to_owned()),
-                environment: None,
-                status: None,
-                limit: None,
-                min_duration_ms: None,
-                pagination: None,
-                cursor_time: None,
-                cursor_id: None,
+                ..ReadOptions::default()
             }),
             json: true,
         }
@@ -52,22 +38,8 @@ fn parses_top_level_singular_collection_shortcuts() {
         Command::Read {
             target: ReadTarget::Releases,
             options: Box::new(ReadOptions {
-                name: None,
-                service: None,
-                since: None,
-                user: None,
-                trace: None,
-                level: None,
-                search: None,
-                project: None,
-                release: None,
                 environment: Some("production".to_owned()),
-                status: None,
-                limit: None,
-                min_duration_ms: None,
-                pagination: None,
-                cursor_time: None,
-                cursor_id: None,
+                ..ReadOptions::default()
             }),
             json: true,
         }
@@ -96,22 +68,9 @@ fn parses_common_human_terms_as_read_shortcuts() {
         Command::Read {
             target: ReadTarget::Issues,
             options: Box::new(ReadOptions {
-                name: None,
-                service: None,
-                since: None,
-                user: None,
-                trace: None,
-                level: None,
-                search: None,
-                project: None,
                 release: Some("checkout@1".to_owned()),
-                environment: None,
                 status: Some("unresolved".to_owned()),
-                limit: None,
-                min_duration_ms: None,
-                pagination: None,
-                cursor_time: None,
-                cursor_id: None,
+                ..ReadOptions::default()
             }),
             json: true,
         }
@@ -138,21 +97,8 @@ fn parses_common_human_terms_as_read_shortcuts() {
             target: ReadTarget::Actions,
             options: Box::new(ReadOptions {
                 name: Some("checkout_failed".to_owned()),
-                service: None,
-                since: None,
-                user: None,
-                trace: None,
-                level: None,
-                search: None,
-                project: None,
-                release: None,
                 environment: Some("production".to_owned()),
-                status: None,
-                limit: None,
-                min_duration_ms: None,
-                pagination: None,
-                cursor_time: None,
-                cursor_id: None,
+                ..ReadOptions::default()
             }),
             json: true,
         }
@@ -169,22 +115,7 @@ fn parses_common_human_terms_as_read_shortcuts() {
         Command::Read {
             target: ReadTarget::Issues,
             options: Box::new(ReadOptions {
-                name: None,
-                service: None,
-                since: None,
-                user: None,
-                trace: None,
-                level: None,
-                search: None,
-                project: None,
-                release: None,
-                environment: None,
-                status: None,
-                limit: None,
-                min_duration_ms: None,
-                pagination: None,
-                cursor_time: None,
-                cursor_id: None,
+                ..ReadOptions::default()
             }),
             json: true,
         }
@@ -196,22 +127,7 @@ fn parses_common_human_terms_as_read_shortcuts() {
         Command::Read {
             target: ReadTarget::Actions,
             options: Box::new(ReadOptions {
-                name: None,
-                service: None,
-                since: None,
-                user: None,
-                trace: None,
-                level: None,
-                search: None,
-                project: None,
-                release: None,
-                environment: None,
-                status: None,
-                limit: None,
-                min_duration_ms: None,
-                pagination: None,
-                cursor_time: None,
-                cursor_id: None,
+                ..ReadOptions::default()
             }),
             json: true,
         }
@@ -387,22 +303,8 @@ fn parses_recency_words_as_read_shortcuts() {
         Command::Read {
             target: ReadTarget::Logs,
             options: Box::new(ReadOptions {
-                name: None,
-                service: None,
-                since: None,
-                user: None,
-                trace: None,
-                level: None,
-                search: None,
-                project: None,
-                release: None,
-                environment: None,
-                status: None,
                 limit: Some("20".to_owned()),
-                min_duration_ms: None,
-                pagination: None,
-                cursor_time: None,
-                cursor_id: None,
+                ..ReadOptions::default()
             }),
             json: true,
         }
@@ -838,21 +740,9 @@ fn parses_action_aliases_with_names_as_name_filters() {
             target: ReadTarget::Actions,
             options: Box::new(ReadOptions {
                 name: Some("checkout_failed".to_owned()),
-                service: None,
-                since: None,
-                user: None,
-                trace: None,
-                level: None,
-                search: None,
-                project: None,
                 release: Some("checkout@1".to_owned()),
                 environment: Some("production".to_owned()),
-                status: None,
-                limit: None,
-                min_duration_ms: None,
-                pagination: None,
-                cursor_time: None,
-                cursor_id: None,
+                ..ReadOptions::default()
             }),
             json: true,
         }
@@ -879,21 +769,8 @@ fn parses_action_aliases_with_names_as_name_filters() {
             target: ReadTarget::Actions,
             options: Box::new(ReadOptions {
                 name: Some("checkout_failed".to_owned()),
-                service: None,
-                since: None,
-                user: None,
-                trace: None,
-                level: None,
-                search: None,
-                project: None,
-                release: None,
                 environment: Some("production".to_owned()),
-                status: None,
-                limit: None,
-                min_duration_ms: None,
-                pagination: None,
-                cursor_time: None,
-                cursor_id: None,
+                ..ReadOptions::default()
             }),
             json: true,
         }
@@ -913,21 +790,7 @@ fn parses_action_aliases_with_names_as_name_filters() {
             target: ReadTarget::Actions,
             options: Box::new(ReadOptions {
                 name: Some("checkout_failed".to_owned()),
-                service: None,
-                since: None,
-                user: None,
-                trace: None,
-                level: None,
-                search: None,
-                project: None,
-                release: None,
-                environment: None,
-                status: None,
-                limit: None,
-                min_duration_ms: None,
-                pagination: None,
-                cursor_time: None,
-                cursor_id: None,
+                ..ReadOptions::default()
             }),
             json: true,
         }
@@ -1215,22 +1078,8 @@ fn parses_common_read_verbs_as_read_shortcuts() {
         Command::Read {
             target: ReadTarget::Logs,
             options: Box::new(ReadOptions {
-                name: None,
-                service: None,
-                since: None,
-                user: None,
-                trace: None,
-                level: None,
-                search: None,
-                project: None,
                 release: Some("checkout@1".to_owned()),
-                environment: None,
-                status: None,
-                limit: None,
-                min_duration_ms: None,
-                pagination: None,
-                cursor_time: None,
-                cursor_id: None,
+                ..ReadOptions::default()
             }),
             json: true,
         }
@@ -1247,22 +1096,8 @@ fn parses_common_read_verbs_as_read_shortcuts() {
         Command::Read {
             target: ReadTarget::Issues,
             options: Box::new(ReadOptions {
-                name: None,
-                service: None,
-                since: None,
-                user: None,
-                trace: None,
-                level: None,
-                search: None,
-                project: None,
-                release: None,
-                environment: None,
                 status: Some("unresolved".to_owned()),
-                limit: None,
-                min_duration_ms: None,
-                pagination: None,
-                cursor_time: None,
-                cursor_id: None,
+                ..ReadOptions::default()
             }),
             json: false,
         }
@@ -1337,22 +1172,7 @@ fn parses_common_read_verbs_as_read_shortcuts() {
         Command::Read {
             target: ReadTarget::Issue("issue_123".to_owned()),
             options: Box::new(ReadOptions {
-                name: None,
-                service: None,
-                since: None,
-                user: None,
-                trace: None,
-                level: None,
-                search: None,
-                project: None,
-                release: None,
-                environment: None,
-                status: None,
-                limit: None,
-                min_duration_ms: None,
-                pagination: None,
-                cursor_time: None,
-                cursor_id: None,
+                ..ReadOptions::default()
             }),
             json: true,
         }

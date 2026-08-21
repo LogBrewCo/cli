@@ -86,22 +86,11 @@ fn parses_search_as_log_search_shortcut() {
             Command::Read {
                 target: ReadTarget::Logs,
                 options: Box::new(ReadOptions {
-                    name: None,
-                    service: None,
-                    since: None,
-                    user: None,
-                    trace: None,
                     level: level.map(str::to_owned),
                     search: Some(search.to_owned()),
-                    project: None,
                     release: release.map(str::to_owned),
                     environment: environment.map(str::to_owned),
-                    status: None,
-                    limit: None,
-                    min_duration_ms: None,
-                    pagination: None,
-                    cursor_time: None,
-                    cursor_id: None,
+                    ..ReadOptions::default()
                 }),
                 json: true,
             }
@@ -152,22 +141,8 @@ fn parses_search_separator_as_literal_log_search_shortcut() {
             Command::Read {
                 target: ReadTarget::Logs,
                 options: Box::new(ReadOptions {
-                    name: None,
-                    service: None,
-                    since: None,
-                    user: None,
-                    trace: None,
-                    level: None,
                     search: Some(search.to_owned()),
-                    project: None,
-                    release: None,
-                    environment: None,
-                    status: None,
-                    limit: None,
-                    min_duration_ms: None,
-                    pagination: None,
-                    cursor_time: None,
-                    cursor_id: None,
+                    ..ReadOptions::default()
                 }),
                 json,
             }
@@ -335,22 +310,11 @@ fn parses_find_and_grep_as_log_search_shortcuts() {
             Command::Read {
                 target: ReadTarget::Logs,
                 options: Box::new(ReadOptions {
-                    name: None,
-                    service: None,
-                    since: None,
-                    user: None,
-                    trace: None,
                     level: Some("error".to_owned()),
                     search: Some("checkout failed".to_owned()),
-                    project: None,
                     release: Some("api@1".to_owned()),
                     environment: Some("production".to_owned()),
-                    status: None,
-                    limit: None,
-                    min_duration_ms: None,
-                    pagination: None,
-                    cursor_time: None,
-                    cursor_id: None,
+                    ..ReadOptions::default()
                 }),
                 json: true,
             }
