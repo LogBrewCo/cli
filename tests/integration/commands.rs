@@ -6,6 +6,31 @@ use logbrew_cli::{
 };
 
 #[test]
+fn read_options_default_has_no_filters() {
+    assert_eq!(
+        ReadOptions::default(),
+        ReadOptions {
+            name: None,
+            service: None,
+            since: None,
+            user: None,
+            trace: None,
+            level: None,
+            search: None,
+            project: None,
+            release: None,
+            environment: None,
+            status: None,
+            limit: None,
+            min_duration_ms: None,
+            pagination: None,
+            cursor_time: None,
+            cursor_id: None,
+        }
+    );
+}
+
+#[test]
 fn parses_root_help_for_real_user_discovery() {
     let command = parse_command(["logbrew", "--help"]).expect("help parses");
 
@@ -194,22 +219,8 @@ fn parses_global_json_before_read_shortcut_for_agents() {
         Command::Read {
             target: ReadTarget::Logs,
             options: Box::new(ReadOptions {
-                name: None,
-                service: None,
-                since: None,
-                user: None,
-                trace: None,
-                level: None,
-                search: None,
-                project: None,
                 release: Some("checkout@1".to_owned()),
-                environment: None,
-                status: None,
-                limit: None,
-                min_duration_ms: None,
-                pagination: None,
-                cursor_time: None,
-                cursor_id: None,
+                ..ReadOptions::default()
             }),
             json: true,
         }
@@ -1140,21 +1151,8 @@ fn parses_agent_friendly_read_actions() {
             target: ReadTarget::Actions,
             options: Box::new(ReadOptions {
                 name: Some("checkout_failed".to_owned()),
-                service: None,
                 since: Some("24h".to_owned()),
-                user: None,
-                trace: None,
-                level: None,
-                search: None,
-                project: None,
-                release: None,
-                environment: None,
-                status: None,
-                limit: None,
-                min_duration_ms: None,
-                pagination: None,
-                cursor_time: None,
-                cursor_id: None,
+                ..ReadOptions::default()
             }),
             json: true,
         }
@@ -1325,22 +1323,10 @@ fn parses_read_filter_aliases_for_real_user_terms() {
         Command::Read {
             target: ReadTarget::Logs,
             options: Box::new(ReadOptions {
-                name: None,
-                service: None,
-                since: None,
-                user: None,
                 trace: Some("trace_123".to_owned()),
-                level: None,
-                search: None,
                 project: Some("checkout".to_owned()),
-                release: None,
                 environment: Some("production".to_owned()),
-                status: None,
-                limit: None,
-                min_duration_ms: None,
-                pagination: None,
-                cursor_time: None,
-                cursor_id: None,
+                ..ReadOptions::default()
             }),
             json: true,
         }
@@ -1364,22 +1350,9 @@ fn parses_read_filter_aliases_for_real_user_terms() {
         Command::Read {
             target: ReadTarget::Actions,
             options: Box::new(ReadOptions {
-                name: None,
-                service: None,
-                since: None,
                 user: Some("user_123".to_owned()),
-                trace: None,
-                level: None,
-                search: None,
-                project: None,
-                release: None,
                 environment: Some("production".to_owned()),
-                status: None,
-                limit: None,
-                min_duration_ms: None,
-                pagination: None,
-                cursor_time: None,
-                cursor_id: None,
+                ..ReadOptions::default()
             }),
             json: true,
         }
@@ -1407,22 +1380,8 @@ fn parses_release_filter_for_logs() {
         Command::Read {
             target: ReadTarget::Logs,
             options: Box::new(ReadOptions {
-                name: None,
-                service: None,
-                since: None,
-                user: None,
-                trace: None,
-                level: None,
-                search: None,
-                project: None,
                 release: Some("api@1.2.3".to_owned()),
-                environment: None,
-                status: None,
-                limit: None,
-                min_duration_ms: None,
-                pagination: None,
-                cursor_time: None,
-                cursor_id: None,
+                ..ReadOptions::default()
             }),
             json: true,
         }
@@ -1443,22 +1402,8 @@ fn parses_positive_limit_for_logs() {
         Command::Read {
             target: ReadTarget::Logs,
             options: Box::new(ReadOptions {
-                name: None,
-                service: None,
-                since: None,
-                user: None,
-                trace: None,
-                level: None,
-                search: None,
-                project: None,
-                release: None,
-                environment: None,
-                status: None,
                 limit: Some("25".to_owned()),
-                min_duration_ms: None,
-                pagination: None,
-                cursor_time: None,
-                cursor_id: None,
+                ..ReadOptions::default()
             }),
             json: true,
         }
@@ -1564,22 +1509,8 @@ fn parses_release_summaries_with_environment_filter() {
         Command::Read {
             target: ReadTarget::Releases,
             options: Box::new(ReadOptions {
-                name: None,
-                service: None,
-                since: None,
-                user: None,
-                trace: None,
-                level: None,
-                search: None,
-                project: None,
-                release: None,
                 environment: Some("production".to_owned()),
-                status: None,
-                limit: None,
-                min_duration_ms: None,
-                pagination: None,
-                cursor_time: None,
-                cursor_id: None,
+                ..ReadOptions::default()
             }),
             json: true,
         }
@@ -1606,22 +1537,8 @@ fn parses_top_level_releases_shortcut_with_environment_filter() {
         Command::Read {
             target: ReadTarget::Releases,
             options: Box::new(ReadOptions {
-                name: None,
-                service: None,
-                since: None,
-                user: None,
-                trace: None,
-                level: None,
-                search: None,
-                project: None,
-                release: None,
                 environment: Some("production".to_owned()),
-                status: None,
-                limit: None,
-                min_duration_ms: None,
-                pagination: None,
-                cursor_time: None,
-                cursor_id: None,
+                ..ReadOptions::default()
             }),
             json: true,
         }
@@ -1644,22 +1561,7 @@ fn parses_read_trace_as_singular_target() {
         Command::Read {
             target: ReadTarget::Trace("trace-123".to_owned()),
             options: Box::new(ReadOptions {
-                name: None,
-                service: None,
-                since: None,
-                user: None,
-                trace: None,
-                level: None,
-                search: None,
-                project: None,
-                release: None,
-                environment: None,
-                status: None,
-                limit: None,
-                min_duration_ms: None,
-                pagination: None,
-                cursor_time: None,
-                cursor_id: None,
+                ..ReadOptions::default()
             }),
             json: true,
         }
