@@ -271,7 +271,7 @@ fn upload_form(manifest: &str, artifacts: &[Artifact]) -> reqwest::multipart::Fo
         form = form.part(
             format!("debug_file_{index}"),
             reqwest::multipart::Part::stream_with_length(
-                artifact.multipart_payload(),
+                artifact.bytes.clone(),
                 artifact.byte_size(),
             ),
         );
