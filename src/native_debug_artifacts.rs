@@ -158,7 +158,7 @@ async fn start_resumable(
             {
                 tokio::time::sleep(retry_delay(attempt, failure.retry_after)).await;
             }
-            Err(failure) => return Err(failure.error),
+            Err(failure) => return Err(*failure.error),
         }
     }
     Err(RuntimeError::NativeDebugVerificationFailed)
@@ -232,7 +232,7 @@ async fn put_chunk_with_retry(
             {
                 tokio::time::sleep(retry_delay(attempt, failure.retry_after)).await;
             }
-            Err(failure) => return Err(failure.error),
+            Err(failure) => return Err(*failure.error),
         }
     }
     Err(RuntimeError::NativeDebugVerificationFailed)
@@ -275,20 +275,20 @@ async fn complete_with_recovery(
                     });
                 }
                 if failure.kind == resumable::FailureKind::CompletionSessionMissing {
-                    return Err(failure.error);
+                    return Err(*failure.error);
                 }
                 if failure.kind == resumable::FailureKind::CompletionPending {
                     if pending_retry_used {
-                        return Err(failure.error);
+                        return Err(*failure.error);
                     }
                     pending_retry_used = true;
                 }
                 if attempt + 1 >= MAX_PHASE_ATTEMPTS {
-                    return Err(failure.error);
+                    return Err(*failure.error);
                 }
                 tokio::time::sleep(retry_delay(attempt, failure.retry_after)).await;
             }
-            Err(failure) => return Err(failure.error),
+            Err(failure) => return Err(*failure.error),
         }
     }
     Err(RuntimeError::NativeDebugVerificationFailed)
