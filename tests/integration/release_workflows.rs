@@ -2,6 +2,7 @@ const RELEASE: &str = include_str!("../../.github/workflows/release.yml");
 const CRATES: &str = include_str!("../../.github/workflows/publish-crates.yml");
 const NPM: &str = include_str!("../../.github/workflows/publish-npm-trusted.yml");
 const HOMEBREW: &str = include_str!("../../.github/workflows/publish-homebrew-tap.yml");
+const PUBLISH_BOUNDARY: &str = include_str!("../../scripts/validate-publish-boundary.sh");
 const DIST: &str = include_str!("../../dist-workspace.toml");
 
 fn ordered(source: &str, required: &[&str]) {
@@ -35,8 +36,7 @@ fn release_workflows_prebuild_publish_and_recover_safely() {
     ] {
         assert!(RELEASE.contains(required), "missing {required}");
     }
-    let prebuilds = RELEASE.matches("github.ref == 'refs/heads/main'").count();
-    assert_eq!(prebuilds, 2);
+    assert_eq!(RELEASE.matches("refs/heads/main' }}").count(), 2);
     assert_eq!(RELEASE.matches("artifacts_run_id:").count(), 3);
     let targets = DIST
         .lines()
@@ -76,13 +76,18 @@ fn release_workflows_prebuild_publish_and_recover_safely() {
             "actions: read",
             "release_tag:",
             "--repo \"$GITHUB_REPOSITORY\"",
-            "[[ \"$(jq -r '.headSha' <<<\"$run\")\" == \"$target\" ]]",
+            ".headSha == $target",
             "run-id: ${{ inputs.artifacts_run_id }}",
             "pattern: artifacts-build-global",
         ] {
-            assert!(source.contains(required), "missing {required}");
+            assert!(
+                source.contains(required) || PUBLISH_BOUNDARY.contains(required),
+                "missing {required}"
+            );
         }
+        assert!(source.contains("validate-publish-boundary.sh"));
     }
+    assert_eq!(PUBLISH_BOUNDARY.matches("|| exit 1").count(), 5);
     assert!(NPM.contains("npm publish --access public \"./${packages[0]}\""));
     assert!(!NPM.contains("  workflow_dispatch:"));
 
