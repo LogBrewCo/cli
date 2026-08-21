@@ -30,6 +30,10 @@ fn release_workflows_prebuild_publish_and_recover_safely() {
         "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER: ${{ matrix.linker }}",
         "run-id: ${{ needs.plan.outputs.prebuild-run-id }}",
         "pattern: artifacts-build-*",
+        "name: Prepare and audit Homebrew formula",
+        "ruby scripts/prepare-homebrew-formula.rb target/distrib/logbrew.rb \"$version\"",
+        "brew audit --fix --strict --formula logbrew-release-verifier/formula/logbrew || true",
+        "brew audit --strict --formula logbrew-release-verifier/formula/logbrew",
         "inputs.release_tag != '' && inputs.artifacts_run_id != ''",
         "artifacts_run_id: ${{ inputs.artifacts_run_id || needs.plan.outputs.prebuild-run-id }}",
         "gh release create \"${{ needs.plan.outputs.tag }}\" --target \"$GITHUB_SHA\"",
@@ -89,6 +93,7 @@ fn release_workflows_prebuild_publish_and_recover_safely() {
     }
     assert_eq!(PUBLISH_BOUNDARY.matches("|| exit 1").count(), 5);
     assert!(NPM.contains("npm publish --access public \"./${packages[0]}\""));
+    assert!(NPM.contains("node-version: \"24.19.0\"") && !NPM.contains("npm install --global"));
     assert!(!NPM.contains("  workflow_dispatch:"));
 
     for required in [
@@ -97,35 +102,25 @@ fn release_workflows_prebuild_publish_and_recover_safely() {
         "persist-credentials: false",
         "persist-credentials: true",
         "token: ${{ secrets.HOMEBREW_TAP_TOKEN }}",
-        "while IFS= read -r release; do",
         "path: tap/Formula/",
-        "if [[ \"${release_count}\" -ne 1 ]]",
-        "[[ ! \"${filename}\" =~ ^[a-z0-9][a-z0-9._+-]*\\.rb$ ]]",
-        "[[ ! \"${version}\" =~ ^[0-9]+\\.[0-9]+\\.[0-9]+$ ]]",
+        "($formulae | length == 1)",
+        "mapfile -t formulae < <(find Formula -maxdepth 1 -name '*.rb' -print)",
         "set -euo pipefail",
-        "trap cleanup_audit_tap EXIT",
-        "HOMEBREW_NO_AUTO_UPDATE: \"1\"",
-        "ln -s \"${GITHUB_WORKSPACE}/tap\" \"${audit_repo}\"",
-        "unlink \"${audit_repo}\"",
     ] {
         assert!(HOMEBREW.contains(required), "missing {required}");
     }
     ordered(
         HOMEBREW,
         &[
-            "ruby ../release-tooling/scripts/prepare-homebrew-formula.rb",
-            "brew audit --fix --strict --formula \"${audit_tap}/${name}\"",
-            "git add \"Formula/${filename}\"",
-            "git commit -m \"${name} ${version}\"",
+            "git add Formula/logbrew.rb",
+            "git commit -m \"logbrew ${expected_version}\"",
             "validate-publish-boundary.sh",
-            "brew audit --strict --online --formula \"${audit_tap}/${name}\"",
             "git push",
         ],
     );
     assert_eq!(HOMEBREW.matches("secrets.HOMEBREW_TAP_TOKEN").count(), 1);
     assert_eq!(HOMEBREW.matches("uses: actions/checkout@v7").count(), 2);
-    assert!(!HOMEBREW.contains("brew update") && !HOMEBREW.contains("brew style"));
-    assert!(!HOMEBREW.contains("brew tap-new") && !HOMEBREW.contains("--except-cops"));
+    assert!(!HOMEBREW.contains("\n          brew ") && !HOMEBREW.contains("\n          ruby "));
     assert!(!HOMEBREW.contains("for release in $(") && !HOMEBREW.contains("echo \"$PLAN\""));
     for source in [RELEASE, CRATES, NPM, HOMEBREW] {
         assert!(!source.contains("pull_request_target") && !source.contains("schedule:"));

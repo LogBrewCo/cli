@@ -160,6 +160,33 @@ jobs:
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
           cp dist-manifest.json "$BUILD_MANIFEST_NAME"
+      - name: Prepare and audit Homebrew formula
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(jq -r '.releases | map(select(.app_name == "logbrew-cli")) | if length == 1 then .[0].app_version else "" end' dist-manifest.json)"
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || exit 1
+          ruby scripts/prepare-homebrew-formula.rb target/distrib/logbrew.rb "$version"
+
+          export PATH="/home/linuxbrew/.linuxbrew/bin:${PATH}"
+          audit_parent="$(brew --repository)/Library/Taps/logbrew-release-verifier"
+          audit_repo="${audit_parent}/homebrew-formula"
+          [[ ! -e "$audit_repo" && ! -L "$audit_repo" ]] || exit 1
+          mkdir -p "$audit_repo/Formula"
+          cp target/distrib/logbrew.rb "$audit_repo/Formula/logbrew.rb"
+          git -C "$audit_repo" init --quiet
+          cleanup_audit_tap() {
+            find "$audit_repo" -depth -delete
+            rmdir "$audit_parent" 2>/dev/null || true
+          }
+          trap cleanup_audit_tap EXIT
+          brew audit --fix --strict --formula logbrew-release-verifier/formula/logbrew || true
+          brew audit --strict --formula logbrew-release-verifier/formula/logbrew
+          cp "$audit_repo/Formula/logbrew.rb" target/distrib/logbrew.rb
+          cleanup_audit_tap
+          trap - EXIT
       - uses: actions/upload-artifact@v7
         with:
           name: artifacts-build-global
