@@ -80,11 +80,6 @@ impl Artifact {
         u64::try_from(self.bytes.len()).unwrap_or(u64::MAX)
     }
 
-    /// Returns a cheap immutable handle for multipart construction or auth replay.
-    pub(super) fn multipart_payload(&self) -> bytes::Bytes {
-        self.bytes.clone()
-    }
-
     /// Splits validated bytes into fixed ordered SHA-256 chunks without copying payload data.
     pub(super) fn resumable_chunks(&self) -> Vec<ArtifactChunk> {
         (0..self.bytes.len())
@@ -526,22 +521,6 @@ mod tests {
         artifact_size_allowed, finalize, sha256_hex, validate_expected_uuids,
         zip_expansion_is_unsafe,
     };
-
-    /// Proves multipart replay shares immutable payload storage instead of deep-copying it.
-    #[test]
-    fn multipart_payload_clone_reuses_backing_storage() {
-        let artifact = Artifact {
-            image_uuid: String::from("10111213-1415-1617-1819-1a1b1c1d1e1f"),
-            architecture: NativeArchitecture::Arm64,
-            sha256: String::from(
-                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            ),
-            bytes: bytes::Bytes::from_static(b"debug"),
-        };
-        let replay = artifact.multipart_payload();
-        assert_eq!(artifact.bytes.as_ptr(), replay.as_ptr());
-        assert_eq!(artifact.bytes.len(), replay.len());
-    }
 
     /// Proves fixed chunk boundaries and cheap immutable slices without a large fixture.
     #[test]

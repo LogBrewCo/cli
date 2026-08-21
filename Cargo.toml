@@ -34,6 +34,7 @@ path = "tests/integration/mod.rs"
 atomic-write-file = "0.3.0"
 bytes = "1.11.1"
 fs2 = "0.4.3"
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 futures-util = { version = "0.3.32", features = ["sink"] }
 getrandom = "0.4.3"
 object = { version = "0.40.0", default-features = false, features = ["macho", "read_core", "std", "unaligned"] }
@@ -45,7 +46,7 @@ sha2 = "0.11.0"
 thiserror = "2"
 tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "time"] }
 tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
-zip = { version = "7.2.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+zip = { version = "7.2.0", default-features = false, features = ["deflate-flate2"] }
 
 [dev-dependencies]
 wiremock = "0.6"
