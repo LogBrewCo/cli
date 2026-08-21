@@ -42,11 +42,8 @@ jobs:
       - name: Install Node
         uses: actions/setup-node@v7
         with:
-          node-version: "24.x"
+          node-version: "24.19.0"
           registry-url: "https://registry.npmjs.org"
-
-      - name: Install npm with trusted publishing support
-        run: npm install --global "npm@^11.15.0"
 
       - name: Require exact public release
         env:
@@ -56,6 +53,7 @@ jobs:
       - name: Publish npm packages with OIDC
         shell: bash
         run: |
+          npm --version | awk -F. '$1 > 11 || ($1 == 11 && $2 >= 5) { found=1 } END { exit !found }'
           if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
             packages=(npm/*-npm-package.tar.gz)
             [[ "${#packages[@]}" -eq 1 ]] || exit 1

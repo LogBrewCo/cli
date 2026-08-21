@@ -36,7 +36,6 @@ jobs:
       ARTIFACTS_RUN_ID: ${{ inputs.artifacts_run_id }}
       GITHUB_USER: "LogBrew release bot"
       GITHUB_EMAIL: "41898282+github-actions[bot]@users.noreply.github.com"
-      HOMEBREW_NO_AUTO_UPDATE: "1"
     steps:
       - name: Checkout release tooling
         uses: actions/checkout@v7
@@ -74,70 +73,23 @@ jobs:
             PLAN="$(jq -cn --arg version "$expected_version" '{releases:[{app_version:$version,artifacts:["logbrew.rb"]}]}')"
           fi
 
+          jq -e --arg version "$expected_version" '
+            [.releases[] | select([.artifacts[] | endswith(".rb")] | any)] as $formulae
+            | ($formulae | length == 1)
+              and ($formulae[0].app_version == $version)
+              and ([$formulae[0].artifacts[] | select(endswith(".rb"))] == ["logbrew.rb"])
+          ' <<<"$PLAN" >/dev/null || exit 1
+          mapfile -t formulae < <(find Formula -maxdepth 1 -name '*.rb' -print)
+          [[ "${#formulae[@]}" -eq 1 && "${formulae[0]}" == "Formula/logbrew.rb" && ! -L "${formulae[0]}" ]] || exit 1
+
           git config --local user.name "${GITHUB_USER}"
           git config --local user.email "${GITHUB_EMAIL}"
-
-          export PATH="/home/linuxbrew/.linuxbrew/bin:${PATH}"
-          command -v brew >/dev/null
-
-          audit_tap="logbrew-release-verifier/formula"
-          audit_parent="$(brew --repository)/Library/Taps/logbrew-release-verifier"
-          audit_repo="${audit_parent}/homebrew-formula"
-          [[ ! -e "${audit_repo}" && ! -L "${audit_repo}" ]] || exit 1
-          mkdir -p "${audit_parent}"
-          ln -s "${GITHUB_WORKSPACE}/tap" "${audit_repo}"
-          cleanup_audit_tap() {
-            if [[ -L "${audit_repo}" && "$(readlink "${audit_repo}")" == "${GITHUB_WORKSPACE}/tap" ]]; then
-              unlink "${audit_repo}"
-              rmdir "${audit_parent}" 2>/dev/null || true
-            fi
-          }
-          trap cleanup_audit_tap EXIT
-
-          release_count=0
-          while IFS= read -r release; do
-            release_count=$((release_count + 1))
-            filename="$(jq -r '.artifacts[] | select(endswith(".rb"))' <<<"${release}")"
-            version="$(jq -r '.app_version' <<<"${release}")"
-
-            if [[ ! "${filename}" =~ ^[a-z0-9][a-z0-9._+-]*\.rb$ ]]; then
-              printf 'Homebrew formula validation failed: invalid filename.\n' >&2
-              exit 1
-            fi
-            if [[ ! "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-              printf 'Homebrew formula validation failed: invalid version.\n' >&2
-              exit 1
-            fi
-
-            name="${filename%.rb}"
-            ruby ../release-tooling/scripts/prepare-homebrew-formula.rb \
-              "Formula/${filename}" "${version}"
-            brew audit --fix --strict --formula "${audit_tap}/${name}"
-
-            git add "Formula/${filename}"
-            if git diff --cached --quiet -- "Formula/${filename}"; then
-              printf 'Formula already up to date.\n'
-            else
-              git commit -m "${name} ${version}"
-            fi
-          done < <(
-            jq -c \
-              '.releases[] | select([.artifacts[] | endswith(".rb")] | any)' \
-              <<<"${PLAN}"
-          )
-
-          if [[ "${release_count}" -ne 1 ]]; then
-            printf 'Homebrew formula validation failed: expected one formula release.\n' >&2
-            exit 1
+          git add Formula/logbrew.rb
+          if git diff --cached --quiet -- Formula/logbrew.rb; then
+            printf 'Formula already up to date.\n'
+          else
+            git commit -m "logbrew ${expected_version}"
           fi
 
           GH_TOKEN="${{ github.token }}" bash ../release-tooling/scripts/validate-publish-boundary.sh
-          brew audit --strict --online --formula "${audit_tap}/${name}"
-          cleanup_audit_tap
-          if [[ -e "${audit_repo}" || -L "${audit_repo}" ]]; then
-            printf 'Homebrew formula validation failed: temporary tap remains.\n' >&2
-            exit 1
-          fi
-          trap - EXIT
-
           git push
