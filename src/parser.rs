@@ -188,7 +188,7 @@ fn parse_values(values: &[String]) -> Result<Command, CliError> {
     if is_setup_alias(head) && tail.iter().any(|arg| arg == "--create-project") {
         return parse_setup_create_project(tail);
     }
-    if contains_help_flag(tail) && !is_log_search_separator_literal(head, tail) {
+    if contains_help_flag(tail) && literal_log_search_separator_index(head, tail).is_none() {
         validate_help_flags(tail)?;
         if let Some(topic) = command_shaped_help_topic(head, tail) {
             return Ok(help_command(topic, tail));
@@ -1536,11 +1536,6 @@ fn normalize_read_verb_resource<'a>(verb: &str, resource: &'a str) -> &'a str {
 /// Returns whether a command is a natural log search shortcut.
 fn is_log_search_shortcut(command: &str) -> bool {
     matches!(command, "search" | "find" | "grep")
-}
-
-/// Returns whether a log search form uses `--` to search help-looking text.
-fn is_log_search_separator_literal(command: &str, args: &[String]) -> bool {
-    literal_log_search_separator_index(command, args).is_some()
 }
 
 /// Returns the static argument label for a natural log search shortcut.
