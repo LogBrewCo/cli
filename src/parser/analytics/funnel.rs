@@ -1,5 +1,6 @@
 //! Closed product-analytics funnel command grammar.
 
+use super::Grammar;
 use crate::ids::is_uuid;
 use crate::{
     AnalyticsFunnelEventKind, AnalyticsFunnelOptions, AnalyticsFunnelStep, AnalyticsFunnelUnit,
@@ -9,6 +10,9 @@ use crate::{
 /// Exact recovery text shared by every malformed funnel invocation.
 pub(super) const ANALYTICS_FUNNEL_NEXT_STEP: &str = "use logbrew analytics funnel --project <project_id> --since <24h|RFC3339> --step <page-view|screen-view|interaction> <name> --step <kind> <name> with two through eight ordered --step values and optional --until, --service, --release, --environment, --unit session|identified-user, --conversion-window <seconds|1h|1d>, and --json";
 
+/// Canonical parser behavior for funnels.
+const GRAMMAR: Grammar = Grammar::new("analytics funnel", ANALYTICS_FUNNEL_NEXT_STEP);
+
 /// Parses two through eight exact ordered event selectors and bounded funnel controls.
 pub(super) fn parse_funnel(args: &[String]) -> Result<Command, CliError> {
     let mut parsed = ParsedFunnelFlags::default();
@@ -16,51 +20,55 @@ pub(super) fn parse_funnel(args: &[String]) -> Result<Command, CliError> {
     let mut index = 0;
     while index < args.len() {
         let raw = &args[index];
-        let (flag, inline) = split_flag(raw);
+        let (flag, inline) = Grammar::split_flag(raw);
         match flag {
             "--json" => {
-                reject_inline(flag, inline)?;
-                mark_seen(&mut seen, "--json")?;
+                GRAMMAR.reject_inline(flag, inline)?;
+                GRAMMAR.mark_seen(&mut seen, "--json")?;
                 parsed.json = true;
             }
             "--project" | "--project-id" => {
-                mark_seen(&mut seen, "--project")?;
-                parsed.project_id = Some(flag_value(args, &mut index, "--project", inline)?);
+                GRAMMAR.mark_seen(&mut seen, "--project")?;
+                parsed.project_id =
+                    Some(GRAMMAR.flag_value(args, &mut index, "--project", inline)?);
             }
             "--since" => {
-                mark_seen(&mut seen, "--since")?;
-                parsed.since = Some(flag_value(args, &mut index, "--since", inline)?);
+                GRAMMAR.mark_seen(&mut seen, "--since")?;
+                parsed.since = Some(GRAMMAR.flag_value(args, &mut index, "--since", inline)?);
             }
             "--until" => {
-                mark_seen(&mut seen, "--until")?;
-                parsed.until = Some(flag_value(args, &mut index, "--until", inline)?);
+                GRAMMAR.mark_seen(&mut seen, "--until")?;
+                parsed.until = Some(GRAMMAR.flag_value(args, &mut index, "--until", inline)?);
             }
             "--service" | "--service-name" => {
-                mark_seen(&mut seen, "--service")?;
-                parsed.service_name = Some(flag_value(args, &mut index, "--service", inline)?);
+                GRAMMAR.mark_seen(&mut seen, "--service")?;
+                parsed.service_name =
+                    Some(GRAMMAR.flag_value(args, &mut index, "--service", inline)?);
             }
             "--release" => {
-                mark_seen(&mut seen, "--release")?;
-                parsed.release = Some(flag_value(args, &mut index, "--release", inline)?);
+                GRAMMAR.mark_seen(&mut seen, "--release")?;
+                parsed.release = Some(GRAMMAR.flag_value(args, &mut index, "--release", inline)?);
             }
             "--environment" | "--env" => {
-                mark_seen(&mut seen, "--environment")?;
-                parsed.environment = Some(flag_value(args, &mut index, "--environment", inline)?);
+                GRAMMAR.mark_seen(&mut seen, "--environment")?;
+                parsed.environment =
+                    Some(GRAMMAR.flag_value(args, &mut index, "--environment", inline)?);
             }
             "--unit" | "--analysis-unit" => {
-                mark_seen(&mut seen, "--unit")?;
-                parsed.analysis_unit = Some(flag_value(args, &mut index, "--unit", inline)?);
+                GRAMMAR.mark_seen(&mut seen, "--unit")?;
+                parsed.analysis_unit =
+                    Some(GRAMMAR.flag_value(args, &mut index, "--unit", inline)?);
             }
             "--conversion-window" | "--conversion-window-seconds" => {
-                mark_seen(&mut seen, "--conversion-window")?;
+                GRAMMAR.mark_seen(&mut seen, "--conversion-window")?;
                 parsed.conversion_window =
-                    Some(flag_value(args, &mut index, "--conversion-window", inline)?);
+                    Some(GRAMMAR.flag_value(args, &mut index, "--conversion-window", inline)?);
             }
             "--step" => {
                 if parsed.steps.len() >= 8 {
-                    return Err(invalid_argument("too many funnel steps"));
+                    return Err(GRAMMAR.invalid_argument("too many funnel steps"));
                 }
-                let kind = flag_value(args, &mut index, "--step", inline)?;
+                let kind = GRAMMAR.flag_value(args, &mut index, "--step", inline)?;
                 let event_name = following_step_value(args, &mut index)?;
                 parsed.steps.push((kind, event_name));
             }
@@ -111,7 +119,7 @@ impl ParsedFunnelFlags {
     fn finish(&self) -> Result<AnalyticsFunnelOptions, CliError> {
         let project_id = required(self.project_id.as_deref(), "project")?.trim();
         if !is_uuid(project_id) {
-            return Err(invalid_argument("invalid project id"));
+            return Err(GRAMMAR.invalid_argument("invalid project id"));
         }
         let since = normalize_text(required(self.since.as_deref(), "since")?, 64)?;
         let until = normalize_optional(self.until.as_deref(), 64)?;
@@ -125,7 +133,7 @@ impl ParsedFunnelFlags {
             .map(parse_duration_seconds)
             .transpose()?;
         if !(2..=8).contains(&self.steps.len()) {
-            return Err(invalid_argument("funnel requires two through eight steps"));
+            return Err(GRAMMAR.invalid_argument("funnel requires two through eight steps"));
         }
         let steps = self
             .steps
@@ -155,10 +163,7 @@ impl ParsedFunnelFlags {
 
 /// Requires one named funnel flag.
 fn required<'a>(value: Option<&'a str>, argument: &'static str) -> Result<&'a str, CliError> {
-    value.ok_or(CliError::MissingArgument {
-        argument,
-        next: ANALYTICS_FUNNEL_NEXT_STEP,
-    })
+    GRAMMAR.required(value, argument)
 }
 
 /// Normalizes one supported classified event kind.
@@ -167,7 +172,7 @@ fn normalize_event_kind(value: &str) -> Result<AnalyticsFunnelEventKind, CliErro
         "page-view" | "page_view" | "page" => Ok(AnalyticsFunnelEventKind::PageView),
         "screen-view" | "screen_view" | "screen" => Ok(AnalyticsFunnelEventKind::ScreenView),
         "interaction" => Ok(AnalyticsFunnelEventKind::Interaction),
-        _ => Err(invalid_argument("invalid funnel step kind")),
+        _ => Err(GRAMMAR.invalid_argument("invalid funnel step kind")),
     }
 }
 
@@ -180,7 +185,7 @@ fn normalize_event_name(kind: AnalyticsFunnelEventKind, value: &str) -> Result<S
                 byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.' | b':')
             }))
     {
-        return Err(invalid_argument("invalid funnel interaction name"));
+        return Err(GRAMMAR.invalid_argument("invalid funnel interaction name"));
     }
     Ok(value)
 }
@@ -192,7 +197,7 @@ fn normalize_unit(value: Option<&str>) -> Result<AnalyticsFunnelUnit, CliError> 
         Some("identified-user" | "identified_user" | "user" | "users") => {
             Ok(AnalyticsFunnelUnit::IdentifiedUser)
         }
-        Some(_) => Err(invalid_argument("invalid funnel analysis unit")),
+        Some(_) => Err(GRAMMAR.invalid_argument("invalid funnel analysis unit")),
     }
 }
 
@@ -207,48 +212,24 @@ fn parse_duration_seconds(value: &str) -> Result<u32, CliError> {
         _ => (value, 1_u32),
     };
     if digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
-        return Err(invalid_argument("invalid funnel conversion window"));
+        return Err(GRAMMAR.invalid_argument("invalid funnel conversion window"));
     }
     digits
         .parse::<u32>()
         .ok()
         .and_then(|count| count.checked_mul(multiplier))
         .filter(|seconds| (1..=31 * 24 * 60 * 60).contains(seconds))
-        .ok_or_else(|| invalid_argument("invalid funnel conversion window"))
+        .ok_or_else(|| GRAMMAR.invalid_argument("invalid funnel conversion window"))
 }
 
 /// Trims one non-empty, control-free bounded public value.
 fn normalize_text(value: &str, limit: usize) -> Result<String, CliError> {
-    let value = value.trim();
-    if value.is_empty() || value.chars().count() > limit || value.chars().any(char::is_control) {
-        return Err(invalid_argument("invalid analytics funnel value"));
-    }
-    Ok(value.to_owned())
+    GRAMMAR.normalize_text(value, limit, "invalid analytics funnel value")
 }
 
 /// Normalizes one optional bounded context value.
 fn normalize_optional(value: Option<&str>, limit: usize) -> Result<Option<String>, CliError> {
-    value.map(|value| normalize_text(value, limit)).transpose()
-}
-
-/// Reads a separate or inline flag value without swallowing another flag.
-fn flag_value(
-    args: &[String],
-    index: &mut usize,
-    flag: &'static str,
-    inline: Option<&str>,
-) -> Result<String, CliError> {
-    let value = inline.unwrap_or_else(|| {
-        *index += 1;
-        args.get(*index).map(String::as_str).unwrap_or_default()
-    });
-    if value.is_empty() || value.starts_with('-') {
-        return Err(CliError::MissingFlagValue {
-            flag,
-            next: ANALYTICS_FUNNEL_NEXT_STEP,
-        });
-    }
-    Ok(value.to_owned())
+    GRAMMAR.normalize_optional(value, limit, "invalid analytics funnel value")
 }
 
 /// Reads the event-name half of one two-token `--step` value.
@@ -262,50 +243,6 @@ fn following_step_value(args: &[String], index: &mut usize) -> Result<String, Cl
         });
     }
     Ok(value.to_owned())
-}
-
-/// Rejects values attached to boolean flags.
-fn reject_inline(flag: &str, inline: Option<&str>) -> Result<(), CliError> {
-    if inline.is_some() {
-        Err(CliError::UnknownFlag {
-            flag: flag.to_owned(),
-            next: ANALYTICS_FUNNEL_NEXT_STEP,
-        })
-    } else {
-        Ok(())
-    }
-}
-
-/// Marks a canonical singular flag and rejects aliases used together.
-fn mark_seen(seen: &mut Vec<&'static str>, flag: &'static str) -> Result<(), CliError> {
-    if seen.contains(&flag) {
-        return Err(CliError::DuplicateFlag {
-            flag,
-            next: if flag == "--json" {
-                "use --json once"
-            } else {
-                ANALYTICS_FUNNEL_NEXT_STEP
-            },
-        });
-    }
-    seen.push(flag);
-    Ok(())
-}
-
-/// Splits one inline `--flag=value` token.
-fn split_flag(value: &str) -> (&str, Option<&str>) {
-    value
-        .split_once('=')
-        .map_or((value, None), |(flag, value)| (flag, Some(value)))
-}
-
-/// Returns a value-free deterministic grammar error.
-fn invalid_argument(argument: &'static str) -> CliError {
-    CliError::UnexpectedArgument {
-        argument: argument.to_owned(),
-        command: "analytics funnel",
-        next: ANALYTICS_FUNNEL_NEXT_STEP,
-    }
 }
 
 #[cfg(test)]
