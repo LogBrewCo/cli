@@ -182,6 +182,102 @@ impl Grammar {
     }
 }
 
+/// Shared project, time, deployment, and output flags for analytics commands.
+#[expect(
+    clippy::missing_docs_in_private_items,
+    reason = "fields directly represent the shared analytics grammar"
+)]
+#[derive(Default)]
+struct ScopeFlags {
+    project_id: Option<String>,
+    since: Option<String>,
+    until: Option<String>,
+    service_name: Option<String>,
+    release: Option<String>,
+    environment: Option<String>,
+    json: bool,
+}
+
+impl ScopeFlags {
+    /// Parses a shared flag and reports whether it consumed the token.
+    fn parse(
+        &mut self,
+        grammar: Grammar,
+        seen: &mut Vec<&'static str>,
+        args: &[String],
+        index: &mut usize,
+        deployment: bool,
+    ) -> Result<bool, CliError> {
+        let (flag, inline) = Grammar::split_flag(&args[*index]);
+        let (canonical, destination) = match flag {
+            "--project" | "--project-id" => ("--project", &mut self.project_id),
+            "--since" => ("--since", &mut self.since),
+            "--until" => ("--until", &mut self.until),
+            "--service" | "--service-name" if deployment => ("--service", &mut self.service_name),
+            "--release" if deployment => ("--release", &mut self.release),
+            "--environment" | "--env" if deployment => ("--environment", &mut self.environment),
+            "--json" => {
+                grammar.reject_inline(flag, inline)?;
+                grammar.mark_seen(seen, "--json")?;
+                self.json = true;
+                return Ok(true);
+            }
+            _ => return Ok(false),
+        };
+        grammar.mark_seen(seen, canonical)?;
+        *destination = Some(grammar.flag_value(args, index, canonical, inline)?);
+        Ok(true)
+    }
+
+    /// Requires and normalizes the shared analytics request scope.
+    fn finish(
+        &self,
+        grammar: Grammar,
+        value_error: &'static str,
+    ) -> Result<AnalyticsScope, CliError> {
+        let project_id = grammar
+            .required(self.project_id.as_deref(), "project")?
+            .trim();
+        if !is_uuid(project_id) {
+            return Err(grammar.invalid_argument("invalid project id"));
+        }
+        Ok(AnalyticsScope {
+            project_id: project_id.to_ascii_lowercase(),
+            since: grammar.normalize_text(
+                grammar.required(self.since.as_deref(), "since")?,
+                64,
+                value_error,
+            )?,
+            until: grammar.normalize_optional(self.until.as_deref(), 64, value_error)?,
+            service_name: grammar.normalize_optional(
+                self.service_name.as_deref(),
+                256,
+                value_error,
+            )?,
+            release: grammar.normalize_optional(self.release.as_deref(), 256, value_error)?,
+            environment: grammar.normalize_optional(
+                self.environment.as_deref(),
+                256,
+                value_error,
+            )?,
+        })
+    }
+}
+
+/// Normalized shared analytics request scope.
+#[expect(
+    clippy::missing_docs_in_private_items,
+    reason = "fields mirror normalized analytics request scope"
+)]
+struct AnalyticsScope {
+    project_id: String,
+    since: String,
+    until: Option<String>,
+    service_name: Option<String>,
+    release: Option<String>,
+    environment: Option<String>,
+}
+
 /// Maps the shared grammar kind to the stable retention-family public type.
 const fn retention_event_kind(kind: AnalyticsPathEventKind) -> AnalyticsRetentionEventKind {
     match kind {
@@ -262,7 +358,7 @@ fn parse_paths(args: &[String]) -> Result<Command, CliError> {
     let parsed = parse_path_flags(flags)?;
     Ok(Command::AnalyticsPaths {
         options: parsed.finish(direction)?,
-        json: parsed.json,
+        json: parsed.scope.json,
     })
 }
 
@@ -273,46 +369,20 @@ fn parse_path_flags(flags: &[String]) -> Result<ParsedPathFlags, CliError> {
     let mut seen = Vec::new();
     let mut index = 0;
     while index < flags.len() {
+        if parsed
+            .scope
+            .parse(grammar, &mut seen, flags, &mut index, true)?
+        {
+            index += 1;
+            continue;
+        }
         let raw = &flags[index];
         let (flag, inline) = Grammar::split_flag(raw);
         match flag {
-            "--json" => {
-                grammar.reject_inline(flag, inline)?;
-                grammar.mark_seen(&mut seen, "--json")?;
-                parsed.json = true;
-            }
             "--keep-repeated" => {
                 grammar.reject_inline(flag, inline)?;
                 grammar.mark_seen(&mut seen, "--keep-repeated")?;
                 parsed.collapse_repeated = false;
-            }
-            "--project" | "--project-id" => {
-                grammar.mark_seen(&mut seen, "--project")?;
-                parsed.project_id =
-                    Some(grammar.flag_value(flags, &mut index, "--project", inline)?);
-            }
-            "--since" => {
-                grammar.mark_seen(&mut seen, "--since")?;
-                parsed.since = Some(grammar.flag_value(flags, &mut index, "--since", inline)?);
-            }
-            "--until" => {
-                grammar.mark_seen(&mut seen, "--until")?;
-                parsed.until = Some(grammar.flag_value(flags, &mut index, "--until", inline)?);
-            }
-            "--service" | "--service-name" => {
-                grammar.mark_seen(&mut seen, "--service")?;
-                parsed.service_name =
-                    Some(grammar.flag_value(flags, &mut index, "--service", inline)?);
-            }
-            "--release" => {
-                grammar.mark_seen(&mut seen, "--release")?;
-                parsed.release =
-                    Some(grammar.flag_value(flags, &mut index, "--release", inline)?);
-            }
-            "--environment" | "--env" => {
-                grammar.mark_seen(&mut seen, "--environment")?;
-                parsed.environment =
-                    Some(grammar.flag_value(flags, &mut index, "--environment", inline)?);
             }
             "--anchor-kind" => {
                 grammar.mark_seen(&mut seen, "--anchor-kind")?;
@@ -366,37 +436,25 @@ fn parse_path_flags(flags: &[String]) -> Result<ParsedPathFlags, CliError> {
     reason = "fields directly represent the closed analytics path grammar"
 )]
 struct ParsedPathFlags {
-    project_id: Option<String>,
-    since: Option<String>,
-    until: Option<String>,
-    service_name: Option<String>,
-    release: Option<String>,
-    environment: Option<String>,
+    scope: ScopeFlags,
     anchor_kind: Option<String>,
     anchor_event: Option<String>,
     properties: Vec<String>,
     depth: Option<String>,
     path_limit: Option<String>,
     collapse_repeated: bool,
-    json: bool,
 }
 
 impl Default for ParsedPathFlags {
     fn default() -> Self {
         Self {
-            project_id: None,
-            since: None,
-            until: None,
-            service_name: None,
-            release: None,
-            environment: None,
+            scope: ScopeFlags::default(),
             anchor_kind: None,
             anchor_event: None,
             properties: Vec::new(),
             depth: None,
             path_limit: None,
             collapse_repeated: true,
-            json: false,
         }
     }
 }
@@ -404,19 +462,9 @@ impl Default for ParsedPathFlags {
 impl ParsedPathFlags {
     /// Requires and normalizes every public request field.
     fn finish(&self, direction: AnalyticsPathDirection) -> Result<AnalyticsPathOptions, CliError> {
-        let project_id = required(self.project_id.as_deref(), "project")?.trim();
-        if !is_uuid(project_id) {
-            return Err(PATH_GRAMMAR.invalid_argument("invalid project id"));
-        }
-        let since = normalize_text(required(self.since.as_deref(), "since")?, 64)?;
-        let until = self
-            .until
-            .as_deref()
-            .map(|value| normalize_text(value, 64))
-            .transpose()?;
-        let service_name = normalize_optional(self.service_name.as_deref(), 256)?;
-        let release = normalize_optional(self.release.as_deref(), 256)?;
-        let environment = normalize_optional(self.environment.as_deref(), 256)?;
+        let scope = self
+            .scope
+            .finish(PATH_GRAMMAR, "invalid analytics path value")?;
         let anchor_kind = PATH_GRAMMAR.normalize_event_kind(
             required(self.anchor_kind.as_deref(), "anchor-kind")?,
             "invalid anchor kind",
@@ -432,12 +480,12 @@ impl ParsedPathFlags {
         let path_limit = bounded_u8(self.path_limit.as_deref(), 10, 1, 20, "invalid path limit")?;
 
         Ok(AnalyticsPathOptions {
-            project_id: project_id.to_ascii_lowercase(),
-            since,
-            until,
-            service_name,
-            release,
-            environment,
+            project_id: scope.project_id,
+            since: scope.since,
+            until: scope.until,
+            service_name: scope.service_name,
+            release: scope.release,
+            environment: scope.environment,
             direction,
             anchor_kind,
             anchor_event,
@@ -495,11 +543,6 @@ fn required<'a>(value: Option<&'a str>, argument: &'static str) -> Result<&'a st
 /// Trims one non-empty, control-free bounded public value.
 fn normalize_text(value: &str, limit: usize) -> Result<String, CliError> {
     PATH_GRAMMAR.normalize_text(value, limit, "invalid analytics path value")
-}
-
-/// Normalizes one optional bounded context value.
-fn normalize_optional(value: Option<&str>, limit: usize) -> Result<Option<String>, CliError> {
-    PATH_GRAMMAR.normalize_optional(value, limit, "invalid analytics path value")
 }
 
 /// Parses a bounded integer or supplies its public default.

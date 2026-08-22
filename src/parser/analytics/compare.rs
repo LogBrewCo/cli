@@ -2,13 +2,12 @@
 
 use std::collections::HashSet;
 
-use crate::ids::is_uuid;
 use crate::{
     AnalyticsSegment, AnalyticsSegmentComparisonOptions, AnalyticsSegmentPropertyFilter,
     AnalyticsSegmentUnit, CliError, Command,
 };
 
-use super::{Grammar, normalize_property_key};
+use super::{Grammar, ScopeFlags, normalize_property_key};
 
 /// Exact recovery text shared by every malformed comparison invocation.
 pub(super) const ANALYTICS_COMPARE_NEXT_STEP: &str = "use logbrew analytics compare --project <project_id> --since <24h|RFC3339> --target-kind <page-view|screen-view|interaction> --target-event <name> --segment <key>=<label> --segment <key>=<label> with two through four ordered segments and optional --segment-service <key>=<value>, --segment-release <key>=<value>, --segment-environment <key>=<value>, --segment-property <segment>:<property-key>=<exact-value> up to four times per segment, --until, --interval auto|1m|5m|15m|1h|6h|1d, --unit session|identified-user, and --json";
@@ -22,27 +21,16 @@ pub(super) fn parse_compare(args: &[String]) -> Result<Command, CliError> {
     let mut seen = Vec::new();
     let mut index = 0;
     while index < args.len() {
+        if parsed
+            .scope
+            .parse(GRAMMAR, &mut seen, args, &mut index, false)?
+        {
+            index += 1;
+            continue;
+        }
         let raw = &args[index];
         let (flag, inline) = Grammar::split_flag(raw);
         match flag {
-            "--json" => {
-                GRAMMAR.reject_inline(flag, inline)?;
-                GRAMMAR.mark_seen(&mut seen, "--json")?;
-                parsed.json = true;
-            }
-            "--project" | "--project-id" => {
-                GRAMMAR.mark_seen(&mut seen, "--project")?;
-                parsed.project_id =
-                    Some(GRAMMAR.flag_value(args, &mut index, "--project", inline)?);
-            }
-            "--since" => {
-                GRAMMAR.mark_seen(&mut seen, "--since")?;
-                parsed.since = Some(GRAMMAR.flag_value(args, &mut index, "--since", inline)?);
-            }
-            "--until" => {
-                GRAMMAR.mark_seen(&mut seen, "--until")?;
-                parsed.until = Some(GRAMMAR.flag_value(args, &mut index, "--until", inline)?);
-            }
             "--interval" => {
                 GRAMMAR.mark_seen(&mut seen, "--interval")?;
                 parsed.interval =
@@ -106,7 +94,7 @@ pub(super) fn parse_compare(args: &[String]) -> Result<Command, CliError> {
 
     Ok(Command::AnalyticsCompare {
         options: parsed.finish()?,
-        json: parsed.json,
+        json: parsed.scope.json,
     })
 }
 
@@ -117,9 +105,7 @@ pub(super) fn parse_compare(args: &[String]) -> Result<Command, CliError> {
 )]
 #[derive(Default)]
 struct ParsedCompareFlags {
-    project_id: Option<String>,
-    since: Option<String>,
-    until: Option<String>,
+    scope: ScopeFlags,
     interval: Option<String>,
     analysis_unit: Option<String>,
     target_kind: Option<String>,
@@ -129,18 +115,14 @@ struct ParsedCompareFlags {
     segment_releases: Vec<String>,
     segment_environments: Vec<String>,
     segment_properties: Vec<String>,
-    json: bool,
 }
 
 impl ParsedCompareFlags {
     /// Requires and normalizes every public comparison field.
     fn finish(&self) -> Result<AnalyticsSegmentComparisonOptions, CliError> {
-        let project_id = required(self.project_id.as_deref(), "project")?.trim();
-        if !is_uuid(project_id) {
-            return Err(GRAMMAR.invalid_argument("invalid project id"));
-        }
-        let since = normalize_text(required(self.since.as_deref(), "since")?, 64)?;
-        let until = normalize_optional(self.until.as_deref(), 64)?;
+        let scope = self
+            .scope
+            .finish(GRAMMAR, "invalid analytics comparison value")?;
         let interval = normalize_interval(self.interval.as_deref())?;
         let analysis_unit = normalize_unit(self.analysis_unit.as_deref())?;
         let target_kind = GRAMMAR.normalize_event_kind(
@@ -176,9 +158,9 @@ impl ParsedCompareFlags {
         require_unique_filters(segments.as_slice())?;
 
         Ok(AnalyticsSegmentComparisonOptions {
-            project_id: project_id.to_ascii_lowercase(),
-            since,
-            until,
+            project_id: scope.project_id,
+            since: scope.since,
+            until: scope.until,
             interval,
             analysis_unit,
             target_kind,
@@ -374,11 +356,6 @@ fn required<'a>(value: Option<&'a str>, argument: &'static str) -> Result<&'a st
 /// Trims one non-empty, control-free bounded public value.
 fn normalize_text(value: &str, limit: usize) -> Result<String, CliError> {
     GRAMMAR.normalize_text(value, limit, "invalid analytics comparison value")
-}
-
-/// Normalizes one optional bounded timestamp value.
-fn normalize_optional(value: Option<&str>, limit: usize) -> Result<Option<String>, CliError> {
-    GRAMMAR.normalize_optional(value, limit, "invalid analytics comparison value")
 }
 
 /// Adds one repeated assignment while preserving the four-segment request bound.
