@@ -111,12 +111,7 @@ async fn built_binary_posts_exact_segments_and_preserves_validated_json()
 
     let process = run_binary(&server, true, "old=Old release").await?;
 
-    assert!(
-        process.status.success(),
-        "built binary failed: {}",
-        String::from_utf8_lossy(process.stderr.as_slice())
-    );
-    assert!(process.stderr.is_empty());
+    super::assert_cli_success(&process);
     let actual: serde_json::Value = serde_json::from_slice(process.stdout.as_slice())?;
     assert_eq!(actual, response);
     Ok(())
@@ -182,12 +177,7 @@ async fn built_binary_accepts_typed_user_identity_coverage_target()
     ]);
     let process = run_binary_args(&server, args).await?;
 
-    assert!(
-        process.status.success(),
-        "built binary failed: {}",
-        String::from_utf8_lossy(process.stderr.as_slice())
-    );
-    assert!(process.stderr.is_empty());
+    super::assert_cli_success(&process);
     let actual: serde_json::Value = serde_json::from_slice(process.stdout.as_slice())?;
     assert_eq!(actual, response);
     Ok(())
@@ -211,12 +201,7 @@ async fn built_binary_separates_missing_properties_from_nonmatching_values()
 
     let process = run_binary_args(&server, property_compare_args(false)).await?;
 
-    assert!(
-        process.status.success(),
-        "built binary failed: {}",
-        String::from_utf8_lossy(process.stderr.as_slice())
-    );
-    assert!(process.stderr.is_empty());
+    super::assert_cli_success(&process);
     let text = String::from_utf8(process.stdout)?;
     for expected in [
         "Property predicates: 2 exact case-sensitive values across resource.framework.name, tag.plan; values hidden in human output.",
@@ -328,7 +313,8 @@ async fn run_binary_args(
     server: &MockServer,
     args: Vec<String>,
 ) -> Result<std::process::Output, Box<dyn std::error::Error>> {
-    super::run_cli(server, args.into_iter().skip(1)).await
+    let args = args.iter().skip(1).map(String::as_str).collect::<Vec<_>>();
+    super::run_cli(server, args.as_slice()).await
 }
 
 /// Builds one property-based comparison with values known only by the caller.

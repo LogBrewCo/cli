@@ -269,12 +269,7 @@ async fn built_binary_deletes_over_loopback_with_a_local_receipt() -> TestResult
         .args(["projects", "delete", ID, "--confirm", ID, "--json"])
         .output()?;
 
-    assert!(
-        process.status.success(),
-        "built binary failed: {}",
-        String::from_utf8_lossy(process.stderr.as_slice())
-    );
-    assert!(process.stderr.is_empty());
+    super::assert_cli_success(&process);
     let text = String::from_utf8(process.stdout)?;
     assert_eq!(
         serde_json::from_str::<serde_json::Value>(&text)?,

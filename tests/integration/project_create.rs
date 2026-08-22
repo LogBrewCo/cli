@@ -458,12 +458,7 @@ async fn built_binary_accepts_private_destination_below_system_tmp_symlink()
         ])
         .output()?;
 
-    assert!(
-        process.status.success(),
-        "built binary failed: {}",
-        String::from_utf8_lossy(process.stderr.as_slice())
-    );
-    assert!(process.stderr.is_empty());
+    super::assert_cli_success(&process);
     let text = String::from_utf8(process.stdout)?;
     let body: serde_json::Value = serde_json::from_str(text.as_str())?;
     assert_eq!(body["status"], "created");
