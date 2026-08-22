@@ -1109,24 +1109,24 @@ fn validate_metric_next_actions(response: &Map<String, Value>) -> Result<(), Run
                     .iter()
                     .find(|item| item.get("span_id").and_then(Value::as_str).is_some())
                 {
-                    validate_metric_exemplar_action_context(context, source)?;
+                    validate_metric_source_action_context(context, source)?;
                 } else {
-                    let sample = metric_latest_sample_object(response)?
+                    let sample = metric_latest_sample(response)?
                         .filter(|sample| sample.get("span_id").and_then(Value::as_str).is_some())
                         .ok_or_else(invalid_response)?;
-                    validate_metric_sample_action_context(context, sample)?;
+                    validate_metric_source_action_context(context, sample)?;
                 }
                 true
             }
             ("inspect_trace", "trace_investigation", Some(context)) => {
                 validate_metric_action_context(context, project_id, true, false, false)?;
                 if let Some(source) = metric_exemplar_items(response)?.first() {
-                    validate_metric_exemplar_action_context(context, source)?;
+                    validate_metric_source_action_context(context, source)?;
                 } else {
-                    let sample = metric_latest_sample_object(response)?
+                    let sample = metric_latest_sample(response)?
                         .filter(|sample| sample.get("trace_id").and_then(Value::as_str).is_some())
                         .ok_or_else(invalid_response)?;
-                    validate_metric_sample_action_context(context, sample)?;
+                    validate_metric_source_action_context(context, sample)?;
                 }
                 true
             }
@@ -1168,11 +1168,11 @@ fn expected_metric_action_codes(
         expected.push("inspect_exact_span");
     } else if !exemplars.is_empty() {
         expected.push("inspect_trace");
-    } else if metric_latest_sample_object(response)?
+    } else if metric_latest_sample(response)?
         .is_some_and(|sample| sample.get("span_id").and_then(Value::as_str).is_some())
     {
         expected.push("inspect_exact_span");
-    } else if metric_latest_sample_object(response)?
+    } else if metric_latest_sample(response)?
         .is_some_and(|sample| sample.get("trace_id").and_then(Value::as_str).is_some())
     {
         expected.push("inspect_trace");
@@ -1219,18 +1219,16 @@ fn metric_deployment_items(response: &Map<String, Value>) -> Result<&[Value], Ru
 }
 
 /// Returns the validated latest raw sample when the source is available.
-fn metric_latest_sample_object(
-    response: &Map<String, Value>,
-) -> Result<Option<&Map<String, Value>>, RuntimeError> {
+fn metric_latest_sample(response: &Map<String, Value>) -> Result<Option<&Value>, RuntimeError> {
     match required_object(response, "latest_sample")?.get("sample") {
         Some(Value::Null) => Ok(None),
-        Some(Value::Object(sample)) => Ok(Some(sample)),
+        Some(sample @ Value::Object(_)) => Ok(Some(sample)),
         _ => Err(invalid_response()),
     }
 }
 
-/// Requires an exemplar drill-down to carry the exact retained identifiers and scope.
-fn validate_metric_exemplar_action_context(
+/// Requires a metric drill-down to carry its source's exact identifiers and scope.
+fn validate_metric_source_action_context(
     context: &Map<String, Value>,
     source: &Value,
 ) -> Result<(), RuntimeError> {
@@ -1242,25 +1240,6 @@ fn validate_metric_exemplar_action_context(
         "service_name",
     ] {
         if context.get(field) != source.get(field) {
-            return Err(invalid_response());
-        }
-    }
-    Ok(())
-}
-
-/// Requires a latest-sample drill-down to carry the exact retained identifiers and scope.
-fn validate_metric_sample_action_context(
-    context: &Map<String, Value>,
-    sample: &Map<String, Value>,
-) -> Result<(), RuntimeError> {
-    for field in [
-        "trace_id",
-        "span_id",
-        "environment",
-        "release",
-        "service_name",
-    ] {
-        if context.get(field) != sample.get(field) {
             return Err(invalid_response());
         }
     }
