@@ -92,56 +92,6 @@ const EXPLAIN_SPAN_NEXT_STEP: &str = "use logbrew explain span <trace_id> <span_
                                       [--json]";
 /// Valid resources for state mutation.
 const SET_RESOURCE_NEXT_STEP: &str = "choose issue";
-/// Filters trace detail reads cannot apply.
-const TRACE_DETAIL_UNSUPPORTED_FLAGS: &[&str] = &[
-    "--name",
-    "--service",
-    "--service-name",
-    "--since",
-    "--user",
-    "--distinct-id",
-    "--trace",
-    "--trace-id",
-    "--level",
-    "--severity",
-    "--search",
-    "--status",
-    "--limit",
-    "--min-duration-ms",
-];
-/// Filters issue detail reads cannot apply.
-const ISSUE_DETAIL_UNSUPPORTED_FLAGS: &[&str] = &[
-    "--name",
-    "--service",
-    "--service-name",
-    "--since",
-    "--user",
-    "--distinct-id",
-    "--trace",
-    "--trace-id",
-    "--level",
-    "--severity",
-    "--search",
-    "--project",
-    "--project-id",
-    "--release",
-    "--environment",
-    "--env",
-    "--status",
-    "--limit",
-    "--min-duration-ms",
-];
-/// Filters action list reads cannot apply.
-const ACTION_LIST_UNSUPPORTED_FLAGS: &[&str] = &[
-    "--trace",
-    "--trace-id",
-    "--level",
-    "--severity",
-    "--search",
-    "--status",
-    "--min-duration-ms",
-];
-
 /// # Errors
 /// Returns [`CliError`] if the command grammar is invalid.
 pub fn parse_command<I, S>(args: I) -> Result<Command, CliError>
@@ -1626,18 +1576,6 @@ fn parse_read_resource(resource: &str, rest: &[String]) -> Result<Command, CliEr
             rest,
             "read releases",
             READ_RELEASES_NEXT_STEP,
-            &[
-                "--name",
-                "--user",
-                "--distinct-id",
-                "--trace",
-                "--trace-id",
-                "--level",
-                "--severity",
-                "--search",
-                "--status",
-                "--min-duration-ms",
-            ],
         )?,
         "traces" | "spans" if has_trace_id_candidate(rest) => {
             return parse_trace_detail_or_explain(rest);
@@ -1702,13 +1640,6 @@ fn parse_log_list_read(rest: &[String]) -> Result<(ReadTarget, crate::flags::Fla
         args.as_slice(),
         "read logs",
         READ_LOGS_NEXT_STEP,
-        &[
-            "--name",
-            "--user",
-            "--distinct-id",
-            "--status",
-            "--min-duration-ms",
-        ],
     )
 }
 
@@ -1720,17 +1651,6 @@ fn parse_issue_list_read(rest: &[String]) -> Result<(ReadTarget, crate::flags::F
         args.as_slice(),
         "read issues",
         READ_ISSUES_NEXT_STEP,
-        &[
-            "--name",
-            "--user",
-            "--distinct-id",
-            "--trace",
-            "--trace-id",
-            "--level",
-            "--severity",
-            "--search",
-            "--min-duration-ms",
-        ],
     )
 }
 
@@ -1778,7 +1698,6 @@ fn parse_action_list_read(rest: &[String]) -> Result<(ReadTarget, crate::flags::
         args.as_slice(),
         "read actions",
         READ_ACTIONS_NEXT_STEP,
-        ACTION_LIST_UNSUPPORTED_FLAGS,
     )
 }
 
@@ -1821,12 +1740,8 @@ fn parse_issue_detail_or_status(args: &[String]) -> Result<Command, CliError> {
         return Ok(command);
     }
     let target = ReadTarget::Issue(id);
-    let flags = parse_detail_read_flags(
-        tail.as_slice(),
-        "read issue",
-        READ_ISSUE_NEXT_STEP,
-        ISSUE_DETAIL_UNSUPPORTED_FLAGS,
-    )?;
+    let flags =
+        parse_detail_read_flags(&target, tail.as_slice(), "read issue", READ_ISSUE_NEXT_STEP)?;
     let json = flags.is_json();
     let options = flags.into_read_options();
     validate_read_filters(&target, &options)?;
@@ -1844,18 +1759,17 @@ fn parse_list_read(
     args: &[String],
     command: &'static str,
     next: &'static str,
-    unsupported_flags: &[&str],
 ) -> Result<(ReadTarget, crate::flags::Flags), CliError> {
-    reject_unsupported_read_flags(args, command, next, unsupported_flags)?;
+    reject_unsupported_read_flags(&target, args, command, next)?;
     Ok((target, parse_flags(args, FlagScope::Read)?))
 }
 
 /// Rejects target-inapplicable read filters before parsing values.
 fn reject_unsupported_read_flags(
+    target: &ReadTarget,
     args: &[String],
     command: &'static str,
     next: &'static str,
-    unsupported_flags: &[&str],
 ) -> Result<(), CliError> {
     let mut index = 0;
     let mut seen = Vec::new();
@@ -1884,7 +1798,7 @@ fn reject_unsupported_read_flags(
             }
             return Ok(());
         }
-        if unsupported_flags.contains(&flag) {
+        if !target.supports_filter(flag) {
             return Err(CliError::UnsupportedFlag {
                 flag: user_facing_read_flag(flag).to_owned(),
                 command,
@@ -2038,12 +1952,12 @@ fn parse_explain_target_flags(target: ExplainTarget, args: &[String]) -> Result<
 
 /// Parses detail read filters after rejecting list-only filters.
 fn parse_detail_read_flags(
+    target: &ReadTarget,
     args: &[String],
     command: &'static str,
     next: &'static str,
-    unsupported_flags: &[&str],
 ) -> Result<crate::flags::Flags, CliError> {
-    reject_unsupported_read_flags(args, command, next, unsupported_flags)?;
+    reject_unsupported_read_flags(target, args, command, next)?;
     parse_flags(args, FlagScope::Read)
 }
 
@@ -2057,29 +1971,22 @@ fn parse_pasted_detail_id(id: &str, args: &[String]) -> Result<Command, CliError
         let target = infer_explain_target(id).ok_or_else(|| unknown_command(id))?;
         return parse_explain_target_flags(target, &explain_args[1..]);
     }
-    let (target, flags) = if is_trace_id(id) {
+    let (target, command, next) = if is_trace_id(id) {
         (
             ReadTarget::Trace(id.to_owned()),
-            parse_detail_read_flags(
-                args,
-                "read trace",
-                READ_TRACE_NEXT_STEP,
-                TRACE_DETAIL_UNSUPPORTED_FLAGS,
-            )?,
+            "read trace",
+            READ_TRACE_NEXT_STEP,
         )
     } else if is_issue_id(id) {
         (
             ReadTarget::Issue(id.to_owned()),
-            parse_detail_read_flags(
-                args,
-                "read issue",
-                READ_ISSUE_NEXT_STEP,
-                ISSUE_DETAIL_UNSUPPORTED_FLAGS,
-            )?,
+            "read issue",
+            READ_ISSUE_NEXT_STEP,
         )
     } else {
         return Err(unknown_command(id));
     };
+    let flags = parse_detail_read_flags(&target, args, command, next)?;
     let json = flags.is_json();
     let options = flags.into_read_options();
     validate_read_filters(&target, &options)?;
@@ -2093,31 +2000,16 @@ fn parse_pasted_detail_id(id: &str, args: &[String]) -> Result<Command, CliError
 
 /// Rejects filters that a read endpoint would otherwise ignore.
 fn validate_read_filters(target: &ReadTarget, filters: &ReadOptions) -> Result<(), CliError> {
-    let unsupported = match target {
-        ReadTarget::Logs => filters
-            .first_log_unsupported_flag()
-            .map(|flag| (flag, "read logs", READ_LOGS_NEXT_STEP)),
-        ReadTarget::Issues => filters
-            .first_issue_list_unsupported_flag()
-            .map(|flag| (flag, "read issues", READ_ISSUES_NEXT_STEP)),
-        ReadTarget::Actions => filters
-            .first_action_unsupported_flag()
-            .map(|flag| (flag, "read actions", READ_ACTIONS_NEXT_STEP)),
-        ReadTarget::Releases => filters
-            .first_release_unsupported_flag()
-            .map(|flag| (flag, "read releases", READ_RELEASES_NEXT_STEP)),
-        ReadTarget::Traces => filters
-            .first_trace_list_unsupported_flag()
-            .map(|flag| (flag, "read traces", READ_TRACES_NEXT_STEP)),
-        ReadTarget::Trace(_) => filters
-            .first_trace_detail_unsupported_flag()
-            .map(|flag| (flag, "read trace", READ_TRACE_NEXT_STEP)),
-        ReadTarget::Issue(_) => filters
-            .first_issue_detail_unsupported_flag()
-            .map(|flag| (flag, "read issue", READ_ISSUE_NEXT_STEP)),
+    let (command, next) = match target {
+        ReadTarget::Logs => ("read logs", READ_LOGS_NEXT_STEP),
+        ReadTarget::Issues => ("read issues", READ_ISSUES_NEXT_STEP),
+        ReadTarget::Actions => ("read actions", READ_ACTIONS_NEXT_STEP),
+        ReadTarget::Releases => ("read releases", READ_RELEASES_NEXT_STEP),
+        ReadTarget::Traces => ("read traces", READ_TRACES_NEXT_STEP),
+        ReadTarget::Trace(_) => ("read trace", READ_TRACE_NEXT_STEP),
+        ReadTarget::Issue(_) => ("read issue", READ_ISSUE_NEXT_STEP),
     };
-
-    if let Some((flag, command, next)) = unsupported {
+    if let Some(flag) = filters.first_unsupported_flag(target) {
         return Err(CliError::UnsupportedFlag {
             flag: flag.to_owned(),
             command,
