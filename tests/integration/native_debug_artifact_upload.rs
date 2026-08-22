@@ -7,14 +7,13 @@ mod resumable_support;
 #[path = "native_debug_artifacts/support.rs"]
 mod support;
 
+use crate::{Mock, MockServer, Request, ResponseTemplate};
 use archive_support::*;
 use resumable_support::*;
 use std::ffi::OsString;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use support::*;
-use wiremock::matchers::{method, path};
-use wiremock::{Mock, MockServer, Request, ResponseTemplate};
 
 const UPPERCASE_DWARFDUMP_UUID: &str = "10111213-1415-1617-1819-1A1B1C1D1E1F";
 const MIXED_CASE_DWARFDUMP_UUID: &str = "10111213-1415-1617-1819-1a1B1c1D1e1F";
@@ -146,28 +145,27 @@ async fn resumable_upload_sends_only_missing_chunks_then_completes_and_verifies(
         ],
     )
     .await;
-    Mock::given(method("POST"))
-        .and(path("/api/native-debug-artifact-uploads"))
+    Mock::route("POST", "/api/native-debug-artifact-uploads")
         .respond_with(ResponseTemplate::new(200).set_body_json(start_response(&[&final_digest])))
         .expect(1)
         .mount(&server)
         .await;
-    Mock::given(method("PUT"))
-        .and(path(format!(
-            "/api/native-debug-artifact-uploads/{RESUMABLE_SESSION_ID}/chunks/{final_digest}"
-        )))
-        .respond_with(ResponseTemplate::new(200).set_body_json(chunk_response(&final_digest)))
-        .expect(1)
-        .mount(&server)
-        .await;
-    Mock::given(method("POST"))
-        .and(path(format!(
-            "/api/native-debug-artifact-uploads/{RESUMABLE_SESSION_ID}/complete"
-        )))
-        .respond_with(ResponseTemplate::new(200).set_body_json(upload_success_body(1)))
-        .expect(1)
-        .mount(&server)
-        .await;
+    Mock::route(
+        "PUT",
+        format!("/api/native-debug-artifact-uploads/{RESUMABLE_SESSION_ID}/chunks/{final_digest}"),
+    )
+    .respond_with(ResponseTemplate::new(200).set_body_json(chunk_response(&final_digest)))
+    .expect(1)
+    .mount(&server)
+    .await;
+    Mock::route(
+        "POST",
+        format!("/api/native-debug-artifact-uploads/{RESUMABLE_SESSION_ID}/complete"),
+    )
+    .respond_with(ResponseTemplate::new(200).set_body_json(upload_success_body(1)))
+    .expect(1)
+    .mount(&server)
+    .await;
 
     let output = invoke(
         &fixture,
@@ -259,8 +257,7 @@ async fn resumable_retry_replays_only_the_ambiguous_chunk() -> Result<(), Box<dy
         ],
     )
     .await;
-    Mock::given(method("POST"))
-        .and(path("/api/native-debug-artifact-uploads"))
+    Mock::route("POST", "/api/native-debug-artifact-uploads")
         .respond_with(ResponseTemplate::new(200).set_body_json(start_response(&[&object_digest])))
         .expect(1)
         .mount(&server)
@@ -268,28 +265,28 @@ async fn resumable_retry_replays_only_the_ambiguous_chunk() -> Result<(), Box<dy
     let attempt = Arc::new(AtomicUsize::new(0));
     let response_attempt = Arc::clone(&attempt);
     let response_digest = object_digest.clone();
-    Mock::given(method("PUT"))
-        .and(path(format!(
-            "/api/native-debug-artifact-uploads/{RESUMABLE_SESSION_ID}/chunks/{object_digest}"
-        )))
-        .respond_with(move |_request: &Request| {
-            if response_attempt.fetch_add(1, Ordering::SeqCst) == 0 {
-                ResponseTemplate::new(503).set_body_string("hostile transient text")
-            } else {
-                ResponseTemplate::new(200).set_body_json(chunk_response(response_digest.as_str()))
-            }
-        })
-        .expect(2)
-        .mount(&server)
-        .await;
-    Mock::given(method("POST"))
-        .and(path(format!(
-            "/api/native-debug-artifact-uploads/{RESUMABLE_SESSION_ID}/complete"
-        )))
-        .respond_with(ResponseTemplate::new(200).set_body_json(upload_success_body(1)))
-        .expect(1)
-        .mount(&server)
-        .await;
+    Mock::route(
+        "PUT",
+        format!("/api/native-debug-artifact-uploads/{RESUMABLE_SESSION_ID}/chunks/{object_digest}"),
+    )
+    .respond_with(move |_request: &Request| {
+        if response_attempt.fetch_add(1, Ordering::SeqCst) == 0 {
+            ResponseTemplate::new(503).set_body_string("hostile transient text")
+        } else {
+            ResponseTemplate::new(200).set_body_json(chunk_response(response_digest.as_str()))
+        }
+    })
+    .expect(2)
+    .mount(&server)
+    .await;
+    Mock::route(
+        "POST",
+        format!("/api/native-debug-artifact-uploads/{RESUMABLE_SESSION_ID}/complete"),
+    )
+    .respond_with(ResponseTemplate::new(200).set_body_json(upload_success_body(1)))
+    .expect(1)
+    .mount(&server)
+    .await;
 
     let output = invoke(
         &fixture,
@@ -329,8 +326,7 @@ async fn resumable_fallback_is_initial_only_and_requires_exact_capability_absenc
         ],
     )
     .await;
-    Mock::given(method("POST"))
-        .and(path("/api/native-debug-artifact-uploads"))
+    Mock::route("POST", "/api/native-debug-artifact-uploads")
         .respond_with(ResponseTemplate::new(405).set_body_json(error_envelope(
             "method_not_allowed",
             START_METHOD_NEXT,
@@ -365,8 +361,7 @@ async fn resumable_fallback_is_initial_only_and_requires_exact_capability_absenc
 
     let server = MockServer::start().await;
     mount_lookup(&server, missing_lookup()).await;
-    Mock::given(method("POST"))
-        .and(path("/api/native-debug-artifact-uploads"))
+    Mock::route("POST", "/api/native-debug-artifact-uploads")
         .respond_with(ResponseTemplate::new(405).set_body_json(error_envelope(
             "method_not_allowed",
             "use another upload method",
@@ -389,8 +384,7 @@ async fn resumable_fallback_is_initial_only_and_requires_exact_capability_absenc
 
     let server = MockServer::start().await;
     mount_lookup(&server, missing_lookup()).await;
-    Mock::given(method("POST"))
-        .and(path("/api/native-debug-artifact-uploads"))
+    Mock::route("POST", "/api/native-debug-artifact-uploads")
         .respond_with(ResponseTemplate::new(404).set_body_json(error_envelope(
             "not_found",
             "check the project scope",
@@ -427,28 +421,27 @@ async fn ambiguous_completion_recovers_through_exact_lookup_without_file_replay(
         ],
     )
     .await;
-    Mock::given(method("POST"))
-        .and(path("/api/native-debug-artifact-uploads"))
+    Mock::route("POST", "/api/native-debug-artifact-uploads")
         .respond_with(ResponseTemplate::new(200).set_body_json(start_response(&[&digest])))
         .expect(1)
         .mount(&server)
         .await;
-    Mock::given(method("PUT"))
-        .and(path(format!(
-            "/api/native-debug-artifact-uploads/{RESUMABLE_SESSION_ID}/chunks/{digest}"
-        )))
-        .respond_with(ResponseTemplate::new(200).set_body_json(chunk_response(&digest)))
-        .expect(1)
-        .mount(&server)
-        .await;
-    Mock::given(method("POST"))
-        .and(path(format!(
-            "/api/native-debug-artifact-uploads/{RESUMABLE_SESSION_ID}/complete"
-        )))
-        .respond_with(ResponseTemplate::new(503).set_body_string("hostile completion text"))
-        .expect(1)
-        .mount(&server)
-        .await;
+    Mock::route(
+        "PUT",
+        format!("/api/native-debug-artifact-uploads/{RESUMABLE_SESSION_ID}/chunks/{digest}"),
+    )
+    .respond_with(ResponseTemplate::new(200).set_body_json(chunk_response(&digest)))
+    .expect(1)
+    .mount(&server)
+    .await;
+    Mock::route(
+        "POST",
+        format!("/api/native-debug-artifact-uploads/{RESUMABLE_SESSION_ID}/complete"),
+    )
+    .respond_with(ResponseTemplate::new(503).set_body_string("hostile completion text"))
+    .expect(1)
+    .mount(&server)
+    .await;
 
     let output = invoke(
         &fixture,
@@ -487,33 +480,32 @@ async fn non_pending_completion_422_preserves_missing_chunk_recovery()
     let (fixture, artifact, object) = artifact("complete-missing-chunk", 257)?;
     let digest = sha256_hex(object.as_slice());
     mount_lookup(&server, missing_lookup()).await;
-    Mock::given(method("POST"))
-        .and(path("/api/native-debug-artifact-uploads"))
+    Mock::route("POST", "/api/native-debug-artifact-uploads")
         .respond_with(ResponseTemplate::new(200).set_body_json(start_response(&[&digest])))
         .expect(1)
         .mount(&server)
         .await;
-    Mock::given(method("PUT"))
-        .and(path(format!(
-            "/api/native-debug-artifact-uploads/{RESUMABLE_SESSION_ID}/chunks/{digest}"
-        )))
-        .respond_with(ResponseTemplate::new(200).set_body_json(chunk_response(&digest)))
-        .expect(1)
-        .mount(&server)
-        .await;
-    Mock::given(method("POST"))
-        .and(path(format!(
-            "/api/native-debug-artifact-uploads/{RESUMABLE_SESSION_ID}/complete"
-        )))
-        .respond_with(ResponseTemplate::new(422).set_body_json(error_envelope(
-            "validation_failed",
-            MISSING_CHUNK_NEXT,
-            "upload_native_debug_artifact_chunks",
-            "native_debug_artifact_upload",
-        )))
-        .expect(1)
-        .mount(&server)
-        .await;
+    Mock::route(
+        "PUT",
+        format!("/api/native-debug-artifact-uploads/{RESUMABLE_SESSION_ID}/chunks/{digest}"),
+    )
+    .respond_with(ResponseTemplate::new(200).set_body_json(chunk_response(&digest)))
+    .expect(1)
+    .mount(&server)
+    .await;
+    Mock::route(
+        "POST",
+        format!("/api/native-debug-artifact-uploads/{RESUMABLE_SESSION_ID}/complete"),
+    )
+    .respond_with(ResponseTemplate::new(422).set_body_json(error_envelope(
+        "validation_failed",
+        MISSING_CHUNK_NEXT,
+        "upload_native_debug_artifact_chunks",
+        "native_debug_artifact_upload",
+    )))
+    .expect(1)
+    .mount(&server)
+    .await;
 
     let output = invoke(
         &fixture,
@@ -762,8 +754,7 @@ async fn validation_error_uses_fixed_release_tooling_recovery_without_body()
     let server = MockServer::start().await;
     let fixture = Fixture::new("validation-recovery")?;
     mount_lookup(&server, missing_lookup()).await;
-    Mock::given(method("POST"))
-        .and(path("/api/native-debug-artifacts"))
+    Mock::route("POST", "/api/native-debug-artifacts")
         .respond_with(ResponseTemplate::new(422).set_body_string("hostile backend text"))
         .expect(1)
         .mount(&server)
@@ -796,8 +787,7 @@ async fn payload_too_large_uses_one_safe_json_failure_on_stdout()
     let server = MockServer::start().await;
     let fixture = Fixture::new("payload-too-large")?;
     mount_lookup(&server, missing_lookup()).await;
-    Mock::given(method("POST"))
-        .and(path("/api/native-debug-artifacts"))
+    Mock::route("POST", "/api/native-debug-artifacts")
         .respond_with(ResponseTemplate::new(413).set_body_string("hostile edge response text"))
         .expect(1)
         .mount(&server)
@@ -872,8 +862,7 @@ async fn retryable_one_shot_upload_recovers_without_replaying_full_payload()
     let lookup_attempt = Arc::new(AtomicUsize::new(0));
     let lookup_attempt_for_response = Arc::clone(&lookup_attempt);
     let found = found_lookup(digest.as_str(), object.len());
-    Mock::given(method("GET"))
-        .and(path("/api/native-debug-artifacts"))
+    Mock::route("GET", "/api/native-debug-artifacts")
         .respond_with(move |_request: &Request| {
             if lookup_attempt_for_response.fetch_add(1, Ordering::SeqCst) == 0 {
                 ResponseTemplate::new(200).set_body_json(missing_lookup())
@@ -884,8 +873,7 @@ async fn retryable_one_shot_upload_recovers_without_replaying_full_payload()
         .expect(2)
         .mount(&server)
         .await;
-    Mock::given(method("POST"))
-        .and(path("/api/native-debug-artifacts"))
+    Mock::route("POST", "/api/native-debug-artifacts")
         .respond_with(ResponseTemplate::new(503).set_body_string("hostile backend text"))
         .expect(1)
         .mount(&server)

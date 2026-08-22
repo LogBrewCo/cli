@@ -1,8 +1,8 @@
 //! Built-binary contract proof for maturity-aware, identity-safe retention.
 
+use crate::matchers::body_json;
+use crate::{Mock, MockServer, ResponseTemplate};
 use logbrew_cli::{Command, HelpTopic, HttpMethod, help, parse_command};
-use wiremock::matchers::{body_json, header, method, path};
-use wiremock::{Mock, MockServer, ResponseTemplate};
 
 const PROJECT_ID: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 
@@ -66,24 +66,26 @@ async fn built_binary_posts_exact_scope_and_preserves_validated_json()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
     let response = retention_response();
-    Mock::given(method("POST"))
-        .and(path("/api/telemetry/analytics/retention"))
-        .and(header("authorization", "Bearer account-token"))
-        .and(body_json(serde_json::json!({
-            "project_id": PROJECT_ID,
-            "since": "30d",
-            "environment": "production",
-            "start_event": {"kind": "page_view", "event_name": "/signup"},
-            "return_event": {"kind": "interaction", "event_name": "dashboard_opened"},
-            "interval": "day",
-            "interval_count": 2,
-            "mode": "return_on",
-            "cohort_mode": "first_in_range"
-        })))
-        .respond_with(ResponseTemplate::new(200).set_body_json(response.clone()))
-        .expect(1)
-        .mount(&server)
-        .await;
+    Mock::auth(
+        "POST",
+        "/api/telemetry/analytics/retention",
+        "account-token",
+    )
+    .and(body_json(serde_json::json!({
+        "project_id": PROJECT_ID,
+        "since": "30d",
+        "environment": "production",
+        "start_event": {"kind": "page_view", "event_name": "/signup"},
+        "return_event": {"kind": "interaction", "event_name": "dashboard_opened"},
+        "interval": "day",
+        "interval_count": 2,
+        "mode": "return_on",
+        "cohort_mode": "first_in_range"
+    })))
+    .respond_with(ResponseTemplate::new(200).set_body_json(response.clone()))
+    .expect(1)
+    .mount(&server)
+    .await;
 
     let process = run_binary(&server, true).await?;
 
@@ -102,8 +104,7 @@ async fn built_binary_posts_exact_scope_and_preserves_validated_json()
 async fn built_binary_human_output_explains_retention_maturity_coverage_and_next_step()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path("/api/telemetry/analytics/retention"))
+    Mock::route("POST", "/api/telemetry/analytics/retention")
         .respond_with(ResponseTemplate::new(200).set_body_json(retention_response()))
         .expect(1)
         .mount(&server)
@@ -136,8 +137,7 @@ async fn built_binary_fails_closed_on_unknown_identity_fields_without_reflection
     let server = MockServer::start().await;
     let mut response = retention_response();
     response["cohorts"][0]["distinct_id"] = "hostile-subject-marker".into();
-    Mock::given(method("POST"))
-        .and(path("/api/telemetry/analytics/retention"))
+    Mock::route("POST", "/api/telemetry/analytics/retention")
         .respond_with(ResponseTemplate::new(200).set_body_json(response))
         .expect(1)
         .mount(&server)

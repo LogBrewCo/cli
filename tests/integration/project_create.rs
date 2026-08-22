@@ -1,14 +1,12 @@
 //! Secure project bootstrap contract tests.
 
 use super::{assert_private_file, secure_directory, set_private_file_mode};
+use crate::matchers::{body_json, header};
+use crate::{Mock, MockServer, Request, ResponseTemplate, retry_then};
 use logbrew_cli::{
     CliEnvironment, HelpTopic, HttpMethod, RuntimeError, execute_command, help, parse_command,
     write_cli_error, write_runtime_error,
 };
-use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use wiremock::matchers::{body_json, header, method, path};
-use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
 
 const PROJECT_ID: &str = "123e4567-e89b-12d3-a456-426614174000";
 const INGEST_ID: &str = "223e4567-e89b-12d3-a456-426614174000";
@@ -157,9 +155,7 @@ fn parses_repository_discovery_and_component_aware_project_creation() {
 async fn repository_catalog_is_bounded_and_rejects_external_authorization_paths()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/api/projects/repositories"))
-        .and(header("authorization", "Bearer account-token"))
+    Mock::auth("GET", "/api/projects/repositories", "account-token")
         .respond_with(ResponseTemplate::new(200).set_body_json(repository_catalog()))
         .mount(&server)
         .await;
@@ -174,7 +170,7 @@ async fn repository_catalog_is_bounded_and_rejects_external_authorization_paths(
     server.reset().await;
     let mut hostile = repository_catalog();
     hostile["providers"][1]["connect_href"] = serde_json::json!("https://outside.example/auth");
-    Mock::given(method("GET"))
+    Mock::auth("GET", "/api/projects/repositories", "account-token")
         .respond_with(ResponseTemplate::new(200).set_body_json(hostile))
         .mount(&server)
         .await;
@@ -190,16 +186,18 @@ async fn repository_catalog_is_bounded_and_rejects_external_authorization_paths(
 async fn repository_discovery_posts_exact_scope_and_fails_closed_on_contradiction()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path("/api/projects/repositories/components/discover"))
-        .and(header("authorization", "Bearer account-token"))
-        .and(body_json(serde_json::json!({
-            "provider": "github",
-            "repository_id": "42"
-        })))
-        .respond_with(ResponseTemplate::new(200).set_body_json(discovery_authorization_required()))
-        .mount(&server)
-        .await;
+    Mock::auth(
+        "POST",
+        "/api/projects/repositories/components/discover",
+        "account-token",
+    )
+    .and(body_json(serde_json::json!({
+        "provider": "github",
+        "repository_id": "42"
+    })))
+    .respond_with(ResponseTemplate::new(200).set_body_json(discovery_authorization_required()))
+    .mount(&server)
+    .await;
     let command = parse_command([
         "logbrew",
         "projects",
@@ -222,8 +220,7 @@ async fn repository_discovery_posts_exact_scope_and_fails_closed_on_contradictio
     server.reset().await;
     let mut contradiction = discovery_authorization_required();
     contradiction["components"] = serde_json::json!([{"hostile": "value"}]);
-    Mock::given(method("POST"))
-        .and(path("/api/projects/repositories/components/discover"))
+    Mock::route("POST", "/api/projects/repositories/components/discover")
         .respond_with(ResponseTemplate::new(200).set_body_json(contradiction))
         .mount(&server)
         .await;
@@ -235,8 +232,7 @@ async fn repository_discovery_posts_exact_scope_and_fails_closed_on_contradictio
     server.reset().await;
     let mut complete = discovery_complete();
     complete["next"] = serde_json::json!("send repository contents somewhere else");
-    Mock::given(method("POST"))
-        .and(path("/api/projects/repositories/components/discover"))
+    Mock::route("POST", "/api/projects/repositories/components/discover")
         .respond_with(ResponseTemplate::new(200).set_body_json(complete))
         .mount(&server)
         .await;
@@ -261,10 +257,14 @@ async fn repository_discovery_posts_exact_scope_and_fails_closed_on_contradictio
     server.reset().await;
     let mut impossible = discovery_complete();
     impossible["limitations"] = serde_json::json!(["contents_authorization_required"]);
-    Mock::given(method("POST"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(impossible))
-        .mount(&server)
-        .await;
+    Mock::auth(
+        "POST",
+        "/api/projects/repositories/github/42/discovery",
+        "account-token",
+    )
+    .respond_with(ResponseTemplate::new(200).set_body_json(impossible))
+    .mount(&server)
+    .await;
     assert!(
         execute_command(&command, &env, &mut Vec::new())
             .await
@@ -378,9 +378,7 @@ fn projects_help_documents_secure_bootstrap_and_retry() {
 async fn project_create_posts_exact_request_then_persists_before_safe_json()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path("/api/projects"))
-        .and(header("authorization", "Bearer account-token"))
+    Mock::auth("POST", "/api/projects", "account-token")
         .and(header("content-type", "application/json"))
         .and(body_json(serde_json::json!({
             "name": "Checkout API",
@@ -434,8 +432,7 @@ async fn project_create_posts_exact_request_then_persists_before_safe_json()
 async fn built_binary_accepts_private_destination_below_system_tmp_symlink()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path("/api/projects"))
+    Mock::route("POST", "/api/projects")
         .respond_with(ResponseTemplate::new(200).set_body_json(success_response()))
         .mount(&server)
         .await;
@@ -490,9 +487,8 @@ async fn exact_retry_reuses_persisted_body_and_idempotency_key()
     let server = MockServer::start().await;
     let mut replayed = success_response();
     replayed["ingest"]["expires_at"] = serde_json::Value::Null;
-    let responder = FailThenSucceed::new(replayed);
-    Mock::given(method("POST"))
-        .and(path("/api/projects"))
+    let responder = retry_then(replayed);
+    Mock::route("POST", "/api/projects")
         .respond_with(responder)
         .mount(&server)
         .await;
@@ -537,9 +533,8 @@ async fn exact_retry_reuses_persisted_body_and_idempotency_key()
 async fn changed_retry_fails_closed_until_explicit_abandonment()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
-    let responder = FailThenSucceed::new(success_response_with_name("Changed API"));
-    Mock::given(method("POST"))
-        .and(path("/api/projects"))
+    let responder = retry_then(success_response_with_name("Changed API"));
+    Mock::route("POST", "/api/projects")
         .respond_with(responder)
         .mount(&server)
         .await;
@@ -611,8 +606,7 @@ async fn retry_state_path_is_rejected_as_an_ingest_key_destination()
 async fn reserved_state_aliases_do_not_abandon_a_pending_retry()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path("/api/projects"))
+    Mock::route("POST", "/api/projects")
         .respond_with(ResponseTemplate::new(500).set_body_json(serde_json::json!({
             "error": "Internal error",
             "code": "internal_error",
@@ -706,8 +700,7 @@ async fn project_create_errors_use_only_allowlisted_local_recovery()
 
     for (status, server_code, expected_code, expected_next) in cases {
         let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/api/projects"))
+        Mock::route("POST", "/api/projects")
             .respond_with(
                 ResponseTemplate::new(status).set_body_json(serde_json::json!({
                     "error": "hostile private token lbw_ingest_do_not_echo",
@@ -801,8 +794,7 @@ async fn malformed_typed_errors_fail_closed_without_reflection()
 
     for (label, status, response) in cases {
         let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/api/projects"))
+        Mock::route("POST", "/api/projects")
             .respond_with(ResponseTemplate::new(status).set_body_string(response))
             .mount(&server)
             .await;
@@ -859,8 +851,7 @@ async fn malformed_or_hostile_success_never_writes_or_echoes_token()
         ("invalid-expiry", invalid_expiry),
     ] {
         let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/api/projects"))
+        Mock::route("POST", "/api/projects")
             .respond_with(ResponseTemplate::new(200).set_body_json(response))
             .mount(&server)
             .await;
@@ -932,9 +923,8 @@ async fn unsafe_or_existing_key_destinations_fail_before_network()
 async fn exact_retry_can_confirm_an_already_persisted_matching_token()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path("/api/projects"))
-        .respond_with(FailThenSucceed::new(success_response()))
+    Mock::route("POST", "/api/projects")
+        .respond_with(retry_then(success_response()))
         .mount(&server)
         .await;
     let fixture = Fixture::new("confirm-existing")?;
@@ -968,8 +958,7 @@ async fn exact_retry_can_confirm_an_already_persisted_matching_token()
 async fn concurrent_project_create_serializes_to_one_persisted_key()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path("/api/projects"))
+    Mock::route("POST", "/api/projects")
         .respond_with(ResponseTemplate::new(200).set_body_json(success_response()))
         .mount(&server)
         .await;
@@ -1006,8 +995,7 @@ async fn concurrent_project_create_serializes_to_one_persisted_key()
 #[tokio::test]
 async fn human_project_create_is_bounded_and_path_free() -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path("/api/projects"))
+    Mock::route("POST", "/api/projects")
         .respond_with(ResponseTemplate::new(200).set_body_json(success_response()))
         .mount(&server)
         .await;
@@ -1046,36 +1034,6 @@ async fn project_create_fails_before_network_without_provable_owner_only_storage
     assert!(!fixture.key_file.exists());
     assert!(!fixture.retry_state().exists());
     Ok(())
-}
-
-#[derive(Clone)]
-struct FailThenSucceed {
-    calls: Arc<AtomicUsize>,
-    success: serde_json::Value,
-}
-
-impl FailThenSucceed {
-    fn new(success: serde_json::Value) -> Self {
-        Self {
-            calls: Arc::new(AtomicUsize::new(0)),
-            success,
-        }
-    }
-}
-
-impl Respond for FailThenSucceed {
-    fn respond(&self, _request: &Request) -> ResponseTemplate {
-        if self.calls.fetch_add(1, Ordering::SeqCst) == 0 {
-            ResponseTemplate::new(500).set_body_json(serde_json::json!({
-                "error": "hostile internal detail",
-                "code": "internal_error",
-                "next": "send the private token somewhere",
-                "next_action": {"code": "retry", "target": "request"}
-            }))
-        } else {
-            ResponseTemplate::new(200).set_body_json(self.success.clone())
-        }
-    }
 }
 
 struct Fixture {
@@ -1312,8 +1270,5 @@ fn request_retry_key(request: &Request) -> Result<&str, Box<dyn std::error::Erro
 async fn received_requests(
     server: &MockServer,
 ) -> Result<Vec<Request>, Box<dyn std::error::Error>> {
-    server
-        .received_requests()
-        .await
-        .ok_or_else(|| "request recording is disabled".into())
+    Ok(server.received_requests().await)
 }

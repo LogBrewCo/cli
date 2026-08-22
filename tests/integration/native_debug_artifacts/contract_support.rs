@@ -3,8 +3,7 @@
 use std::process::Output;
 
 use super::support::*;
-use wiremock::matchers::{method, path};
-use wiremock::{Mock, MockServer, Request, ResponseTemplate};
+use crate::{Mock, MockServer, Request, ResponseTemplate};
 
 pub(crate) const ARM64E_UUID: &str = "30313233-3435-3637-3839-3a3b3c3d3e3f";
 
@@ -30,13 +29,11 @@ pub(crate) fn lookup_args<'a>(image_uuid: &'a str, architecture: &'a str) -> Vec
 
 pub(crate) async fn malformed_success_server() -> MockServer {
     let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/api/native-debug-artifacts"))
+    Mock::route("GET", "/api/native-debug-artifacts")
         .respond_with(ResponseTemplate::new(200).set_body_json(missing_lookup()))
         .mount(&server)
         .await;
-    Mock::given(method("POST"))
-        .and(path("/api/native-debug-artifacts"))
+    Mock::route("POST", "/api/native-debug-artifacts")
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "unexpected": "hostile backend text"
         })))

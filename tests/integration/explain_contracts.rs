@@ -1,8 +1,8 @@
 //! Versioned issue, log, action, trace, release, and metric explanation contracts.
 
+use crate::matchers::{header, query_param};
+use crate::{Mock, MockServer, ResponseTemplate};
 use logbrew_cli::{CliEnvironment, execute_command, parse_command, write_runtime_error};
-use wiremock::matchers::{header, method, path, query_param};
-use wiremock::{Mock, MockServer, ResponseTemplate};
 
 const PROJECT_ID: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const ISSUE_ID: &str = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
@@ -14,8 +14,7 @@ const SPAN_ID: &str = "00f067aa0ba902b7";
 async fn human_release_explanation_connects_health_sdk_and_every_signal()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/api/telemetry/releases/investigation"))
+    Mock::route("GET", "/api/telemetry/releases/investigation")
         .and(query_param("project_id", PROJECT_ID))
         .and(query_param("release", "checkout@1.2.3"))
         .and(query_param("environment", "production"))
@@ -66,8 +65,7 @@ async fn built_binary_release_preserves_validated_version_3_json()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
     let response = release_response();
-    Mock::given(method("GET"))
-        .and(path("/api/telemetry/releases/investigation"))
+    Mock::route("GET", "/api/telemetry/releases/investigation")
         .and(query_param("response_version", "3"))
         .and(header("authorization", "Bearer test-token"))
         .respond_with(ResponseTemplate::new(200).set_body_json(response.clone()))
@@ -197,8 +195,7 @@ async fn release_explanation_rejects_contradictory_or_unversioned_subject_receip
         unknown_comparison_field,
     ] {
         let server = MockServer::start().await;
-        Mock::given(method("GET"))
-            .and(path("/api/telemetry/releases/investigation"))
+        Mock::route("GET", "/api/telemetry/releases/investigation")
             .respond_with(ResponseTemplate::new(200).set_body_json(response))
             .mount(&server)
             .await;
@@ -227,8 +224,7 @@ async fn release_v3_accepts_exact_capture_retry_and_partial_trace_recovery_state
         release_with_previous_trace_unavailable(),
     ] {
         let server = MockServer::start().await;
-        Mock::given(method("GET"))
-            .and(path("/api/telemetry/releases/investigation"))
+        Mock::route("GET", "/api/telemetry/releases/investigation")
             .and(query_param("response_version", "3"))
             .respond_with(ResponseTemplate::new(200).set_body_json(response.clone()))
             .mount(&server)
@@ -249,8 +245,7 @@ async fn metric_explanation_preserves_validated_json_and_exact_scope()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
     let response = metric_response();
-    Mock::given(method("GET"))
-        .and(path("/api/telemetry/metrics/investigation"))
+    Mock::route("GET", "/api/telemetry/metrics/investigation")
         .and(query_param("project_id", PROJECT_ID))
         .and(query_param("name", "http.server.duration"))
         .and(query_param("since", "24h"))
@@ -279,8 +274,7 @@ async fn built_binary_metric_preserves_validated_version_2_description_json()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
     let response = metric_response();
-    Mock::given(method("GET"))
-        .and(path("/api/telemetry/metrics/investigation"))
+    Mock::route("GET", "/api/telemetry/metrics/investigation")
         .and(query_param("response_version", "2"))
         .and(header("authorization", "Bearer test-token"))
         .respond_with(ResponseTemplate::new(200).set_body_json(response.clone()))
@@ -331,8 +325,7 @@ async fn built_binary_metric_preserves_validated_version_2_description_json()
 async fn human_metric_explanation_exposes_semantics_coverage_and_trace_follow_up()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/api/telemetry/metrics/investigation"))
+    Mock::route("GET", "/api/telemetry/metrics/investigation")
         .respond_with(ResponseTemplate::new(200).set_body_json(metric_response()))
         .mount(&server)
         .await;
@@ -434,8 +427,7 @@ async fn metric_latest_sample_preserves_rich_context_and_redaction_receipts()
         });
     response["evidence"]["redacted_fields"] =
         serde_json::json!(["metric.latest_sample.metadata.authorization"]);
-    Mock::given(method("GET"))
-        .and(path("/api/telemetry/metrics/investigation"))
+    Mock::route("GET", "/api/telemetry/metrics/investigation")
         .respond_with(ResponseTemplate::new(200).set_body_json(response))
         .mount(&server)
         .await;
@@ -458,8 +450,7 @@ async fn metric_latest_sample_preserves_rich_context_and_redaction_receipts()
 async fn empty_metric_investigation_stays_truthful_and_actionable()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/api/telemetry/metrics/investigation"))
+    Mock::route("GET", "/api/telemetry/metrics/investigation")
         .respond_with(ResponseTemplate::new(200).set_body_json(empty_metric_response()))
         .mount(&server)
         .await;
@@ -494,8 +485,7 @@ async fn unavailable_metric_description_stays_explicit_and_valid()
         .ok_or("missing fixture")?;
     missing.push(serde_json::json!("metric.description"));
     missing.sort_by(|left, right| left.as_str().cmp(&right.as_str()));
-    Mock::given(method("GET"))
-        .and(path("/api/telemetry/metrics/investigation"))
+    Mock::route("GET", "/api/telemetry/metrics/investigation")
         .respond_with(ResponseTemplate::new(200).set_body_json(response))
         .mount(&server)
         .await;
@@ -540,8 +530,7 @@ async fn unknown_or_duplicate_versions_fail_closed_without_reflection()
         ),
     ] {
         let server = MockServer::start().await;
-        Mock::given(method("GET"))
-            .and(path("/api/telemetry/metrics/investigation"))
+        Mock::route("GET", "/api/telemetry/metrics/investigation")
             .respond_with(ResponseTemplate::new(200).set_body_string(body))
             .mount(&server)
             .await;
@@ -567,8 +556,7 @@ async fn explanation_rejects_identity_mismatch_and_hostile_api_errors()
     let mismatch = MockServer::start().await;
     let mut response = metric_response();
     response["query"]["project_id"] = serde_json::json!("cccccccc-cccc-4ccc-8ccc-cccccccccccc");
-    Mock::given(method("GET"))
-        .and(path("/api/telemetry/metrics/investigation"))
+    Mock::route("GET", "/api/telemetry/metrics/investigation")
         .respond_with(ResponseTemplate::new(200).set_body_json(response))
         .mount(&mismatch)
         .await;
@@ -583,8 +571,7 @@ async fn explanation_rejects_identity_mismatch_and_hostile_api_errors()
     ));
 
     let rejected = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/api/telemetry/metrics/investigation"))
+    Mock::route("GET", "/api/telemetry/metrics/investigation")
         .respond_with(
             ResponseTemplate::new(422)
                 .set_body_string("hostile-api-marker test-token private upstream detail"),
@@ -688,8 +675,7 @@ async fn metric_explanation_rejects_contradictory_semantics_and_group_identity()
         line_separator_description,
     ] {
         let server = MockServer::start().await;
-        Mock::given(method("GET"))
-            .and(path("/api/telemetry/metrics/investigation"))
+        Mock::route("GET", "/api/telemetry/metrics/investigation")
             .respond_with(ResponseTemplate::new(200).set_body_json(response))
             .mount(&server)
             .await;
@@ -713,8 +699,7 @@ async fn metric_explanation_rejects_contradictory_semantics_and_group_identity()
 async fn redirects_are_not_followed_with_authentication() -> Result<(), Box<dyn std::error::Error>>
 {
     let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/api/telemetry/metrics/investigation"))
+    Mock::route("GET", "/api/telemetry/metrics/investigation")
         .respond_with(
             ResponseTemplate::new(302)
                 .insert_header("location", format!("{}/redirected", server.uri())),
@@ -722,8 +707,7 @@ async fn redirects_are_not_followed_with_authentication() -> Result<(), Box<dyn 
         .expect(1)
         .mount(&server)
         .await;
-    Mock::given(method("GET"))
-        .and(path("/redirected"))
+    Mock::route("GET", "/redirected")
         .respond_with(ResponseTemplate::new(200).set_body_json(metric_response()))
         .expect(0)
         .mount(&server)
@@ -747,8 +731,7 @@ async fn redirects_are_not_followed_with_authentication() -> Result<(), Box<dyn 
 async fn human_log_output_marks_and_escapes_untrusted_telemetry()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path(format!("/api/logs/{LOG_ID}/investigation")))
+    Mock::route("GET", format!("/api/logs/{LOG_ID}/investigation"))
         .respond_with(ResponseTemplate::new(200).set_body_json(log_response()))
         .mount(&server)
         .await;

@@ -1,12 +1,12 @@
 //! Privacy-safe support context history and reply contracts.
 
 use super::{authenticated_env, run_command};
+use crate::matchers::{body_json, header};
+use crate::{Mock, MockServer, ResponseTemplate};
 use logbrew_cli::{
     CliEnvironment, HttpMethod, execute_command, parse_command, write_cli_error,
     write_runtime_error,
 };
-use wiremock::matchers::{body_json, header, method, path};
-use wiremock::{Mock, MockServer, ResponseTemplate};
 
 const TICKET_ID: &str = "sup_9b2b4b3abd4e4f85a0f648118f037c17";
 const CONTEXT_ID: &str = "ctx_4b2b4b3abd4e4f85a0f648118f037c29";
@@ -259,15 +259,17 @@ async fn support_context_history_preserves_json_and_hides_context_payloads()
     });
     let response_text = serde_json::to_string_pretty(&response)?;
     let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path(format!("/api/support/tickets/{TICKET_ID}/context")))
-        .and(header("authorization", "Bearer test-token"))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_raw(response_text.clone(), "application/json"),
-        )
-        .expect(2)
-        .mount(&server)
-        .await;
+    Mock::auth(
+        "GET",
+        format!("/api/support/tickets/{TICKET_ID}/context"),
+        "test-token",
+    )
+    .respond_with(
+        ResponseTemplate::new(200).set_body_raw(response_text.clone(), "application/json"),
+    )
+    .expect(2)
+    .mount(&server)
+    .await;
 
     let human = run_command(
         &server,
@@ -318,15 +320,17 @@ async fn support_context_reply_sends_retry_header_and_exact_retry_is_stable()
         "next_action": {"code": "await_owner_update", "target": "support_ticket"}
     });
     let server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path(format!("/api/support/tickets/{TICKET_ID}/context")))
-        .and(header("authorization", "Bearer test-token"))
-        .and(header("idempotency-key", RETRY_KEY))
-        .and(body_json(serde_json::json!({"context": CONTEXT_TEXT})))
-        .respond_with(ResponseTemplate::new(200).set_body_json(response.clone()))
-        .expect(3)
-        .mount(&server)
-        .await;
+    Mock::auth(
+        "POST",
+        format!("/api/support/tickets/{TICKET_ID}/context"),
+        "test-token",
+    )
+    .and(header("idempotency-key", RETRY_KEY))
+    .and(body_json(serde_json::json!({"context": CONTEXT_TEXT})))
+    .respond_with(ResponseTemplate::new(200).set_body_json(response.clone()))
+    .expect(3)
+    .mount(&server)
+    .await;
 
     let args = [
         "logbrew",
@@ -375,8 +379,7 @@ async fn support_context_reply_sends_retry_header_and_exact_retry_is_stable()
 async fn support_context_conflicts_use_local_recovery_without_backend_text()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path(format!("/api/support/tickets/{TICKET_ID}/context")))
+    Mock::route("POST", format!("/api/support/tickets/{TICKET_ID}/context"))
         .and(header("idempotency-key", RETRY_KEY))
         .and(body_json(serde_json::json!({
             "context": "changed body secret-token https://private.invalid/private/path"
@@ -532,11 +535,13 @@ async fn support_context_human_rendering_fails_closed_on_malformed_success()
             .and_then(|context| context.get("context"))
             .and_then(serde_json::Value::as_str)
             .is_some_and(|context| context.chars().count() == 4001);
-        Mock::given(method(if is_history { "GET" } else { "POST" }))
-            .and(path(format!("/api/support/tickets/{TICKET_ID}/context")))
-            .respond_with(ResponseTemplate::new(200).set_body_json(response.clone()))
-            .mount(&server)
-            .await;
+        Mock::route(
+            if is_history { "GET" } else { "POST" },
+            format!("/api/support/tickets/{TICKET_ID}/context"),
+        )
+        .respond_with(ResponseTemplate::new(200).set_body_json(response.clone()))
+        .mount(&server)
+        .await;
         let output = if is_history {
             run_command(
                 &server,

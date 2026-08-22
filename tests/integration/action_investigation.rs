@@ -1,11 +1,10 @@
 //! Built-binary and adversarial proof for privacy-bounded product-action investigations.
 
+use crate::{Mock, MockServer, ResponseTemplate};
 use logbrew_cli::{
     CliEnvironment, Command, ExplainTarget, HelpTopic, RuntimeError, execute_command, help,
     parse_command,
 };
-use wiremock::matchers::{header, method, path};
-use wiremock::{Mock, MockServer, ResponseTemplate};
 
 const ACTION_ID: &str = "14141414-1414-4141-8141-141414141414";
 const ACTION_PATH: &str =
@@ -47,9 +46,7 @@ async fn built_binary_preserves_exact_validated_json_and_authenticates()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
     let response = action_response();
-    Mock::given(method("GET"))
-        .and(path(ACTION_PATH))
-        .and(header("authorization", "Bearer account-token"))
+    Mock::auth("GET", ACTION_PATH, "account-token")
         .respond_with(ResponseTemplate::new(200).set_body_json(response.clone()))
         .expect(1)
         .mount(&server)
@@ -72,8 +69,7 @@ async fn built_binary_preserves_exact_validated_json_and_authenticates()
 async fn built_binary_human_output_explains_status_privacy_and_cross_signal_evidence()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path(ACTION_PATH))
+    Mock::route("GET", ACTION_PATH)
         .respond_with(ResponseTemplate::new(200).set_body_json(action_response()))
         .expect(1)
         .mount(&server)
@@ -170,8 +166,7 @@ async fn action_contract_rejects_identity_mismatch_contradiction_and_private_con
         unknown_identity,
     ] {
         let server = MockServer::start().await;
-        Mock::given(method("GET"))
-            .and(path(ACTION_PATH))
+        Mock::route("GET", ACTION_PATH)
             .respond_with(ResponseTemplate::new(200).set_body_json(response))
             .expect(1)
             .mount(&server)
@@ -222,8 +217,7 @@ async fn action_contract_accepts_safe_routes_and_truthfully_truncated_subject_ti
 
     for response in [safe_route, truncated_timeline, sparse_context] {
         let server = MockServer::start().await;
-        Mock::given(method("GET"))
-            .and(path(ACTION_PATH))
+        Mock::route("GET", ACTION_PATH)
             .respond_with(ResponseTemplate::new(200).set_body_json(response))
             .expect(1)
             .mount(&server)
@@ -244,8 +238,7 @@ async fn built_binary_fails_closed_on_raw_identity_without_reflection()
     let server = MockServer::start().await;
     let mut response = action_response();
     response["context"]["session"]["id"] = serde_json::json!(PRIVATE_MARKER);
-    Mock::given(method("GET"))
-        .and(path(ACTION_PATH))
+    Mock::route("GET", ACTION_PATH)
         .respond_with(ResponseTemplate::new(200).set_body_json(response))
         .expect(1)
         .mount(&server)

@@ -2,17 +2,16 @@
 
 #![cfg(unix)]
 
+use crate::matchers::body_json;
+use crate::{Mock, MockServer, ResponseTemplate};
 use std::os::unix::fs::PermissionsExt as _;
-use wiremock::matchers::{body_json, method, path};
-use wiremock::{Mock, MockServer, ResponseTemplate};
 
 #[tokio::test]
 async fn built_binary_completes_loopback_login_without_exposing_credentials()
 -> Result<(), Box<dyn std::error::Error>> {
     drop(rustls::crypto::ring::default_provider().install_default());
     let server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path("/api/auth/gitlab"))
+    Mock::route("POST", "/api/auth/gitlab")
         .and(body_json(
             serde_json::json!({ "code": "binary-provider-code" }),
         ))
@@ -102,6 +101,22 @@ async fn built_binary_completes_loopback_login_without_exposing_credentials()
     assert_eq!(saved["access_token"], "binary-access");
     assert_eq!(saved["refresh_token"], "binary-refresh");
     assert_eq!(saved["origin"], server.uri());
+    assert_eq!(
+        std::fs::metadata(home.join(".logbrew"))?
+            .permissions()
+            .mode()
+            & 0o777,
+        0o700
+    );
+    for name in ["session.json", "credentials.lock"] {
+        assert_eq!(
+            std::fs::metadata(home.join(".logbrew").join(name))?
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+    }
     Ok(())
 }
 

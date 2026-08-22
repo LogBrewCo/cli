@@ -27,6 +27,7 @@ mod local_commands;
 mod log_cursor_pagination;
 mod login_loopback;
 mod logout_sessions;
+mod mock_http;
 mod native_debug_artifact_upload;
 mod native_debug_artifact_upload_bounds;
 mod native_debug_artifacts;
@@ -50,9 +51,15 @@ mod usage;
 mod watch_errors;
 mod whoami;
 
+pub(crate) use mock_http::{Mock, MockServer, Request, ResponseTemplate, retry_then};
+
+pub(crate) mod matchers {
+    pub(crate) use super::mock_http::matchers::*;
+}
+
 /// Runs the built CLI against one loopback server with isolated credentials.
 async fn run_cli<I, S>(
-    server: &wiremock::MockServer,
+    server: &MockServer,
     args: I,
 ) -> Result<std::process::Output, Box<dyn std::error::Error>>
 where
@@ -76,7 +83,7 @@ where
 
 /// Executes one parsed command against isolated authenticated loopback state.
 fn authenticated_env(
-    server: &wiremock::MockServer,
+    server: &MockServer,
     token: &str,
     home_name: Option<&str>,
 ) -> logbrew_cli::CliEnvironment {
@@ -88,7 +95,7 @@ fn authenticated_env(
 }
 
 fn test_env(
-    server: &wiremock::MockServer,
+    server: &MockServer,
     token: Option<&str>,
     home: Option<std::path::PathBuf>,
 ) -> logbrew_cli::CliEnvironment {
@@ -174,7 +181,7 @@ fn assert_private_file(path: &std::path::Path) -> Result<(), std::io::Error> {
 }
 
 async fn run_command<const N: usize>(
-    server: &wiremock::MockServer,
+    server: &MockServer,
     args: [&str; N],
     home_name: &str,
 ) -> Result<String, Box<dyn std::error::Error>> {

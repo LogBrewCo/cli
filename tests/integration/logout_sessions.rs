@@ -1,15 +1,14 @@
 //! Server-aware CLI logout contract tests.
 
+use crate::matchers::body_json;
+use crate::{Mock, MockServer, ResponseTemplate};
 use logbrew_cli::{CliEnvironment, execute_command, parse_command};
-use wiremock::matchers::{body_json, method, path};
-use wiremock::{Mock, MockServer, ResponseTemplate};
 
 #[tokio::test]
 async fn logout_revokes_refresh_family_without_bearer_then_clears_local_pair()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path("/api/auth/logout"))
+    Mock::route("POST", "/api/auth/logout")
         .and(body_json(serde_json::json!({
             "refresh_token": "logout-refresh-proof"
         })))
@@ -35,7 +34,7 @@ async fn logout_revokes_refresh_family_without_bearer_then_clears_local_pair()
 
     execute_command(&command, &env, &mut output).await?;
 
-    let requests = server.received_requests().await.unwrap_or_default();
+    let requests = server.received_requests().await;
     assert_eq!(requests.len(), 1);
     assert!(!requests[0].headers.contains_key("authorization"));
     let body: serde_json::Value = serde_json::from_slice(output.as_slice())?;
@@ -53,8 +52,7 @@ async fn logout_revokes_refresh_family_without_bearer_then_clears_local_pair()
 async fn logout_treats_rejected_refresh_as_inactive_and_clears_local_pair()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path("/api/auth/logout"))
+    Mock::route("POST", "/api/auth/logout")
         .and(body_json(serde_json::json!({
             "refresh_token": "inactive-refresh-proof"
         })))
@@ -117,8 +115,7 @@ async fn logout_clears_local_pair_when_server_revocation_is_unknown()
         ),
     ] {
         let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/api/auth/logout"))
+        Mock::route("POST", "/api/auth/logout")
             .respond_with(response)
             .mount(&server)
             .await;
@@ -157,8 +154,7 @@ async fn logout_clears_local_pair_when_server_revocation_is_unknown()
 async fn logout_revokes_stored_session_without_sending_env_or_legacy_tokens()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path("/api/auth/logout"))
+    Mock::route("POST", "/api/auth/logout")
         .and(body_json(serde_json::json!({
             "refresh_token": "env-file-refresh-proof"
         })))
@@ -199,7 +195,7 @@ async fn logout_revokes_stored_session_without_sending_env_or_legacy_tokens()
     assert_eq!(missing_body["removed"], false);
     assert_eq!(missing_body["server_session"], "not_applicable");
 
-    let requests = server.received_requests().await.unwrap_or_default();
+    let requests = server.received_requests().await;
     assert_eq!(requests.len(), 1);
     assert!(!requests[0].headers.contains_key("authorization"));
     let rendered = format!("{env_body}{legacy_body}{missing_body}");
@@ -244,8 +240,7 @@ async fn logout_keeps_legacy_credentials_local_when_api_url_is_invalid()
 async fn logout_human_output_reports_server_and_environment_state_without_secrets()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path("/api/auth/logout"))
+    Mock::route("POST", "/api/auth/logout")
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "revoked": true,
             "next_action": {
@@ -288,8 +283,7 @@ async fn logout_human_output_reports_server_and_environment_state_without_secret
 async fn logout_unknown_server_with_env_token_preserves_both_recovery_steps()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path("/api/auth/logout"))
+    Mock::route("POST", "/api/auth/logout")
         .respond_with(ResponseTemplate::new(503).set_body_string("unsafe combined-proof"))
         .mount(&server)
         .await;
@@ -328,8 +322,7 @@ async fn logout_does_not_forward_refresh_token_across_redirects()
 -> Result<(), Box<dyn std::error::Error>> {
     let redirect_target = MockServer::start().await;
     let server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path("/api/auth/logout"))
+    Mock::route("POST", "/api/auth/logout")
         .respond_with(
             ResponseTemplate::new(307)
                 .insert_header("location", format!("{}/capture", redirect_target.uri())),
@@ -349,13 +342,7 @@ async fn logout_does_not_forward_refresh_token_across_redirects()
     assert_eq!(body["removed"], true);
     assert_eq!(body["server_session"], "unknown");
     assert!(!session_path.exists());
-    assert!(
-        redirect_target
-            .received_requests()
-            .await
-            .unwrap_or_default()
-            .is_empty()
-    );
+    assert!(redirect_target.received_requests().await.is_empty());
     assert!(!body.to_string().contains("redirect-refresh-proof"));
     Ok(())
 }
@@ -364,8 +351,7 @@ async fn logout_does_not_forward_refresh_token_across_redirects()
 async fn repeated_logout_does_not_replay_deleted_refresh_credentials()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path("/api/auth/logout"))
+    Mock::route("POST", "/api/auth/logout")
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "revoked": true,
             "next_action": {
@@ -389,10 +375,7 @@ async fn repeated_logout_does_not_replay_deleted_refresh_credentials()
     assert_eq!(first["server_session"], "revoked");
     assert_eq!(second["removed"], false);
     assert_eq!(second["server_session"], "not_applicable");
-    assert_eq!(
-        server.received_requests().await.unwrap_or_default().len(),
-        1
-    );
+    assert_eq!(server.received_requests().await.len(), 1);
     Ok(())
 }
 
@@ -400,8 +383,7 @@ async fn repeated_logout_does_not_replay_deleted_refresh_credentials()
 async fn concurrent_new_login_survives_logout_revocation() -> Result<(), Box<dyn std::error::Error>>
 {
     let server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path("/api/auth/logout"))
+    Mock::route("POST", "/api/auth/logout")
         .respond_with(
             ResponseTemplate::new(200)
                 .set_delay(std::time::Duration::from_millis(200))
@@ -431,23 +413,12 @@ async fn concurrent_new_login_survives_logout_revocation() -> Result<(), Box<dyn
     });
 
     for _attempt in 0..50 {
-        if !server
-            .received_requests()
-            .await
-            .unwrap_or_default()
-            .is_empty()
-        {
+        if !server.received_requests().await.is_empty() {
             break;
         }
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;
     }
-    assert!(
-        !server
-            .received_requests()
-            .await
-            .unwrap_or_default()
-            .is_empty()
-    );
+    assert!(!server.received_requests().await.is_empty());
     let writer_home = home;
     let writer = tokio::task::spawn_blocking(move || write_new_session_after_lock(writer_home));
 
@@ -471,8 +442,7 @@ async fn waiting_for_credential_lock_does_not_block_async_runtime()
     use fs2::FileExt as _;
 
     let server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path("/api/auth/logout"))
+    Mock::route("POST", "/api/auth/logout")
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "revoked": true,
             "next_action": {

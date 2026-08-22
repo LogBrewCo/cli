@@ -1,14 +1,13 @@
 //! CLI API response rendering tests.
 
+use crate::matchers::{body_json, header, query_param};
+use crate::{Mock, MockServer, ResponseTemplate};
 use logbrew_cli::{CliEnvironment, execute_command, parse_command, write_runtime_error};
-use wiremock::matchers::{body_json, header, method, path, query_param};
-use wiremock::{Mock, MockServer, ResponseTemplate};
 
 #[tokio::test]
 async fn authenticated_read_logs_sends_bearer_token_and_prints_api_body() {
     let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/api/logs"))
+    Mock::route("GET", "/api/logs")
         .and(query_param("release", "checkout@1.2.3"))
         .and(query_param("environment", "production"))
         .and(header("authorization", "Bearer test-token"))
@@ -54,8 +53,7 @@ async fn authenticated_read_logs_sends_bearer_token_and_prints_api_body() {
 #[tokio::test]
 async fn human_read_logs_prints_scan_friendly_summary() {
     let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/api/logs"))
+    Mock::route("GET", "/api/logs")
         .and(query_param("release", "checkout@1.2.3"))
         .and(query_param("environment", "production"))
         .and(header("authorization", "Bearer test-token"))
@@ -96,8 +94,7 @@ async fn human_read_logs_prints_scan_friendly_summary() {
 #[tokio::test]
 async fn human_read_logs_summarizes_level_only_array_shape_with_canonical_label() {
     let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/api/logs"))
+    Mock::route("GET", "/api/logs")
         .and(query_param("release", "checkout@1.2.3"))
         .and(query_param("environment", "production"))
         .and(header("authorization", "Bearer test-token"))
@@ -136,8 +133,7 @@ async fn human_read_logs_summarizes_level_only_array_shape_with_canonical_label(
 #[tokio::test]
 async fn human_empty_logs_prints_next_step() {
     let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/api/logs"))
+    Mock::route("GET", "/api/logs")
         .and(query_param("release", "empty@0"))
         .and(query_param("environment", "production"))
         .and(header("authorization", "Bearer test-token"))
@@ -169,8 +165,7 @@ async fn human_empty_logs_prints_next_step() {
 #[tokio::test]
 async fn human_empty_logs_summarizes_real_api_array_shape() {
     let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/api/logs"))
+    Mock::route("GET", "/api/logs")
         .and(query_param("release", "empty@0"))
         .and(query_param("environment", "production"))
         .and(header("authorization", "Bearer test-token"))
@@ -427,8 +422,7 @@ async fn collection_reads_preserve_json_shape_and_render_service_name() {
 async fn invalid_since_preserves_backend_validation_recovery_for_agents()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/api/telemetry/issues"))
+    Mock::route("GET", "/api/telemetry/issues")
         .and(query_param("service_name", "checkout-api"))
         .and(query_param("since", "0h"))
         .and(header("authorization", "Bearer test-token"))
@@ -472,8 +466,7 @@ async fn invalid_since_preserves_backend_validation_recovery_for_agents()
 #[tokio::test]
 async fn human_read_releases_prints_all_telemetry_counts() {
     let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/api/telemetry/releases"))
+    Mock::route("GET", "/api/telemetry/releases")
         .and(query_param("environment", "production"))
         .and(header("authorization", "Bearer test-token"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
@@ -506,77 +499,79 @@ async fn human_read_releases_prints_all_telemetry_counts() {
 #[tokio::test]
 async fn human_explain_trace_prints_scan_friendly_summary() {
     let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/api/telemetry/traces/trace_123/investigation"))
-        .and(header("authorization", "Bearer test-token"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "schema_version": 1,
-            "subject": {
-                "kind": "trace",
-                "trace_id": "trace_123",
-                "analyzed_span_count": 2,
-                "error_span_count": 1,
-                "service_count": 1,
-                "project_count": 1,
-                "started_at": "2026-06-02T20:00:00Z",
-                "duration_ms": 845,
-                "releases": ["checkout@1.2.3"],
-                "environments": ["production"]
+    Mock::auth(
+        "GET",
+        "/api/telemetry/traces/trace_123/investigation",
+        "test-token",
+    )
+    .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+        "schema_version": 1,
+        "subject": {
+            "kind": "trace",
+            "trace_id": "trace_123",
+            "analyzed_span_count": 2,
+            "error_span_count": 1,
+            "service_count": 1,
+            "project_count": 1,
+            "started_at": "2026-06-02T20:00:00Z",
+            "duration_ms": 845,
+            "releases": ["checkout@1.2.3"],
+            "environments": ["production"]
+        },
+        "analysis": {
+            "status": "errors_observed",
+            "causality": "evidence_only",
+            "root_span": null,
+            "first_error_span": {
+                "name": "charge card",
+                "service_name": "checkout-api",
+                "operation": "payment.charge",
+                "status": "error",
+                "duration_ms": 420,
+                "span_id": "0123456789abcdef",
+                "parent_span_id": null
             },
-            "analysis": {
-                "status": "errors_observed",
-                "causality": "evidence_only",
-                "root_span": null,
-                "first_error_span": {
-                    "name": "charge card",
-                    "service_name": "checkout-api",
-                    "operation": "payment.charge",
-                    "status": "error",
-                    "duration_ms": 420,
-                    "span_id": "0123456789abcdef",
-                    "parent_span_id": null
-                },
-                "first_error_path": [{"name": "charge card"}],
-                "bottleneck_span": null,
-                "bottleneck_path": []
+            "first_error_path": [{"name": "charge card"}],
+            "bottleneck_span": null,
+            "bottleneck_path": []
+        },
+        "spans": {"items": [], "truncated": false},
+        "correlations": {
+            "window": {
+                "since": "2026-06-02T20:00:00Z",
+                "until": "2026-06-02T20:00:01Z",
+                "scopes": [{
+                    "project_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+                    "environment": "production",
+                    "release": "checkout@1.2.3"
+                }],
+                "truncated": false
             },
-            "spans": {"items": [], "truncated": false},
-            "correlations": {
-                "window": {
-                    "since": "2026-06-02T20:00:00Z",
-                    "until": "2026-06-02T20:00:01Z",
-                    "scopes": [{
-                        "project_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
-                        "environment": "production",
-                        "release": "checkout@1.2.3"
-                    }],
-                    "truncated": false
-                },
-                "issues": {"status": "not_found", "items": [], "truncated": false},
-                "logs": {"status": "not_found", "items": [], "truncated": false},
-                "actions": {"status": "not_found", "items": [], "truncated": false},
-                "metrics": {"status": "not_found", "items": [], "truncated": false}
-            },
-            "timeline": {"items": [
-                {"kind": "span", "occurred_at": "2026-06-02T20:00:00Z"},
-                {"kind": "span", "occurred_at": "2026-06-02T20:00:00.500Z"}
-            ], "truncated": false},
-            "evidence": {
-                "status": "partial",
-                "captured_fields": ["trace.spans"],
-                "missing_fields": ["span.attributes"],
-                "redacted_fields": [],
-                "truncated_fields": []
-            },
-            "next_actions": [{
-                "priority": 1,
-                "code": "inspect_error_span",
-                "target": "trace_span",
-                "reason": "inspect the first retained error span"
-            }]
-        })))
-        .mount(&server)
-        .await;
+            "issues": {"status": "not_found", "items": [], "truncated": false},
+            "logs": {"status": "not_found", "items": [], "truncated": false},
+            "actions": {"status": "not_found", "items": [], "truncated": false},
+            "metrics": {"status": "not_found", "items": [], "truncated": false}
+        },
+        "timeline": {"items": [
+            {"kind": "span", "occurred_at": "2026-06-02T20:00:00Z"},
+            {"kind": "span", "occurred_at": "2026-06-02T20:00:00.500Z"}
+        ], "truncated": false},
+        "evidence": {
+            "status": "partial",
+            "captured_fields": ["trace.spans"],
+            "missing_fields": ["span.attributes"],
+            "redacted_fields": [],
+            "truncated_fields": []
+        },
+        "next_actions": [{
+            "priority": 1,
+            "code": "inspect_error_span",
+            "target": "trace_span",
+            "reason": "inspect the first retained error span"
+        }]
+    })))
+    .mount(&server)
+    .await;
     let text = successful_human_output(
         &server,
         ["logbrew", "explain", "trace", "trace_123"],
@@ -604,9 +599,7 @@ async fn human_explain_trace_prints_scan_friendly_summary() {
 #[tokio::test]
 async fn human_read_trace_summarizes_real_api_array_shape() {
     let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/api/telemetry/traces/trace_123"))
-        .and(header("authorization", "Bearer test-token"))
+    Mock::auth("GET", "/api/telemetry/traces/trace_123", "test-token")
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
             {
                 "trace_id": "trace_123",
@@ -633,9 +626,7 @@ async fn human_read_trace_summarizes_real_api_array_shape() {
 #[tokio::test]
 async fn human_read_issue_summarizes_real_api_object_shape_with_next_action() {
     let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/api/telemetry/issues/issue_123"))
-        .and(header("authorization", "Bearer test-token"))
+    Mock::auth("GET", "/api/telemetry/issues/issue_123", "test-token")
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "id": "issue_123",
             "status": "unresolved",
@@ -670,9 +661,7 @@ async fn human_read_issue_summarizes_real_api_object_shape_with_next_action() {
 #[tokio::test]
 async fn human_set_issue_status_prints_confirmation() {
     let server = MockServer::start().await;
-    Mock::given(method("PATCH"))
-        .and(path("/api/telemetry/issues/issue_123"))
-        .and(header("authorization", "Bearer test-token"))
+    Mock::auth("PATCH", "/api/telemetry/issues/issue_123", "test-token")
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "issue": {
                 "id": "issue_123",
@@ -700,9 +689,7 @@ async fn human_set_issue_status_prints_confirmation() {
 #[tokio::test]
 async fn human_set_issue_status_summarizes_real_api_object_shape() {
     let server = MockServer::start().await;
-    Mock::given(method("PATCH"))
-        .and(path("/api/telemetry/issues/issue_123"))
-        .and(header("authorization", "Bearer test-token"))
+    Mock::auth("PATCH", "/api/telemetry/issues/issue_123", "test-token")
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "id": "issue_123",
             "status": "resolved",
@@ -729,9 +716,7 @@ async fn human_set_issue_status_summarizes_real_api_object_shape() {
 async fn project_setup_seen_posts_backend_owned_setup_state()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path("/api/projects/proj_123/setup/seen"))
-        .and(header("authorization", "Bearer test-token"))
+    Mock::auth("POST", "/api/projects/proj_123/setup/seen", "test-token")
         .and(body_json(serde_json::json!({
             "runtime": "node",
             "source": "cli",
@@ -778,18 +763,20 @@ async fn project_setup_seen_posts_backend_owned_setup_state()
 async fn project_setup_seen_omits_source_for_ingest_key_auth()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path("/api/projects/proj_123/setup/seen"))
-        .and(header("authorization", "Bearer lbw_ingest_test"))
-        .and(body_json(serde_json::json!({ "runtime": "node" })))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "status": "sdk_seen",
-            "runtime": "node",
-            "source": "sdk",
-            "next": "send telemetry for this project"
-        })))
-        .mount(&server)
-        .await;
+    Mock::auth(
+        "POST",
+        "/api/projects/proj_123/setup/seen",
+        "lbw_ingest_test",
+    )
+    .and(body_json(serde_json::json!({ "runtime": "node" })))
+    .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+        "status": "sdk_seen",
+        "runtime": "node",
+        "source": "sdk",
+        "next": "send telemetry for this project"
+    })))
+    .mount(&server)
+    .await;
     let command = parse_command([
         "logbrew",
         "projects",
@@ -813,9 +800,7 @@ async fn project_setup_seen_omits_source_for_ingest_key_auth()
 #[tokio::test]
 async fn human_project_setup_seen_prints_status_and_next() {
     let server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path("/api/projects/proj_123/setup/seen"))
-        .and(header("authorization", "Bearer test-token"))
+    Mock::auth("POST", "/api/projects/proj_123/setup/seen", "test-token")
         .and(body_json(serde_json::json!({ "source": "cli" })))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "status": "sdk_seen",
@@ -843,17 +828,14 @@ async fn human_project_setup_seen_prints_status_and_next() {
 async fn local_auth_refreshes_once_and_persists_replacement_credentials()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/api/logs"))
-        .and(header("authorization", "Bearer expired-access"))
+    Mock::auth("GET", "/api/logs", "expired-access")
         .respond_with(ResponseTemplate::new(401).set_body_json(serde_json::json!({
             "error": "not_logged_in"
         })))
         .expect(1)
         .mount(&server)
         .await;
-    Mock::given(method("POST"))
-        .and(path("/api/auth/refresh"))
+    Mock::route("POST", "/api/auth/refresh")
         .and(body_json(serde_json::json!({
             "refresh_token": "old-refresh"
         })))
@@ -864,9 +846,7 @@ async fn local_auth_refreshes_once_and_persists_replacement_credentials()
         .expect(1)
         .mount(&server)
         .await;
-    Mock::given(method("GET"))
-        .and(path("/api/logs"))
-        .and(header("authorization", "Bearer fresh-access"))
+    Mock::auth("GET", "/api/logs", "fresh-access")
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "logs": []
         })))
@@ -910,15 +890,12 @@ async fn local_auth_refreshes_once_and_persists_replacement_credentials()
 async fn concurrent_local_401s_share_one_refresh_rotation() -> Result<(), Box<dyn std::error::Error>>
 {
     let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/api/logs"))
-        .and(header("authorization", "Bearer shared-expired"))
+    Mock::auth("GET", "/api/logs", "shared-expired")
         .respond_with(ResponseTemplate::new(401))
         .expect(2)
         .mount(&server)
         .await;
-    Mock::given(method("POST"))
-        .and(path("/api/auth/refresh"))
+    Mock::route("POST", "/api/auth/refresh")
         .and(body_json(serde_json::json!({
             "refresh_token": "shared-refresh"
         })))
@@ -933,9 +910,7 @@ async fn concurrent_local_401s_share_one_refresh_rotation() -> Result<(), Box<dy
         .expect(1)
         .mount(&server)
         .await;
-    Mock::given(method("GET"))
-        .and(path("/api/logs"))
-        .and(header("authorization", "Bearer shared-fresh"))
+    Mock::auth("GET", "/api/logs", "shared-fresh")
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "logs": []
         })))
@@ -985,15 +960,12 @@ async fn concurrent_local_401s_share_one_refresh_rotation() -> Result<(), Box<dy
 async fn env_auth_401_never_reads_or_rotates_local_refresh_credentials()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/api/logs"))
-        .and(header("authorization", "Bearer env-expired"))
+    Mock::auth("GET", "/api/logs", "env-expired")
         .respond_with(ResponseTemplate::new(401))
         .expect(1)
         .mount(&server)
         .await;
-    Mock::given(method("POST"))
-        .and(path("/api/auth/refresh"))
+    Mock::route("POST", "/api/auth/refresh")
         .respond_with(ResponseTemplate::new(500))
         .expect(0)
         .mount(&server)
@@ -1030,14 +1002,12 @@ async fn env_auth_401_never_reads_or_rotates_local_refresh_credentials()
 async fn persisted_refresh_session_never_authenticates_to_a_different_api_origin()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/api/logs"))
+    Mock::route("GET", "/api/logs")
         .respond_with(ResponseTemplate::new(500))
         .expect(0)
         .mount(&server)
         .await;
-    Mock::given(method("POST"))
-        .and(path("/api/auth/refresh"))
+    Mock::route("POST", "/api/auth/refresh")
         .respond_with(ResponseTemplate::new(500))
         .expect(0)
         .mount(&server)
@@ -1071,9 +1041,7 @@ async fn persisted_refresh_session_never_authenticates_to_a_different_api_origin
 async fn api_auth_error_reports_token_file_source_without_leaking_token()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/api/logs"))
-        .and(header("authorization", "Bearer expired"))
+    Mock::auth("GET", "/api/logs", "expired")
         .respond_with(ResponseTemplate::new(401).set_body_json(serde_json::json!({
             "ok": false,
             "error": "not_logged_in"
@@ -1108,9 +1076,7 @@ async fn api_auth_error_reports_token_file_source_without_leaking_token()
 async fn human_api_auth_error_reports_env_source_without_leaking_token()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/api/logs"))
-        .and(header("authorization", "Bearer env-token"))
+    Mock::auth("GET", "/api/logs", "env-token")
         .respond_with(ResponseTemplate::new(403).set_body_json(serde_json::json!({
             "ok": false,
             "error": "forbidden",
@@ -1166,9 +1132,8 @@ async fn mount_authenticated_json<I>(
 ) where
     I: IntoIterator<Item = (&'static str, &'static str)>,
 {
-    let mut builder = Mock::given(method(http_method))
-        .and(path(route))
-        .and(header("authorization", "Bearer test-token"));
+    let mut builder =
+        Mock::route(http_method, route).and(header("authorization", "Bearer test-token"));
     for (name, value) in query {
         builder = builder.and(query_param(name, value));
     }

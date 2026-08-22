@@ -1,8 +1,8 @@
 //! Built-binary contract proof for privacy-safe product-analytics property discovery.
 
+use crate::matchers::query_param;
+use crate::{Mock, MockServer, ResponseTemplate};
 use logbrew_cli::{Command, HelpTopic, HttpMethod, help, parse_command};
-use wiremock::matchers::{header, method, path, query_param};
-use wiremock::{Mock, MockServer, ResponseTemplate};
 
 const PROJECT_ID: &str = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
 
@@ -58,19 +58,21 @@ async fn built_binary_gets_exact_scope_and_preserves_validated_json()
     let server = MockServer::start().await;
     let response = property_response();
     let response_body = serde_json::to_string(&response)?;
-    Mock::given(method("GET"))
-        .and(path("/api/telemetry/analytics/properties"))
-        .and(header("authorization", "Bearer account-token"))
-        .and(query_param("project_id", PROJECT_ID))
-        .and(query_param("since", "24h"))
-        .and(query_param("environment", "production"))
-        .and(query_param("limit", "2"))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_raw(response_body.clone(), "application/json"),
-        )
-        .expect(1)
-        .mount(&server)
-        .await;
+    Mock::auth(
+        "GET",
+        "/api/telemetry/analytics/properties",
+        "account-token",
+    )
+    .and(query_param("project_id", PROJECT_ID))
+    .and(query_param("since", "24h"))
+    .and(query_param("environment", "production"))
+    .and(query_param("limit", "2"))
+    .respond_with(
+        ResponseTemplate::new(200).set_body_raw(response_body.clone(), "application/json"),
+    )
+    .expect(1)
+    .mount(&server)
+    .await;
 
     let process = run_binary(&server, true).await?;
 
@@ -88,8 +90,7 @@ async fn built_binary_gets_exact_scope_and_preserves_validated_json()
 async fn built_binary_human_output_separates_capture_privacy_and_truncation()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/api/telemetry/analytics/properties"))
+    Mock::route("GET", "/api/telemetry/analytics/properties")
         .respond_with(ResponseTemplate::new(200).set_body_json(property_response()))
         .expect(1)
         .mount(&server)
@@ -134,8 +135,7 @@ async fn built_binary_fails_closed_on_values_sensitive_keys_and_contradictory_co
         let server = MockServer::start().await;
         let mut response = property_response();
         mutate(&mut response);
-        Mock::given(method("GET"))
-            .and(path("/api/telemetry/analytics/properties"))
+        Mock::route("GET", "/api/telemetry/analytics/properties")
             .respond_with(ResponseTemplate::new(200).set_body_json(response))
             .expect(1)
             .mount(&server)

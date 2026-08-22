@@ -1,11 +1,11 @@
 //! Account-owned project lifecycle contract tests.
 
+use crate::matchers::{body_json, header};
+use crate::{Mock, MockServer, ResponseTemplate};
 use logbrew_cli::{
     Command, HttpMethod, RuntimeError, execute_command, parse_command, write_cli_error,
     write_runtime_error,
 };
-use wiremock::matchers::{body_json, header, method, path};
-use wiremock::{Mock, MockServer, ResponseTemplate};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
@@ -189,9 +189,7 @@ async fn lifecycle_revalidates_public_values_and_rejects_ingest_keys() -> TestRe
 #[tokio::test]
 async fn archive_and_delete_send_exact_requests_and_local_receipts() -> TestResult {
     let server = MockServer::start().await;
-    Mock::given(method("DELETE"))
-        .and(path(format!("/api/projects/{ID}")))
-        .and(header("authorization", "Bearer account-token"))
+    Mock::auth("DELETE", format!("/api/projects/{ID}"), "account-token")
         .respond_with(ResponseTemplate::new(204))
         .expect(2)
         .mount(&server)
@@ -298,8 +296,7 @@ async fn success_contracts_reject_wrong_status_redirects_and_hostile_bodies() ->
         ResponseTemplate::new(404).set_body_string("hostile-secret".repeat(70_000)),
     ] {
         let server = MockServer::start().await;
-        Mock::given(method("DELETE"))
-            .and(path(format!("/api/projects/{ID}")))
+        Mock::route("DELETE", format!("/api/projects/{ID}"))
             .respond_with(response)
             .expect(1)
             .mount(&server)
@@ -355,8 +352,7 @@ async fn errors_are_typed_local_and_never_echo_backend_text() -> TestResult {
         ),
     ] {
         let server = MockServer::start().await;
-        Mock::given(method("DELETE"))
-            .and(path(format!("/api/projects/{ID}")))
+        Mock::route("DELETE", format!("/api/projects/{ID}"))
             .respond_with(
                 ResponseTemplate::new(status).set_body_json(archive_error(code, action, target)),
             )
@@ -407,16 +403,13 @@ async fn lifecycle_mutations_refresh_account_auth_once() -> TestResult {
             ("expired-access", ResponseTemplate::new(401)),
             ("fresh-access", success),
         ] {
-            Mock::given(method(verb))
-                .and(path(endpoint.as_str()))
-                .and(header("authorization", format!("Bearer {token}")))
+            Mock::auth(verb, endpoint.as_str(), token)
                 .respond_with(response)
                 .expect(1)
                 .mount(&server)
                 .await;
         }
-        Mock::given(method("POST"))
-            .and(path("/api/auth/refresh"))
+        Mock::route("POST", "/api/auth/refresh")
             .and(body_json(
                 serde_json::json!({"refresh_token": "old-refresh"}),
             ))
@@ -495,9 +488,7 @@ async fn run_error(server: &MockServer, line: &str) -> RuntimeError {
 }
 
 async fn mount_delete(server: &MockServer, response: ResponseTemplate, expected: u64) {
-    Mock::given(method("POST"))
-        .and(path("/api/support/tickets"))
-        .and(header("authorization", "Bearer account-token"))
+    Mock::auth("POST", "/api/support/tickets", "account-token")
         .and(header("idempotency-key", ID))
         .and(body_json(deletion_body()))
         .respond_with(response)
@@ -506,8 +497,8 @@ async fn mount_delete(server: &MockServer, response: ResponseTemplate, expected:
         .await;
 }
 
-async fn requests(server: &MockServer) -> Result<Vec<wiremock::Request>, &'static str> {
-    server.received_requests().await.ok_or("requests disabled")
+async fn requests(server: &MockServer) -> Result<Vec<crate::Request>, &'static str> {
+    Ok(server.received_requests().await)
 }
 
 fn cli_error(error: &logbrew_cli::CliError) -> TestResult<serde_json::Value> {

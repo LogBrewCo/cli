@@ -10,6 +10,7 @@ mod resumable_support;
 #[path = "native_debug_artifacts/support.rs"]
 mod support;
 
+use crate::{Mock, MockServer, ResponseTemplate};
 use contract_support::universal_macho;
 use resumable_support::{
     RESUMABLE_CHUNK_SIZE, RESUMABLE_SESSION_ID, chunk_response, start_response,
@@ -23,8 +24,6 @@ use support::{
     command_with_token, header_value, invoke, macho64, missing_lookup, mount_lookup_sequence,
     received_requests, sha256_hex, upload_args, upload_success_body, uuid_bytes,
 };
-use wiremock::matchers::{method, path};
-use wiremock::{Mock, MockServer, ResponseTemplate};
 
 const IMPLEMENTATION: &str = include_str!("../../src/native_debug_artifacts.rs");
 
@@ -57,8 +56,7 @@ fn native_debug_transport_has_explicit_request_and_overall_bounds_without_hidden
 async fn human_upload_reports_a_fixed_phase_before_waiting_for_the_server()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/api/native-debug-artifacts"))
+    Mock::route("GET", "/api/native-debug-artifacts")
         .respond_with(
             ResponseTemplate::new(200)
                 .set_delay(Duration::from_secs(5))
@@ -155,30 +153,29 @@ async fn large_universal_object_uses_bounded_resumable_chunks_and_one_json_docum
         .iter()
         .map(|(digest, _)| digest.as_str())
         .collect::<Vec<_>>();
-    Mock::given(method("POST"))
-        .and(path("/api/native-debug-artifact-uploads"))
+    Mock::route("POST", "/api/native-debug-artifact-uploads")
         .respond_with(ResponseTemplate::new(200).set_body_json(start_response(&missing)))
         .expect(1)
         .mount(&server)
         .await;
     for (digest, _) in &chunks {
-        Mock::given(method("PUT"))
-            .and(path(format!(
-                "/api/native-debug-artifact-uploads/{RESUMABLE_SESSION_ID}/chunks/{digest}"
-            )))
-            .respond_with(ResponseTemplate::new(200).set_body_json(chunk_response(digest)))
-            .expect(1)
-            .mount(&server)
-            .await;
-    }
-    Mock::given(method("POST"))
-        .and(path(format!(
-            "/api/native-debug-artifact-uploads/{RESUMABLE_SESSION_ID}/complete"
-        )))
-        .respond_with(ResponseTemplate::new(200).set_body_json(upload_success_body(2)))
+        Mock::route(
+            "PUT",
+            format!("/api/native-debug-artifact-uploads/{RESUMABLE_SESSION_ID}/chunks/{digest}"),
+        )
+        .respond_with(ResponseTemplate::new(200).set_body_json(chunk_response(digest)))
         .expect(1)
         .mount(&server)
         .await;
+    }
+    Mock::route(
+        "POST",
+        format!("/api/native-debug-artifact-uploads/{RESUMABLE_SESSION_ID}/complete"),
+    )
+    .respond_with(ResponseTemplate::new(200).set_body_json(upload_success_body(2)))
+    .expect(1)
+    .mount(&server)
+    .await;
 
     let output = invoke(
         &fixture,

@@ -1,12 +1,12 @@
 //! Privacy-safe support-ticket create, history, and detail contracts.
 
 use super::{authenticated_env, run_command};
+use crate::matchers::{body_json, header, query_param};
+use crate::{Mock, MockServer, ResponseTemplate};
 use logbrew_cli::{
     Command, HttpMethod, execute_command, help, parse_command, write_cli_error, write_runtime_error,
 };
 use std::collections::BTreeMap;
-use wiremock::matchers::{body_json, header, method, path, query_param};
-use wiremock::{Mock, MockServer, ResponseTemplate};
 
 const PROJECT_ID: &str = "123e4567-e89b-12d3-a456-426614174000";
 const TICKET_ID: &str = "sup_9b2b4b3abd4e4f85a0f648118f037c17";
@@ -422,22 +422,26 @@ async fn support_lifecycle_preserves_json_and_exact_retry_is_stable()
     let mut closed = ticket_value();
     closed["status"] = serde_json::Value::String(String::from("closed"));
     let reopened = ticket_value();
-    Mock::given(method("PATCH"))
-        .and(path(format!("/api/support/tickets/{TICKET_ID}")))
-        .and(header("authorization", "Bearer test-token"))
-        .and(body_json(serde_json::json!({"status": "closed"})))
-        .respond_with(ResponseTemplate::new(200).set_body_json(closed.clone()))
-        .expect(2)
-        .mount(&server)
-        .await;
-    Mock::given(method("PATCH"))
-        .and(path(format!("/api/support/tickets/{TICKET_ID}")))
-        .and(header("authorization", "Bearer test-token"))
-        .and(body_json(serde_json::json!({"status": "open"})))
-        .respond_with(ResponseTemplate::new(200).set_body_json(reopened.clone()))
-        .expect(1)
-        .mount(&server)
-        .await;
+    Mock::auth(
+        "PATCH",
+        format!("/api/support/tickets/{TICKET_ID}"),
+        "test-token",
+    )
+    .and(body_json(serde_json::json!({"status": "closed"})))
+    .respond_with(ResponseTemplate::new(200).set_body_json(closed.clone()))
+    .expect(2)
+    .mount(&server)
+    .await;
+    Mock::auth(
+        "PATCH",
+        format!("/api/support/tickets/{TICKET_ID}"),
+        "test-token",
+    )
+    .and(body_json(serde_json::json!({"status": "open"})))
+    .respond_with(ResponseTemplate::new(200).set_body_json(reopened.clone()))
+    .expect(1)
+    .mount(&server)
+    .await;
 
     let first = run_command(
         &server,
@@ -486,8 +490,7 @@ async fn support_lifecycle_uses_local_safe_404_and_422_recovery()
         ),
     ] {
         let server = MockServer::start().await;
-        Mock::given(method("PATCH"))
-            .and(path(format!("/api/support/tickets/{TICKET_ID}")))
+        Mock::route("PATCH", format!("/api/support/tickets/{TICKET_ID}"))
             .respond_with(
                 ResponseTemplate::new(status).set_body_json(serde_json::json!({
                     "error": "private backend error proof",
@@ -534,9 +537,7 @@ async fn support_create_preserves_json_and_renders_concise_human_output()
         "next_action": {"code": "inspect_support_ticket", "target": "support_ticket"}
     });
     let server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path("/api/support/tickets"))
-        .and(header("authorization", "Bearer test-token"))
+    Mock::auth("POST", "/api/support/tickets", "test-token")
         .and(body_json(serde_json::json!({
             "source": "cli",
             "category": "cli_issue",
@@ -604,14 +605,11 @@ async fn support_list_preserves_legacy_and_cursor_envelopes()
         "next": "continue support ticket history",
         "next_action": {"code": "continue_support_tickets", "target": "support_tickets"}
     });
-    Mock::given(method("GET"))
-        .and(path("/api/support/tickets"))
-        .and(header("authorization", "Bearer test-token"))
+    Mock::auth("GET", "/api/support/tickets", "test-token")
         .respond_with(ResponseTemplate::new(200).set_body_json(legacy.clone()))
         .mount(&legacy_server)
         .await;
-    Mock::given(method("GET"))
-        .and(path("/api/support/tickets"))
+    Mock::route("GET", "/api/support/tickets")
         .and(query_param("pagination", "cursor"))
         .and(header("authorization", "Bearer test-token"))
         .respond_with(ResponseTemplate::new(200).set_body_json(cursor.clone()))
@@ -652,8 +650,7 @@ async fn support_list_preserves_legacy_and_cursor_envelopes()
 async fn support_list_human_output_is_bounded_and_cursor_recovery_keeps_rows()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/api/support/tickets"))
+    Mock::route("GET", "/api/support/tickets")
         .and(query_param("pagination", "cursor"))
         .and(header("authorization", "Bearer test-token"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
@@ -698,8 +695,7 @@ async fn support_human_output_rejects_controls_and_caps_visible_rows()
     let unsafe_server = MockServer::start().await;
     let mut unsafe_ticket = ticket_value();
     unsafe_ticket["status"] = serde_json::Value::String(String::from("open\u{1b}[31m"));
-    Mock::given(method("GET"))
-        .and(path("/api/support/tickets"))
+    Mock::route("GET", "/api/support/tickets")
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "tickets": [unsafe_ticket],
             "next": "inspect a ticket by id",
@@ -720,8 +716,7 @@ async fn support_human_output_rejects_controls_and_caps_visible_rows()
     assert!(!unsafe_output.contains('\u{1b}'));
 
     let unsafe_create_server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path("/api/support/tickets"))
+    Mock::route("POST", "/api/support/tickets")
         .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({
             "ticket_id": TICKET_ID,
             "status": "open\u{1b}[31m",
@@ -756,8 +751,7 @@ async fn support_human_output_rejects_controls_and_caps_visible_rows()
     let mut long_time_ticket = ticket_value();
     long_time_ticket["created_at"] =
         serde_json::Value::String(format!("2026-07-14T07:00:00.{}Z", "1".repeat(256)));
-    Mock::given(method("GET"))
-        .and(path("/api/support/tickets"))
+    Mock::route("GET", "/api/support/tickets")
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "tickets": [long_time_ticket],
             "next": "inspect a ticket by id",
@@ -778,8 +772,7 @@ async fn support_human_output_rejects_controls_and_caps_visible_rows()
 
     let bounded_server = MockServer::start().await;
     let tickets = vec![ticket_value(); 101];
-    Mock::given(method("GET"))
-        .and(path("/api/support/tickets"))
+    Mock::route("GET", "/api/support/tickets")
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "tickets": tickets,
             "next": "inspect a ticket by id",
@@ -804,8 +797,7 @@ async fn support_terminal_cursor_and_detail_are_explicit_and_json_exact()
     let list_server = MockServer::start().await;
     let detail_server = MockServer::start().await;
     let detail = ticket_value();
-    Mock::given(method("GET"))
-        .and(path("/api/support/tickets"))
+    Mock::route("GET", "/api/support/tickets")
         .and(query_param("pagination", "cursor"))
         .and(query_param("cursor_time", CURSOR_TIME))
         .and(query_param("cursor_id", TICKET_ID))
@@ -817,8 +809,7 @@ async fn support_terminal_cursor_and_detail_are_explicit_and_json_exact()
         })))
         .mount(&list_server)
         .await;
-    Mock::given(method("GET"))
-        .and(path(format!("/api/support/tickets/{TICKET_ID}")))
+    Mock::route("GET", format!("/api/support/tickets/{TICKET_ID}"))
         .respond_with(ResponseTemplate::new(200).set_body_json(detail.clone()))
         .expect(2)
         .mount(&detail_server)
@@ -882,8 +873,7 @@ async fn support_errors_never_print_raw_backend_bodies_or_sensitive_fields()
     let response_object = response.as_object_mut().expect("response object");
     drop(response_object.insert(auth_key.clone(), auth_value.clone().into()));
     drop(response_object.insert(cookie_key.clone(), cookie_value.into()));
-    Mock::given(method("GET"))
-        .and(path("/api/support/tickets"))
+    Mock::route("GET", "/api/support/tickets")
         .respond_with(ResponseTemplate::new(422).set_body_json(response))
         .mount(&server)
         .await;
@@ -932,8 +922,7 @@ async fn malformed_support_success_responses_use_value_safe_human_recovery()
         }),
     ] {
         let server = MockServer::start().await;
-        Mock::given(method("GET"))
-            .and(path("/api/support/tickets"))
+        Mock::route("GET", "/api/support/tickets")
             .and(query_param("pagination", "cursor"))
             .respond_with(ResponseTemplate::new(200).set_body_json(body))
             .mount(&server)
@@ -957,8 +946,7 @@ async fn malformed_support_success_responses_use_value_safe_human_recovery()
 async fn non_json_support_errors_are_replaced_instead_of_printed()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/api/support/tickets"))
+    Mock::route("GET", "/api/support/tickets")
         .respond_with(ResponseTemplate::new(500).set_body_raw(
             "private-backend-body-sentinel\nauthorization: Bearer private-value",
             "text/plain",

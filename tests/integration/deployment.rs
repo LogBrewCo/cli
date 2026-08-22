@@ -1,12 +1,12 @@
 //! Completed deployment capture contract tests.
 
+use crate::matchers::body_json;
+use crate::{Mock, MockServer, ResponseTemplate};
 use logbrew_cli::{
     Command, DeploymentRecordOptions, DeploymentStatus, HelpTopic, HttpMethod, RuntimeError,
     execute_command, help, parse_command, write_cli_error, write_runtime_error,
 };
 use serde_json::{Value, json};
-use wiremock::matchers::{body_json, header, method, path};
-use wiremock::{Mock, MockServer, ResponseTemplate};
 
 const PROJECT_ID: &str = "123e4567-e89b-12d3-a456-426614174000";
 const DEPLOYMENT_ID: &str = "ci-run-42";
@@ -297,10 +297,7 @@ async fn deployment_revalidates_constructed_values_before_network()
     )
     .await
     .expect_err("constructed invalid command fails locally");
-    let requests = server
-        .received_requests()
-        .await
-        .ok_or("requests unavailable")?;
+    let requests = server.received_requests().await;
     let mut output = Vec::new();
     write_runtime_error(&error, true, &mut output)?;
     let text = String::from_utf8(output)?;
@@ -317,9 +314,7 @@ async fn deployment_sends_one_put_and_validates_human_and_json_receipts()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
     let response = deployment_response();
-    Mock::given(method("PUT"))
-        .and(path(DEPLOYMENT_PATH))
-        .and(header("authorization", "Bearer account-token"))
+    Mock::auth("PUT", DEPLOYMENT_PATH, "account-token")
         .and(body_json(json!({
             "project_id": PROJECT_ID,
             "release": "checkout@2.0.0",
@@ -383,8 +378,7 @@ async fn deployment_rejects_malformed_or_contradictory_success_before_output()
         let server = MockServer::start().await;
         let mut response = deployment_response();
         response[changed.0] = changed.1;
-        Mock::given(method("PUT"))
-            .and(path(DEPLOYMENT_PATH))
+        Mock::route("PUT", DEPLOYMENT_PATH)
             .respond_with(ResponseTemplate::new(200).set_body_json(response))
             .mount(&server)
             .await;
@@ -413,8 +407,7 @@ async fn deployment_rejects_malformed_or_contradictory_success_before_output()
 async fn deployment_conflict_uses_fixed_retry_without_reflecting_server_content()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
-    Mock::given(method("PUT"))
-        .and(path(DEPLOYMENT_PATH))
+    Mock::route("PUT", DEPLOYMENT_PATH)
         .respond_with(ResponseTemplate::new(409).set_body_json(json!({
             "error": "hostile-private-value\nauthorization: secret",
             "code": "hostile_code",
@@ -457,10 +450,7 @@ async fn deployment_rejects_project_ingest_keys_before_network()
     )
     .await
     .expect_err("project ingest key is rejected");
-    let requests = server
-        .received_requests()
-        .await
-        .ok_or("requests unavailable")?;
+    let requests = server.received_requests().await;
     let mut output = Vec::new();
     write_runtime_error(&error, true, &mut output)?;
     let text = String::from_utf8(output)?;

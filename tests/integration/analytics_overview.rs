@@ -1,8 +1,8 @@
 //! Built-binary contract proof for bounded product-analytics overview reads.
 
+use crate::matchers::query_param;
+use crate::{Mock, MockServer, ResponseTemplate};
 use logbrew_cli::{Command, HelpTopic, HttpMethod, help, parse_command};
-use wiremock::matchers::{header, method, path, query_param};
-use wiremock::{Mock, MockServer, ResponseTemplate};
 
 const PROJECT_ID: &str = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
 
@@ -62,9 +62,7 @@ async fn built_binary_gets_exact_scope_and_preserves_validated_json()
     let server = MockServer::start().await;
     let response = overview_response();
     let response_body = serde_json::to_string(&response)?;
-    Mock::given(method("GET"))
-        .and(path("/api/telemetry/analytics/overview"))
-        .and(header("authorization", "Bearer account-token"))
+    Mock::auth("GET", "/api/telemetry/analytics/overview", "account-token")
         .and(query_param("project_id", PROJECT_ID))
         .and(query_param("since", "24h"))
         .and(query_param("interval", "5m"))
@@ -97,8 +95,7 @@ async fn built_binary_human_output_explains_activity_coverage_and_next_step()
     let server = MockServer::start().await;
     let mut response = overview_response();
     response["top_actions"][0]["name"] = "checkout\u{202e}started".into();
-    Mock::given(method("GET"))
-        .and(path("/api/telemetry/analytics/overview"))
+    Mock::route("GET", "/api/telemetry/analytics/overview")
         .respond_with(ResponseTemplate::new(200).set_body_json(response))
         .expect(1)
         .mount(&server)
@@ -147,8 +144,7 @@ async fn built_binary_fails_closed_on_unknown_identity_fields_without_reflection
     let server = MockServer::start().await;
     let mut response = overview_response();
     response["query"]["user_id"] = "hostile-user-marker".into();
-    Mock::given(method("GET"))
-        .and(path("/api/telemetry/analytics/overview"))
+    Mock::route("GET", "/api/telemetry/analytics/overview")
         .respond_with(ResponseTemplate::new(200).set_body_json(response))
         .expect(1)
         .mount(&server)
@@ -172,8 +168,7 @@ async fn built_binary_fails_closed_on_contradictory_coverage()
     let mut response = overview_response();
     response["coverage"]["subject_coverage"]["legacy_unknown_kind_events"] = 6.into();
     response["next_action"]["reason"] = "contradictory-response-marker".into();
-    Mock::given(method("GET"))
-        .and(path("/api/telemetry/analytics/overview"))
+    Mock::route("GET", "/api/telemetry/analytics/overview")
         .respond_with(ResponseTemplate::new(200).set_body_json(response))
         .expect(1)
         .mount(&server)
@@ -196,8 +191,7 @@ async fn built_binary_fails_closed_on_impossible_anonymous_cardinality()
     let mut response = overview_response();
     response["summary"]["active_anonymous_subjects"] = 9.into();
     response["next_action"]["reason"] = "impossible-cardinality-marker".into();
-    Mock::given(method("GET"))
-        .and(path("/api/telemetry/analytics/overview"))
+    Mock::route("GET", "/api/telemetry/analytics/overview")
         .respond_with(ResponseTemplate::new(200).set_body_json(response))
         .expect(1)
         .mount(&server)

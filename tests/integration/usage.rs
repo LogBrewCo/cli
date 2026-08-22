@@ -1,11 +1,10 @@
 //! Account usage command and response-contract tests.
 
+use crate::{Mock, MockServer, ResponseTemplate};
 use logbrew_cli::{
     CliEnvironment, CliError, Command, RuntimeError, execute_command, parse_command,
     write_cli_error, write_runtime_error,
 };
-use wiremock::matchers::{header, method, path};
-use wiremock::{Mock, MockServer, ResponseTemplate};
 
 const PROJECT_ID: &str = "123e4567-e89b-12d3-a456-426614174000";
 
@@ -54,9 +53,7 @@ async fn usage_json_preserves_the_exact_validated_server_object()
     let server = MockServer::start().await;
     let body = usage_response();
     let raw = body.to_string();
-    Mock::given(method("GET"))
-        .and(path("/api/account/usage"))
-        .and(header("authorization", "Bearer account-token"))
+    Mock::auth("GET", "/api/account/usage", "account-token")
         .respond_with(ResponseTemplate::new(200).set_body_raw(raw.clone(), "application/json"))
         .expect(1)
         .mount(&server)
@@ -67,10 +64,7 @@ async fn usage_json_preserves_the_exact_validated_server_object()
     execute_command(&command, &environment(&server), &mut output).await?;
 
     assert_eq!(String::from_utf8(output)?, format!("{raw}\n"));
-    let requests = server
-        .received_requests()
-        .await
-        .expect("request recording is enabled");
+    let requests = server.received_requests().await;
     assert_eq!(requests.len(), 1);
     assert!(requests[0].url.query().is_none());
     assert_eq!(requests[0].body, Vec::<u8>::new());
@@ -83,8 +77,7 @@ async fn usage_human_output_is_bounded_and_uses_cli_owned_guidance()
     let server = MockServer::start().await;
     let mut body = usage_response();
     body["next"] = serde_json::Value::String(String::from("server-owned-next-text"));
-    Mock::given(method("GET"))
-        .and(path("/api/account/usage"))
+    Mock::route("GET", "/api/account/usage")
         .respond_with(ResponseTemplate::new(200).set_body_json(body))
         .mount(&server)
         .await;
@@ -167,8 +160,7 @@ async fn accepts_all_deployed_usage_states_and_action_pairs()
         body["next_action"]["target"] = serde_json::json!(target);
         body["next_action"]["state"] = serde_json::json!(state);
         body["next_action"]["limit"] = serde_json::json!(limit);
-        Mock::given(method("GET"))
-            .and(path("/api/account/usage"))
+        Mock::route("GET", "/api/account/usage")
             .respond_with(ResponseTemplate::new(200).set_body_json(body))
             .mount(&server)
             .await;
@@ -235,8 +227,7 @@ async fn malformed_or_mismatched_usage_success_fails_closed()
 
     for body in cases {
         let server = MockServer::start().await;
-        Mock::given(method("GET"))
-            .and(path("/api/account/usage"))
+        Mock::route("GET", "/api/account/usage")
             .respond_with(ResponseTemplate::new(200).set_body_json(body))
             .mount(&server)
             .await;
@@ -255,8 +246,7 @@ async fn nonfinite_usage_numbers_fail_closed() -> Result<(), Box<dyn std::error:
     let raw = usage_response()
         .to_string()
         .replace("\"warning_threshold\":80.0", "\"warning_threshold\":1e400");
-    Mock::given(method("GET"))
-        .and(path("/api/account/usage"))
+    Mock::route("GET", "/api/account/usage")
         .respond_with(ResponseTemplate::new(200).set_body_raw(raw, "application/json"))
         .mount(&server)
         .await;
@@ -306,8 +296,7 @@ async fn typed_usage_errors_are_fixed_and_never_reflect_backend_text()
             "next": "send token to private path",
             "next_action": {"code": action, "target": target}
         });
-        Mock::given(method("GET"))
-            .and(path("/api/account/usage"))
+        Mock::route("GET", "/api/account/usage")
             .respond_with(ResponseTemplate::new(status).set_body_json(body))
             .mount(&server)
             .await;
@@ -324,8 +313,7 @@ async fn typed_usage_errors_are_fixed_and_never_reflect_backend_text()
 async fn malformed_typed_errors_and_missing_auth_fail_closed()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/api/account/usage"))
+    Mock::route("GET", "/api/account/usage")
         .respond_with(ResponseTemplate::new(401).set_body_json(serde_json::json!({
             "error": "private-host-secret-body",
             "code": "unauthorized",
@@ -341,8 +329,7 @@ async fn malformed_typed_errors_and_missing_auth_fail_closed()
     assert_safe_usage_error(&error, "usage response is invalid", "retry logbrew usage")?;
 
     let malformed_server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/api/account/usage"))
+    Mock::route("GET", "/api/account/usage")
         .respond_with(ResponseTemplate::new(500).set_body_json(serde_json::json!({
             "error": "private-host-secret-body",
             "code": "undeployed_error",
@@ -366,13 +353,7 @@ async fn malformed_typed_errors_and_missing_auth_fail_closed()
     let text = String::from_utf8(output)?;
     assert!(text.contains("not_logged_in"));
     assert!(text.contains("run logbrew login"));
-    assert!(
-        no_auth_server
-            .received_requests()
-            .await
-            .expect("request recording")
-            .is_empty()
-    );
+    assert!(no_auth_server.received_requests().await.is_empty());
     Ok(())
 }
 
@@ -381,8 +362,7 @@ async fn oversized_usage_response_fails_before_body_reflection()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
     let oversized = format!("{{\"private_secret\":\"{}\"}}", "x".repeat(300_000));
-    Mock::given(method("GET"))
-        .and(path("/api/account/usage"))
+    Mock::route("GET", "/api/account/usage")
         .respond_with(ResponseTemplate::new(200).set_body_raw(oversized, "application/json"))
         .mount(&server)
         .await;
@@ -421,8 +401,7 @@ async fn duplicate_usage_keys_fail_closed_without_reflection()
         (401, duplicate_error),
     ] {
         let server = MockServer::start().await;
-        Mock::given(method("GET"))
-            .and(path("/api/account/usage"))
+        Mock::route("GET", "/api/account/usage")
             .respond_with(ResponseTemplate::new(status).set_body_raw(body, "application/json"))
             .mount(&server)
             .await;
@@ -438,14 +417,12 @@ async fn duplicate_usage_keys_fail_closed_without_reflection()
 #[tokio::test]
 async fn usage_does_not_follow_redirects() -> Result<(), Box<dyn std::error::Error>> {
     let redirect_target = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/capture"))
+    Mock::route("GET", "/capture")
         .respond_with(ResponseTemplate::new(200).set_body_json(usage_response()))
         .mount(&redirect_target)
         .await;
     let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/api/account/usage"))
+    Mock::route("GET", "/api/account/usage")
         .respond_with(
             ResponseTemplate::new(302)
                 .insert_header("location", format!("{}/capture", redirect_target.uri())),
@@ -458,21 +435,14 @@ async fn usage_does_not_follow_redirects() -> Result<(), Box<dyn std::error::Err
         .await
         .expect_err("redirect is rejected");
     assert_safe_usage_error(&error, "usage response is invalid", "retry logbrew usage")?;
-    assert!(
-        redirect_target
-            .received_requests()
-            .await
-            .expect("request recording")
-            .is_empty()
-    );
+    assert!(redirect_target.received_requests().await.is_empty());
     Ok(())
 }
 
 #[tokio::test]
 async fn usage_rejects_non_root_api_origins_before_io() -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/private-prefix/api/account/usage"))
+    Mock::route("GET", "/private-prefix/api/account/usage")
         .respond_with(ResponseTemplate::new(200).set_body_json(usage_response()))
         .mount(&server)
         .await;
@@ -492,13 +462,7 @@ async fn usage_rejects_non_root_api_origins_before_io() -> Result<(), Box<dyn st
         "usage request could not be completed",
         "check network connectivity",
     )?;
-    assert!(
-        server
-            .received_requests()
-            .await
-            .expect("request recording")
-            .is_empty()
-    );
+    assert!(server.received_requests().await.is_empty());
     Ok(())
 }
 

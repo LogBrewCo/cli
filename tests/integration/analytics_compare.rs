@@ -1,8 +1,8 @@
 //! Built-binary contract proof for bounded, descriptive segment comparisons.
 
+use crate::matchers::body_json;
+use crate::{Mock, MockServer, ResponseTemplate};
 use logbrew_cli::{Command, HelpTopic, HttpMethod, help, parse_command};
-use wiremock::matchers::{body_json, header, method, path};
-use wiremock::{Mock, MockServer, ResponseTemplate};
 
 const PROJECT_ID: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 
@@ -76,36 +76,38 @@ async fn built_binary_posts_exact_segments_and_preserves_validated_json()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
     let response = comparison_response("Old release");
-    Mock::given(method("POST"))
-        .and(path("/api/telemetry/analytics/segments/compare"))
-        .and(header("authorization", "Bearer account-token"))
-        .and(body_json(serde_json::json!({
-            "project_id": PROJECT_ID,
-            "since": "7d",
-            "interval": "1h",
-            "analysis_unit": "session",
-            "target": {"kind": "interaction", "event_name": "checkout_completed"},
-            "segments": [
-                {
-                    "key": "old",
-                    "label": "Old release",
-                    "service_name": "checkout",
-                    "release": "1.0.0",
-                    "environment": "production"
-                },
-                {
-                    "key": "new",
-                    "label": "New release",
-                    "service_name": "checkout",
-                    "release": "1.1.0",
-                    "environment": "production"
-                }
-            ]
-        })))
-        .respond_with(ResponseTemplate::new(200).set_body_json(response.clone()))
-        .expect(1)
-        .mount(&server)
-        .await;
+    Mock::auth(
+        "POST",
+        "/api/telemetry/analytics/segments/compare",
+        "account-token",
+    )
+    .and(body_json(serde_json::json!({
+        "project_id": PROJECT_ID,
+        "since": "7d",
+        "interval": "1h",
+        "analysis_unit": "session",
+        "target": {"kind": "interaction", "event_name": "checkout_completed"},
+        "segments": [
+            {
+                "key": "old",
+                "label": "Old release",
+                "service_name": "checkout",
+                "release": "1.0.0",
+                "environment": "production"
+            },
+            {
+                "key": "new",
+                "label": "New release",
+                "service_name": "checkout",
+                "release": "1.1.0",
+                "environment": "production"
+            }
+        ]
+    })))
+    .respond_with(ResponseTemplate::new(200).set_body_json(response.clone()))
+    .expect(1)
+    .mount(&server)
+    .await;
 
     let process = run_binary(&server, true, "old=Old release").await?;
 
@@ -124,8 +126,7 @@ async fn built_binary_posts_exact_segments_and_preserves_validated_json()
 async fn built_binary_human_output_explains_reach_differences_coverage_and_limits()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path("/api/telemetry/analytics/segments/compare"))
+    Mock::route("POST", "/api/telemetry/analytics/segments/compare")
         .respond_with(ResponseTemplate::new(200).set_body_json(comparison_response("Old release")))
         .expect(1)
         .mount(&server)
@@ -167,8 +168,7 @@ async fn built_binary_accepts_typed_user_identity_coverage_target()
     response["segments"][0]["coverage"]["unit_coverage_rate"] = 0.7.into();
     response["next_action"]["code"] = "improve_identity_coverage".into();
     response["next_action"]["target"] = "context.subject.kind=user".into();
-    Mock::given(method("POST"))
-        .and(path("/api/telemetry/analytics/segments/compare"))
+    Mock::route("POST", "/api/telemetry/analytics/segments/compare")
         .respond_with(ResponseTemplate::new(200).set_body_json(response.clone()))
         .expect(1)
         .mount(&server)
@@ -198,8 +198,7 @@ async fn built_binary_separates_missing_properties_from_nonmatching_values()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
     let response = property_comparison_response();
-    Mock::given(method("POST"))
-        .and(path("/api/telemetry/analytics/segments/compare"))
+    Mock::route("POST", "/api/telemetry/analytics/segments/compare")
         .and(body_json(
             parse_command(property_compare_args(false))?
                 .request_body()
@@ -242,8 +241,7 @@ async fn built_binary_fails_closed_on_contradictory_property_populations()
     let mut response = property_comparison_response();
     response["segments"][0]["coverage"]["property_filters"]["missing_property_events"] = 9.into();
     response["next_action"]["reason"] = "property-contradiction-marker".into();
-    Mock::given(method("POST"))
-        .and(path("/api/telemetry/analytics/segments/compare"))
+    Mock::route("POST", "/api/telemetry/analytics/segments/compare")
         .respond_with(ResponseTemplate::new(200).set_body_json(response))
         .expect(1)
         .mount(&server)
@@ -277,8 +275,7 @@ async fn built_binary_fails_closed_on_unknown_identity_and_contradictory_differe
         },
     ] {
         let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/api/telemetry/analytics/segments/compare"))
+        Mock::route("POST", "/api/telemetry/analytics/segments/compare")
             .respond_with(ResponseTemplate::new(200).set_body_json(response))
             .expect(1)
             .mount(&server)
@@ -301,8 +298,7 @@ async fn built_binary_escapes_bidirectional_segment_labels_in_human_output()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
     let label = "Old \u{202e}release";
-    Mock::given(method("POST"))
-        .and(path("/api/telemetry/analytics/segments/compare"))
+    Mock::route("POST", "/api/telemetry/analytics/segments/compare")
         .respond_with(ResponseTemplate::new(200).set_body_json(comparison_response(label)))
         .expect(1)
         .mount(&server)

@@ -5,10 +5,9 @@ mod contract_support;
 #[path = "native_debug_artifacts/support.rs"]
 mod support;
 
+use crate::{Mock, MockServer, ResponseTemplate};
 use contract_support::*;
 use support::*;
-use wiremock::matchers::{method, path};
-use wiremock::{Mock, MockServer, ResponseTemplate};
 
 #[tokio::test]
 async fn upload_grammar_is_closed_and_value_safe() -> Result<(), Box<dyn std::error::Error>> {
@@ -461,8 +460,7 @@ async fn upload_fails_closed_when_lookup_hash_mismatches() -> Result<(), Box<dyn
 async fn lookup_uses_exact_canonical_query_and_redacts_malformed_success()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/api/native-debug-artifacts"))
+    Mock::route("GET", "/api/native-debug-artifacts")
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "unexpected": "hostile backend text"
         })))
