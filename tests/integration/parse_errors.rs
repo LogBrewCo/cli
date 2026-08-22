@@ -13,10 +13,10 @@ fn rendered_json_error(args: &[&str]) -> (serde_json::Value, String) {
 
 fn assert_json_error(args: &[&str], code: &str, message: &str, next: &str) {
     let (body, _) = rendered_json_error(args);
-    assert_eq!(body["ok"], false);
-    assert_eq!(body["error"], code);
-    assert_eq!(body["message"], message);
-    assert_eq!(body["next"], next);
+    assert_eq!(body["ok"], false, "{args:?}");
+    assert_eq!(body["error"], code, "{args:?}");
+    assert_eq!(body["message"], message, "{args:?}");
+    assert_eq!(body["next"], next, "{args:?}");
 }
 
 fn assert_human_error(args: &[&str], message: &str, next: &str) {
@@ -25,7 +25,8 @@ fn assert_human_error(args: &[&str], message: &str, next: &str) {
     write_cli_error(&error, false, &mut output).expect("error writes");
     assert_eq!(
         String::from_utf8(output).expect("utf8 output"),
-        format!("{message}\nNext: {next}\n")
+        format!("{message}\nNext: {next}\n"),
+        "{args:?}"
     );
 }
 
@@ -63,41 +64,190 @@ fn project_doctor_rejects_malformed_or_hostile_grammar_without_reflection() {
 }
 
 #[test]
-fn rejects_non_numeric_limit_with_agent_next_step() {
-    assert_json_error(
-        &["logbrew", "logs", "--limit", "banana", "--json"],
-        "invalid_limit",
-        "invalid limit: banana",
-        "use --limit with a positive whole number",
-    );
+fn rejects_common_json_parse_errors_with_exact_recovery() {
+    for (args, code, message, next) in [
+        (
+            &["logbrew", "logs", "--limit", "banana", "--json"][..],
+            "invalid_limit",
+            "invalid limit: banana",
+            "use --limit with a positive whole number",
+        ),
+        (
+            &["logbrew", "issues", "--status", "done", "--json"][..],
+            "unknown_status",
+            "unknown issue status: done",
+            "use one of unresolved/open, resolved/closed, ignored",
+        ),
+        (
+            &["logbrew", "logs", "--release", "--json"][..],
+            "missing_flag_value",
+            "missing value for --release",
+            "provide a value after --release",
+        ),
+        (
+            &["logbrew", "logs", "--release", "-x", "--json"][..],
+            "missing_flag_value",
+            "missing value for --release",
+            "provide a value after --release",
+        ),
+        (
+            &["logbrew", "logs", "--release=", "--json"][..],
+            "missing_flag_value",
+            "missing value for --release",
+            "provide a value after --release",
+        ),
+        (
+            &["logbrew", "logs", "--env", "--json"][..],
+            "missing_flag_value",
+            "missing value for --env",
+            "provide a value after --env",
+        ),
+        (
+            &[
+                "logbrew",
+                "logs",
+                "--release",
+                "api@1",
+                "--release",
+                "api@2",
+                "--json",
+            ][..],
+            "duplicate_flag",
+            "duplicate flag: --release",
+            "use --release once",
+        ),
+        (
+            &[
+                "logbrew",
+                "logs",
+                "--env",
+                "production",
+                "--environment",
+                "staging",
+                "--json",
+            ][..],
+            "duplicate_flag",
+            "duplicate flag: --environment",
+            "use --environment once",
+        ),
+        (
+            &["logbrew", "status", "production", "--json"][..],
+            "unexpected_argument",
+            "unexpected argument for status: production",
+            "run logbrew status --help",
+        ),
+        (
+            &["logbrew", "releases", "--bogus", "--json"][..],
+            "unknown_flag",
+            "unknown flag: --bogus",
+            "run logbrew read releases --help",
+        ),
+        (
+            &["logbrew", "status", "--limit", "10", "--json"][..],
+            "unsupported_flag",
+            "unsupported flag for status: --limit",
+            "run logbrew status --help",
+        ),
+        (
+            &["logbrew", "logs", "--level", "urgent", "--json"][..],
+            "unknown_log_level",
+            "unknown log level: urgent",
+            "use one of info, warning, error, critical",
+        ),
+    ] {
+        assert_json_error(args, code, message, next);
+    }
 }
 
 #[test]
-fn rejects_zero_limit_with_human_next_step() {
-    assert_human_error(
-        &["logbrew", "issues", "--limit", "0"],
-        "invalid limit: 0",
-        "use --limit with a positive whole number",
-    );
-}
-
-#[test]
-fn rejects_unknown_read_status_with_agent_next_step() {
-    assert_json_error(
-        &["logbrew", "issues", "--status", "done", "--json"],
-        "unknown_status",
-        "unknown issue status: done",
-        "use one of unresolved/open, resolved/closed, ignored",
-    );
-}
-
-#[test]
-fn rejects_unknown_set_status_with_human_next_step() {
-    assert_human_error(
-        &["logbrew", "set", "issue", "issue_123", "done"],
-        "unknown issue status: done",
-        "use one of unresolved/open, resolved/closed, ignored",
-    );
+fn rejects_common_human_parse_errors_with_exact_recovery() {
+    for (args, message, next) in [
+        (
+            &["logbrew", "issues", "--limit", "0"][..],
+            "invalid limit: 0",
+            "use --limit with a positive whole number",
+        ),
+        (
+            &["logbrew", "set", "issue", "issue_123", "done"][..],
+            "unknown issue status: done",
+            "use one of unresolved/open, resolved/closed, ignored",
+        ),
+        (
+            &["logbrew", "inspect"][..],
+            "unknown command: inspect",
+            "run logbrew --help",
+        ),
+        (
+            &[
+                "logbrew",
+                "actions",
+                "--name",
+                "--environment",
+                "production",
+            ][..],
+            "missing value for --name",
+            "provide a value after --name",
+        ),
+        (
+            &["logbrew", "login", "--no-open", "--no-open"][..],
+            "duplicate flag: --no-open",
+            "use --no-open once",
+        ),
+        (
+            &["logbrew", "logs", "checkout@1"][..],
+            "unexpected argument for read: checkout@1",
+            "use --release <release> or run logbrew read --help",
+        ),
+        (
+            &["logbrew", "search", "--"][..],
+            "missing argument: search",
+            "provide search text or run logbrew logs --help",
+        ),
+        (
+            &["logbrew", "logs", "--"][..],
+            "missing value for --search",
+            "provide a value after --search",
+        ),
+        (
+            &["logbrew", "explain", "trace", "--json"][..],
+            "missing argument: trace_id",
+            "provide a trace id",
+        ),
+        (
+            &["logbrew", "logs", "--search", "--json"][..],
+            "missing value for --search",
+            "provide a value after --search",
+        ),
+        (
+            &["logbrew", "logs", "--level", "panic"][..],
+            "unknown log level: panic",
+            "use one of info, warning, error, critical",
+        ),
+        (
+            &[
+                "logbrew",
+                "read",
+                "issue",
+                "issue_123",
+                "--release",
+                "checkout@1.2.3",
+            ][..],
+            "unsupported flag for read issue: --release",
+            "run logbrew read issue --help",
+        ),
+        (
+            &["logbrew", "watch", "logs", "--auto"][..],
+            "unsupported flag for watch: --auto",
+            "run logbrew watch --help",
+        ),
+        (
+            &["logbrew", "releases", "--bogus"][..],
+            "unknown flag: --bogus",
+            "run logbrew read releases --help",
+        ),
+    ] {
+        assert_human_error(args, message, next);
+    }
 }
 
 #[test]
@@ -168,35 +318,6 @@ fn rejects_inline_values_on_simple_command_flags_with_command_help() {
             command: "read logs",
             next: "run logbrew read logs --help",
         })
-    );
-}
-
-#[test]
-fn rejects_unknown_command_with_human_help_next_step() {
-    assert_human_error(
-        &["logbrew", "inspect"],
-        "unknown command: inspect",
-        "run logbrew --help",
-    );
-}
-
-#[test]
-fn rejects_release_flag_without_value_before_json() {
-    assert_json_error(
-        &["logbrew", "logs", "--release", "--json"],
-        "missing_flag_value",
-        "missing value for --release",
-        "provide a value after --release",
-    );
-}
-
-#[test]
-fn rejects_single_dash_flag_like_value_with_agent_next_step() {
-    assert_json_error(
-        &["logbrew", "logs", "--release", "-x", "--json"],
-        "missing_flag_value",
-        "missing value for --release",
-        "provide a value after --release",
     );
 }
 
@@ -323,77 +444,6 @@ fn keeps_duplicate_flag_recovery_before_later_unsupported_filter() {
 }
 
 #[test]
-fn rejects_empty_equals_flag_value_with_agent_next_step() {
-    assert_json_error(
-        &["logbrew", "logs", "--release=", "--json"],
-        "missing_flag_value",
-        "missing value for --release",
-        "provide a value after --release",
-    );
-}
-
-#[test]
-fn rejects_name_flag_without_value_before_environment() {
-    assert_human_error(
-        &[
-            "logbrew",
-            "actions",
-            "--name",
-            "--environment",
-            "production",
-        ],
-        "missing value for --name",
-        "provide a value after --name",
-    );
-}
-
-#[test]
-fn rejects_alias_flag_without_value_before_json() {
-    assert_json_error(
-        &["logbrew", "logs", "--env", "--json"],
-        "missing_flag_value",
-        "missing value for --env",
-        "provide a value after --env",
-    );
-}
-
-#[test]
-fn rejects_duplicate_release_filter_with_agent_next_step() {
-    assert_json_error(
-        &[
-            "logbrew",
-            "logs",
-            "--release",
-            "api@1",
-            "--release",
-            "api@2",
-            "--json",
-        ],
-        "duplicate_flag",
-        "duplicate flag: --release",
-        "use --release once",
-    );
-}
-
-#[test]
-fn rejects_duplicate_alias_and_canonical_filters_with_agent_next_step() {
-    assert_json_error(
-        &[
-            "logbrew",
-            "logs",
-            "--env",
-            "production",
-            "--environment",
-            "staging",
-            "--json",
-        ],
-        "duplicate_flag",
-        "duplicate flag: --environment",
-        "use --environment once",
-    );
-}
-
-#[test]
 fn rejects_duplicate_json_with_agent_next_step() {
     for args in [
         &["logbrew", "--json", "status", "--json"][..],
@@ -409,34 +459,6 @@ fn rejects_duplicate_json_with_agent_next_step() {
         );
     }
 }
-#[test]
-fn rejects_duplicate_login_flag_with_human_next_step() {
-    assert_human_error(
-        &["logbrew", "login", "--no-open", "--no-open"],
-        "duplicate flag: --no-open",
-        "use --no-open once",
-    );
-}
-
-#[test]
-fn rejects_unexpected_status_argument_with_agent_next_step() {
-    assert_json_error(
-        &["logbrew", "status", "production", "--json"],
-        "unexpected_argument",
-        "unexpected argument for status: production",
-        "run logbrew status --help",
-    );
-}
-
-#[test]
-fn rejects_unexpected_read_argument_with_filter_hint() {
-    assert_human_error(
-        &["logbrew", "logs", "checkout@1"],
-        "unexpected argument for read: checkout@1",
-        "use --release <release> or run logbrew read --help",
-    );
-}
-
 #[test]
 fn rejects_trace_word_after_read_shortcut_with_trace_hint() {
     assert_json_error(
@@ -543,33 +565,6 @@ fn rejects_missing_search_text_with_log_search_next_step() {
 }
 
 #[test]
-fn rejects_empty_search_separator_with_log_search_next_step() {
-    assert_human_error(
-        &["logbrew", "search", "--"],
-        "missing argument: search",
-        "provide search text or run logbrew logs --help",
-    );
-}
-
-#[test]
-fn rejects_empty_logs_separator_with_search_value_next_step() {
-    assert_human_error(
-        &["logbrew", "logs", "--"],
-        "missing value for --search",
-        "provide a value after --search",
-    );
-}
-
-#[test]
-fn rejects_flag_like_missing_explain_id_with_human_next_step() {
-    assert_human_error(
-        &["logbrew", "explain", "trace", "--json"],
-        "missing argument: trace_id",
-        "provide a trace id",
-    );
-}
-
-#[test]
 fn rejects_flag_like_missing_set_fields_with_agent_next_steps() {
     for (args, message, next) in [
         (
@@ -588,16 +583,6 @@ fn rejects_flag_like_missing_set_fields_with_agent_next_steps() {
 }
 
 #[test]
-fn writes_parse_errors_as_json_for_agents() {
-    assert_json_error(
-        &["logbrew", "releases", "--bogus", "--json"],
-        "unknown_flag",
-        "unknown flag: --bogus",
-        "run logbrew read releases --help",
-    );
-}
-
-#[test]
 fn rejects_read_filters_on_login_with_command_help_next_step() {
     for (args, message, next) in [
         (
@@ -613,16 +598,6 @@ fn rejects_read_filters_on_login_with_command_help_next_step() {
     ] {
         assert_json_error(&args, "unsupported_flag", message, next);
     }
-}
-
-#[test]
-fn rejects_read_filters_on_status_with_command_help_next_step() {
-    assert_json_error(
-        &["logbrew", "status", "--limit", "10", "--json"],
-        "unsupported_flag",
-        "unsupported flag for status: --limit",
-        "run logbrew status --help",
-    );
 }
 
 #[test]
@@ -780,66 +755,4 @@ fn rejects_list_filters_that_target_cannot_apply() {
     ] {
         assert_json_error(args, "unsupported_flag", message, next);
     }
-}
-
-#[test]
-fn rejects_search_without_value_with_human_next_step() {
-    assert_human_error(
-        &["logbrew", "logs", "--search", "--json"],
-        "missing value for --search",
-        "provide a value after --search",
-    );
-}
-
-#[test]
-fn rejects_unknown_log_level_with_agent_next_step() {
-    assert_json_error(
-        &["logbrew", "logs", "--level", "urgent", "--json"],
-        "unknown_log_level",
-        "unknown log level: urgent",
-        "use one of info, warning, error, critical",
-    );
-}
-
-#[test]
-fn rejects_unknown_log_level_with_human_next_step() {
-    assert_human_error(
-        &["logbrew", "logs", "--level", "panic"],
-        "unknown log level: panic",
-        "use one of info, warning, error, critical",
-    );
-}
-
-#[test]
-fn rejects_ignored_issue_detail_filters_with_human_next_step() {
-    assert_human_error(
-        &[
-            "logbrew",
-            "read",
-            "issue",
-            "issue_123",
-            "--release",
-            "checkout@1.2.3",
-        ],
-        "unsupported flag for read issue: --release",
-        "run logbrew read issue --help",
-    );
-}
-
-#[test]
-fn rejects_setup_flags_on_watch_with_command_help_next_step() {
-    assert_human_error(
-        &["logbrew", "watch", "logs", "--auto"],
-        "unsupported flag for watch: --auto",
-        "run logbrew watch --help",
-    );
-}
-
-#[test]
-fn writes_parse_errors_with_human_next_step() {
-    assert_human_error(
-        &["logbrew", "releases", "--bogus"],
-        "unknown flag: --bogus",
-        "run logbrew read releases --help",
-    );
 }
