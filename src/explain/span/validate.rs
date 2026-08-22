@@ -10,14 +10,12 @@ use serde_json::{Map, Value};
 
 use self::correlations::CorrelationFacts;
 use self::topology::{BaselineFacts, TopologyFacts};
-use super::super::projection::{
-    count_scalar_leaves, sensitive_context_tag_key, sensitive_key, sensitive_string,
-    validate_projection,
-};
+use super::super::context::{self, Expected as ExpectedContext};
+use super::super::projection::{count_scalar_leaves, validate_projection};
 use super::super::{
     MAX_SAFE_JSON_INTEGER, invalid_response, is_error_status, is_w3c_id, nullable_w3c_id,
     require_bool, require_exact_fields, require_safe_u64, require_string, require_timestamp,
-    require_u64, required_object, response_object, validate_schema_version,
+    required_object, response_object, validate_schema_version,
 };
 use crate::ids::is_uuid;
 use crate::{ExplainSpanTarget, RuntimeError};
@@ -28,15 +26,6 @@ const PAYLOAD_LEAF_LIMIT: u64 = 64;
 const EVENT_LIMIT: usize = 8;
 /// Maximum causal links returned on one exact span.
 const LINK_LIMIT: usize = 8;
-/// Maximum low-cardinality typed-context tags.
-const CONTEXT_TAG_LIMIT: usize = 32;
-/// Maximum typed-context tag-key length.
-const CONTEXT_TAG_KEY_LIMIT: usize = 64;
-/// Maximum typed-context string or tag-value length.
-const CONTEXT_TEXT_LIMIT: usize = 256;
-/// Maximum privacy-safe opaque context-identifier length.
-const CONTEXT_ID_LIMIT: usize = 200;
-
 /// Validated exact subject fields needed by every later invariant.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct SubjectFacts<'a> {
@@ -116,7 +105,17 @@ pub(super) fn validate_response(
     )?;
     validate_schema_version(response)?;
     let subject = validate_subject(required_object(response, "subject")?, expected)?;
-    validate_context(response.get("context"), &subject)?;
+    context::validate(
+        response.get("context"),
+        ExpectedContext::span(
+            subject.service_name,
+            subject.environment,
+            subject.release,
+            subject.trace_id,
+            subject.span_id,
+            subject.parent_span_id,
+        ),
+    )?;
     let payload = validate_payload(required_object(response, "payload")?)?;
     let topology = topology::validate_topology(required_object(response, "topology")?, &subject)?;
     let baseline = topology::validate_baseline(required_object(response, "baseline")?, &subject)?;
@@ -230,195 +229,6 @@ fn validate_subject<'a>(
         release,
         sdk_captured: !sdk_name.is_empty(),
     })
-}
-
-/// Validates strict shared telemetry context and exact trace/deployment bindings.
-fn validate_context(value: Option<&Value>, subject: &SubjectFacts<'_>) -> Result<(), RuntimeError> {
-    let Some(value) = value else {
-        return Err(invalid_response());
-    };
-    let Value::Object(context) = value else {
-        return if value.is_null() {
-            Ok(())
-        } else {
-            Err(invalid_response())
-        };
-    };
-    require_exact_fields(
-        context,
-        &[
-            "schema_version",
-            "resource",
-            "trace",
-            "session",
-            "subject",
-            "tags",
-        ],
-    )?;
-    if require_u64(context, "schema_version")? != 1 {
-        return Err(invalid_response());
-    }
-    let resource_present = validate_resource_context(context.get("resource"), subject)?;
-    let trace_present = validate_trace_context(context.get("trace"), subject)?;
-    let session_present = validate_session_context(context.get("session"))?;
-    let subject_present = validate_subject_context(context.get("subject"))?;
-    let tags = required_object(context, "tags")?;
-    validate_context_tags(tags)?;
-    if !resource_present
-        && !trace_present
-        && !session_present
-        && !subject_present
-        && tags.is_empty()
-    {
-        return Err(invalid_response());
-    }
-    Ok(())
-}
-
-/// Validates optional typed resource context and returns whether it was present.
-fn validate_resource_context(
-    value: Option<&Value>,
-    subject: &SubjectFacts<'_>,
-) -> Result<bool, RuntimeError> {
-    let Some(resource) = required_nullable_object(value)? else {
-        return Ok(false);
-    };
-    require_exact_fields(
-        resource,
-        &[
-            "service",
-            "deployment",
-            "runtime",
-            "framework",
-            "operating_system",
-            "device",
-            "application",
-        ],
-    )?;
-    for name in ["service", "runtime", "framework"] {
-        if let Some(identity) = required_nullable_object(resource.get(name))? {
-            require_exact_fields(identity, &["name", "version"])?;
-            let identity_name = require_string(identity, "name")?;
-            let _version = nullable_bounded_text(identity, "version")?;
-            if name == "service" && identity_name != subject.service_name {
-                return Err(invalid_response());
-            }
-        }
-    }
-    if let Some(deployment) = required_nullable_object(resource.get("deployment"))? {
-        require_exact_fields(deployment, &["environment", "release"])?;
-        if nullable_bounded_text(deployment, "environment")?
-            .is_some_and(|value| value != subject.environment)
-            || nullable_bounded_text(deployment, "release")?
-                .is_some_and(|value| value != subject.release)
-        {
-            return Err(invalid_response());
-        }
-    }
-    if let Some(os) = required_nullable_object(resource.get("operating_system"))? {
-        require_exact_fields(os, &["name", "version", "build"])?;
-        let _name = require_string(os, "name")?;
-        let _version = nullable_bounded_text(os, "version")?;
-        let _build = nullable_bounded_text(os, "build")?;
-    }
-    if let Some(device) = required_nullable_object(resource.get("device"))? {
-        require_exact_fields(device, &["family", "model", "architecture"])?;
-        for name in ["family", "model", "architecture"] {
-            let _value = nullable_bounded_text(device, name)?;
-        }
-    }
-    if let Some(application) = required_nullable_object(resource.get("application"))? {
-        require_exact_fields(application, &["name", "version", "build"])?;
-        for name in ["name", "version", "build"] {
-            let _value = nullable_bounded_text(application, name)?;
-        }
-    }
-    Ok(true)
-}
-
-/// Validates optional W3C context and returns whether it was present.
-fn validate_trace_context(
-    value: Option<&Value>,
-    subject: &SubjectFacts<'_>,
-) -> Result<bool, RuntimeError> {
-    let Some(trace) = required_nullable_object(value)? else {
-        return Ok(false);
-    };
-    require_exact_fields(trace, &["trace_id", "span_id", "parent_span_id", "sampled"])?;
-    if require_string(trace, "trace_id")? != subject.trace_id
-        || nullable_w3c_id(trace, "span_id", 16)? != Some(subject.span_id)
-        || nullable_w3c_id(trace, "parent_span_id", 16)? != subject.parent_span_id
-        || !matches!(trace.get("sampled"), Some(Value::Null | Value::Bool(_)))
-    {
-        return Err(invalid_response());
-    }
-    Ok(true)
-}
-
-/// Validates optional privacy-bounded session context.
-fn validate_session_context(value: Option<&Value>) -> Result<bool, RuntimeError> {
-    let Some(session) = required_nullable_object(value)? else {
-        return Ok(false);
-    };
-    require_exact_fields(session, &["id", "previous_id"])?;
-    for name in ["id", "previous_id"] {
-        if let Some(id) = nullable_string(session, name)? {
-            validate_opaque_context_id(id)?;
-        }
-    }
-    Ok(true)
-}
-
-/// Validates optional privacy-bounded user or anonymous-subject context.
-fn validate_subject_context(value: Option<&Value>) -> Result<bool, RuntimeError> {
-    let Some(context_subject) = required_nullable_object(value)? else {
-        return Ok(false);
-    };
-    require_exact_fields(context_subject, &["id", "kind"])?;
-    if let Some(id) = nullable_string(context_subject, "id")? {
-        validate_opaque_context_id(id)?;
-    }
-    if !matches!(
-        require_string(context_subject, "kind")?,
-        "user" | "anonymous"
-    ) {
-        return Err(invalid_response());
-    }
-    Ok(true)
-}
-
-/// Validates deterministic low-cardinality context tags without direct identifiers.
-fn validate_context_tags(tags: &Map<String, Value>) -> Result<(), RuntimeError> {
-    if tags.len() > CONTEXT_TAG_LIMIT {
-        return Err(invalid_response());
-    }
-    let mut previous = None;
-    for (key, value) in tags {
-        if previous.is_some_and(|previous: &str| previous >= key.as_str()) {
-            return Err(invalid_response());
-        }
-        previous = Some(key.as_str());
-        let text = value
-            .as_str()
-            .filter(|value| !value.is_empty())
-            .ok_or_else(invalid_response)?;
-        let mut characters = key.chars();
-        if !characters
-            .next()
-            .is_some_and(|character| character.is_ascii_alphabetic())
-            || key.chars().count() > CONTEXT_TAG_KEY_LIMIT
-            || !characters
-                .all(|character| character.is_ascii_alphanumeric() || "_.-".contains(character))
-            || text.chars().count() > CONTEXT_TEXT_LIMIT
-            || text.chars().any(char::is_control)
-            || sensitive_key(key)
-            || sensitive_context_tag_key(key)
-            || sensitive_string(text, key)
-        {
-            return Err(invalid_response());
-        }
-    }
-    Ok(())
 }
 
 /// Validates bounded metadata, application events, causal links, and their leaf receipt.
@@ -622,21 +432,6 @@ fn string_allow_empty<'a>(
         .ok_or_else(invalid_response)
 }
 
-/// Returns an explicitly nullable bounded context string.
-fn nullable_bounded_text<'a>(
-    value: &'a Map<String, Value>,
-    name: &str,
-) -> Result<Option<&'a str>, RuntimeError> {
-    let text = nullable_string(value, name)?;
-    if text.is_some_and(|text| {
-        text.chars().count() > CONTEXT_TEXT_LIMIT || text.chars().any(char::is_control)
-    }) {
-        Err(invalid_response())
-    } else {
-        Ok(text)
-    }
-}
-
 /// Returns an explicitly nullable UTC RFC3339 timestamp.
 pub(super) fn nullable_timestamp<'a>(
     value: &'a Map<String, Value>,
@@ -703,18 +498,6 @@ pub(super) fn availability<'a>(
     let status = require_string(value, name)?;
     if matches!(status, "available" | "not_found" | "unavailable") {
         Ok(status)
-    } else {
-        Err(invalid_response())
-    }
-}
-
-/// Validates one opaque context identity without rendering or accepting obvious private values.
-fn validate_opaque_context_id(value: &str) -> Result<(), RuntimeError> {
-    if value.chars().count() <= CONTEXT_ID_LIMIT
-        && !value.chars().any(char::is_control)
-        && !sensitive_string(value, "context_id")
-    {
-        Ok(())
     } else {
         Err(invalid_response())
     }

@@ -1,6 +1,7 @@
 //! Versioned, bounded telemetry investigation reads.
 
 mod action;
+mod context;
 mod correction;
 mod issue_exception_chain;
 mod issue_lifecycle;

@@ -4,19 +4,17 @@ use std::collections::BTreeSet;
 
 use serde_json::{Map, Value};
 
-use super::projection::{
-    count_scalar_leaves, sensitive_context_tag_key, sensitive_key, sensitive_string,
-    validate_projection,
-};
+use super::context::{self, Expected as ExpectedContext};
+use super::projection::{count_scalar_leaves, validate_projection};
 use super::{
     DeploymentExpectation, METRIC_POINT_LIMIT, METRIC_SERIES_LIMIT, NEXT_ACTION_LIMIT,
     append_actions, append_evidence, append_labeled_bool, append_labeled_integer,
     append_labeled_number, append_labeled_text, append_named_text, append_runtime_context,
     collect_scalar_fields, display_text, exact_response_object, field_text, invalid_response,
-    optional_finite_number, optional_string, require_bool, require_exact_fields,
-    require_finite_number, require_known_fields, require_safe_positive_u64, require_safe_u64,
-    require_string, require_string_equals, require_timestamp, require_u64, required_object,
-    validate_deployment_boundary, validate_evidence, validate_name_version,
+    is_w3c_id, nullable_w3c_id, optional_finite_number, optional_string, require_bool,
+    require_exact_fields, require_finite_number, require_known_fields, require_safe_positive_u64,
+    require_safe_u64, require_string, require_string_equals, require_timestamp, require_u64,
+    required_object, validate_deployment_boundary, validate_evidence, validate_name_version,
     validate_schema_version_value,
 };
 use crate::ids::{is_trace_id, is_uuid};
@@ -152,8 +150,8 @@ fn validate_metric_sample(
         }
     }
 
-    let trace_id = nullable_metric_w3c_id(sample, "trace_id", 32)?;
-    let span_id = nullable_metric_w3c_id(sample, "span_id", 16)?;
+    let trace_id = nullable_w3c_id(sample, "trace_id", 32)?;
+    let span_id = nullable_w3c_id(sample, "span_id", 16)?;
     if span_id.is_some() && trace_id.is_none() {
         return Err(invalid_response());
     }
@@ -168,219 +166,11 @@ fn validate_metric_sample(
             return Err(invalid_response());
         }
     }
-    validate_metric_sample_context(
+    context::validate(
         sample.get("context"),
-        service,
-        environment,
-        release,
-        trace_id,
-        span_id,
+        ExpectedContext::metric(service, environment, release, trace_id, span_id),
     )?;
     validate_metric_sample_metadata(required_object(sample, "metadata")?)
-}
-
-/// Validates one explicitly nullable, typed shared telemetry context.
-fn validate_metric_sample_context(
-    value: Option<&Value>,
-    service: &str,
-    environment: &str,
-    release: &str,
-    trace_id: Option<&str>,
-    span_id: Option<&str>,
-) -> Result<(), RuntimeError> {
-    let Some(context) = nullable_metric_object(value)? else {
-        return Ok(());
-    };
-    require_exact_fields(
-        context,
-        &[
-            "schema_version",
-            "resource",
-            "trace",
-            "session",
-            "subject",
-            "tags",
-        ],
-    )?;
-    if require_u64(context, "schema_version")? != 1 {
-        return Err(invalid_response());
-    }
-    let resource_present =
-        validate_metric_resource_context(context.get("resource"), service, environment, release)?;
-    let trace_present = validate_metric_trace_context(context.get("trace"), trace_id, span_id)?;
-    let session_present = validate_metric_session_context(context.get("session"))?;
-    let subject_present = validate_metric_subject_context(context.get("subject"))?;
-    let tags = required_object(context, "tags")?;
-    validate_metric_context_tags(tags)?;
-    if !resource_present
-        && !trace_present
-        && !session_present
-        && !subject_present
-        && tags.is_empty()
-    {
-        return Err(invalid_response());
-    }
-    Ok(())
-}
-
-/// Validates optional typed runtime and deployment identity against the sample envelope.
-fn validate_metric_resource_context(
-    value: Option<&Value>,
-    service: &str,
-    environment: &str,
-    release: &str,
-) -> Result<bool, RuntimeError> {
-    let Some(resource) = nullable_metric_object(value)? else {
-        return Ok(false);
-    };
-    require_exact_fields(
-        resource,
-        &[
-            "service",
-            "deployment",
-            "runtime",
-            "framework",
-            "operating_system",
-            "device",
-            "application",
-        ],
-    )?;
-    for name in ["service", "runtime", "framework"] {
-        if let Some(identity) = nullable_metric_object(resource.get(name))? {
-            require_exact_fields(identity, &["name", "version"])?;
-            let identity_name = require_string(identity, "name")?;
-            validate_metric_context_text(identity_name)?;
-            if name == "service" && identity_name != service {
-                return Err(invalid_response());
-            }
-            if let Some(version) = nullable_metric_context_text(identity, "version")? {
-                validate_metric_context_text(version)?;
-            }
-        }
-    }
-    if let Some(deployment) = nullable_metric_object(resource.get("deployment"))? {
-        require_exact_fields(deployment, &["environment", "release"])?;
-        let captured_environment = nullable_metric_context_text(deployment, "environment")?;
-        let captured_release = nullable_metric_context_text(deployment, "release")?;
-        if captured_environment.is_none() && captured_release.is_none()
-            || captured_environment.is_some_and(|value| value != environment)
-            || captured_release.is_some_and(|value| value != release)
-        {
-            return Err(invalid_response());
-        }
-    }
-    if let Some(os) = nullable_metric_object(resource.get("operating_system"))? {
-        require_exact_fields(os, &["name", "version", "build"])?;
-        validate_metric_context_text(require_string(os, "name")?)?;
-        let _version = nullable_metric_context_text(os, "version")?;
-        let _build = nullable_metric_context_text(os, "build")?;
-    }
-    if let Some(device) = nullable_metric_object(resource.get("device"))? {
-        require_exact_fields(device, &["family", "model", "architecture"])?;
-        let values = [
-            nullable_metric_context_text(device, "family")?,
-            nullable_metric_context_text(device, "model")?,
-            nullable_metric_context_text(device, "architecture")?,
-        ];
-        if values.iter().all(Option::is_none) {
-            return Err(invalid_response());
-        }
-    }
-    if let Some(application) = nullable_metric_object(resource.get("application"))? {
-        require_exact_fields(application, &["name", "version", "build"])?;
-        let values = [
-            nullable_metric_context_text(application, "name")?,
-            nullable_metric_context_text(application, "version")?,
-            nullable_metric_context_text(application, "build")?,
-        ];
-        if values.iter().all(Option::is_none) {
-            return Err(invalid_response());
-        }
-    }
-    Ok(true)
-}
-
-/// Validates optional W3C context and binds it to the raw sample identifiers.
-fn validate_metric_trace_context(
-    value: Option<&Value>,
-    expected_trace: Option<&str>,
-    expected_span: Option<&str>,
-) -> Result<bool, RuntimeError> {
-    let Some(trace) = nullable_metric_object(value)? else {
-        return Ok(false);
-    };
-    require_exact_fields(trace, &["trace_id", "span_id", "parent_span_id", "sampled"])?;
-    let trace_id = require_string(trace, "trace_id")?;
-    if !is_metric_w3c_id(trace_id, 32) || Some(trace_id) != expected_trace {
-        return Err(invalid_response());
-    }
-    let span_id = nullable_metric_w3c_id(trace, "span_id", 16)?;
-    let _parent = nullable_metric_w3c_id(trace, "parent_span_id", 16)?;
-    if span_id.is_some_and(|span| Some(span) != expected_span)
-        || !matches!(trace.get("sampled"), Some(Value::Null | Value::Bool(_)))
-    {
-        return Err(invalid_response());
-    }
-    Ok(true)
-}
-
-/// Validates optional privacy-bounded session identity without rendering it as authority.
-fn validate_metric_session_context(value: Option<&Value>) -> Result<bool, RuntimeError> {
-    let Some(session) = nullable_metric_object(value)? else {
-        return Ok(false);
-    };
-    require_exact_fields(session, &["id", "previous_id"])?;
-    let id = nullable_metric_context_id(session, "id")?;
-    let previous = nullable_metric_context_id(session, "previous_id")?;
-    if id.is_some() && id == previous {
-        return Err(invalid_response());
-    }
-    Ok(true)
-}
-
-/// Validates optional privacy-bounded subject classification.
-fn validate_metric_subject_context(value: Option<&Value>) -> Result<bool, RuntimeError> {
-    let Some(subject) = nullable_metric_object(value)? else {
-        return Ok(false);
-    };
-    require_exact_fields(subject, &["id", "kind"])?;
-    let _id = nullable_metric_context_id(subject, "id")?;
-    if !matches!(require_string(subject, "kind")?, "anonymous" | "user") {
-        return Err(invalid_response());
-    }
-    Ok(true)
-}
-
-/// Validates deterministic low-cardinality context tags and their privacy boundary.
-fn validate_metric_context_tags(tags: &Map<String, Value>) -> Result<(), RuntimeError> {
-    if tags.len() > 32 {
-        return Err(invalid_response());
-    }
-    let mut previous = None;
-    for (key, value) in tags {
-        if previous.is_some_and(|previous: &str| previous >= key.as_str()) {
-            return Err(invalid_response());
-        }
-        previous = Some(key.as_str());
-        let mut characters = key.chars();
-        let text = value
-            .as_str()
-            .filter(|value| !value.is_empty())
-            .ok_or_else(invalid_response)?;
-        if !characters
-            .next()
-            .is_some_and(|character| character.is_ascii_alphabetic())
-            || key.chars().count() > 64
-            || !characters
-                .all(|character| character.is_ascii_alphanumeric() || "_.-".contains(character))
-            || sensitive_key(key)
-            || sensitive_context_tag_key(key)
-            || validate_metric_context_text(text).is_err()
-        {
-            return Err(invalid_response());
-        }
-    }
-    Ok(())
 }
 
 /// Validates one bounded arbitrary metadata projection and its exact leaf receipt.
@@ -401,91 +191,6 @@ fn validate_metric_sample_metadata(metadata: &Map<String, Value>) -> Result<(), 
     let _redacted = require_bool(metadata, "redacted")?;
     let _truncated = require_bool(metadata, "truncated")?;
     Ok(())
-}
-
-/// Returns one explicitly nullable object.
-const fn nullable_metric_object(
-    value: Option<&Value>,
-) -> Result<Option<&Map<String, Value>>, RuntimeError> {
-    match value {
-        Some(Value::Null) => Ok(None),
-        Some(Value::Object(value)) => Ok(Some(value)),
-        _ => Err(invalid_response()),
-    }
-}
-
-/// Returns one explicitly nullable canonical W3C identifier.
-fn nullable_metric_w3c_id<'a>(
-    value: &'a Map<String, Value>,
-    name: &str,
-    width: usize,
-) -> Result<Option<&'a str>, RuntimeError> {
-    match value.get(name) {
-        Some(Value::Null) => Ok(None),
-        Some(Value::String(id)) if is_metric_w3c_id(id, width) => Ok(Some(id.as_str())),
-        _ => Err(invalid_response()),
-    }
-}
-
-/// Returns whether one identifier is canonical, non-zero, lower-case W3C hexadecimal.
-fn is_metric_w3c_id(value: &str, width: usize) -> bool {
-    value.len() == width
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-        && value.bytes().any(|byte| byte != b'0')
-}
-
-/// Returns one explicitly nullable bounded shared-context string.
-fn nullable_metric_context_text<'a>(
-    value: &'a Map<String, Value>,
-    name: &str,
-) -> Result<Option<&'a str>, RuntimeError> {
-    match value.get(name) {
-        Some(Value::Null) => Ok(None),
-        Some(Value::String(text)) => {
-            validate_metric_context_text(text)?;
-            Ok(Some(text.as_str()))
-        }
-        _ => Err(invalid_response()),
-    }
-}
-
-/// Validates one bounded context value without private location or credential shapes.
-fn validate_metric_context_text(value: &str) -> Result<(), RuntimeError> {
-    if value.is_empty()
-        || value.chars().count() > 256
-        || value.chars().any(char::is_control)
-        || sensitive_string(value, "context_value")
-    {
-        Err(invalid_response())
-    } else {
-        Ok(())
-    }
-}
-
-/// Returns one explicitly nullable machine-like opaque context identifier.
-fn nullable_metric_context_id<'a>(
-    value: &'a Map<String, Value>,
-    name: &str,
-) -> Result<Option<&'a str>, RuntimeError> {
-    match value.get(name) {
-        Some(Value::Null) => Ok(None),
-        Some(Value::String(id))
-            if id.chars().count() <= 200
-                && id
-                    .chars()
-                    .next()
-                    .is_some_and(|character| character.is_ascii_alphanumeric())
-                && id.chars().all(|character| {
-                    character.is_ascii_alphanumeric() || "._:-".contains(character)
-                })
-                && !sensitive_string(id, "context_id") =>
-        {
-            Ok(Some(id.as_str()))
-        }
-        _ => Err(invalid_response()),
-    }
 }
 
 /// Validates top-level version, trust boundary, and exact metric identity.
@@ -1240,7 +945,7 @@ fn validate_metric_exemplars(
 
 /// Returns whether a value is a non-zero W3C span identifier.
 fn is_metric_span_id(value: &str) -> bool {
-    is_metric_w3c_id(value, 16)
+    is_w3c_id(value, 16)
 }
 
 /// Validates bounded completed deployment overlays.

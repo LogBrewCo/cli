@@ -266,6 +266,14 @@ async fn contract_rejects_identity_arithmetic_topology_payload_and_routing_contr
     hostile_payload["payload"]["metadata"]["included_leaf_count"] = serde_json::json!(3);
     hostile_payload["payload"]["included_leaf_count"] = serde_json::json!(11);
 
+    let mut hostile_context = span_response();
+    hostile_context["context"]["resource"]["runtime"]["version"] =
+        serde_json::json!("/opt/example/runtime");
+
+    let mut duplicate_session = span_response();
+    duplicate_session["context"]["session"] =
+        serde_json::json!({"id": "session-1", "previous_id": "session-1"});
+
     let mut unknown_field = span_response();
     unknown_field["subject"]["actor_id"] = serde_json::json!("private-actor");
 
@@ -280,6 +288,8 @@ async fn contract_rejects_identity_arithmetic_topology_payload_and_routing_contr
         exact_log_mismatch,
         timeline_mismatch,
         hostile_payload,
+        hostile_context,
+        duplicate_session,
         unknown_field,
         wrong_next_action,
     ] {
