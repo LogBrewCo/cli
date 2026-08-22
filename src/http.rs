@@ -12,6 +12,36 @@ pub(crate) enum BodyError {
     Transport,
 }
 
+/// Duplicate-aware exact standard API error envelope.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ErrorShape {
+    /// Human-readable error field.
+    #[serde(rename = "error")]
+    _error: serde_json::Value,
+    /// Stable error-code field.
+    #[serde(rename = "code")]
+    _code: serde_json::Value,
+    /// Recovery guidance field.
+    #[serde(rename = "next")]
+    _next: serde_json::Value,
+    /// Typed recovery-action field.
+    #[serde(rename = "next_action")]
+    _next_action: ErrorActionShape,
+}
+
+/// Duplicate-aware exact standard API recovery action.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ErrorActionShape {
+    /// Stable action-code field.
+    #[serde(rename = "code")]
+    _code: serde_json::Value,
+    /// Stable action-target field.
+    #[serde(rename = "target")]
+    _target: serde_json::Value,
+}
+
 /// Returns a client builder after installing the process-wide TLS provider.
 pub(crate) fn client_builder() -> reqwest::ClientBuilder {
     drop(rustls::crypto::ring::default_provider().install_default());

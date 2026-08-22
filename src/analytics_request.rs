@@ -12,6 +12,29 @@
 use crate::auth::{AuthCredential, send_authenticated_with_refresh};
 use crate::{CliEnvironment, RuntimeError};
 
+/// Starts one POST request with the shared exact project and deployment scope.
+pub(crate) fn scoped_body(
+    project_id: &str,
+    since: &str,
+    until: Option<&str>,
+    service_name: Option<&str>,
+    release: Option<&str>,
+    environment: Option<&str>,
+) -> serde_json::Map<String, serde_json::Value> {
+    let mut body = serde_json::Map::new();
+    for (key, value) in [
+        ("project_id", Some(project_id)),
+        ("since", Some(since)),
+        ("until", until),
+        ("service_name", service_name),
+        ("release", release),
+        ("environment", environment),
+    ] {
+        insert_optional(&mut body, key, value);
+    }
+    body
+}
+
 /// Analytics operation whose stable transport and recovery policy is required.
 #[derive(Clone, Copy)]
 pub(crate) enum Kind {

@@ -19,7 +19,7 @@ const ANCESTOR_LIMIT: usize = 64;
 const EDGE_LIMIT: usize = 50;
 
 /// Validated topology facts needed by analysis, evidence, and next actions.
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub(super) struct TopologyFacts<'a> {
     /// Optional-evidence status.
     pub(super) status: &'a str,
@@ -32,7 +32,7 @@ pub(super) struct TopologyFacts<'a> {
 }
 
 /// Validated peer-baseline facts needed by analysis and next actions.
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub(super) struct BaselineFacts<'a> {
     /// Optional-evidence status.
     pub(super) status: &'a str,
@@ -43,7 +43,7 @@ pub(super) struct BaselineFacts<'a> {
 }
 
 /// Minimal validated span-summary identity used for relationship checks.
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 struct SpanSummaryFacts<'a> {
     /// Span identity.
     span_id: &'a str,

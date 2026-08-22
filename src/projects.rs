@@ -17,7 +17,7 @@ const HUMAN_ROW_LIMIT: usize = 100;
     clippy::missing_docs_in_private_items,
     reason = "field names intentionally mirror the validated public JSON contract"
 )]
-#[derive(Debug, serde::Deserialize)]
+#[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ProjectShape {
     #[serde(rename = "id")]
@@ -57,7 +57,7 @@ struct ProjectShape {
     clippy::missing_docs_in_private_items,
     reason = "field names intentionally mirror the validated public JSON contract"
 )]
-#[derive(Debug, serde::Deserialize)]
+#[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ProjectAccessShape {
     #[serde(rename = "kind")]
@@ -70,38 +70,6 @@ struct ProjectAccessShape {
     _role_name: serde_json::Value,
     #[serde(rename = "permissions")]
     _permissions: serde_json::Value,
-}
-
-/// Duplicate-aware standard API error envelope.
-#[expect(
-    clippy::missing_docs_in_private_items,
-    reason = "field names intentionally mirror the validated public JSON contract"
-)]
-#[derive(Debug, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ErrorShape {
-    #[serde(rename = "error")]
-    _error: serde_json::Value,
-    #[serde(rename = "code")]
-    _code: serde_json::Value,
-    #[serde(rename = "next")]
-    _next: serde_json::Value,
-    #[serde(rename = "next_action")]
-    _next_action: ErrorActionShape,
-}
-
-/// Duplicate-aware standard API error action.
-#[expect(
-    clippy::missing_docs_in_private_items,
-    reason = "field names intentionally mirror the validated public JSON contract"
-)]
-#[derive(Debug, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ErrorActionShape {
-    #[serde(rename = "code")]
-    _code: serde_json::Value,
-    #[serde(rename = "target")]
-    _target: serde_json::Value,
 }
 
 /// Human-rendered fields from one fully validated project row.
@@ -274,7 +242,8 @@ fn validate_error(
     body: &str,
     credential: &AuthCredential,
 ) -> Result<RuntimeError, RuntimeError> {
-    let _shape = serde_json::from_str::<ErrorShape>(body).map_err(|_| invalid_response())?;
+    let _shape =
+        serde_json::from_str::<crate::http::ErrorShape>(body).map_err(|_| invalid_response())?;
     let value = serde_json::from_str::<serde_json::Value>(body).map_err(|_| invalid_response())?;
     let object = value.as_object().ok_or_else(invalid_response)?;
     let _error = safe_string(object.get("error"), 512, false)?;

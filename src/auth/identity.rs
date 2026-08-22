@@ -8,7 +8,7 @@ const RESPONSE_LIMIT: usize = 768 * 1024;
 const MAX_AVATAR_ENCODED_BYTES: usize = 512 * 1024 * 4 / 3 + 4;
 
 /// Duplicate-aware exact deployed account shape.
-#[derive(Debug, serde::Deserialize)]
+#[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct IdentityShape {
     id: String,
@@ -20,38 +20,8 @@ struct IdentityShape {
     tier: String,
 }
 
-/// Duplicate-aware standard API error envelope.
-#[derive(Debug, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ErrorShape {
-    /// Human-readable error field.
-    #[serde(rename = "error")]
-    _error: serde_json::Value,
-    /// Stable error-code field.
-    #[serde(rename = "code")]
-    _code: serde_json::Value,
-    /// Recovery guidance field.
-    #[serde(rename = "next")]
-    _next: serde_json::Value,
-    /// Typed recovery-action field.
-    #[serde(rename = "next_action")]
-    _next_action: ErrorActionShape,
-}
-
-/// Duplicate-aware standard API error action.
-#[derive(Debug, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ErrorActionShape {
-    /// Stable action-code field.
-    #[serde(rename = "code")]
-    _code: serde_json::Value,
-    /// Stable action-target field.
-    #[serde(rename = "target")]
-    _target: serde_json::Value,
-}
-
 /// Duplicate-aware recovery-available API error envelope.
-#[derive(Debug, serde::Deserialize)]
+#[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RecoveryErrorShape {
     /// Human-readable error field.
@@ -65,7 +35,7 @@ struct RecoveryErrorShape {
     _next: serde_json::Value,
     /// Typed recovery-action field.
     #[serde(rename = "next_action")]
-    _next_action: ErrorActionShape,
+    _next_action: crate::http::ErrorActionShape,
     /// Account deletion timestamp field.
     #[serde(rename = "deleted_at")]
     _deleted_at: serde_json::Value,
@@ -147,7 +117,8 @@ fn validate_error(
     if status == 409 {
         return validate_recovery_error(body, credential);
     }
-    let _shape = serde_json::from_str::<ErrorShape>(body).map_err(|_| invalid_response())?;
+    let _shape =
+        serde_json::from_str::<crate::http::ErrorShape>(body).map_err(|_| invalid_response())?;
     let value = serde_json::from_str::<serde_json::Value>(body).map_err(|_| invalid_response())?;
     let object = value.as_object().ok_or_else(invalid_response)?;
     let _error = safe_string(object.get("error"), 512)?;

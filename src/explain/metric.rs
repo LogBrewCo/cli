@@ -1333,7 +1333,12 @@ fn validate_metric_evidence(response: &Map<String, Value>) -> Result<(), Runtime
     let mut expected = metric_base_evidence_expectations(response)?;
     let latest_flags =
         add_metric_latest_sample_evidence(response, &mut expected.captured, &mut expected.missing)?;
-    validate_metric_latest_omissions(&redacted, &truncated, &mut expected.truncated, latest_flags)?;
+    validate_metric_latest_omissions(
+        &redacted,
+        &truncated,
+        &mut expected.truncated,
+        &latest_flags,
+    )?;
     if captured != expected.captured
         || missing != expected.missing
         || truncated != expected.truncated
@@ -1344,7 +1349,7 @@ fn validate_metric_evidence(response: &Map<String, Value>) -> Result<(), Runtime
 }
 
 /// Recomputed non-sample evidence partitions for one metric investigation.
-#[derive(Debug, Default)]
+#[derive(Default)]
 struct MetricEvidenceExpectations {
     /// Evidence fields proven present.
     captured: BTreeSet<String>,
@@ -1450,7 +1455,7 @@ fn validate_metric_latest_omissions(
     redacted: &BTreeSet<String>,
     truncated: &BTreeSet<String>,
     expected_truncated: &mut BTreeSet<String>,
-    latest_flags: MetricLatestEvidenceFlags,
+    latest_flags: &MetricLatestEvidenceFlags,
 ) -> Result<(), RuntimeError> {
     let extra_redacted = redacted
         .iter()
@@ -1484,7 +1489,7 @@ fn validate_metric_latest_omissions(
 }
 
 /// Latest-sample omission flags that must match the response-level evidence receipt.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Default)]
 struct MetricLatestEvidenceFlags {
     /// Whether a latest sample was returned.
     available: bool,

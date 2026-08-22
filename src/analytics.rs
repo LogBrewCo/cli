@@ -7,8 +7,8 @@
 
 use serde::Deserialize;
 
-use crate::analytics_contract::{COUNT_LIMIT, bounded_counts, ratio_matches};
-use crate::analytics_request::{self, Kind, insert_optional, valid_event_name};
+use crate::analytics_contract::{COUNT_LIMIT, NextAction, bounded_counts, ratio_matches};
+use crate::analytics_request::{self, Kind, scoped_body, valid_event_name};
 use crate::http::{nonempty_control_safe as bounded_contract_text, terminal_safe as display_text};
 use crate::{
     AnalyticsPathDirection, AnalyticsPathEventKind, AnalyticsPathOptions,
@@ -32,19 +32,14 @@ const TRACE_EXEMPLAR_LIMIT: usize = 3;
     reason = "the parent command model consumes this private-module helper"
 )]
 pub(super) fn request_body(options: &AnalyticsPathOptions) -> serde_json::Value {
-    let mut body = serde_json::Map::new();
-    drop(body.insert(
-        "project_id".to_owned(),
-        serde_json::Value::String(options.project_id.clone()),
-    ));
-    drop(body.insert(
-        "since".to_owned(),
-        serde_json::Value::String(options.since.clone()),
-    ));
-    insert_optional(&mut body, "until", options.until.as_deref());
-    insert_optional(&mut body, "service_name", options.service_name.as_deref());
-    insert_optional(&mut body, "release", options.release.as_deref());
-    insert_optional(&mut body, "environment", options.environment.as_deref());
+    let mut body = scoped_body(
+        &options.project_id,
+        &options.since,
+        options.until.as_deref(),
+        options.service_name.as_deref(),
+        options.release.as_deref(),
+        options.environment.as_deref(),
+    );
     drop(body.insert(
         "direction".to_owned(),
         serde_json::Value::String(options.direction.as_str().to_owned()),
@@ -109,7 +104,7 @@ pub(super) async fn execute<W: std::io::Write>(
 }
 
 /// Complete response with unknown fields rejected at every level.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PathsResponse {
     schema_version: u8,
@@ -122,7 +117,7 @@ struct PathsResponse {
 }
 
 /// Normalized effective query echoed by the backend.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PathQuery {
     project_id: String,
@@ -141,7 +136,7 @@ struct PathQuery {
 }
 
 /// Exact classified event anchoring each returned sequence.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PathAnchor {
     kind: AnalyticsPathEventKind,
@@ -157,7 +152,7 @@ struct PropertyFilter {
 }
 
 /// Headline aggregate coverage.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PathSummary {
     anchored_sessions: u64,
@@ -168,7 +163,7 @@ struct PathSummary {
 }
 
 /// Capture and query coverage qualifying the result.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PathCoverage {
     classified_events: u64,
@@ -190,7 +185,7 @@ struct PathCoverage {
 }
 
 /// Exact anchor-property classification coverage.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PathPropertyCoverage {
     context_events: u64,
@@ -203,7 +198,7 @@ struct PathPropertyCoverage {
 }
 
 /// One highest-volume exact aggregate sequence.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct AggregatePath {
     rank: u8,
@@ -216,21 +211,12 @@ struct AggregatePath {
 }
 
 /// One named event positioned relative to the anchor.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PathNode {
     relative_position: i8,
     kind: AnalyticsPathEventKind,
     event_name: String,
-}
-
-/// Stable server-selected follow-up.
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct NextAction {
-    code: String,
-    target: String,
-    reason: String,
 }
 
 /// Parses and proves the complete schema-version-1 response.
@@ -496,9 +482,6 @@ fn valid_nodes(options: &AnalyticsPathOptions, nodes: &[PathNode]) -> bool {
 
 /// Requires the stable action code and target implied by the response state.
 fn valid_next_action(response: &PathsResponse) -> bool {
-    if !bounded_contract_text(response.next_action.reason.as_str(), 512) {
-        return false;
-    }
     let has_property_filters = !response.query.property_filters.is_empty();
     let property = response.coverage.anchor_property_filters.as_ref();
     if has_property_filters != property.is_some() {
@@ -558,7 +541,7 @@ fn valid_next_action(response: &PathsResponse) -> bool {
     } else {
         ("compare_path_contexts", "/api/telemetry/analytics/paths")
     };
-    response.next_action.code == expected.0 && response.next_action.target == expected.1
+    response.next_action.matches(expected.0, expected.1, 512)
 }
 
 /// Renders the useful human interpretation without reflecting backend prose.

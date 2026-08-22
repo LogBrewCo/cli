@@ -7,8 +7,8 @@
 
 use serde::Deserialize;
 
-use crate::analytics_contract::{bounded_counts, ratio_matches};
-use crate::analytics_request::{self, Kind, insert_optional, valid_event_name};
+use crate::analytics_contract::{NextAction, bounded_counts, ratio_matches};
+use crate::analytics_request::{self, Kind, scoped_body, valid_event_name};
 use crate::http::{nonempty_control_safe as bounded_contract_text, terminal_safe as display_text};
 use crate::time::{
     ParsedTimestamp as UtcTimestamp, add_seconds, parse_utc_timestamp, subtract_seconds,
@@ -36,19 +36,14 @@ const NANOS_PER_SECOND: i128 = 1_000_000_000;
     reason = "the parent command model consumes this private-module helper"
 )]
 pub(super) fn request_body(options: &AnalyticsLifecycleOptions) -> serde_json::Value {
-    let mut body = serde_json::Map::new();
-    drop(body.insert(
-        "project_id".to_owned(),
-        serde_json::Value::String(options.project_id.clone()),
-    ));
-    drop(body.insert(
-        "since".to_owned(),
-        serde_json::Value::String(options.since.clone()),
-    ));
-    insert_optional(&mut body, "until", options.until.as_deref());
-    insert_optional(&mut body, "service_name", options.service_name.as_deref());
-    insert_optional(&mut body, "release", options.release.as_deref());
-    insert_optional(&mut body, "environment", options.environment.as_deref());
+    let mut body = scoped_body(
+        &options.project_id,
+        &options.since,
+        options.until.as_deref(),
+        options.service_name.as_deref(),
+        options.release.as_deref(),
+        options.environment.as_deref(),
+    );
     drop(body.insert(
         "event".to_owned(),
         serde_json::json!({
@@ -99,7 +94,7 @@ pub(super) async fn execute<W: std::io::Write>(
 }
 
 /// Complete response with unknown fields rejected at every level.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct LifecycleResponse {
     schema_version: u8,
@@ -112,7 +107,7 @@ struct LifecycleResponse {
 }
 
 /// Normalized effective query echoed by the backend.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct LifecycleQuery {
     project_id: String,
@@ -130,7 +125,7 @@ struct LifecycleQuery {
 }
 
 /// One exact classified event selector.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct LifecycleEvent {
     kind: AnalyticsLifecycleEventKind,
@@ -138,7 +133,7 @@ struct LifecycleEvent {
 }
 
 /// Aggregate identified-subject lifecycle outcome.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct LifecycleSummary {
     observed_subjects: u64,
@@ -152,7 +147,7 @@ struct LifecycleSummary {
 }
 
 /// Capture coverage qualifying the lifecycle result.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct LifecycleCoverage {
     analysis_classified_events: u64,
@@ -176,7 +171,7 @@ struct LifecycleCoverage {
 }
 
 /// One fixed lifecycle bucket.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct LifecycleBucket {
     period: u16,
@@ -194,15 +189,6 @@ struct LifecycleBucket {
     resurrected_share_of_active: Option<f64>,
     dormant_share_of_previous_active: Option<f64>,
     net_active_change: i64,
-}
-
-/// Stable server-selected follow-up.
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct NextAction {
-    code: String,
-    target: String,
-    reason: String,
 }
 
 /// Parses and proves the complete schema-version-1 response.
@@ -490,11 +476,8 @@ fn valid_bucket(response: &LifecycleResponse, index: usize, bucket: &LifecycleBu
 
 /// Requires the stable action code and target implied by validated response state.
 fn valid_next_action(response: &LifecycleResponse) -> bool {
-    if !bounded_contract_text(response.next_action.reason.as_str(), 768) {
-        return false;
-    }
     let expected = expected_next_action(response);
-    response.next_action.code == expected.0 && response.next_action.target == expected.1
+    response.next_action.matches(expected.0, expected.1, 768)
 }
 
 /// Derives the backend's stable next action from validated result state.

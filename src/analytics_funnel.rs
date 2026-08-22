@@ -7,8 +7,8 @@
 
 use serde::Deserialize;
 
-use crate::analytics_contract::{bounded_counts, ratio_matches};
-use crate::analytics_request::{self, Kind, insert_optional, valid_event_name};
+use crate::analytics_contract::{NextAction, bounded_counts, ratio_matches};
+use crate::analytics_request::{self, Kind, scoped_body, valid_event_name};
 use crate::http::{nonempty_control_safe as bounded_contract_text, terminal_safe as display_text};
 use crate::time::{parse_utc_timestamp, timestamp_nanos};
 use crate::{
@@ -37,19 +37,14 @@ const NANOS_PER_SECOND: i128 = 1_000_000_000;
     reason = "the parent command model consumes this private-module helper"
 )]
 pub(super) fn request_body(options: &AnalyticsFunnelOptions) -> serde_json::Value {
-    let mut body = serde_json::Map::new();
-    drop(body.insert(
-        "project_id".to_owned(),
-        serde_json::Value::String(options.project_id.clone()),
-    ));
-    drop(body.insert(
-        "since".to_owned(),
-        serde_json::Value::String(options.since.clone()),
-    ));
-    insert_optional(&mut body, "until", options.until.as_deref());
-    insert_optional(&mut body, "service_name", options.service_name.as_deref());
-    insert_optional(&mut body, "release", options.release.as_deref());
-    insert_optional(&mut body, "environment", options.environment.as_deref());
+    let mut body = scoped_body(
+        &options.project_id,
+        &options.since,
+        options.until.as_deref(),
+        options.service_name.as_deref(),
+        options.release.as_deref(),
+        options.environment.as_deref(),
+    );
     drop(body.insert(
         "analysis_unit".to_owned(),
         serde_json::Value::String(options.analysis_unit.as_str().to_owned()),
@@ -107,7 +102,7 @@ pub(super) async fn execute<W: std::io::Write>(
 }
 
 /// Complete response with unknown fields rejected at every level.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct FunnelResponse {
     schema_version: u8,
@@ -120,7 +115,7 @@ struct FunnelResponse {
 }
 
 /// Normalized effective query echoed by the backend.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct FunnelQuery {
     project_id: String,
@@ -134,7 +129,7 @@ struct FunnelQuery {
 }
 
 /// Aggregate conversion outcome for the selected identity boundary.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct FunnelSummary {
     candidate_units: u64,
@@ -145,7 +140,7 @@ struct FunnelSummary {
 }
 
 /// Capture coverage that qualifies one funnel result.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct FunnelCoverage {
     classified_events: u64,
@@ -161,7 +156,7 @@ struct FunnelCoverage {
 }
 
 /// One ordered funnel step and its derived conversion values.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct FunnelStep {
     position: u8,
@@ -172,15 +167,6 @@ struct FunnelStep {
     conversion_from_first: Option<f64>,
     drop_off_to_next_units: Option<u64>,
     drop_off_to_next_rate: Option<f64>,
-}
-
-/// Stable server-selected follow-up.
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct NextAction {
-    code: String,
-    target: String,
-    reason: String,
 }
 
 /// Parses and proves the complete schema-version-1 response.
@@ -364,14 +350,8 @@ fn valid_step(
 
 /// Verifies bounded next-action text and the exact state-derived code and target.
 fn valid_next_action(response: &FunnelResponse) -> bool {
-    if !bounded_contract_text(response.next_action.code.as_str(), 128)
-        || !bounded_contract_text(response.next_action.target.as_str(), 256)
-        || !bounded_contract_text(response.next_action.reason.as_str(), 768)
-    {
-        return false;
-    }
     let expected = expected_next_action(response);
-    response.next_action.code == expected.0 && response.next_action.target == expected.1
+    response.next_action.matches(expected.0, expected.1, 768)
 }
 
 /// Derives the backend's stable next action from validated result state.
