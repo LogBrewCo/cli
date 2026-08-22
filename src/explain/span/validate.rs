@@ -105,7 +105,7 @@ pub(super) fn validate_response(
     )?;
     validate_schema_version(response)?;
     let subject = validate_subject(required_object(response, "subject")?, expected)?;
-    context::validate(
+    let _captured = context::validate(
         response.get("context"),
         ExpectedContext::span(
             subject.service_name,

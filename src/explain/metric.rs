@@ -166,7 +166,7 @@ fn validate_metric_sample(
             return Err(invalid_response());
         }
     }
-    context::validate(
+    let _captured = context::validate(
         sample.get("context"),
         ExpectedContext::metric(service, environment, release, trace_id, span_id),
     )?;
