@@ -15,13 +15,16 @@ import sys
 import tempfile
 import unittest
 from contextlib import redirect_stderr
-from dataclasses import replace
+from dataclasses import astuple, replace
 from unittest import mock
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 SUBJECT = ROOT / "scripts" / "installed_release_attestation.py"
 WORKFLOW_HEAD = "1" * 40
+TAG_OBJECT_SHA = "b" * 40
+RELEASE_ID = 654321
+PUBLISHED_AT = "2026-08-22T20:33:21Z"
 sys.dont_write_bytecode = True
 
 
@@ -69,7 +72,7 @@ def release_run_fixture(policy) -> dict[str, object]:
         "head_branch": policy.tag,
         "head_sha": policy.source_commit,
         "run_attempt": 1,
-        "workflow_id": policy.release_workflow_id,
+        "workflow_id": 289984708,
     }
 
 
@@ -78,7 +81,7 @@ def tag_ref_fixture(policy) -> dict[str, object]:
         "ref": f"refs/tags/{policy.tag}",
         "object": {
             "type": "tag",
-            "sha": policy.tag_object_sha,
+            "sha": TAG_OBJECT_SHA,
         },
     }
 
@@ -93,157 +96,226 @@ def tag_object_fixture(policy) -> dict[str, object]:
     }
 
 
-def release_fixture(policy, receipt) -> dict[str, object]:
-    base = f"https://github.com/{policy.repository}/releases/download/{policy.tag}"
-    assets = [
-        {
-            "id": receipt.asset_id,
-            "name": receipt.asset_name,
-            "state": "uploaded",
-            "size": receipt.asset_size,
-            "digest": f"sha256:{receipt.digest}",
-            "browser_download_url": f"{base}/{receipt.asset_name}",
-        }
-    ]
-    if receipt.mode == "native":
-        assets.append(
-            {
-                "id": policy.checksum_asset_id,
-                "name": policy.checksum_asset_name,
-                "state": "uploaded",
-                "size": policy.checksum_asset_size,
-                "digest": f"sha256:{policy.checksum_asset_digest}",
-                "browser_download_url": f"{base}/{policy.checksum_asset_name}",
-            }
-        )
+def release_asset(tag, name, asset_id, size, digest) -> dict[str, object]:
+    base = f"https://github.com/LogBrewCo/cli/releases/download/{tag}"
     return {
-        "id": policy.release_id,
-        "tag_name": policy.tag,
-        "target_commitish": policy.source_commit,
-        "draft": False,
-        "prerelease": False,
-        "published_at": policy.published_at,
-        "assets": assets,
+        "id": asset_id,
+        "name": name,
+        "state": "uploaded",
+        "size": size,
+        "digest": f"sha256:{digest}",
+        "browser_download_url": f"{base}/{name}",
     }
 
 
-class InstalledReleaseAttestationTests(unittest.TestCase):
-    def test_public_policy_is_exact_current_release(self) -> None:
-        module = load_subject()
-        policy = module.PUBLIC_POLICY
-        self.assertEqual(
-            (
-                policy.repository,
+def release_fixture(policy, receipt) -> dict[str, object]:
+    assets = [
+        release_asset(
+            policy.tag,
+            receipt.asset_name,
+            receipt.asset_id,
+            receipt.asset_size,
+            receipt.digest,
+        )
+    ]
+    if receipt.mode == "native":
+        assets.append(
+            release_asset(
                 policy.tag,
-                policy.version,
-                policy.source_commit,
-                policy.tag_object_sha,
-                policy.release_run_id,
-                policy.release_workflow_id,
-                policy.release_id,
-                policy.published_at,
                 policy.checksum_asset_name,
                 policy.checksum_asset_id,
                 policy.checksum_asset_size,
                 policy.checksum_asset_digest,
-            ),
-            (
-                "LogBrewCo/cli",
-                "v0.1.51",
-                "0.1.51",
-                "16c3d4797332f4796d058e248ebc078a554c67da",
-                "05478bd96512d2cfa04d8ea9527a8a93207133e2",
-                32058535082,
-                289984708,
-                371894673,
-                "2026-08-17T19:12:14Z",
-                "sha256.sum",
-                518391646,
-                820,
-                "ad6753aa72fe9b96c866175265fb1b66400ffb9fa71242e165fc854f59917ff0",
-            ),
+            )
         )
-        expected_receipts = {
-            "shell-linux-x64": (
-                518391599,
-                54183,
-                "b6fc704c7c7ae046888d87fd42ffc043acbedaf9e541518eb476267f9a42e951",
-            ),
-            "native-linux-arm64": (
-                518391578,
-                2400244,
-                "be5fa1384f518f046eee683a67b402f12b6b792a5bd6e4ee2a855e8a61ac9511",
-            ),
-            "native-linux-x64": (
-                518391640,
-                2710444,
-                "ad9452ff333b990b1bf7eb03850e5ea56d33209dc04916b305e1882f2a20845c",
-            ),
-            "powershell-windows-x64": (
-                518391595,
-                22325,
-                "029d133748a411b008655294e06177e05a46505fba90a04b2cead4aea8647a25",
-            ),
-            "native-windows-x64": (
-                518391628,
-                3503012,
-                "92436b85eb4c22662b4587e9574f1c6bc51b189a2f87bbafcf0e87013bf8d57d",
-            ),
-            "native-macos-x64": (
-                518391616,
-                2661860,
-                "684ddd1fc5cbe3f0c0080b07918107e1417c021d4f36b08deed8eac81103830d",
-            ),
-        }
+    return {
+        "id": RELEASE_ID,
+        "tag_name": policy.tag,
+        "target_commitish": policy.source_commit,
+        "draft": False,
+        "prerelease": False,
+        "published_at": PUBLISHED_AT,
+        "assets": assets,
+    }
+
+
+def complete_release_fixture(policy) -> dict[str, object]:
+    release = release_fixture(policy, next(iter(policy.receipts.values())))
+    release["assets"] = [
+        release_asset(
+            policy.tag,
+            receipt.asset_name,
+            receipt.asset_id,
+            receipt.asset_size,
+            receipt.digest,
+        )
+        for receipt in policy.receipts.values()
+    ]
+    release["assets"].append(
+        release_asset(
+            policy.tag,
+            policy.checksum_asset_name,
+            policy.checksum_asset_id,
+            policy.checksum_asset_size,
+            policy.checksum_asset_digest,
+        )
+    )
+    return release
+
+
+def policy_urls(module, policy) -> dict[str, str]:
+    urls = module.metadata_urls(policy.tag, policy.release_run_id)
+    return {
+        "tag_ref": urls["tag_ref"],
+        "tag_object": (
+            "https://api.github.com/repos/LogBrewCo/cli/git/tags/"
+            f"{TAG_OBJECT_SHA}"
+        ),
+        "release_run": urls["release_run"],
+        "release": urls["release"],
+    }
+
+
+def metadata_fixture(module, policy, release=None):
+    urls = policy_urls(module, policy)
+    return urls, {
+        urls["tag_ref"]: tag_ref_fixture(policy),
+        urls["tag_object"]: tag_object_fixture(policy),
+        urls["release_run"]: release_run_fixture(policy),
+        urls["release"]: release or complete_release_fixture(policy),
+    }
+
+
+def verifier_output(artifact_id: str, digest: str) -> bytes:
+    return json.dumps(
+        {
+            "schema_version": 1,
+            "status": "passed",
+            "artifacts": [{"id": artifact_id, "digest": digest}],
+        },
+        separators=(",", ":"),
+    ).encode() + b"\n"
+
+
+def git_outputs(
+    source_commit: str,
+    verifier: bytes,
+    newline: bytes = b"\n",
+) -> list[bytes]:
+    blob = hashlib.sha1(
+        f"blob {len(verifier)}\0".encode() + verifier,
+        usedforsecurity=False,
+    ).hexdigest()
+    tree = f"100644 blob {blob}\tscripts/real_user_public_install_smoke.py".encode()
+    return [
+        source_commit.encode() + newline,
+        tree + newline,
+        str(len(verifier)).encode() + newline,
+        verifier,
+    ]
+
+
+def fixture_policy(module):
+    receipts = {
+        name: module.ReceiptPolicy(
+            spec.runner,
+            spec.platform,
+            spec.mode,
+            spec.artifact_id,
+            spec.asset_name,
+            100 + index,
+            128 + index,
+            f"{index + 1:x}" * 64,
+        )
+        for index, (name, spec) in enumerate(module.RECEIPTS.items())
+    }
+    return module.ReleasePolicy(
+        "v1.2.3",
+        "1.2.3",
+        "a" * 40,
+        123456,
+        "sha256.sum",
+        99,
+        96,
+        "f" * 64,
+        receipts,
+    )
+
+
+class InstalledReleaseAttestationTests(unittest.TestCase):
+    def test_receipt_specs_are_complete_and_platform_exact(self) -> None:
+        module = load_subject()
         self.assertEqual(
             {
-                name: (receipt.asset_id, receipt.asset_size, receipt.digest)
-                for name, receipt in policy.receipts.items()
+                "|".join((name, *astuple(spec)))
+                for name, spec in module.RECEIPTS.items()
             },
-            expected_receipts,
+            {
+                "shell-linux-x64|ubuntu-24.04|linux-x64|shell|installer:shell|logbrew-cli-installer.sh",
+                "native-linux-arm64|ubuntu-24.04-arm|linux-arm64|native|native:linux-arm64|logbrew-cli-aarch64-unknown-linux-gnu.tar.xz",
+                "native-linux-x64|ubuntu-24.04|linux-x64|native|native:linux-x64|logbrew-cli-x86_64-unknown-linux-gnu.tar.xz",
+                "powershell-windows-x64|windows-2025|windows-x64|powershell|installer:powershell|logbrew-cli-installer.ps1",
+                "native-windows-x64|windows-2025|windows-x64|native|native:windows-x64|logbrew-cli-x86_64-pc-windows-msvc.zip",
+                "native-macos-x64|macos-15-intel|macos-x64|native|native:macos-x64|logbrew-cli-x86_64-apple-darwin.tar.xz",
+            },
         )
 
-    def test_release_inputs_reject_replay_and_substitution(self) -> None:
+    def test_release_identity_rejects_noncanonical_inputs(self) -> None:
         module = load_subject()
-        policy = module.PUBLIC_POLICY
-        module.validate_release_inputs(
-            policy,
-            policy.tag,
-            policy.version,
-            policy.source_commit,
-            str(policy.release_run_id),
+        policy = fixture_policy(module)
+        self.assertEqual(
+            module.release_identity(
+                policy.tag,
+                policy.source_commit,
+                str(policy.release_run_id),
+            ),
+            (policy.version, policy.release_run_id),
         )
 
         changes = [
-            ("v0.1.19", policy.version, policy.source_commit, str(policy.release_run_id)),
-            (policy.tag, "0.1.19", policy.source_commit, str(policy.release_run_id)),
-            (policy.tag, policy.version, "2" * 40, str(policy.release_run_id)),
-            (
-                policy.tag,
-                policy.version,
-                policy.source_commit,
-                str(policy.release_run_id + 1),
-            ),
+            ("v01.2.3", policy.source_commit, str(policy.release_run_id)),
+            ("1.2.3", policy.source_commit, str(policy.release_run_id)),
+            (policy.tag, "A" * 40, str(policy.release_run_id)),
+            (policy.tag, policy.source_commit, "0"),
+            (policy.tag, policy.source_commit, "1" * 21),
         ]
         for changed in changes:
             with self.subTest(changed=changed):
                 with self.assertRaises(module.AttestationError):
-                    module.validate_release_inputs(policy, *changed)
+                    module.release_identity(*changed)
 
     def test_tag_and_run_require_exact_source_and_release_workflow(self) -> None:
         module = load_subject()
-        policy = module.PUBLIC_POLICY
-        module.validate_tag(policy, tag_ref_fixture(policy), tag_object_fixture(policy))
-        module.validate_release_run(policy, release_run_fixture(policy))
+        policy = fixture_policy(module)
+        self.assertEqual(
+            module.validated_tag_object_sha(
+                policy.tag,
+                policy.source_commit,
+                tag_ref_fixture(policy),
+                tag_object_fixture(policy),
+            ),
+            TAG_OBJECT_SHA,
+        )
+        module.validate_release_run_identity(
+            policy.tag,
+            policy.source_commit,
+            policy.release_run_id,
+            release_run_fixture(policy),
+        )
 
         bad_tag = tag_object_fixture(policy)
         bad_tag["object"]["sha"] = "3" * 40
         with self.assertRaises(module.AttestationError):
-            module.validate_tag(policy, tag_ref_fixture(policy), bad_tag)
+            module.validated_tag_object_sha(
+                policy.tag,
+                policy.source_commit,
+                tag_ref_fixture(policy),
+                bad_tag,
+            )
 
         for field, value in [
             ("path", ".github/workflows/release-copy.yml"),
-            ("workflow_id", policy.release_workflow_id + 1),
+            ("workflow_id", module.RELEASE_WORKFLOW_ID + 1),
             ("head_sha", "4" * 40),
             ("run_attempt", 2),
             ("conclusion", "failure"),
@@ -252,31 +324,54 @@ class InstalledReleaseAttestationTests(unittest.TestCase):
             run[field] = value
             with self.subTest(field=field):
                 with self.assertRaises(module.AttestationError):
-                    module.validate_release_run(policy, run)
+                    module.validate_release_run_identity(
+                        policy.tag,
+                        policy.source_commit,
+                        policy.release_run_id,
+                        run,
+                    )
+
+    def test_release_policy_is_discovered_from_exact_public_metadata(self) -> None:
+        module = load_subject()
+        policy = fixture_policy(module)
+        urls, responses = metadata_fixture(module, policy)
+        release = responses[urls["release"]]
+        requests = []
+
+        def read_json(url):
+            requests.append(url)
+            return responses[url]
+
+        discovered, discovered_release = module.discover_release_policy(
+            policy.tag,
+            policy.source_commit,
+            str(policy.release_run_id),
+            read_json,
+        )
+        self.assertEqual(discovered, policy)
+        self.assertIs(discovered_release, release)
+        self.assertEqual(requests, list(urls.values()))
 
     def test_release_assets_bind_exact_public_digest_and_checksum(self) -> None:
         module = load_subject()
-        policy = module.PUBLIC_POLICY
+        policy = fixture_policy(module)
         receipt = policy.receipts["native-linux-x64"]
-        release = release_fixture(policy, receipt)
-        artifact, checksum = module.select_release_assets(policy, receipt, release)
-        self.assertEqual(artifact["name"], receipt.asset_name)
-        self.assertEqual(checksum["name"], policy.checksum_asset_name)
-
-        substituted = copy.deepcopy(release)
-        substituted["assets"][0]["digest"] = "sha256:" + "0" * 64
-        with self.assertRaises(module.AttestationError):
-            module.select_release_assets(policy, receipt, substituted)
-
-        missing = copy.deepcopy(release)
-        missing["assets"] = missing["assets"][1:]
-        with self.assertRaises(module.AttestationError):
-            module.select_release_assets(policy, receipt, missing)
-
-        duplicated = copy.deepcopy(release)
-        duplicated["assets"].append(copy.deepcopy(duplicated["assets"][0]))
-        with self.assertRaises(module.AttestationError):
-            module.select_release_assets(policy, receipt, duplicated)
+        urls = policy_urls(module, policy)
+        releases = [complete_release_fixture(policy) for _ in range(4)]
+        releases[0]["assets"][0]["digest"] = "sha256:" + "0" * 63
+        releases[1]["assets"] = releases[1]["assets"][1:]
+        releases[2]["assets"].append(copy.deepcopy(releases[2]["assets"][0]))
+        releases[3]["target_commitish"] = "0" * 40
+        for index, release in enumerate(releases):
+            _, responses = metadata_fixture(module, policy, release)
+            with self.subTest(index=index):
+                with self.assertRaises(module.AttestationError):
+                    module.discover_release_policy(
+                        policy.tag,
+                        policy.source_commit,
+                        str(policy.release_run_id),
+                        responses.__getitem__,
+                    )
 
         payload = b"exact released bytes"
         digest = hashlib.sha256(payload).hexdigest()
@@ -285,17 +380,13 @@ class InstalledReleaseAttestationTests(unittest.TestCase):
             asset_size=len(payload),
             digest=digest,
         )
-        local_asset = {
-            "id": local_receipt.asset_id,
-            "name": local_receipt.asset_name,
-            "state": "uploaded",
-            "size": len(payload),
-            "digest": f"sha256:{digest}",
-            "browser_download_url": (
-                "https://github.com/LogBrewCo/cli/releases/download/"
-                f"{policy.tag}/{local_receipt.asset_name}"
-            ),
-        }
+        local_asset = release_asset(
+            policy.tag,
+            local_receipt.asset_name,
+            local_receipt.asset_id,
+            len(payload),
+            digest,
+        )
         checksum_bytes = f"{digest} *{local_receipt.asset_name}\n".encode()
         self.assertEqual(
             module.validate_artifact_bytes(
@@ -340,7 +431,7 @@ class InstalledReleaseAttestationTests(unittest.TestCase):
 
     def test_workflow_context_rejects_lookalikes_and_platform_substitution(self) -> None:
         module = load_subject()
-        receipt = module.PUBLIC_POLICY.receipts["native-linux-x64"]
+        receipt = fixture_policy(module).receipts["native-linux-x64"]
         module.validate_matrix_inputs(
             receipt,
             receipt.mode,
@@ -410,38 +501,31 @@ class InstalledReleaseAttestationTests(unittest.TestCase):
 
     def test_verifier_output_requires_one_canonical_platform_newline(self) -> None:
         module = load_subject()
-        receipt = module.PUBLIC_POLICY.receipts["native-linux-x64"]
+        receipt = fixture_policy(module).receipts["native-linux-x64"]
         digest = f"sha256:{receipt.digest}"
-        verifier_output = json.dumps(
-            {
-                "schema_version": 1,
-                "status": "passed",
-                "artifacts": [{"id": receipt.artifact_id, "digest": digest}],
-            },
-            separators=(",", ":"),
-        ).encode()
+        output = verifier_output(receipt.artifact_id, digest).removesuffix(b"\n")
         for terminator in (b"\n", b"\r\n"):
             module.validate_verifier_output(
-                verifier_output + terminator,
+                output + terminator,
                 b"",
                 receipt.artifact_id,
                 digest,
             )
 
         rejected = [
-            (verifier_output, b""),
-            (verifier_output + b"\nextra\n", b""),
-            (verifier_output + b"\n\n", b""),
-            (verifier_output + b"\r\n\r\n", b""),
-            (verifier_output.replace(b",", b",\n", 1) + b"\n", b""),
-            (verifier_output + b"\r", b""),
-            (verifier_output + b"\x00\n", b""),
-            (verifier_output + b"\n", b"hostile backend text"),
+            (output, b""),
+            (output + b"\nextra\n", b""),
+            (output + b"\n\n", b""),
+            (output + b"\r\n\r\n", b""),
+            (output.replace(b",", b",\n", 1) + b"\n", b""),
+            (output + b"\r", b""),
+            (output + b"\x00\n", b""),
+            (output + b"\n", b"hostile backend text"),
             (
-                verifier_output.replace(b'"passed"', b'"failed"') + b"\n",
+                output.replace(b'"passed"', b'"failed"') + b"\n",
                 b"",
             ),
-            (verifier_output[:-1] + b',"extra":true}\n', b""),
+            (output[:-1] + b',"extra":true}\n', b""),
         ]
         for stdout, stderr in rejected:
             with self.assertRaises(module.AttestationError):
@@ -454,11 +538,17 @@ class InstalledReleaseAttestationTests(unittest.TestCase):
 
     def test_attestation_schema_rejects_extra_output(self) -> None:
         module = load_subject()
-        receipt = module.PUBLIC_POLICY.receipts["native-linux-x64"]
+        policy = fixture_policy(module)
+        receipt = policy.receipts["native-linux-x64"]
         digest = f"sha256:{receipt.digest}"
 
-        attestation = module.build_attestation(receipt, WORKFLOW_HEAD, digest)
-        module.validate_attestation(attestation)
+        attestation = module.build_attestation(
+            receipt,
+            WORKFLOW_HEAD,
+            digest,
+            policy,
+        )
+        module.validate_attestation(attestation, policy)
         self.assertEqual(
             set(attestation),
             {
@@ -476,12 +566,12 @@ class InstalledReleaseAttestationTests(unittest.TestCase):
             dict(attestation, backend="hidden"),
             {name: value for name, value in attestation.items() if name != "digest"},
             dict(attestation, status="unknown"),
-            dict(attestation, release_run=str(module.PUBLIC_POLICY.release_run_id)),
+            dict(attestation, release_run=str(fixture_policy(module).release_run_id)),
         ]
         for malformed in malformed_attestations:
             with self.subTest(malformed=malformed):
                 with self.assertRaises(module.AttestationError):
-                    module.validate_attestation(malformed)
+                    module.validate_attestation(malformed, policy)
 
     def test_github_api_headers_require_one_bounded_job_token(self) -> None:
         module = load_subject()
@@ -551,8 +641,9 @@ class InstalledReleaseAttestationTests(unittest.TestCase):
 
     def test_powershell_verifier_alone_disables_persistent_path_mutation(self) -> None:
         module = load_subject()
-        powershell = module.PUBLIC_POLICY.receipts["powershell-windows-x64"]
-        native = module.PUBLIC_POLICY.receipts["native-windows-x64"]
+        policy = fixture_policy(module)
+        powershell = policy.receipts["powershell-windows-x64"]
+        native = policy.receipts["native-windows-x64"]
         artifact = pathlib.Path("/tmp/fixed-release-artifact")
 
         with mock.patch.dict(
@@ -577,19 +668,10 @@ class InstalledReleaseAttestationTests(unittest.TestCase):
         )
         self.assertNotIn("INSTALLER_NO_MODIFY_PATH", native_environment)
 
-        verifier_output = json.dumps(
-            {
-                "schema_version": 1,
-                "status": "passed",
-                "artifacts": [
-                    {
-                        "id": powershell.artifact_id,
-                        "digest": f"sha256:{powershell.digest}",
-                    }
-                ],
-            },
-            separators=(",", ":"),
-        ).encode() + b"\n"
+        output = verifier_output(
+            powershell.artifact_id,
+            f"sha256:{powershell.digest}",
+        )
 
         def completed(command, **kwargs):
             self.assertEqual(
@@ -598,17 +680,17 @@ class InstalledReleaseAttestationTests(unittest.TestCase):
                     sys.executable,
                     "/fixed/verifier.py",
                     "powershell",
-                    module.PUBLIC_POLICY.version,
+                    policy.version,
                 ],
             )
             self.assertEqual(kwargs["env"].get("INSTALLER_NO_MODIFY_PATH"), "1")
-            return subprocess.CompletedProcess(command, 0, verifier_output, b"")
+            return subprocess.CompletedProcess(command, 0, output, b"")
 
         with mock.patch.object(subprocess, "run", side_effect=completed):
             stdout, stderr = module.execute_verifier(
                 pathlib.Path("/fixed/verifier.py"),
                 powershell,
-                module.PUBLIC_POLICY.version,
+                policy.version,
                 artifact,
             )
         module.validate_verifier_output(
@@ -620,32 +702,36 @@ class InstalledReleaseAttestationTests(unittest.TestCase):
 
     def test_attestation_output_rejects_symlink_and_overwrite(self) -> None:
         module = load_subject()
-        receipt = module.PUBLIC_POLICY.receipts["native-linux-x64"]
+        policy = fixture_policy(module)
+        receipt = policy.receipts["native-linux-x64"]
         attestation = module.build_attestation(
             receipt,
             WORKFLOW_HEAD,
             f"sha256:{receipt.digest}",
+            policy,
         )
         with tempfile.TemporaryDirectory() as raw_directory:
             directory = pathlib.Path(raw_directory)
             output = directory / "attestation.json"
-            module.write_attestation(output, attestation)
+            module.write_attestation(output, attestation, policy)
             self.assertEqual(
                 json.loads(output.read_text(encoding="utf-8")),
                 attestation,
             )
             with self.assertRaises(module.AttestationError):
-                module.write_attestation(output, attestation)
+                module.write_attestation(output, attestation, policy)
 
             external = directory / "external"
             external.write_text("preserve", encoding="utf-8")
             linked = directory / "linked.json"
             linked.symlink_to(external)
             with self.assertRaises(module.AttestationError):
-                module.write_attestation(linked, attestation)
+                module.write_attestation(linked, attestation, policy)
             self.assertEqual(external.read_text(encoding="utf-8"), "preserve")
 
-    def test_released_verifier_must_match_the_exact_commit_blob(self) -> None:
+    def test_released_source_binds_the_commit_and_rejects_hostile_git_output(
+        self,
+    ) -> None:
         module = load_subject()
         with tempfile.TemporaryDirectory() as raw_directory:
             repository = pathlib.Path(raw_directory) / "released-source"
@@ -653,139 +739,57 @@ class InstalledReleaseAttestationTests(unittest.TestCase):
             verifier.parent.mkdir(parents=True)
             committed_verifier = b"print('exact fixture')\n"
             verifier.write_bytes(committed_verifier)
-            commands = [
+            for command in [
                 ["git", "init", "--quiet"],
                 ["git", "add", str(module.VERIFIER_PATH)],
                 [
                     "git",
-                    "-c",
-                    "user.name=Fixture",
-                    "-c",
-                    "user.email=fixture@example.invalid",
-                    "commit",
-                    "--quiet",
-                    "-m",
+                    "-c", "user.name=Fixture",
+                    "-c", "user.email=fixture@example.invalid",
+                    "commit", "--quiet", "-m",
                     "fixture",
                 ],
-            ]
-            for command in commands:
-                result = subprocess.run(
-                    command,
-                    cwd=repository,
-                    check=False,
-                    capture_output=True,
-                )
-                self.assertEqual(result.returncode, 0, result.stderr.decode())
-            head = subprocess.run(
+            ]:
+                subprocess.run(command, cwd=repository, check=True, capture_output=True)
+            head = subprocess.check_output(
                 ["git", "rev-parse", "HEAD"],
                 cwd=repository,
-                check=True,
-                capture_output=True,
                 text=True,
-            ).stdout.strip()
-            self.assertEqual(
-                module.validate_released_source(repository, head),
+            ).strip()
+            for working_copy in (
                 committed_verifier,
-            )
+                committed_verifier.replace(b"\n", b"\r\n"),
+                b"print('substituted')\r\n",
+            ):
+                verifier.write_bytes(working_copy)
+                self.assertEqual(
+                    module.validate_released_source(repository, head),
+                    committed_verifier,
+                )
 
-            verifier.write_bytes(committed_verifier.replace(b"\n", b"\r\n"))
-            self.assertEqual(
-                module.validate_released_source(repository, head),
-                committed_verifier,
-            )
-
-            verifier.write_bytes(b"print('substituted')\r\n")
-            self.assertEqual(
-                module.validate_released_source(repository, head),
-                committed_verifier,
-            )
-
-    def test_released_source_accepts_one_windows_crlf_git_line(self) -> None:
-        module = load_subject()
         source_commit = "1" * 40
         verifier_content = b"# exact fixture\n"
-        verifier_blob = hashlib.sha1(
-            f"blob {len(verifier_content)}\0".encode() + verifier_content,
-            usedforsecurity=False,
-        ).hexdigest()
+        exact = git_outputs(source_commit, verifier_content)
+        variants = [
+            [exact[0].replace(b"\n", b"\nextra\n")],
+            [exact[0], exact[1] + b"100644 blob " + b"3" * 40 + b"\tlookalike\n"],
+            [exact[0], exact[1].replace(b".py\n", b".py.bak\n")],
+            [exact[0], exact[1], exact[2].replace(b"\n", b"\nextra\n")],
+            [exact[0], exact[1], b"9" * 64 + b"\n"],
+            [*exact[:3], b"# substituted fixture\n"],
+        ]
         with tempfile.TemporaryDirectory() as raw_directory:
             repository = pathlib.Path(raw_directory) / "released-source"
-            verifier = repository / "scripts" / "real_user_public_install_smoke.py"
-            verifier.parent.mkdir(parents=True)
-            verifier.write_bytes(verifier_content.replace(b"\n", b"\r\n"))
-            results = [
-                subprocess.CompletedProcess(
-                    [], 0, f"{source_commit}\r\n".encode(), b""
-                ),
-                subprocess.CompletedProcess(
-                    [],
-                    0,
-                    (
-                        f"100644 blob {verifier_blob}\t"
-                        "scripts/real_user_public_install_smoke.py\r\n"
-                    ).encode(),
-                    b"",
-                ),
-                subprocess.CompletedProcess(
-                    [], 0, f"{len(verifier_content)}\r\n".encode(), b""
-                ),
-                subprocess.CompletedProcess([], 0, verifier_content, b""),
+            repository.mkdir()
+            crlf_results = [
+                subprocess.CompletedProcess([], 0, output, b"")
+                for output in git_outputs(source_commit, verifier_content, b"\r\n")
             ]
-            with mock.patch.object(module.subprocess, "run", side_effect=results):
+            with mock.patch.object(module.subprocess, "run", side_effect=crlf_results):
                 self.assertEqual(
                     module.validate_released_source(repository, source_commit),
                     verifier_content,
                 )
-
-    def test_released_source_rejects_extra_and_lookalike_git_lines(self) -> None:
-        module = load_subject()
-        source_commit = "1" * 40
-        verifier_content = b"# exact fixture\n"
-        verifier_blob = hashlib.sha1(
-            f"blob {len(verifier_content)}\0".encode() + verifier_content,
-            usedforsecurity=False,
-        ).hexdigest()
-        exact_tree = (
-            f"100644 blob {verifier_blob}\t"
-            "scripts/real_user_public_install_smoke.py\n"
-        ).encode()
-        variants = [
-            [
-                f"{source_commit}\nextra\n".encode(),
-            ],
-            [
-                f"{source_commit}\n".encode(),
-                exact_tree + b"100644 blob " + b"3" * 40 + b"\tlookalike\n",
-            ],
-            [
-                f"{source_commit}\n".encode(),
-                exact_tree.replace(
-                    b"real_user_public_install_smoke.py\n",
-                    b"real_user_public_install_smoke.py.bak\n",
-                ),
-            ],
-            [
-                f"{source_commit}\n".encode(),
-                exact_tree,
-                f"{len(verifier_content)}\nextra\n".encode(),
-            ],
-            [
-                f"{source_commit}\n".encode(),
-                exact_tree,
-                b"9" * 64 + b"\n",
-            ],
-            [
-                f"{source_commit}\n".encode(),
-                exact_tree,
-                f"{len(verifier_content)}\n".encode(),
-                b"# substituted fixture\n",
-            ],
-        ]
-        with tempfile.TemporaryDirectory() as raw_directory:
-            repository = pathlib.Path(raw_directory) / "released-source"
-            verifier = repository / "scripts" / "real_user_public_install_smoke.py"
-            verifier.parent.mkdir(parents=True)
-            verifier.write_bytes(verifier_content)
             for outputs in variants:
                 results = [
                     subprocess.CompletedProcess([], 0, output, b"")
@@ -793,11 +797,7 @@ class InstalledReleaseAttestationTests(unittest.TestCase):
                 ]
                 with self.subTest(outputs=outputs):
                     with (
-                        mock.patch.object(
-                            module.subprocess,
-                            "run",
-                            side_effect=results,
-                        ),
+                        mock.patch.object(module.subprocess, "run", side_effect=results),
                         self.assertRaises(module.AttestationError),
                     ):
                         module.validate_released_source(repository, source_commit)
@@ -806,29 +806,22 @@ class InstalledReleaseAttestationTests(unittest.TestCase):
         module = load_subject()
         payload = b"bounded native artifact"
         digest = hashlib.sha256(payload).hexdigest()
-        checksum = f"{digest} *fixture.tar.xz\n".encode()
-        checksum_digest = hashlib.sha256(checksum).hexdigest()
-        base_receipt = module.PUBLIC_POLICY.receipts["native-linux-x64"]
+        base_policy = fixture_policy(module)
+        base_receipt = base_policy.receipts["native-linux-x64"]
+        checksum = f"{digest} *{base_receipt.asset_name}\n".encode()
         receipt = replace(
             base_receipt,
-            asset_name="fixture.tar.xz",
             asset_size=len(payload),
             digest=digest,
         )
         receipt_name = "native-linux-x64"
         policy = replace(
-            module.PUBLIC_POLICY,
+            base_policy,
             checksum_asset_size=len(checksum),
-            checksum_asset_digest=checksum_digest,
-            receipts={receipt_name: receipt},
+            checksum_asset_digest=hashlib.sha256(checksum).hexdigest(),
+            receipts=base_policy.receipts | {receipt_name: receipt},
         )
-        urls = module.api_urls(policy)
-        responses = {
-            urls["tag_ref"]: tag_ref_fixture(policy),
-            urls["tag_object"]: tag_object_fixture(policy),
-            urls["release_run"]: release_run_fixture(policy),
-            urls["release"]: release_fixture(policy, receipt),
-        }
+        urls, responses = metadata_fixture(module, policy)
         metadata_requests: list[str] = []
         asset_requests: list[tuple[str, int]] = []
 
@@ -837,8 +830,16 @@ class InstalledReleaseAttestationTests(unittest.TestCase):
             return responses[url]
 
         release = responses[urls["release"]]
-        artifact_url = release["assets"][0]["browser_download_url"]
-        checksum_url = release["assets"][1]["browser_download_url"]
+        artifact_url = next(
+            item["browser_download_url"]
+            for item in release["assets"]
+            if item["name"] == receipt.asset_name
+        )
+        checksum_url = next(
+            item["browser_download_url"]
+            for item in release["assets"]
+            if item["name"] == policy.checksum_asset_name
+        )
 
         def read_asset(url: str, maximum: int) -> bytes:
             asset_requests.append((url, maximum))
@@ -848,16 +849,10 @@ class InstalledReleaseAttestationTests(unittest.TestCase):
                 return checksum
             raise AssertionError("unexpected asset request")
 
-        verifier_receipt = json.dumps(
-            {
-                "schema_version": 1,
-                "status": "passed",
-                "artifacts": [
-                    {"id": receipt.artifact_id, "digest": f"sha256:{digest}"}
-                ],
-            },
-            separators=(",", ":"),
-        ).encode() + b"\n"
+        verifier_receipt = verifier_output(
+            receipt.artifact_id,
+            f"sha256:{digest}",
+        )
         with tempfile.TemporaryDirectory() as raw_directory:
             directory = pathlib.Path(raw_directory)
             released_source = directory / "released-source"
@@ -900,7 +895,6 @@ class InstalledReleaseAttestationTests(unittest.TestCase):
                 module.run_attestation(
                     receipt_name=receipt_name,
                     tag=policy.tag,
-                    version=policy.version,
                     source_commit=policy.source_commit,
                     release_run=str(policy.release_run_id),
                     mode=receipt.mode,
@@ -910,7 +904,6 @@ class InstalledReleaseAttestationTests(unittest.TestCase):
                     released_source=released_source,
                     output=output,
                     environment=workflow_environment(),
-                    policy=policy,
                     json_reader=read_json,
                     asset_reader=read_asset,
                 )

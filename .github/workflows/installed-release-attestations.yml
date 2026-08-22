@@ -1,14 +1,13 @@
 name: Installed release attestations
 
 on:
+  workflow_run:
+    workflows: [Release]
+    types: [completed]
   workflow_dispatch:
     inputs:
       tag:
         description: Immutable release tag
-        required: true
-        type: string
-      version:
-        description: Exact released version
         required: true
         type: string
       source_commit:
@@ -25,6 +24,11 @@ permissions:
 
 jobs:
   attest:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      startsWith(github.event.workflow_run.head_branch, 'v'))
     name: ${{ matrix.receipt }}
     strategy:
       fail-fast: false
@@ -83,7 +87,7 @@ jobs:
       - name: Checkout released source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: ${{ inputs.source_commit }}
+          ref: ${{ inputs.source_commit || github.event.workflow_run.head_sha }}
           path: released-source
           persist-credentials: false
 
@@ -93,10 +97,9 @@ jobs:
           ATTESTATION_PYTHON: ${{ matrix.python }}
           GITHUB_TOKEN: ${{ github.token }}
           ATTESTATION_RECEIPT: ${{ matrix.receipt }}
-          ATTESTATION_TAG: ${{ inputs.tag }}
-          ATTESTATION_VERSION: ${{ inputs.version }}
-          ATTESTATION_SOURCE_COMMIT: ${{ inputs.source_commit }}
-          ATTESTATION_RELEASE_RUN: ${{ inputs.release_run }}
+          ATTESTATION_TAG: ${{ inputs.tag || github.event.workflow_run.head_branch }}
+          ATTESTATION_SOURCE_COMMIT: ${{ inputs.source_commit || github.event.workflow_run.head_sha }}
+          ATTESTATION_RELEASE_RUN: ${{ inputs.release_run || github.event.workflow_run.id }}
           ATTESTATION_MODE: ${{ matrix.mode }}
           ATTESTATION_ARTIFACT_ID: ${{ matrix.artifact_id }}
           ATTESTATION_ASSET: ${{ matrix.asset }}
@@ -107,7 +110,6 @@ jobs:
           "$ATTESTATION_PYTHON" scripts/installed_release_attestation.py
           --receipt "$ATTESTATION_RECEIPT"
           --tag "$ATTESTATION_TAG"
-          --version "$ATTESTATION_VERSION"
           --source-commit "$ATTESTATION_SOURCE_COMMIT"
           --release-run "$ATTESTATION_RELEASE_RUN"
           --mode "$ATTESTATION_MODE"

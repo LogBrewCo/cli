@@ -29,9 +29,14 @@ class InstalledReleaseAttestationWorkflowTests(unittest.TestCase):
         run_lines = step.split("        run: >-\n", 1)[1].splitlines()
         return " ".join(line.strip() for line in run_lines if line.strip())
 
-    def test_workflow_is_manual_read_only_with_one_scoped_job_token(self) -> None:
+    def test_workflow_is_unattended_with_read_only_recovery(self) -> None:
         workflow = self.workflow()
+        self.assertIn("workflow_run:", workflow)
+        self.assertIn("workflows: [Release]", workflow)
+        self.assertIn("types: [completed]", workflow)
         self.assertIn("workflow_dispatch:", workflow)
+        self.assertIn("github.event.workflow_run.conclusion == 'success'", workflow)
+        self.assertIn("startsWith(github.event.workflow_run.head_branch, 'v')", workflow)
         self.assertNotIn("pull_request_target", workflow)
         self.assertRegex(workflow, r"(?m)^permissions:\n  contents: read$")
         for forbidden in [
@@ -50,11 +55,12 @@ class InstalledReleaseAttestationWorkflowTests(unittest.TestCase):
 
     def test_dispatch_inputs_are_required_without_stale_defaults(self) -> None:
         inputs = self.workflow().split("permissions:", 1)[0]
-        for name in ["tag", "version", "source_commit", "release_run"]:
+        for name in ["tag", "source_commit", "release_run"]:
             with self.subTest(name=name):
                 self.assertRegex(
                     inputs,
-                    rf"(?m)^      {name}:\n        description: [^\n]+\n        required: true\n        type: string$",
+                    rf"(?m)^      {name}:\n        description: [^\n]+\n"
+                    r"        required: true\n        type: string$",
                 )
         self.assertNotIn("        default:", inputs)
 
@@ -137,7 +143,10 @@ class InstalledReleaseAttestationWorkflowTests(unittest.TestCase):
             workflow.count("actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"),
             2,
         )
-        self.assertIn("ref: ${{ inputs.source_commit }}", workflow)
+        self.assertIn(
+            "ref: ${{ inputs.source_commit || github.event.workflow_run.head_sha }}",
+            workflow,
+        )
         self.assertIn("path: released-source", workflow)
         self.assertEqual(workflow.count("persist-credentials: false"), 2)
         self.assertIn(
@@ -158,17 +167,20 @@ class InstalledReleaseAttestationWorkflowTests(unittest.TestCase):
         self.assertIn("        shell: bash", workflow)
         self.assertNotIn("GITHUB_TOKEN", command)
         for option, variable, expression in [
-            ("--tag", "ATTESTATION_TAG", "${{ inputs.tag }}"),
-            ("--version", "ATTESTATION_VERSION", "${{ inputs.version }}"),
+            (
+                "--tag",
+                "ATTESTATION_TAG",
+                "${{ inputs.tag || github.event.workflow_run.head_branch }}",
+            ),
             (
                 "--source-commit",
                 "ATTESTATION_SOURCE_COMMIT",
-                "${{ inputs.source_commit }}",
+                "${{ inputs.source_commit || github.event.workflow_run.head_sha }}",
             ),
             (
                 "--release-run",
                 "ATTESTATION_RELEASE_RUN",
-                "${{ inputs.release_run }}",
+                "${{ inputs.release_run || github.event.workflow_run.id }}",
             ),
         ]:
             with self.subTest(option=option):
@@ -212,17 +224,15 @@ class InstalledReleaseAttestationWorkflowTests(unittest.TestCase):
 
             hostile = {
                 "tag": 'v0.1.33\'\";|&<>',
-                "version": f'0.1.33;$(touch "{marker_one}")',
-                "source_commit": f'${{{{ github.token }}}}`touch "{marker_two}"`',
+                "source_commit": (
+                    f'${{{{ github.token }}}}$(touch "{marker_one}")'
+                    f'`touch "{marker_two}"`'
+                ),
                 "release_run": "31109523405\r\n$(exit 91)",
             }
             replacements = {
                 "${{ matrix.python }}": sys.executable,
                 "${{ matrix.receipt }}": "shell-linux-x64",
-                "${{ inputs.tag }}": hostile["tag"],
-                "${{ inputs.version }}": hostile["version"],
-                "${{ inputs.source_commit }}": hostile["source_commit"],
-                "${{ inputs.release_run }}": hostile["release_run"],
                 "${{ matrix.mode }}": "shell",
                 "${{ matrix.artifact_id }}": "installer:shell",
                 "${{ matrix.asset }}": "logbrew-cli-installer.sh",
@@ -241,7 +251,6 @@ class InstalledReleaseAttestationWorkflowTests(unittest.TestCase):
                     "ATTESTATION_PYTHON": sys.executable,
                     "ATTESTATION_RECEIPT": "shell-linux-x64",
                     "ATTESTATION_TAG": hostile["tag"],
-                    "ATTESTATION_VERSION": hostile["version"],
                     "ATTESTATION_SOURCE_COMMIT": hostile["source_commit"],
                     "ATTESTATION_RELEASE_RUN": hostile["release_run"],
                     "ATTESTATION_MODE": "shell",
@@ -270,8 +279,6 @@ class InstalledReleaseAttestationWorkflowTests(unittest.TestCase):
                     "shell-linux-x64",
                     "--tag",
                     hostile["tag"],
-                    "--version",
-                    hostile["version"],
                     "--source-commit",
                     hostile["source_commit"],
                     "--release-run",
