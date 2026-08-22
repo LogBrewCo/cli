@@ -4,8 +4,8 @@ use std::collections::HashSet;
 
 use crate::ids::is_uuid;
 use crate::{
-    AnalyticsSegment, AnalyticsSegmentComparisonOptions, AnalyticsSegmentEventKind,
-    AnalyticsSegmentPropertyFilter, AnalyticsSegmentUnit, CliError, Command,
+    AnalyticsSegment, AnalyticsSegmentComparisonOptions, AnalyticsSegmentPropertyFilter,
+    AnalyticsSegmentUnit, CliError, Command,
 };
 
 use super::{Grammar, normalize_property_key};
@@ -143,11 +143,15 @@ impl ParsedCompareFlags {
         let until = normalize_optional(self.until.as_deref(), 64)?;
         let interval = normalize_interval(self.interval.as_deref())?;
         let analysis_unit = normalize_unit(self.analysis_unit.as_deref())?;
-        let target_kind =
-            normalize_event_kind(required(self.target_kind.as_deref(), "target-kind")?)?;
-        let target_event = normalize_event_name(
+        let target_kind = GRAMMAR.normalize_event_kind(
+            required(self.target_kind.as_deref(), "target-kind")?,
+            "invalid analytics comparison target kind",
+        )?;
+        let target_event = GRAMMAR.normalize_event_name(
             target_kind,
             required(self.target_event.as_deref(), "target-event")?,
+            "invalid analytics comparison value",
+            "invalid analytics comparison target",
         )?;
         let mut segments = normalize_segments(self.segments.as_slice())?;
         apply_segment_filters(
@@ -340,30 +344,6 @@ fn normalize_segment_key(value: &str) -> Result<String, CliError> {
         return Err(GRAMMAR.invalid_argument("invalid analytics segment key"));
     }
     Ok(value.to_owned())
-}
-
-/// Normalizes one supported classified target kind.
-fn normalize_event_kind(value: &str) -> Result<AnalyticsSegmentEventKind, CliError> {
-    match value.trim() {
-        "page-view" | "page_view" | "page" => Ok(AnalyticsSegmentEventKind::PageView),
-        "screen-view" | "screen_view" | "screen" => Ok(AnalyticsSegmentEventKind::ScreenView),
-        "interaction" => Ok(AnalyticsSegmentEventKind::Interaction),
-        _ => Err(GRAMMAR.invalid_argument("invalid analytics comparison target kind")),
-    }
-}
-
-/// Applies the server's exact public target-name bounds before any request.
-fn normalize_event_name(kind: AnalyticsSegmentEventKind, value: &str) -> Result<String, CliError> {
-    let value = normalize_text(value, 256)?;
-    if kind == AnalyticsSegmentEventKind::Interaction
-        && (value.len() > 64
-            || !value.bytes().all(|byte| {
-                byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.' | b':')
-            }))
-    {
-        return Err(GRAMMAR.invalid_argument("invalid analytics comparison target"));
-    }
-    Ok(value)
 }
 
 /// Normalizes the explicit eligibility and reach boundary.

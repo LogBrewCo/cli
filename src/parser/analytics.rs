@@ -12,7 +12,7 @@ mod retention;
 use crate::ids::is_uuid;
 use crate::{
     AnalyticsPathDirection, AnalyticsPathEventKind, AnalyticsPathOptions,
-    AnalyticsPathPropertyFilter, CliError, Command,
+    AnalyticsPathPropertyFilter, AnalyticsRetentionEventKind, CliError, Command,
 };
 
 /// Exact recovery text shared by every malformed path invocation.
@@ -131,6 +131,40 @@ impl Grammar {
             .transpose()
     }
 
+    /// Normalizes one classified product-event kind.
+    pub(super) fn normalize_event_kind(
+        self,
+        value: &str,
+        error: &'static str,
+    ) -> Result<AnalyticsPathEventKind, CliError> {
+        match value.trim() {
+            "page-view" | "page_view" | "page" => Ok(AnalyticsPathEventKind::PageView),
+            "screen-view" | "screen_view" | "screen" => Ok(AnalyticsPathEventKind::ScreenView),
+            "interaction" => Ok(AnalyticsPathEventKind::Interaction),
+            _ => Err(self.invalid_argument(error)),
+        }
+    }
+
+    /// Applies the exact public event-name bounds before any request.
+    pub(super) fn normalize_event_name(
+        self,
+        kind: AnalyticsPathEventKind,
+        value: &str,
+        value_error: &'static str,
+        interaction_error: &'static str,
+    ) -> Result<String, CliError> {
+        let value = self.normalize_text(value, 256, value_error)?;
+        if kind == AnalyticsPathEventKind::Interaction
+            && (value.len() > 64
+                || !value.bytes().all(|byte| {
+                    byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.' | b':')
+                }))
+        {
+            return Err(self.invalid_argument(interaction_error));
+        }
+        Ok(value)
+    }
+
     /// Splits one inline `--flag=value` token.
     pub(super) fn split_flag(value: &str) -> (&str, Option<&str>) {
         value
@@ -145,6 +179,15 @@ impl Grammar {
             command: self.command,
             next: self.next,
         }
+    }
+}
+
+/// Maps the shared grammar kind to the stable retention-family public type.
+const fn retention_event_kind(kind: AnalyticsPathEventKind) -> AnalyticsRetentionEventKind {
+    match kind {
+        AnalyticsPathEventKind::PageView => AnalyticsRetentionEventKind::PageView,
+        AnalyticsPathEventKind::ScreenView => AnalyticsRetentionEventKind::ScreenView,
+        AnalyticsPathEventKind::Interaction => AnalyticsRetentionEventKind::Interaction,
     }
 }
 
@@ -374,11 +417,15 @@ impl ParsedPathFlags {
         let service_name = normalize_optional(self.service_name.as_deref(), 256)?;
         let release = normalize_optional(self.release.as_deref(), 256)?;
         let environment = normalize_optional(self.environment.as_deref(), 256)?;
-        let anchor_kind =
-            normalize_anchor_kind(required(self.anchor_kind.as_deref(), "anchor-kind")?)?;
-        let anchor_event = normalize_anchor_event(
+        let anchor_kind = PATH_GRAMMAR.normalize_event_kind(
+            required(self.anchor_kind.as_deref(), "anchor-kind")?,
+            "invalid anchor kind",
+        )?;
+        let anchor_event = PATH_GRAMMAR.normalize_event_name(
             anchor_kind,
             required(self.anchor_event.as_deref(), "anchor-event")?,
+            "invalid analytics path value",
+            "invalid interaction anchor event",
         )?;
         let property_filters = normalize_path_property_filters(self.properties.as_slice())?;
         let depth = bounded_u8(self.depth.as_deref(), 4, 1, 8, "invalid depth")?;
@@ -443,30 +490,6 @@ pub(super) fn normalize_property_key(value: &str) -> Result<String, CliError> {
 /// Requires one named flag value.
 fn required<'a>(value: Option<&'a str>, argument: &'static str) -> Result<&'a str, CliError> {
     PATH_GRAMMAR.required(value, argument)
-}
-
-/// Normalizes one classified path kind.
-fn normalize_anchor_kind(value: &str) -> Result<AnalyticsPathEventKind, CliError> {
-    match value.trim() {
-        "page-view" | "page_view" | "page" => Ok(AnalyticsPathEventKind::PageView),
-        "screen-view" | "screen_view" | "screen" => Ok(AnalyticsPathEventKind::ScreenView),
-        "interaction" => Ok(AnalyticsPathEventKind::Interaction),
-        _ => Err(PATH_GRAMMAR.invalid_argument("invalid anchor kind")),
-    }
-}
-
-/// Applies the server's exact public event-name bounds before any request.
-fn normalize_anchor_event(kind: AnalyticsPathEventKind, value: &str) -> Result<String, CliError> {
-    let value = normalize_text(value, 256)?;
-    if kind == AnalyticsPathEventKind::Interaction
-        && (value.len() > 64
-            || !value.bytes().all(|byte| {
-                byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.' | b':')
-            }))
-    {
-        return Err(PATH_GRAMMAR.invalid_argument("invalid interaction anchor event"));
-    }
-    Ok(value)
 }
 
 /// Trims one non-empty, control-free bounded public value.

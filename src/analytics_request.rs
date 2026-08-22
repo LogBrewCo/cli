@@ -273,3 +273,13 @@ pub(crate) fn insert_optional(
         drop(body.insert(key.to_owned(), serde_json::Value::String(value.to_owned())));
     }
 }
+
+/// Checks the shared bounded product-event name contract.
+pub(crate) fn valid_event_name(is_interaction: bool, value: &str) -> bool {
+    crate::http::nonempty_control_safe(value, 256)
+        && (!is_interaction
+            || value.len() <= 64
+                && value.bytes().all(|byte| {
+                    byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.' | b':')
+                }))
+}

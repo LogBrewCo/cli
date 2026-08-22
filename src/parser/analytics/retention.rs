@@ -1,10 +1,10 @@
 //! Closed product-analytics retention command grammar.
 
-use super::Grammar;
+use super::{Grammar, retention_event_kind};
 use crate::ids::is_uuid;
 use crate::{
-    AnalyticsRetentionCohortMode, AnalyticsRetentionEventKind, AnalyticsRetentionInterval,
-    AnalyticsRetentionMode, AnalyticsRetentionOptions, CliError, Command,
+    AnalyticsRetentionCohortMode, AnalyticsRetentionInterval, AnalyticsRetentionMode,
+    AnalyticsRetentionOptions, CliError, Command,
 };
 
 /// Exact recovery text shared by every malformed retention invocation.
@@ -152,19 +152,28 @@ impl ParsedRetentionFlags {
         let service_name = normalize_optional(self.service_name.as_deref(), 256)?;
         let release = normalize_optional(self.release.as_deref(), 256)?;
         let environment = normalize_optional(self.environment.as_deref(), 256)?;
-        let start_kind = normalize_event_kind(required(self.start_kind.as_deref(), "start-kind")?)?;
-        let start_event = normalize_event_name(
-            start_kind,
+        let parsed_start_kind = GRAMMAR.normalize_event_kind(
+            required(self.start_kind.as_deref(), "start-kind")?,
+            "invalid retention event kind",
+        )?;
+        let start_event = GRAMMAR.normalize_event_name(
+            parsed_start_kind,
             required(self.start_event.as_deref(), "start-event")?,
+            "invalid analytics retention value",
             "invalid start event",
         )?;
-        let return_kind =
-            normalize_event_kind(required(self.return_kind.as_deref(), "return-kind")?)?;
-        let return_event = normalize_event_name(
-            return_kind,
+        let parsed_return_kind = GRAMMAR.normalize_event_kind(
+            required(self.return_kind.as_deref(), "return-kind")?,
+            "invalid retention event kind",
+        )?;
+        let return_event = GRAMMAR.normalize_event_name(
+            parsed_return_kind,
             required(self.return_event.as_deref(), "return-event")?,
+            "invalid analytics retention value",
             "invalid return event",
         )?;
+        let start_kind = retention_event_kind(parsed_start_kind);
+        let return_kind = retention_event_kind(parsed_return_kind);
         let interval = normalize_interval(self.interval.as_deref())?;
         let interval_count = bounded_interval_count(self.interval_count.as_deref())?;
         let mode = normalize_mode(self.mode.as_deref())?;
@@ -192,34 +201,6 @@ impl ParsedRetentionFlags {
 /// Requires one named retention flag.
 fn required<'a>(value: Option<&'a str>, argument: &'static str) -> Result<&'a str, CliError> {
     GRAMMAR.required(value, argument)
-}
-
-/// Normalizes one supported classified event kind.
-fn normalize_event_kind(value: &str) -> Result<AnalyticsRetentionEventKind, CliError> {
-    match value.trim() {
-        "page-view" | "page_view" | "page" => Ok(AnalyticsRetentionEventKind::PageView),
-        "screen-view" | "screen_view" | "screen" => Ok(AnalyticsRetentionEventKind::ScreenView),
-        "interaction" => Ok(AnalyticsRetentionEventKind::Interaction),
-        _ => Err(GRAMMAR.invalid_argument("invalid retention event kind")),
-    }
-}
-
-/// Applies the server's exact public event-name bounds before any request.
-fn normalize_event_name(
-    kind: AnalyticsRetentionEventKind,
-    value: &str,
-    error: &'static str,
-) -> Result<String, CliError> {
-    let value = normalize_text(value, 256)?;
-    if kind == AnalyticsRetentionEventKind::Interaction
-        && (value.len() > 64
-            || !value.bytes().all(|byte| {
-                byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.' | b':')
-            }))
-    {
-        return Err(GRAMMAR.invalid_argument(error));
-    }
-    Ok(value)
 }
 
 /// Normalizes the selected fixed interval or applies the safe CLI default.
@@ -309,10 +290,13 @@ mod tests {
             panic!("wrong command");
         };
         assert_eq!(options.project_id, "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
-        assert_eq!(options.start_kind, AnalyticsRetentionEventKind::PageView);
+        assert_eq!(
+            options.start_kind,
+            crate::AnalyticsRetentionEventKind::PageView
+        );
         assert_eq!(
             options.return_kind,
-            AnalyticsRetentionEventKind::Interaction
+            crate::AnalyticsRetentionEventKind::Interaction
         );
         assert_eq!(options.interval, AnalyticsRetentionInterval::Day);
         assert_eq!(options.interval_count, 10);

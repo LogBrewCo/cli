@@ -1,11 +1,8 @@
 //! Closed product-analytics lifecycle command grammar.
 
-use super::Grammar;
+use super::{Grammar, retention_event_kind};
 use crate::ids::is_uuid;
-use crate::{
-    AnalyticsLifecycleEventKind, AnalyticsLifecycleInterval, AnalyticsLifecycleOptions, CliError,
-    Command,
-};
+use crate::{AnalyticsLifecycleInterval, AnalyticsLifecycleOptions, CliError, Command};
 
 /// Exact recovery text shared by every malformed lifecycle invocation.
 pub(super) const ANALYTICS_LIFECYCLE_NEXT_STEP: &str = "use logbrew analytics lifecycle --project <project_id> --since <24h|RFC3339> --event-kind <page-view|screen-view|interaction> --event <name> with optional --until, --service, --release, --environment, --interval hour|day|week|thirty-day, --history-periods 2-31, and --json";
@@ -128,9 +125,17 @@ impl ParsedLifecycleFlags {
         let service_name = normalize_optional(self.service_name.as_deref(), 256)?;
         let release = normalize_optional(self.release.as_deref(), 256)?;
         let environment = normalize_optional(self.environment.as_deref(), 256)?;
-        let event_kind = normalize_event_kind(required(self.event_kind.as_deref(), "event-kind")?)?;
-        let event_name =
-            normalize_event_name(event_kind, required(self.event_name.as_deref(), "event")?)?;
+        let parsed_kind = GRAMMAR.normalize_event_kind(
+            required(self.event_kind.as_deref(), "event-kind")?,
+            "invalid lifecycle event kind",
+        )?;
+        let event_name = GRAMMAR.normalize_event_name(
+            parsed_kind,
+            required(self.event_name.as_deref(), "event")?,
+            "invalid analytics lifecycle value",
+            "invalid lifecycle event",
+        )?;
+        let event_kind = retention_event_kind(parsed_kind);
         let interval = normalize_interval(self.interval.as_deref())?;
         let history_period_count = bounded_history_periods(self.history_period_count.as_deref())?;
         validate_history_span(interval, history_period_count)?;
@@ -153,33 +158,6 @@ impl ParsedLifecycleFlags {
 /// Requires one named lifecycle flag.
 fn required<'a>(value: Option<&'a str>, argument: &'static str) -> Result<&'a str, CliError> {
     GRAMMAR.required(value, argument)
-}
-
-/// Normalizes one supported classified event kind.
-fn normalize_event_kind(value: &str) -> Result<AnalyticsLifecycleEventKind, CliError> {
-    match value.trim() {
-        "page-view" | "page_view" | "page" => Ok(AnalyticsLifecycleEventKind::PageView),
-        "screen-view" | "screen_view" | "screen" => Ok(AnalyticsLifecycleEventKind::ScreenView),
-        "interaction" => Ok(AnalyticsLifecycleEventKind::Interaction),
-        _ => Err(GRAMMAR.invalid_argument("invalid lifecycle event kind")),
-    }
-}
-
-/// Applies the server's exact public event-name bounds before any request.
-fn normalize_event_name(
-    kind: AnalyticsLifecycleEventKind,
-    value: &str,
-) -> Result<String, CliError> {
-    let value = normalize_text(value, 256)?;
-    if kind == AnalyticsLifecycleEventKind::Interaction
-        && (value.len() > 64
-            || !value.bytes().all(|byte| {
-                byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.' | b':')
-            }))
-    {
-        return Err(GRAMMAR.invalid_argument("invalid lifecycle event"));
-    }
-    Ok(value)
 }
 
 /// Normalizes an optional fixed lifecycle interval.
@@ -263,7 +241,10 @@ mod tests {
             panic!("wrong command");
         };
         assert_eq!(options.project_id, "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
-        assert_eq!(options.event_kind, AnalyticsLifecycleEventKind::PageView);
+        assert_eq!(
+            options.event_kind,
+            crate::AnalyticsRetentionEventKind::PageView
+        );
         assert_eq!(options.interval, None);
         assert_eq!(options.history_period_count, 2);
         assert!(json);

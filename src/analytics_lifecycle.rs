@@ -8,7 +8,7 @@
 use serde::Deserialize;
 
 use crate::analytics_contract::{bounded_counts, ratio_matches};
-use crate::analytics_request::{self, Kind, insert_optional};
+use crate::analytics_request::{self, Kind, insert_optional, valid_event_name};
 use crate::http::{nonempty_control_safe as bounded_contract_text, terminal_safe as display_text};
 use crate::time::{
     ParsedTimestamp as UtcTimestamp, add_seconds, parse_utc_timestamp, subtract_seconds,
@@ -246,7 +246,10 @@ fn valid_query(options: &AnalyticsLifecycleOptions, query: &LifecycleQuery) -> b
         && query.environment == options.environment
         && query.event.kind == options.event_kind
         && query.event.event_name == options.event_name
-        && valid_event_name(query.event.kind, query.event.event_name.as_str())
+        && valid_event_name(
+            query.event.kind == AnalyticsLifecycleEventKind::Interaction,
+            query.event.event_name.as_str(),
+        )
         && options
             .interval
             .is_none_or(|interval| interval == query.interval)
@@ -283,17 +286,6 @@ fn expected_bucket_count(
         .checked_add(interval.checked_sub(1)?)?
         .checked_div(interval)?;
     u64::try_from(buckets).ok()
-}
-
-/// Applies the server's exact event-name contract to response echoes.
-fn valid_event_name(kind: AnalyticsLifecycleEventKind, value: &str) -> bool {
-    let common = bounded_contract_text(value, 256);
-    common
-        && (kind != AnalyticsLifecycleEventKind::Interaction
-            || (value.len() <= 64
-                && value.bytes().all(|byte| {
-                    byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.' | b':')
-                })))
 }
 
 /// Proves every derived coverage count, ratio, and limitation bound.
