@@ -7,6 +7,7 @@
 
 use serde::Deserialize;
 
+use crate::analytics_contract::{bounded_counts, ratio_matches};
 use crate::analytics_request::{self, Kind, insert_optional};
 use crate::http::{nonempty_control_safe as bounded_contract_text, terminal_safe as display_text};
 use crate::time::{
@@ -21,8 +22,6 @@ use crate::{
 const SCHEMA_VERSION: u8 = 1;
 /// Maximum accepted response body, matching the API result-byte bound.
 const RESPONSE_LIMIT: usize = 10 * 1024 * 1024;
-/// Server-side scan cap also bounds every returned count.
-const COUNT_LIMIT: u64 = 10_000_000;
 /// Maximum UTC-aligned buckets returned for one segment.
 const BUCKET_LIMIT: usize = 500;
 /// Automatic interval target used by the API.
@@ -933,29 +932,6 @@ fn segment_context_events(segment: &SegmentResult) -> u64 {
         .map_or(segment.coverage.classified_events, |coverage| {
             coverage.context_events
         })
-}
-
-/// Returns whether every count stays inside the server's public scan bound.
-fn bounded_counts(values: &[u64]) -> bool {
-    values.iter().all(|value| *value <= COUNT_LIMIT)
-}
-
-/// Verifies one optional exact ratio bounded between zero and one.
-fn ratio_matches(value: Option<f64>, numerator: u64, denominator: u64) -> bool {
-    if denominator == 0 {
-        return value.is_none();
-    }
-    if numerator > denominator {
-        return false;
-    }
-    let (Ok(numerator), Ok(denominator)) = (u32::try_from(numerator), u32::try_from(denominator))
-    else {
-        return false;
-    };
-    let expected = f64::from(numerator) / f64::from(denominator);
-    value.is_some_and(|value| {
-        value.is_finite() && (0.0..=1.0).contains(&value) && floats_match(value, expected)
-    })
 }
 
 /// Verifies optional usable-event volume per reached unit.
