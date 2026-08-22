@@ -1,5 +1,6 @@
 //! Closed product-analytics retention command grammar.
 
+use super::Grammar;
 use crate::ids::is_uuid;
 use crate::{
     AnalyticsRetentionCohortMode, AnalyticsRetentionEventKind, AnalyticsRetentionInterval,
@@ -9,6 +10,9 @@ use crate::{
 /// Exact recovery text shared by every malformed retention invocation.
 pub(super) const ANALYTICS_RETENTION_NEXT_STEP: &str = "use logbrew analytics retention --project <project_id> --since <24h|RFC3339> --start-kind <page-view|screen-view|interaction> --start-event <name> --return-kind <page-view|screen-view|interaction> --return-event <name> with optional --until, --service, --release, --environment, --interval hour|day|week|thirty-day, --interval-count 1-31, --mode return-on|return-on-or-after, --cohort-mode first-in-range, and --json";
 
+/// Canonical parser behavior for retention reads.
+const GRAMMAR: Grammar = Grammar::new("analytics retention", ANALYTICS_RETENTION_NEXT_STEP);
+
 /// Parses the exact retention selectors and bounded query controls.
 pub(super) fn parse_retention(args: &[String]) -> Result<Command, CliError> {
     let mut parsed = ParsedRetentionFlags::default();
@@ -16,69 +20,78 @@ pub(super) fn parse_retention(args: &[String]) -> Result<Command, CliError> {
     let mut index = 0;
     while index < args.len() {
         let raw = &args[index];
-        let (flag, inline) = split_flag(raw);
+        let (flag, inline) = Grammar::split_flag(raw);
         match flag {
             "--json" => {
-                reject_inline(flag, inline)?;
-                mark_seen(&mut seen, "--json")?;
+                GRAMMAR.reject_inline(flag, inline)?;
+                GRAMMAR.mark_seen(&mut seen, "--json")?;
                 parsed.json = true;
             }
             "--project" | "--project-id" => {
-                mark_seen(&mut seen, "--project")?;
-                parsed.project_id = Some(flag_value(args, &mut index, "--project", inline)?);
+                GRAMMAR.mark_seen(&mut seen, "--project")?;
+                parsed.project_id =
+                    Some(GRAMMAR.flag_value(args, &mut index, "--project", inline)?);
             }
             "--since" => {
-                mark_seen(&mut seen, "--since")?;
-                parsed.since = Some(flag_value(args, &mut index, "--since", inline)?);
+                GRAMMAR.mark_seen(&mut seen, "--since")?;
+                parsed.since = Some(GRAMMAR.flag_value(args, &mut index, "--since", inline)?);
             }
             "--until" => {
-                mark_seen(&mut seen, "--until")?;
-                parsed.until = Some(flag_value(args, &mut index, "--until", inline)?);
+                GRAMMAR.mark_seen(&mut seen, "--until")?;
+                parsed.until = Some(GRAMMAR.flag_value(args, &mut index, "--until", inline)?);
             }
             "--service" | "--service-name" => {
-                mark_seen(&mut seen, "--service")?;
-                parsed.service_name = Some(flag_value(args, &mut index, "--service", inline)?);
+                GRAMMAR.mark_seen(&mut seen, "--service")?;
+                parsed.service_name =
+                    Some(GRAMMAR.flag_value(args, &mut index, "--service", inline)?);
             }
             "--release" => {
-                mark_seen(&mut seen, "--release")?;
-                parsed.release = Some(flag_value(args, &mut index, "--release", inline)?);
+                GRAMMAR.mark_seen(&mut seen, "--release")?;
+                parsed.release = Some(GRAMMAR.flag_value(args, &mut index, "--release", inline)?);
             }
             "--environment" | "--env" => {
-                mark_seen(&mut seen, "--environment")?;
-                parsed.environment = Some(flag_value(args, &mut index, "--environment", inline)?);
+                GRAMMAR.mark_seen(&mut seen, "--environment")?;
+                parsed.environment =
+                    Some(GRAMMAR.flag_value(args, &mut index, "--environment", inline)?);
             }
             "--start-kind" => {
-                mark_seen(&mut seen, "--start-kind")?;
-                parsed.start_kind = Some(flag_value(args, &mut index, "--start-kind", inline)?);
+                GRAMMAR.mark_seen(&mut seen, "--start-kind")?;
+                parsed.start_kind =
+                    Some(GRAMMAR.flag_value(args, &mut index, "--start-kind", inline)?);
             }
             "--start-event" => {
-                mark_seen(&mut seen, "--start-event")?;
-                parsed.start_event = Some(flag_value(args, &mut index, "--start-event", inline)?);
+                GRAMMAR.mark_seen(&mut seen, "--start-event")?;
+                parsed.start_event =
+                    Some(GRAMMAR.flag_value(args, &mut index, "--start-event", inline)?);
             }
             "--return-kind" => {
-                mark_seen(&mut seen, "--return-kind")?;
-                parsed.return_kind = Some(flag_value(args, &mut index, "--return-kind", inline)?);
+                GRAMMAR.mark_seen(&mut seen, "--return-kind")?;
+                parsed.return_kind =
+                    Some(GRAMMAR.flag_value(args, &mut index, "--return-kind", inline)?);
             }
             "--return-event" => {
-                mark_seen(&mut seen, "--return-event")?;
-                parsed.return_event = Some(flag_value(args, &mut index, "--return-event", inline)?);
+                GRAMMAR.mark_seen(&mut seen, "--return-event")?;
+                parsed.return_event =
+                    Some(GRAMMAR.flag_value(args, &mut index, "--return-event", inline)?);
             }
             "--interval" => {
-                mark_seen(&mut seen, "--interval")?;
-                parsed.interval = Some(flag_value(args, &mut index, "--interval", inline)?);
+                GRAMMAR.mark_seen(&mut seen, "--interval")?;
+                parsed.interval =
+                    Some(GRAMMAR.flag_value(args, &mut index, "--interval", inline)?);
             }
             "--interval-count" => {
-                mark_seen(&mut seen, "--interval-count")?;
+                GRAMMAR.mark_seen(&mut seen, "--interval-count")?;
                 parsed.interval_count =
-                    Some(flag_value(args, &mut index, "--interval-count", inline)?);
+                    Some(GRAMMAR.flag_value(args, &mut index, "--interval-count", inline)?);
             }
             "--mode" => {
-                mark_seen(&mut seen, "--mode")?;
-                parsed.mode = Some(flag_value(args, &mut index, "--mode", inline)?);
+                GRAMMAR.mark_seen(&mut seen, "--mode")?;
+                parsed.mode = Some(GRAMMAR.flag_value(args, &mut index, "--mode", inline)?);
             }
             "--cohort-mode" => {
-                mark_seen(&mut seen, "--cohort-mode")?;
-                parsed.cohort_mode = Some(flag_value(args, &mut index, "--cohort-mode", inline)?);
+                GRAMMAR.mark_seen(&mut seen, "--cohort-mode")?;
+                parsed.cohort_mode =
+                    Some(GRAMMAR.flag_value(args, &mut index, "--cohort-mode", inline)?);
             }
             value if value.starts_with('-') => {
                 return Err(CliError::UnknownFlag {
@@ -132,7 +145,7 @@ impl ParsedRetentionFlags {
     fn finish(&self) -> Result<AnalyticsRetentionOptions, CliError> {
         let project_id = required(self.project_id.as_deref(), "project")?.trim();
         if !is_uuid(project_id) {
-            return Err(invalid_argument("invalid project id"));
+            return Err(GRAMMAR.invalid_argument("invalid project id"));
         }
         let since = normalize_text(required(self.since.as_deref(), "since")?, 64)?;
         let until = normalize_optional(self.until.as_deref(), 64)?;
@@ -178,10 +191,7 @@ impl ParsedRetentionFlags {
 
 /// Requires one named retention flag.
 fn required<'a>(value: Option<&'a str>, argument: &'static str) -> Result<&'a str, CliError> {
-    value.ok_or(CliError::MissingArgument {
-        argument,
-        next: ANALYTICS_RETENTION_NEXT_STEP,
-    })
+    GRAMMAR.required(value, argument)
 }
 
 /// Normalizes one supported classified event kind.
@@ -190,7 +200,7 @@ fn normalize_event_kind(value: &str) -> Result<AnalyticsRetentionEventKind, CliE
         "page-view" | "page_view" | "page" => Ok(AnalyticsRetentionEventKind::PageView),
         "screen-view" | "screen_view" | "screen" => Ok(AnalyticsRetentionEventKind::ScreenView),
         "interaction" => Ok(AnalyticsRetentionEventKind::Interaction),
-        _ => Err(invalid_argument("invalid retention event kind")),
+        _ => Err(GRAMMAR.invalid_argument("invalid retention event kind")),
     }
 }
 
@@ -207,7 +217,7 @@ fn normalize_event_name(
                 byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.' | b':')
             }))
     {
-        return Err(invalid_argument(error));
+        return Err(GRAMMAR.invalid_argument(error));
     }
     Ok(value)
 }
@@ -219,7 +229,7 @@ fn normalize_interval(value: Option<&str>) -> Result<AnalyticsRetentionInterval,
         Some("hour" | "1h") => Ok(AnalyticsRetentionInterval::Hour),
         Some("week" | "1w") => Ok(AnalyticsRetentionInterval::Week),
         Some("thirty-day" | "thirty_day" | "30d") => Ok(AnalyticsRetentionInterval::ThirtyDay),
-        Some(_) => Err(invalid_argument("invalid retention interval")),
+        Some(_) => Err(GRAMMAR.invalid_argument("invalid retention interval")),
     }
 }
 
@@ -230,7 +240,7 @@ fn normalize_mode(value: Option<&str>) -> Result<AnalyticsRetentionMode, CliErro
         Some("return-on-or-after" | "return_on_or_after" | "rolling") => {
             Ok(AnalyticsRetentionMode::ReturnOnOrAfter)
         }
-        Some(_) => Err(invalid_argument("invalid retention mode")),
+        Some(_) => Err(GRAMMAR.invalid_argument("invalid retention mode")),
     }
 }
 
@@ -240,7 +250,7 @@ fn normalize_cohort_mode(value: Option<&str>) -> Result<AnalyticsRetentionCohort
         None | Some("first-in-range" | "first_in_range") => {
             Ok(AnalyticsRetentionCohortMode::FirstInRange)
         }
-        Some(_) => Err(invalid_argument("invalid retention cohort mode")),
+        Some(_) => Err(GRAMMAR.invalid_argument("invalid retention cohort mode")),
     }
 }
 
@@ -253,85 +263,17 @@ fn bounded_interval_count(value: Option<&str>) -> Result<u8, CliError> {
         .parse::<u8>()
         .ok()
         .filter(|count| (1..=31).contains(count))
-        .ok_or_else(|| invalid_argument("invalid retention interval count"))
+        .ok_or_else(|| GRAMMAR.invalid_argument("invalid retention interval count"))
 }
 
 /// Trims one non-empty, control-free bounded public value.
 fn normalize_text(value: &str, limit: usize) -> Result<String, CliError> {
-    let value = value.trim();
-    if value.is_empty() || value.chars().count() > limit || value.chars().any(char::is_control) {
-        return Err(invalid_argument("invalid analytics retention value"));
-    }
-    Ok(value.to_owned())
+    GRAMMAR.normalize_text(value, limit, "invalid analytics retention value")
 }
 
 /// Normalizes one optional bounded context value.
 fn normalize_optional(value: Option<&str>, limit: usize) -> Result<Option<String>, CliError> {
-    value.map(|value| normalize_text(value, limit)).transpose()
-}
-
-/// Reads a separate or inline flag value without swallowing another flag.
-fn flag_value(
-    args: &[String],
-    index: &mut usize,
-    flag: &'static str,
-    inline: Option<&str>,
-) -> Result<String, CliError> {
-    let value = inline.unwrap_or_else(|| {
-        *index += 1;
-        args.get(*index).map(String::as_str).unwrap_or_default()
-    });
-    if value.is_empty() || value.starts_with('-') {
-        return Err(CliError::MissingFlagValue {
-            flag,
-            next: ANALYTICS_RETENTION_NEXT_STEP,
-        });
-    }
-    Ok(value.to_owned())
-}
-
-/// Rejects values attached to boolean flags.
-fn reject_inline(flag: &str, inline: Option<&str>) -> Result<(), CliError> {
-    if inline.is_some() {
-        Err(CliError::UnknownFlag {
-            flag: flag.to_owned(),
-            next: ANALYTICS_RETENTION_NEXT_STEP,
-        })
-    } else {
-        Ok(())
-    }
-}
-
-/// Marks a canonical flag and rejects aliases used together.
-fn mark_seen(seen: &mut Vec<&'static str>, flag: &'static str) -> Result<(), CliError> {
-    if seen.contains(&flag) {
-        return Err(CliError::DuplicateFlag {
-            flag,
-            next: if flag == "--json" {
-                "use --json once"
-            } else {
-                ANALYTICS_RETENTION_NEXT_STEP
-            },
-        });
-    }
-    seen.push(flag);
-    Ok(())
-}
-
-/// Splits one inline `--flag=value` token.
-fn split_flag(value: &str) -> (&str, Option<&str>) {
-    value
-        .split_once('=')
-        .map_or((value, None), |(flag, value)| (flag, Some(value)))
-}
-
-/// Returns a value-free deterministic grammar error.
-fn invalid_argument(argument: &'static str) -> CliError {
-    CliError::UnexpectedArgument {
-        argument: argument.to_owned(),
-        command: "analytics retention",
-        next: ANALYTICS_RETENTION_NEXT_STEP,
-    }
+    GRAMMAR.normalize_optional(value, limit, "invalid analytics retention value")
 }
 
 #[cfg(test)]

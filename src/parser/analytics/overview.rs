@@ -1,10 +1,14 @@
 //! Closed product-analytics overview command grammar.
 
+use super::Grammar;
 use crate::ids::is_uuid;
 use crate::{AnalyticsOverviewOptions, CliError, Command};
 
 /// Exact recovery text shared by every malformed overview invocation.
 pub(super) const ANALYTICS_OVERVIEW_NEXT_STEP: &str = "use logbrew analytics overview --project <project_id> --since <24h|RFC3339> with optional --until, --interval auto|1m|5m|15m|1h|6h|1d, --service, --release, --environment, --top-limit 1-20, and --json";
+
+/// Canonical parser behavior for the overview command.
+const GRAMMAR: Grammar = Grammar::new("analytics overview", ANALYTICS_OVERVIEW_NEXT_STEP);
 
 /// Parses one bounded project activity and capture-quality overview.
 pub(super) fn parse_overview(args: &[String]) -> Result<Command, CliError> {
@@ -13,44 +17,49 @@ pub(super) fn parse_overview(args: &[String]) -> Result<Command, CliError> {
     let mut index = 0;
     while index < args.len() {
         let raw = &args[index];
-        let (flag, inline) = split_flag(raw);
+        let (flag, inline) = Grammar::split_flag(raw);
         match flag {
             "--json" => {
-                reject_inline(flag, inline)?;
-                mark_seen(&mut seen, "--json")?;
+                GRAMMAR.reject_inline(flag, inline)?;
+                GRAMMAR.mark_seen(&mut seen, "--json")?;
                 parsed.json = true;
             }
             "--project" | "--project-id" => {
-                mark_seen(&mut seen, "--project")?;
-                parsed.project_id = Some(flag_value(args, &mut index, "--project", inline)?);
+                GRAMMAR.mark_seen(&mut seen, "--project")?;
+                parsed.project_id =
+                    Some(GRAMMAR.flag_value(args, &mut index, "--project", inline)?);
             }
             "--since" => {
-                mark_seen(&mut seen, "--since")?;
-                parsed.since = Some(flag_value(args, &mut index, "--since", inline)?);
+                GRAMMAR.mark_seen(&mut seen, "--since")?;
+                parsed.since = Some(GRAMMAR.flag_value(args, &mut index, "--since", inline)?);
             }
             "--until" => {
-                mark_seen(&mut seen, "--until")?;
-                parsed.until = Some(flag_value(args, &mut index, "--until", inline)?);
+                GRAMMAR.mark_seen(&mut seen, "--until")?;
+                parsed.until = Some(GRAMMAR.flag_value(args, &mut index, "--until", inline)?);
             }
             "--interval" => {
-                mark_seen(&mut seen, "--interval")?;
-                parsed.interval = Some(flag_value(args, &mut index, "--interval", inline)?);
+                GRAMMAR.mark_seen(&mut seen, "--interval")?;
+                parsed.interval =
+                    Some(GRAMMAR.flag_value(args, &mut index, "--interval", inline)?);
             }
             "--service" | "--service-name" => {
-                mark_seen(&mut seen, "--service")?;
-                parsed.service_name = Some(flag_value(args, &mut index, "--service", inline)?);
+                GRAMMAR.mark_seen(&mut seen, "--service")?;
+                parsed.service_name =
+                    Some(GRAMMAR.flag_value(args, &mut index, "--service", inline)?);
             }
             "--release" => {
-                mark_seen(&mut seen, "--release")?;
-                parsed.release = Some(flag_value(args, &mut index, "--release", inline)?);
+                GRAMMAR.mark_seen(&mut seen, "--release")?;
+                parsed.release = Some(GRAMMAR.flag_value(args, &mut index, "--release", inline)?);
             }
             "--environment" | "--env" => {
-                mark_seen(&mut seen, "--environment")?;
-                parsed.environment = Some(flag_value(args, &mut index, "--environment", inline)?);
+                GRAMMAR.mark_seen(&mut seen, "--environment")?;
+                parsed.environment =
+                    Some(GRAMMAR.flag_value(args, &mut index, "--environment", inline)?);
             }
             "--top-limit" | "--limit" => {
-                mark_seen(&mut seen, "--top-limit")?;
-                parsed.top_limit = Some(flag_value(args, &mut index, "--top-limit", inline)?);
+                GRAMMAR.mark_seen(&mut seen, "--top-limit")?;
+                parsed.top_limit =
+                    Some(GRAMMAR.flag_value(args, &mut index, "--top-limit", inline)?);
             }
             value if value.starts_with('-') => {
                 return Err(CliError::UnknownFlag {
@@ -96,16 +105,38 @@ struct ParsedOverviewFlags {
 impl ParsedOverviewFlags {
     /// Requires and normalizes every public request field.
     fn finish(&self) -> Result<AnalyticsOverviewOptions, CliError> {
-        let project_id = required(self.project_id.as_deref(), "project")?.trim();
+        let project_id = GRAMMAR
+            .required(self.project_id.as_deref(), "project")?
+            .trim();
         if !is_uuid(project_id) {
-            return Err(invalid_argument("invalid project id"));
+            return Err(GRAMMAR.invalid_argument("invalid project id"));
         }
-        let since = normalize_text(required(self.since.as_deref(), "since")?, 64)?;
-        let until = normalize_optional(self.until.as_deref(), 64)?;
+        let since = GRAMMAR.normalize_text(
+            GRAMMAR.required(self.since.as_deref(), "since")?,
+            64,
+            "invalid analytics overview value",
+        )?;
+        let until = GRAMMAR.normalize_optional(
+            self.until.as_deref(),
+            64,
+            "invalid analytics overview value",
+        )?;
         let interval = normalize_interval(self.interval.as_deref())?;
-        let service_name = normalize_optional(self.service_name.as_deref(), 256)?;
-        let release = normalize_optional(self.release.as_deref(), 256)?;
-        let environment = normalize_optional(self.environment.as_deref(), 256)?;
+        let service_name = GRAMMAR.normalize_optional(
+            self.service_name.as_deref(),
+            256,
+            "invalid analytics overview value",
+        )?;
+        let release = GRAMMAR.normalize_optional(
+            self.release.as_deref(),
+            256,
+            "invalid analytics overview value",
+        )?;
+        let environment = GRAMMAR.normalize_optional(
+            self.environment.as_deref(),
+            256,
+            "invalid analytics overview value",
+        )?;
         let top_limit = bounded_top_limit(self.top_limit.as_deref())?;
 
         Ok(AnalyticsOverviewOptions {
@@ -121,14 +152,6 @@ impl ParsedOverviewFlags {
     }
 }
 
-/// Requires one named overview flag.
-fn required<'a>(value: Option<&'a str>, argument: &'static str) -> Result<&'a str, CliError> {
-    value.ok_or(CliError::MissingArgument {
-        argument,
-        next: ANALYTICS_OVERVIEW_NEXT_STEP,
-    })
-}
-
 /// Normalizes the automatic or fixed series interval.
 fn normalize_interval(value: Option<&str>) -> Result<String, CliError> {
     match value.map(str::trim).map(str::to_ascii_lowercase) {
@@ -141,7 +164,7 @@ fn normalize_interval(value: Option<&str>) -> Result<String, CliError> {
         {
             Ok(value)
         }
-        Some(_) => Err(invalid_argument("invalid analytics overview interval")),
+        Some(_) => Err(GRAMMAR.invalid_argument("invalid analytics overview interval")),
     }
 }
 
@@ -153,86 +176,8 @@ fn bounded_top_limit(value: Option<&str>) -> Result<u8, CliError> {
             .parse::<u8>()
             .ok()
             .filter(|limit| (1..=20).contains(limit))
-            .ok_or_else(|| invalid_argument("invalid analytics overview top limit"))
+            .ok_or_else(|| GRAMMAR.invalid_argument("invalid analytics overview top limit"))
     })
-}
-
-/// Trims one non-empty, control-free bounded public value.
-fn normalize_text(value: &str, limit: usize) -> Result<String, CliError> {
-    let value = value.trim();
-    if value.is_empty() || value.chars().count() > limit || value.chars().any(char::is_control) {
-        return Err(invalid_argument("invalid analytics overview value"));
-    }
-    Ok(value.to_owned())
-}
-
-/// Normalizes one optional bounded context value.
-fn normalize_optional(value: Option<&str>, limit: usize) -> Result<Option<String>, CliError> {
-    value.map(|value| normalize_text(value, limit)).transpose()
-}
-
-/// Reads a separate or inline flag value without swallowing another flag.
-fn flag_value(
-    args: &[String],
-    index: &mut usize,
-    flag: &'static str,
-    inline: Option<&str>,
-) -> Result<String, CliError> {
-    let value = inline.unwrap_or_else(|| {
-        *index += 1;
-        args.get(*index).map(String::as_str).unwrap_or_default()
-    });
-    if value.is_empty() || value.starts_with('-') {
-        return Err(CliError::MissingFlagValue {
-            flag,
-            next: ANALYTICS_OVERVIEW_NEXT_STEP,
-        });
-    }
-    Ok(value.to_owned())
-}
-
-/// Rejects values attached to boolean flags.
-fn reject_inline(flag: &str, inline: Option<&str>) -> Result<(), CliError> {
-    if inline.is_some() {
-        Err(CliError::UnknownFlag {
-            flag: flag.to_owned(),
-            next: ANALYTICS_OVERVIEW_NEXT_STEP,
-        })
-    } else {
-        Ok(())
-    }
-}
-
-/// Marks a canonical singular flag and rejects aliases used together.
-fn mark_seen(seen: &mut Vec<&'static str>, flag: &'static str) -> Result<(), CliError> {
-    if seen.contains(&flag) {
-        return Err(CliError::DuplicateFlag {
-            flag,
-            next: if flag == "--json" {
-                "use --json once"
-            } else {
-                ANALYTICS_OVERVIEW_NEXT_STEP
-            },
-        });
-    }
-    seen.push(flag);
-    Ok(())
-}
-
-/// Splits one inline `--flag=value` token.
-fn split_flag(value: &str) -> (&str, Option<&str>) {
-    value
-        .split_once('=')
-        .map_or((value, None), |(flag, value)| (flag, Some(value)))
-}
-
-/// Returns a value-free deterministic grammar error.
-fn invalid_argument(argument: &'static str) -> CliError {
-    CliError::UnexpectedArgument {
-        argument: argument.to_owned(),
-        command: "analytics overview",
-        next: ANALYTICS_OVERVIEW_NEXT_STEP,
-    }
 }
 
 #[cfg(test)]

@@ -8,10 +8,13 @@ use crate::{
     AnalyticsSegmentPropertyFilter, AnalyticsSegmentUnit, CliError, Command,
 };
 
-use super::normalize_property_key;
+use super::{Grammar, normalize_property_key};
 
 /// Exact recovery text shared by every malformed comparison invocation.
 pub(super) const ANALYTICS_COMPARE_NEXT_STEP: &str = "use logbrew analytics compare --project <project_id> --since <24h|RFC3339> --target-kind <page-view|screen-view|interaction> --target-event <name> --segment <key>=<label> --segment <key>=<label> with two through four ordered segments and optional --segment-service <key>=<value>, --segment-release <key>=<value>, --segment-environment <key>=<value>, --segment-property <segment>:<property-key>=<exact-value> up to four times per segment, --until, --interval auto|1m|5m|15m|1h|6h|1d, --unit session|identified-user, and --json";
+
+/// Canonical parser behavior for segment comparison.
+const GRAMMAR: Grammar = Grammar::new("analytics compare", ANALYTICS_COMPARE_NEXT_STEP);
 
 /// Parses one exact target and two through four named context segments.
 pub(super) fn parse_compare(args: &[String]) -> Result<Command, CliError> {
@@ -20,64 +23,69 @@ pub(super) fn parse_compare(args: &[String]) -> Result<Command, CliError> {
     let mut index = 0;
     while index < args.len() {
         let raw = &args[index];
-        let (flag, inline) = split_flag(raw);
+        let (flag, inline) = Grammar::split_flag(raw);
         match flag {
             "--json" => {
-                reject_inline(flag, inline)?;
-                mark_seen(&mut seen, "--json")?;
+                GRAMMAR.reject_inline(flag, inline)?;
+                GRAMMAR.mark_seen(&mut seen, "--json")?;
                 parsed.json = true;
             }
             "--project" | "--project-id" => {
-                mark_seen(&mut seen, "--project")?;
-                parsed.project_id = Some(flag_value(args, &mut index, "--project", inline)?);
+                GRAMMAR.mark_seen(&mut seen, "--project")?;
+                parsed.project_id =
+                    Some(GRAMMAR.flag_value(args, &mut index, "--project", inline)?);
             }
             "--since" => {
-                mark_seen(&mut seen, "--since")?;
-                parsed.since = Some(flag_value(args, &mut index, "--since", inline)?);
+                GRAMMAR.mark_seen(&mut seen, "--since")?;
+                parsed.since = Some(GRAMMAR.flag_value(args, &mut index, "--since", inline)?);
             }
             "--until" => {
-                mark_seen(&mut seen, "--until")?;
-                parsed.until = Some(flag_value(args, &mut index, "--until", inline)?);
+                GRAMMAR.mark_seen(&mut seen, "--until")?;
+                parsed.until = Some(GRAMMAR.flag_value(args, &mut index, "--until", inline)?);
             }
             "--interval" => {
-                mark_seen(&mut seen, "--interval")?;
-                parsed.interval = Some(flag_value(args, &mut index, "--interval", inline)?);
+                GRAMMAR.mark_seen(&mut seen, "--interval")?;
+                parsed.interval =
+                    Some(GRAMMAR.flag_value(args, &mut index, "--interval", inline)?);
             }
             "--unit" | "--analysis-unit" => {
-                mark_seen(&mut seen, "--unit")?;
-                parsed.analysis_unit = Some(flag_value(args, &mut index, "--unit", inline)?);
+                GRAMMAR.mark_seen(&mut seen, "--unit")?;
+                parsed.analysis_unit =
+                    Some(GRAMMAR.flag_value(args, &mut index, "--unit", inline)?);
             }
             "--target-kind" | "--event-kind" => {
-                mark_seen(&mut seen, "--target-kind")?;
-                parsed.target_kind = Some(flag_value(args, &mut index, "--target-kind", inline)?);
+                GRAMMAR.mark_seen(&mut seen, "--target-kind")?;
+                parsed.target_kind =
+                    Some(GRAMMAR.flag_value(args, &mut index, "--target-kind", inline)?);
             }
             "--target-event" | "--event" | "--event-name" => {
-                mark_seen(&mut seen, "--target-event")?;
-                parsed.target_event = Some(flag_value(args, &mut index, "--target-event", inline)?);
+                GRAMMAR.mark_seen(&mut seen, "--target-event")?;
+                parsed.target_event =
+                    Some(GRAMMAR.flag_value(args, &mut index, "--target-event", inline)?);
             }
             "--segment" => push_bounded(
                 &mut parsed.segments,
-                flag_value(args, &mut index, "--segment", inline)?,
+                GRAMMAR.flag_value(args, &mut index, "--segment", inline)?,
                 "too many analytics segments",
             )?,
             "--segment-service" | "--segment-service-name" => push_bounded(
                 &mut parsed.segment_services,
-                flag_value(args, &mut index, "--segment-service", inline)?,
+                GRAMMAR.flag_value(args, &mut index, "--segment-service", inline)?,
                 "too many segment service filters",
             )?,
             "--segment-release" => push_bounded(
                 &mut parsed.segment_releases,
-                flag_value(args, &mut index, "--segment-release", inline)?,
+                GRAMMAR.flag_value(args, &mut index, "--segment-release", inline)?,
                 "too many segment release filters",
             )?,
             "--segment-environment" | "--segment-env" => push_bounded(
                 &mut parsed.segment_environments,
-                flag_value(args, &mut index, "--segment-environment", inline)?,
+                GRAMMAR.flag_value(args, &mut index, "--segment-environment", inline)?,
                 "too many segment environment filters",
             )?,
             "--segment-property" => push_property_assignment(
                 &mut parsed.segment_properties,
-                flag_value(args, &mut index, "--segment-property", inline)?,
+                GRAMMAR.flag_value(args, &mut index, "--segment-property", inline)?,
             )?,
             value if value.starts_with('-') => {
                 return Err(CliError::UnknownFlag {
@@ -129,7 +137,7 @@ impl ParsedCompareFlags {
     fn finish(&self) -> Result<AnalyticsSegmentComparisonOptions, CliError> {
         let project_id = required(self.project_id.as_deref(), "project")?.trim();
         if !is_uuid(project_id) {
-            return Err(invalid_argument("invalid project id"));
+            return Err(GRAMMAR.invalid_argument("invalid project id"));
         }
         let since = normalize_text(required(self.since.as_deref(), "since")?, 64)?;
         let until = normalize_optional(self.until.as_deref(), 64)?;
@@ -190,9 +198,9 @@ enum SegmentFilter {
 /// Normalizes the ordered segment declarations and proves unique keys.
 fn normalize_segments(values: &[String]) -> Result<Vec<AnalyticsSegment>, CliError> {
     if !(2..=4).contains(&values.len()) {
-        return Err(invalid_argument(
-            "analytics comparison requires two through four segments",
-        ));
+        return Err(
+            GRAMMAR.invalid_argument("analytics comparison requires two through four segments")
+        );
     }
     let mut keys = HashSet::with_capacity(values.len());
     values
@@ -201,7 +209,7 @@ fn normalize_segments(values: &[String]) -> Result<Vec<AnalyticsSegment>, CliErr
             let (key, label) = assignment(value.as_str(), 80)?;
             let key = normalize_segment_key(key)?;
             if !keys.insert(key.clone()) {
-                return Err(invalid_argument("duplicate analytics segment key"));
+                return Err(GRAMMAR.invalid_argument("duplicate analytics segment key"));
             }
             Ok(AnalyticsSegment {
                 key,
@@ -224,26 +232,24 @@ fn apply_segment_property_filters(
         let (selector, value) = assignment(value.as_str(), 256)?;
         let (segment_key, property_key) = selector
             .split_once(':')
-            .ok_or_else(|| invalid_argument("invalid segment property assignment"))?;
+            .ok_or_else(|| GRAMMAR.invalid_argument("invalid segment property assignment"))?;
         let segment_key = normalize_segment_key(segment_key)?;
         let property_key = normalize_property_key(property_key)?;
         let Some(segment) = segments
             .iter_mut()
             .find(|segment| segment.key == segment_key)
         else {
-            return Err(invalid_argument(
-                "segment property references an unknown key",
-            ));
+            return Err(GRAMMAR.invalid_argument("segment property references an unknown key"));
         };
         if segment.property_filters.len() >= 4 {
-            return Err(invalid_argument("too many segment property filters"));
+            return Err(GRAMMAR.invalid_argument("too many segment property filters"));
         }
         if segment
             .property_filters
             .iter()
             .any(|filter| filter.key == property_key)
         {
-            return Err(invalid_argument("duplicate segment property key"));
+            return Err(GRAMMAR.invalid_argument("duplicate segment property key"));
         }
         segment
             .property_filters
@@ -270,7 +276,7 @@ fn apply_segment_filters(
         let (key, value) = assignment(value.as_str(), 256)?;
         let key = normalize_segment_key(key)?;
         let Some(segment) = segments.iter_mut().find(|segment| segment.key == key) else {
-            return Err(invalid_argument("segment filter references an unknown key"));
+            return Err(GRAMMAR.invalid_argument("segment filter references an unknown key"));
         };
         let slot = match filter {
             SegmentFilter::Service => &mut segment.service_name,
@@ -278,7 +284,7 @@ fn apply_segment_filters(
             SegmentFilter::Environment => &mut segment.environment,
         };
         if slot.is_some() {
-            return Err(invalid_argument("duplicate segment filter assignment"));
+            return Err(GRAMMAR.invalid_argument("duplicate segment filter assignment"));
         }
         *slot = Some(normalize_text(value, 256)?);
     }
@@ -298,7 +304,7 @@ fn require_unique_filters(segments: &[AnalyticsSegment]) -> Result<(), CliError>
     }) {
         Ok(())
     } else {
-        Err(invalid_argument("duplicate analytics segment filters"))
+        Err(GRAMMAR.invalid_argument("duplicate analytics segment filters"))
     }
 }
 
@@ -306,13 +312,13 @@ fn require_unique_filters(segments: &[AnalyticsSegment]) -> Result<(), CliError>
 fn assignment(value: &str, limit: usize) -> Result<(&str, &str), CliError> {
     let (key, value) = value
         .split_once('=')
-        .ok_or_else(|| invalid_argument("invalid keyed segment assignment"))?;
+        .ok_or_else(|| GRAMMAR.invalid_argument("invalid keyed segment assignment"))?;
     if key.trim().is_empty()
         || value.trim().is_empty()
         || value.chars().count() > limit
         || value.chars().any(char::is_control)
     {
-        return Err(invalid_argument("invalid keyed segment assignment"));
+        return Err(GRAMMAR.invalid_argument("invalid keyed segment assignment"));
     }
     Ok((key, value))
 }
@@ -331,7 +337,7 @@ fn normalize_segment_key(value: &str) -> Result<String, CliError> {
             byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'_' | b'-')
         })
     {
-        return Err(invalid_argument("invalid analytics segment key"));
+        return Err(GRAMMAR.invalid_argument("invalid analytics segment key"));
     }
     Ok(value.to_owned())
 }
@@ -342,7 +348,7 @@ fn normalize_event_kind(value: &str) -> Result<AnalyticsSegmentEventKind, CliErr
         "page-view" | "page_view" | "page" => Ok(AnalyticsSegmentEventKind::PageView),
         "screen-view" | "screen_view" | "screen" => Ok(AnalyticsSegmentEventKind::ScreenView),
         "interaction" => Ok(AnalyticsSegmentEventKind::Interaction),
-        _ => Err(invalid_argument("invalid analytics comparison target kind")),
+        _ => Err(GRAMMAR.invalid_argument("invalid analytics comparison target kind")),
     }
 }
 
@@ -355,7 +361,7 @@ fn normalize_event_name(kind: AnalyticsSegmentEventKind, value: &str) -> Result<
                 byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.' | b':')
             }))
     {
-        return Err(invalid_argument("invalid analytics comparison target"));
+        return Err(GRAMMAR.invalid_argument("invalid analytics comparison target"));
     }
     Ok(value)
 }
@@ -367,7 +373,7 @@ fn normalize_unit(value: Option<&str>) -> Result<AnalyticsSegmentUnit, CliError>
         Some("identified-user" | "identified_user" | "user" | "users") => {
             Ok(AnalyticsSegmentUnit::IdentifiedUser)
         }
-        Some(_) => Err(invalid_argument("invalid analytics comparison unit")),
+        Some(_) => Err(GRAMMAR.invalid_argument("invalid analytics comparison unit")),
     }
 }
 
@@ -376,30 +382,23 @@ fn normalize_interval(value: Option<&str>) -> Result<String, CliError> {
     match value.map(str::trim) {
         None | Some("auto") => Ok("auto".to_owned()),
         Some(value @ ("1m" | "5m" | "15m" | "1h" | "6h" | "1d")) => Ok(value.to_owned()),
-        Some(_) => Err(invalid_argument("invalid analytics comparison interval")),
+        Some(_) => Err(GRAMMAR.invalid_argument("invalid analytics comparison interval")),
     }
 }
 
 /// Requires one named comparison flag.
 fn required<'a>(value: Option<&'a str>, argument: &'static str) -> Result<&'a str, CliError> {
-    value.ok_or(CliError::MissingArgument {
-        argument,
-        next: ANALYTICS_COMPARE_NEXT_STEP,
-    })
+    GRAMMAR.required(value, argument)
 }
 
 /// Trims one non-empty, control-free bounded public value.
 fn normalize_text(value: &str, limit: usize) -> Result<String, CliError> {
-    let value = value.trim();
-    if value.is_empty() || value.chars().count() > limit || value.chars().any(char::is_control) {
-        return Err(invalid_argument("invalid analytics comparison value"));
-    }
-    Ok(value.to_owned())
+    GRAMMAR.normalize_text(value, limit, "invalid analytics comparison value")
 }
 
 /// Normalizes one optional bounded timestamp value.
 fn normalize_optional(value: Option<&str>, limit: usize) -> Result<Option<String>, CliError> {
-    value.map(|value| normalize_text(value, limit)).transpose()
+    GRAMMAR.normalize_optional(value, limit, "invalid analytics comparison value")
 }
 
 /// Adds one repeated assignment while preserving the four-segment request bound.
@@ -409,7 +408,7 @@ fn push_bounded(
     error: &'static str,
 ) -> Result<(), CliError> {
     if values.len() >= 4 {
-        return Err(invalid_argument(error));
+        return Err(GRAMMAR.invalid_argument(error));
     }
     values.push(value);
     Ok(())
@@ -418,74 +417,10 @@ fn push_bounded(
 /// Adds one property assignment while preserving the four-by-four request bound.
 fn push_property_assignment(values: &mut Vec<String>, value: String) -> Result<(), CliError> {
     if values.len() >= 16 {
-        return Err(invalid_argument("too many segment property filters"));
+        return Err(GRAMMAR.invalid_argument("too many segment property filters"));
     }
     values.push(value);
     Ok(())
-}
-
-/// Reads a separate or inline flag value without swallowing another flag.
-fn flag_value(
-    args: &[String],
-    index: &mut usize,
-    flag: &'static str,
-    inline: Option<&str>,
-) -> Result<String, CliError> {
-    let value = inline.unwrap_or_else(|| {
-        *index += 1;
-        args.get(*index).map(String::as_str).unwrap_or_default()
-    });
-    if value.is_empty() || value.starts_with('-') {
-        return Err(CliError::MissingFlagValue {
-            flag,
-            next: ANALYTICS_COMPARE_NEXT_STEP,
-        });
-    }
-    Ok(value.to_owned())
-}
-
-/// Rejects values attached to boolean flags.
-fn reject_inline(flag: &str, inline: Option<&str>) -> Result<(), CliError> {
-    if inline.is_some() {
-        Err(CliError::UnknownFlag {
-            flag: flag.to_owned(),
-            next: ANALYTICS_COMPARE_NEXT_STEP,
-        })
-    } else {
-        Ok(())
-    }
-}
-
-/// Marks one singular canonical flag and rejects aliases used together.
-fn mark_seen(seen: &mut Vec<&'static str>, flag: &'static str) -> Result<(), CliError> {
-    if seen.contains(&flag) {
-        return Err(CliError::DuplicateFlag {
-            flag,
-            next: if flag == "--json" {
-                "use --json once"
-            } else {
-                ANALYTICS_COMPARE_NEXT_STEP
-            },
-        });
-    }
-    seen.push(flag);
-    Ok(())
-}
-
-/// Splits one inline `--flag=value` token.
-fn split_flag(value: &str) -> (&str, Option<&str>) {
-    value
-        .split_once('=')
-        .map_or((value, None), |(flag, value)| (flag, Some(value)))
-}
-
-/// Returns a value-free deterministic grammar error.
-fn invalid_argument(argument: &'static str) -> CliError {
-    CliError::UnexpectedArgument {
-        argument: argument.to_owned(),
-        command: "analytics compare",
-        next: ANALYTICS_COMPARE_NEXT_STEP,
-    }
 }
 
 #[cfg(test)]

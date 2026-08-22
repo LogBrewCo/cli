@@ -1,5 +1,6 @@
 //! Closed product-analytics lifecycle command grammar.
 
+use super::Grammar;
 use crate::ids::is_uuid;
 use crate::{
     AnalyticsLifecycleEventKind, AnalyticsLifecycleInterval, AnalyticsLifecycleOptions, CliError,
@@ -9,6 +10,9 @@ use crate::{
 /// Exact recovery text shared by every malformed lifecycle invocation.
 pub(super) const ANALYTICS_LIFECYCLE_NEXT_STEP: &str = "use logbrew analytics lifecycle --project <project_id> --since <24h|RFC3339> --event-kind <page-view|screen-view|interaction> --event <name> with optional --until, --service, --release, --environment, --interval hour|day|week|thirty-day, --history-periods 2-31, and --json";
 
+/// Canonical parser behavior for lifecycle reads.
+const GRAMMAR: Grammar = Grammar::new("analytics lifecycle", ANALYTICS_LIFECYCLE_NEXT_STEP);
+
 /// Parses one exact event selector and bounded lifecycle controls.
 pub(super) fn parse_lifecycle(args: &[String]) -> Result<Command, CliError> {
     let mut parsed = ParsedLifecycleFlags::default();
@@ -16,53 +20,58 @@ pub(super) fn parse_lifecycle(args: &[String]) -> Result<Command, CliError> {
     let mut index = 0;
     while index < args.len() {
         let raw = &args[index];
-        let (flag, inline) = split_flag(raw);
+        let (flag, inline) = Grammar::split_flag(raw);
         match flag {
             "--json" => {
-                reject_inline(flag, inline)?;
-                mark_seen(&mut seen, "--json")?;
+                GRAMMAR.reject_inline(flag, inline)?;
+                GRAMMAR.mark_seen(&mut seen, "--json")?;
                 parsed.json = true;
             }
             "--project" | "--project-id" => {
-                mark_seen(&mut seen, "--project")?;
-                parsed.project_id = Some(flag_value(args, &mut index, "--project", inline)?);
+                GRAMMAR.mark_seen(&mut seen, "--project")?;
+                parsed.project_id =
+                    Some(GRAMMAR.flag_value(args, &mut index, "--project", inline)?);
             }
             "--since" => {
-                mark_seen(&mut seen, "--since")?;
-                parsed.since = Some(flag_value(args, &mut index, "--since", inline)?);
+                GRAMMAR.mark_seen(&mut seen, "--since")?;
+                parsed.since = Some(GRAMMAR.flag_value(args, &mut index, "--since", inline)?);
             }
             "--until" => {
-                mark_seen(&mut seen, "--until")?;
-                parsed.until = Some(flag_value(args, &mut index, "--until", inline)?);
+                GRAMMAR.mark_seen(&mut seen, "--until")?;
+                parsed.until = Some(GRAMMAR.flag_value(args, &mut index, "--until", inline)?);
             }
             "--service" | "--service-name" => {
-                mark_seen(&mut seen, "--service")?;
-                parsed.service_name = Some(flag_value(args, &mut index, "--service", inline)?);
+                GRAMMAR.mark_seen(&mut seen, "--service")?;
+                parsed.service_name =
+                    Some(GRAMMAR.flag_value(args, &mut index, "--service", inline)?);
             }
             "--release" => {
-                mark_seen(&mut seen, "--release")?;
-                parsed.release = Some(flag_value(args, &mut index, "--release", inline)?);
+                GRAMMAR.mark_seen(&mut seen, "--release")?;
+                parsed.release = Some(GRAMMAR.flag_value(args, &mut index, "--release", inline)?);
             }
             "--environment" | "--env" => {
-                mark_seen(&mut seen, "--environment")?;
-                parsed.environment = Some(flag_value(args, &mut index, "--environment", inline)?);
+                GRAMMAR.mark_seen(&mut seen, "--environment")?;
+                parsed.environment =
+                    Some(GRAMMAR.flag_value(args, &mut index, "--environment", inline)?);
             }
             "--event-kind" => {
-                mark_seen(&mut seen, "--event-kind")?;
-                parsed.event_kind = Some(flag_value(args, &mut index, "--event-kind", inline)?);
+                GRAMMAR.mark_seen(&mut seen, "--event-kind")?;
+                parsed.event_kind =
+                    Some(GRAMMAR.flag_value(args, &mut index, "--event-kind", inline)?);
             }
             "--event" | "--event-name" => {
-                mark_seen(&mut seen, "--event")?;
-                parsed.event_name = Some(flag_value(args, &mut index, "--event", inline)?);
+                GRAMMAR.mark_seen(&mut seen, "--event")?;
+                parsed.event_name = Some(GRAMMAR.flag_value(args, &mut index, "--event", inline)?);
             }
             "--interval" => {
-                mark_seen(&mut seen, "--interval")?;
-                parsed.interval = Some(flag_value(args, &mut index, "--interval", inline)?);
+                GRAMMAR.mark_seen(&mut seen, "--interval")?;
+                parsed.interval =
+                    Some(GRAMMAR.flag_value(args, &mut index, "--interval", inline)?);
             }
             "--history-periods" | "--history-period-count" => {
-                mark_seen(&mut seen, "--history-periods")?;
+                GRAMMAR.mark_seen(&mut seen, "--history-periods")?;
                 parsed.history_period_count =
-                    Some(flag_value(args, &mut index, "--history-periods", inline)?);
+                    Some(GRAMMAR.flag_value(args, &mut index, "--history-periods", inline)?);
             }
             value if value.starts_with('-') => {
                 return Err(CliError::UnknownFlag {
@@ -112,7 +121,7 @@ impl ParsedLifecycleFlags {
     fn finish(&self) -> Result<AnalyticsLifecycleOptions, CliError> {
         let project_id = required(self.project_id.as_deref(), "project")?.trim();
         if !is_uuid(project_id) {
-            return Err(invalid_argument("invalid project id"));
+            return Err(GRAMMAR.invalid_argument("invalid project id"));
         }
         let since = normalize_text(required(self.since.as_deref(), "since")?, 64)?;
         let until = normalize_optional(self.until.as_deref(), 64)?;
@@ -143,10 +152,7 @@ impl ParsedLifecycleFlags {
 
 /// Requires one named lifecycle flag.
 fn required<'a>(value: Option<&'a str>, argument: &'static str) -> Result<&'a str, CliError> {
-    value.ok_or(CliError::MissingArgument {
-        argument,
-        next: ANALYTICS_LIFECYCLE_NEXT_STEP,
-    })
+    GRAMMAR.required(value, argument)
 }
 
 /// Normalizes one supported classified event kind.
@@ -155,7 +161,7 @@ fn normalize_event_kind(value: &str) -> Result<AnalyticsLifecycleEventKind, CliE
         "page-view" | "page_view" | "page" => Ok(AnalyticsLifecycleEventKind::PageView),
         "screen-view" | "screen_view" | "screen" => Ok(AnalyticsLifecycleEventKind::ScreenView),
         "interaction" => Ok(AnalyticsLifecycleEventKind::Interaction),
-        _ => Err(invalid_argument("invalid lifecycle event kind")),
+        _ => Err(GRAMMAR.invalid_argument("invalid lifecycle event kind")),
     }
 }
 
@@ -171,7 +177,7 @@ fn normalize_event_name(
                 byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.' | b':')
             }))
     {
-        return Err(invalid_argument("invalid lifecycle event"));
+        return Err(GRAMMAR.invalid_argument("invalid lifecycle event"));
     }
     Ok(value)
 }
@@ -186,7 +192,7 @@ fn normalize_interval(value: Option<&str>) -> Result<Option<AnalyticsLifecycleIn
         Some("thirty-day" | "thirty_day" | "30d") => {
             Ok(Some(AnalyticsLifecycleInterval::ThirtyDay))
         }
-        Some(_) => Err(invalid_argument("invalid lifecycle interval")),
+        Some(_) => Err(GRAMMAR.invalid_argument("invalid lifecycle interval")),
     }
 }
 
@@ -199,7 +205,7 @@ fn bounded_history_periods(value: Option<&str>) -> Result<u8, CliError> {
         .parse::<u8>()
         .ok()
         .filter(|count| (2..=31).contains(count))
-        .ok_or_else(|| invalid_argument("invalid lifecycle history period count"))
+        .ok_or_else(|| GRAMMAR.invalid_argument("invalid lifecycle history period count"))
 }
 
 /// Rejects interval/count combinations exceeding the server's 62-day history cap.
@@ -213,87 +219,19 @@ fn validate_history_span(
             .saturating_mul(u64::from(history_period_count))
             > 62 * 24 * 60 * 60
     }) {
-        return Err(invalid_argument("lifecycle history exceeds 62 days"));
+        return Err(GRAMMAR.invalid_argument("lifecycle history exceeds 62 days"));
     }
     Ok(())
 }
 
 /// Trims one non-empty, control-free bounded public value.
 fn normalize_text(value: &str, limit: usize) -> Result<String, CliError> {
-    let value = value.trim();
-    if value.is_empty() || value.chars().count() > limit || value.chars().any(char::is_control) {
-        return Err(invalid_argument("invalid analytics lifecycle value"));
-    }
-    Ok(value.to_owned())
+    GRAMMAR.normalize_text(value, limit, "invalid analytics lifecycle value")
 }
 
 /// Normalizes one optional bounded context value.
 fn normalize_optional(value: Option<&str>, limit: usize) -> Result<Option<String>, CliError> {
-    value.map(|value| normalize_text(value, limit)).transpose()
-}
-
-/// Reads a separate or inline flag value without swallowing another flag.
-fn flag_value(
-    args: &[String],
-    index: &mut usize,
-    flag: &'static str,
-    inline: Option<&str>,
-) -> Result<String, CliError> {
-    let value = inline.unwrap_or_else(|| {
-        *index += 1;
-        args.get(*index).map(String::as_str).unwrap_or_default()
-    });
-    if value.is_empty() || value.starts_with('-') {
-        return Err(CliError::MissingFlagValue {
-            flag,
-            next: ANALYTICS_LIFECYCLE_NEXT_STEP,
-        });
-    }
-    Ok(value.to_owned())
-}
-
-/// Rejects values attached to boolean flags.
-fn reject_inline(flag: &str, inline: Option<&str>) -> Result<(), CliError> {
-    if inline.is_some() {
-        Err(CliError::UnknownFlag {
-            flag: flag.to_owned(),
-            next: ANALYTICS_LIFECYCLE_NEXT_STEP,
-        })
-    } else {
-        Ok(())
-    }
-}
-
-/// Marks a canonical flag and rejects aliases used together.
-fn mark_seen(seen: &mut Vec<&'static str>, flag: &'static str) -> Result<(), CliError> {
-    if seen.contains(&flag) {
-        return Err(CliError::DuplicateFlag {
-            flag,
-            next: if flag == "--json" {
-                "use --json once"
-            } else {
-                ANALYTICS_LIFECYCLE_NEXT_STEP
-            },
-        });
-    }
-    seen.push(flag);
-    Ok(())
-}
-
-/// Splits one inline `--flag=value` token.
-fn split_flag(value: &str) -> (&str, Option<&str>) {
-    value
-        .split_once('=')
-        .map_or((value, None), |(flag, value)| (flag, Some(value)))
-}
-
-/// Returns a value-free deterministic grammar error.
-fn invalid_argument(argument: &'static str) -> CliError {
-    CliError::UnexpectedArgument {
-        argument: argument.to_owned(),
-        command: "analytics lifecycle",
-        next: ANALYTICS_LIFECYCLE_NEXT_STEP,
-    }
+    GRAMMAR.normalize_optional(value, limit, "invalid analytics lifecycle value")
 }
 
 #[cfg(test)]

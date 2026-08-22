@@ -21,6 +21,133 @@ pub(super) const ANALYTICS_PATHS_NEXT_STEP: &str = "use logbrew analytics paths 
 /// Exact recovery text for the product-analytics namespace.
 pub(super) const ANALYTICS_NEXT_STEP: &str = "use logbrew analytics overview --help, logbrew analytics properties --help, logbrew analytics compare --help, logbrew analytics paths --help, logbrew analytics funnel --help, logbrew analytics retention --help, or logbrew analytics lifecycle --help";
 
+/// Canonical parser behavior for path analysis.
+const PATH_GRAMMAR: Grammar = Grammar::new("analytics paths", ANALYTICS_PATHS_NEXT_STEP);
+
+/// Shared closed-grammar behavior for one analytics command.
+#[derive(Clone, Copy)]
+pub(super) struct Grammar {
+    /// Stable command name used by deterministic parse errors.
+    command: &'static str,
+    /// Stable recovery text for every malformed invocation.
+    next: &'static str,
+}
+
+impl Grammar {
+    /// Creates one command-specific grammar helper.
+    pub(super) const fn new(command: &'static str, next: &'static str) -> Self {
+        Self { command, next }
+    }
+
+    /// Reads a separate or inline flag value without swallowing another flag.
+    pub(super) fn flag_value(
+        self,
+        args: &[String],
+        index: &mut usize,
+        flag: &'static str,
+        inline: Option<&str>,
+    ) -> Result<String, CliError> {
+        let value = inline.unwrap_or_else(|| {
+            *index += 1;
+            args.get(*index).map(String::as_str).unwrap_or_default()
+        });
+        if value.is_empty() || value.starts_with('-') {
+            return Err(CliError::MissingFlagValue {
+                flag,
+                next: self.next,
+            });
+        }
+        Ok(value.to_owned())
+    }
+
+    /// Rejects values attached to boolean flags.
+    pub(super) fn reject_inline(self, flag: &str, inline: Option<&str>) -> Result<(), CliError> {
+        if inline.is_some() {
+            Err(CliError::UnknownFlag {
+                flag: flag.to_owned(),
+                next: self.next,
+            })
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Marks a canonical singular flag and rejects aliases used together.
+    pub(super) fn mark_seen(
+        self,
+        seen: &mut Vec<&'static str>,
+        flag: &'static str,
+    ) -> Result<(), CliError> {
+        if seen.contains(&flag) {
+            return Err(CliError::DuplicateFlag {
+                flag,
+                next: if flag == "--json" {
+                    "use --json once"
+                } else {
+                    self.next
+                },
+            });
+        }
+        seen.push(flag);
+        Ok(())
+    }
+
+    /// Requires one named flag.
+    pub(super) fn required<'a>(
+        self,
+        value: Option<&'a str>,
+        argument: &'static str,
+    ) -> Result<&'a str, CliError> {
+        value.ok_or(CliError::MissingArgument {
+            argument,
+            next: self.next,
+        })
+    }
+
+    /// Trims one non-empty, control-free bounded public value.
+    pub(super) fn normalize_text(
+        self,
+        value: &str,
+        limit: usize,
+        error: &'static str,
+    ) -> Result<String, CliError> {
+        let value = value.trim();
+        if value.is_empty() || value.chars().count() > limit || value.chars().any(char::is_control)
+        {
+            return Err(self.invalid_argument(error));
+        }
+        Ok(value.to_owned())
+    }
+
+    /// Normalizes one optional bounded context value.
+    pub(super) fn normalize_optional(
+        self,
+        value: Option<&str>,
+        limit: usize,
+        error: &'static str,
+    ) -> Result<Option<String>, CliError> {
+        value
+            .map(|value| self.normalize_text(value, limit, error))
+            .transpose()
+    }
+
+    /// Splits one inline `--flag=value` token.
+    pub(super) fn split_flag(value: &str) -> (&str, Option<&str>) {
+        value
+            .split_once('=')
+            .map_or((value, None), |(flag, value)| (flag, Some(value)))
+    }
+
+    /// Returns one value-free deterministic grammar error.
+    pub(super) fn invalid_argument(self, argument: &'static str) -> CliError {
+        CliError::UnexpectedArgument {
+            argument: argument.to_owned(),
+            command: self.command,
+            next: self.next,
+        }
+    }
+}
+
 /// Parses the closed product-analytics namespace.
 pub(super) fn parse_analytics(args: &[String]) -> Result<Command, CliError> {
     let normalized = normalize_json(args)?;
@@ -70,6 +197,7 @@ fn normalize_json(args: &[String]) -> Result<Vec<String>, CliError> {
 
 /// Parses one exact direction and its bounded path flags.
 fn parse_paths(args: &[String]) -> Result<Command, CliError> {
+    let grammar = PATH_GRAMMAR;
     let Some((direction, flags)) = args.split_first() else {
         return Err(CliError::MissingArgument {
             argument: "direction",
@@ -85,71 +213,90 @@ fn parse_paths(args: &[String]) -> Result<Command, CliError> {
                 next: ANALYTICS_PATHS_NEXT_STEP,
             });
         }
-        _ => return Err(invalid_argument("invalid direction")),
+        _ => return Err(grammar.invalid_argument("invalid direction")),
     };
 
+    let parsed = parse_path_flags(flags)?;
+    Ok(Command::AnalyticsPaths {
+        options: parsed.finish(direction)?,
+        json: parsed.json,
+    })
+}
+
+/// Collects path flags before their values are normalized together.
+fn parse_path_flags(flags: &[String]) -> Result<ParsedPathFlags, CliError> {
+    let grammar = PATH_GRAMMAR;
     let mut parsed = ParsedPathFlags::default();
     let mut seen = Vec::new();
     let mut index = 0;
     while index < flags.len() {
         let raw = &flags[index];
-        let (flag, inline) = split_flag(raw);
+        let (flag, inline) = Grammar::split_flag(raw);
         match flag {
             "--json" => {
-                reject_inline(flag, inline)?;
-                mark_seen(&mut seen, "--json")?;
+                grammar.reject_inline(flag, inline)?;
+                grammar.mark_seen(&mut seen, "--json")?;
                 parsed.json = true;
             }
             "--keep-repeated" => {
-                reject_inline(flag, inline)?;
-                mark_seen(&mut seen, "--keep-repeated")?;
+                grammar.reject_inline(flag, inline)?;
+                grammar.mark_seen(&mut seen, "--keep-repeated")?;
                 parsed.collapse_repeated = false;
             }
             "--project" | "--project-id" => {
-                mark_seen(&mut seen, "--project")?;
-                parsed.project_id = Some(flag_value(flags, &mut index, "--project", inline)?);
+                grammar.mark_seen(&mut seen, "--project")?;
+                parsed.project_id =
+                    Some(grammar.flag_value(flags, &mut index, "--project", inline)?);
             }
             "--since" => {
-                mark_seen(&mut seen, "--since")?;
-                parsed.since = Some(flag_value(flags, &mut index, "--since", inline)?);
+                grammar.mark_seen(&mut seen, "--since")?;
+                parsed.since = Some(grammar.flag_value(flags, &mut index, "--since", inline)?);
             }
             "--until" => {
-                mark_seen(&mut seen, "--until")?;
-                parsed.until = Some(flag_value(flags, &mut index, "--until", inline)?);
+                grammar.mark_seen(&mut seen, "--until")?;
+                parsed.until = Some(grammar.flag_value(flags, &mut index, "--until", inline)?);
             }
             "--service" | "--service-name" => {
-                mark_seen(&mut seen, "--service")?;
-                parsed.service_name = Some(flag_value(flags, &mut index, "--service", inline)?);
+                grammar.mark_seen(&mut seen, "--service")?;
+                parsed.service_name =
+                    Some(grammar.flag_value(flags, &mut index, "--service", inline)?);
             }
             "--release" => {
-                mark_seen(&mut seen, "--release")?;
-                parsed.release = Some(flag_value(flags, &mut index, "--release", inline)?);
+                grammar.mark_seen(&mut seen, "--release")?;
+                parsed.release =
+                    Some(grammar.flag_value(flags, &mut index, "--release", inline)?);
             }
             "--environment" | "--env" => {
-                mark_seen(&mut seen, "--environment")?;
-                parsed.environment = Some(flag_value(flags, &mut index, "--environment", inline)?);
+                grammar.mark_seen(&mut seen, "--environment")?;
+                parsed.environment =
+                    Some(grammar.flag_value(flags, &mut index, "--environment", inline)?);
             }
             "--anchor-kind" => {
-                mark_seen(&mut seen, "--anchor-kind")?;
-                parsed.anchor_kind = Some(flag_value(flags, &mut index, "--anchor-kind", inline)?);
+                grammar.mark_seen(&mut seen, "--anchor-kind")?;
+                parsed.anchor_kind =
+                    Some(grammar.flag_value(flags, &mut index, "--anchor-kind", inline)?);
             }
             "--anchor-event" => {
-                mark_seen(&mut seen, "--anchor-event")?;
+                grammar.mark_seen(&mut seen, "--anchor-event")?;
                 parsed.anchor_event =
-                    Some(flag_value(flags, &mut index, "--anchor-event", inline)?);
+                    Some(grammar.flag_value(flags, &mut index, "--anchor-event", inline)?);
             }
             "--property" | "--property-filter" => {
-                parsed
-                    .properties
-                    .push(flag_value(flags, &mut index, "--property", inline)?);
+                parsed.properties.push(grammar.flag_value(
+                    flags,
+                    &mut index,
+                    "--property",
+                    inline,
+                )?);
             }
             "--depth" => {
-                mark_seen(&mut seen, "--depth")?;
-                parsed.depth = Some(flag_value(flags, &mut index, "--depth", inline)?);
+                grammar.mark_seen(&mut seen, "--depth")?;
+                parsed.depth = Some(grammar.flag_value(flags, &mut index, "--depth", inline)?);
             }
             "--path-limit" => {
-                mark_seen(&mut seen, "--path-limit")?;
-                parsed.path_limit = Some(flag_value(flags, &mut index, "--path-limit", inline)?);
+                grammar.mark_seen(&mut seen, "--path-limit")?;
+                parsed.path_limit =
+                    Some(grammar.flag_value(flags, &mut index, "--path-limit", inline)?);
             }
             value if value.starts_with('-') => {
                 return Err(CliError::UnknownFlag {
@@ -167,11 +314,7 @@ fn parse_paths(args: &[String]) -> Result<Command, CliError> {
         }
         index += 1;
     }
-
-    Ok(Command::AnalyticsPaths {
-        options: parsed.finish(direction)?,
-        json: parsed.json,
-    })
+    Ok(parsed)
 }
 
 /// Partially parsed flags before required-value and shape validation.
@@ -220,7 +363,7 @@ impl ParsedPathFlags {
     fn finish(&self, direction: AnalyticsPathDirection) -> Result<AnalyticsPathOptions, CliError> {
         let project_id = required(self.project_id.as_deref(), "project")?.trim();
         if !is_uuid(project_id) {
-            return Err(invalid_argument("invalid project id"));
+            return Err(PATH_GRAMMAR.invalid_argument("invalid project id"));
         }
         let since = normalize_text(required(self.since.as_deref(), "since")?, 64)?;
         let until = self
@@ -264,18 +407,18 @@ fn normalize_path_property_filters(
     values: &[String],
 ) -> Result<Vec<AnalyticsPathPropertyFilter>, CliError> {
     if values.len() > 4 {
-        return Err(invalid_argument("too many analytics path property filters"));
+        return Err(PATH_GRAMMAR.invalid_argument("too many analytics path property filters"));
     }
     let mut keys = HashSet::with_capacity(values.len());
     let mut filters = values
         .iter()
         .map(|raw| {
-            let (key, value) = raw
-                .split_once('=')
-                .ok_or_else(|| invalid_argument("invalid analytics path property assignment"))?;
+            let (key, value) = raw.split_once('=').ok_or_else(|| {
+                PATH_GRAMMAR.invalid_argument("invalid analytics path property assignment")
+            })?;
             let key = normalize_property_key(key)?;
             if !keys.insert(key.clone()) {
-                return Err(invalid_argument("duplicate analytics path property key"));
+                return Err(PATH_GRAMMAR.invalid_argument("duplicate analytics path property key"));
             }
             Ok(AnalyticsPathPropertyFilter {
                 key,
@@ -293,16 +436,13 @@ pub(super) fn normalize_property_key(value: &str) -> Result<String, CliError> {
     if crate::analytics_property_contract::is_safe_key(value) {
         Ok(value.to_owned())
     } else {
-        Err(invalid_argument("unsupported analytics property key"))
+        Err(PATH_GRAMMAR.invalid_argument("unsupported analytics property key"))
     }
 }
 
 /// Requires one named flag value.
 fn required<'a>(value: Option<&'a str>, argument: &'static str) -> Result<&'a str, CliError> {
-    value.ok_or(CliError::MissingArgument {
-        argument,
-        next: ANALYTICS_PATHS_NEXT_STEP,
-    })
+    PATH_GRAMMAR.required(value, argument)
 }
 
 /// Normalizes one classified path kind.
@@ -311,7 +451,7 @@ fn normalize_anchor_kind(value: &str) -> Result<AnalyticsPathEventKind, CliError
         "page-view" | "page_view" | "page" => Ok(AnalyticsPathEventKind::PageView),
         "screen-view" | "screen_view" | "screen" => Ok(AnalyticsPathEventKind::ScreenView),
         "interaction" => Ok(AnalyticsPathEventKind::Interaction),
-        _ => Err(invalid_argument("invalid anchor kind")),
+        _ => Err(PATH_GRAMMAR.invalid_argument("invalid anchor kind")),
     }
 }
 
@@ -324,23 +464,19 @@ fn normalize_anchor_event(kind: AnalyticsPathEventKind, value: &str) -> Result<S
                 byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.' | b':')
             }))
     {
-        return Err(invalid_argument("invalid interaction anchor event"));
+        return Err(PATH_GRAMMAR.invalid_argument("invalid interaction anchor event"));
     }
     Ok(value)
 }
 
 /// Trims one non-empty, control-free bounded public value.
 fn normalize_text(value: &str, limit: usize) -> Result<String, CliError> {
-    let value = value.trim();
-    if value.is_empty() || value.chars().count() > limit || value.chars().any(char::is_control) {
-        return Err(invalid_argument("invalid analytics path value"));
-    }
-    Ok(value.to_owned())
+    PATH_GRAMMAR.normalize_text(value, limit, "invalid analytics path value")
 }
 
 /// Normalizes one optional bounded context value.
 fn normalize_optional(value: Option<&str>, limit: usize) -> Result<Option<String>, CliError> {
-    value.map(|value| normalize_text(value, limit)).transpose()
+    PATH_GRAMMAR.normalize_optional(value, limit, "invalid analytics path value")
 }
 
 /// Parses a bounded integer or supplies its public default.
@@ -358,71 +494,7 @@ fn bounded_u8(
         .parse::<u8>()
         .ok()
         .filter(|value| (minimum..=maximum).contains(value))
-        .ok_or_else(|| invalid_argument(error))
-}
-
-/// Reads a separate or inline flag value without swallowing another flag.
-fn flag_value(
-    args: &[String],
-    index: &mut usize,
-    flag: &'static str,
-    inline: Option<&str>,
-) -> Result<String, CliError> {
-    let value = inline.unwrap_or_else(|| {
-        *index += 1;
-        args.get(*index).map(String::as_str).unwrap_or_default()
-    });
-    if value.is_empty() || value.starts_with('-') {
-        return Err(CliError::MissingFlagValue {
-            flag,
-            next: ANALYTICS_PATHS_NEXT_STEP,
-        });
-    }
-    Ok(value.to_owned())
-}
-
-/// Rejects values attached to boolean flags.
-fn reject_inline(flag: &str, inline: Option<&str>) -> Result<(), CliError> {
-    if inline.is_some() {
-        Err(CliError::UnknownFlag {
-            flag: flag.to_owned(),
-            next: ANALYTICS_PATHS_NEXT_STEP,
-        })
-    } else {
-        Ok(())
-    }
-}
-
-/// Marks a canonical flag and rejects aliases used together.
-fn mark_seen(seen: &mut Vec<&'static str>, flag: &'static str) -> Result<(), CliError> {
-    if seen.contains(&flag) {
-        return Err(CliError::DuplicateFlag {
-            flag,
-            next: if flag == "--json" {
-                "use --json once"
-            } else {
-                ANALYTICS_PATHS_NEXT_STEP
-            },
-        });
-    }
-    seen.push(flag);
-    Ok(())
-}
-
-/// Splits one inline `--flag=value` token.
-fn split_flag(value: &str) -> (&str, Option<&str>) {
-    value
-        .split_once('=')
-        .map_or((value, None), |(flag, value)| (flag, Some(value)))
-}
-
-/// Returns a value-free deterministic grammar error.
-fn invalid_argument(argument: &'static str) -> CliError {
-    CliError::UnexpectedArgument {
-        argument: argument.to_owned(),
-        command: "analytics paths",
-        next: ANALYTICS_PATHS_NEXT_STEP,
-    }
+        .ok_or_else(|| PATH_GRAMMAR.invalid_argument(error))
 }
 
 #[cfg(test)]
