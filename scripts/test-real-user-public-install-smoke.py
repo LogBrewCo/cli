@@ -24,7 +24,7 @@ from unittest import mock
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 VERIFIER = ROOT / "scripts" / "real_user_public_install_smoke.py"
-VERSION = "0.1.62"
+VERSION = "0.1.63"
 sys.dont_write_bytecode = True
 
 
@@ -285,10 +285,10 @@ class PublicInstallVerifierTests(unittest.TestCase):
                     class Logbrew < Formula
                       if OS.mac?
                         if Hardware::CPU.arm?
-                          url "https://github.com/LogBrewCo/cli/releases/download/v0.1.62/logbrew-cli-aarch64-apple-darwin.tar.xz"
+                          url "https://github.com/LogBrewCo/cli/releases/download/v{VERSION}/logbrew-cli-aarch64-apple-darwin.tar.xz"
                         end
                         if Hardware::CPU.intel?
-                          url "https://github.com/LogBrewCo/cli/releases/download/v0.1.62/logbrew-cli-x86_64-apple-darwin.tar.xz"
+                          url "https://github.com/LogBrewCo/cli/releases/download/v{VERSION}/logbrew-cli-x86_64-apple-darwin.tar.xz"
                         end
                       end
                       BINARY_ALIASES = {
@@ -304,7 +304,7 @@ class PublicInstallVerifierTests(unittest.TestCase):
                       end
                     end
                     '''
-                ).lstrip(),
+                ).replace("{VERSION}", VERSION).lstrip(),
                 encoding="utf-8",
             )
             return "homebrew:LogBrewCo/tap/logbrew", artifact
