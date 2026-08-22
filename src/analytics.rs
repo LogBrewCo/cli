@@ -7,6 +7,7 @@
 
 use serde::Deserialize;
 
+use crate::analytics_contract::{COUNT_LIMIT, bounded_counts, ratio_matches};
 use crate::analytics_request::{self, Kind, insert_optional};
 use crate::http::{nonempty_control_safe as bounded_contract_text, terminal_safe as display_text};
 use crate::{
@@ -20,8 +21,6 @@ const SCHEMA_VERSION: u8 = 1;
 const RESPONSE_LIMIT: usize = 1024 * 1024;
 /// Storage contract's direction-nearest event cap.
 const ORDERED_EVENT_CAP: u16 = 1024;
-/// Server-side scan cap also bounds every returned count.
-const COUNT_LIMIT: u64 = 10_000_000;
 /// Maximum material limitations accepted from the bounded API.
 const LIMITATION_LIMIT: usize = 10;
 /// Maximum trace exemplars accepted per aggregate path.
@@ -569,27 +568,6 @@ fn valid_next_action(response: &PathsResponse) -> bool {
         ("compare_path_contexts", "/api/telemetry/analytics/paths")
     };
     response.next_action.code == expected.0 && response.next_action.target == expected.1
-}
-
-/// Returns whether every count stays inside the server's public scan bound.
-fn bounded_counts(values: &[u64]) -> bool {
-    values.iter().all(|value| *value <= COUNT_LIMIT)
-}
-
-/// Verifies one optional exact aggregate ratio.
-fn ratio_matches(value: Option<f64>, numerator: u64, denominator: u64) -> bool {
-    if denominator == 0 {
-        return value.is_none();
-    }
-    let (Ok(numerator), Ok(denominator)) = (u32::try_from(numerator), u32::try_from(denominator))
-    else {
-        return false;
-    };
-    value.is_some_and(|value| {
-        value.is_finite()
-            && (0.0..=1.0).contains(&value)
-            && (value - f64::from(numerator) / f64::from(denominator)).abs() <= 1.0e-12
-    })
 }
 
 /// Renders the useful human interpretation without reflecting backend prose.

@@ -7,6 +7,7 @@
 #![forbid(unsafe_code)]
 
 mod analytics;
+mod analytics_contract;
 mod analytics_funnel;
 mod analytics_lifecycle;
 mod analytics_overview;

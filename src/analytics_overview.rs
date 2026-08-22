@@ -7,6 +7,7 @@
 
 use serde::Deserialize;
 
+use crate::analytics_contract::{bounded_counts, ratio_matches};
 use crate::analytics_request::{self, Kind};
 use crate::http::{nonempty_control_safe as bounded_contract_text, terminal_safe as display_text};
 use crate::{AnalyticsOverviewOptions, CliEnvironment, RuntimeError};
@@ -17,8 +18,6 @@ const SCHEMA_VERSION: u8 = 2;
 const SUBJECT_INDEX_VERSION: u8 = 1;
 /// Maximum accepted response body.
 const RESPONSE_LIMIT: usize = 1024 * 1024;
-/// Server-side scan cap also bounds every returned count.
-const COUNT_LIMIT: u64 = 10_000_000;
 /// Hard maximum non-empty time buckets.
 const BUCKET_LIMIT: u64 = 500;
 /// Hard maximum rows in each ranking.
@@ -914,27 +913,6 @@ fn valid_next_action(response: &OverviewResponse) -> bool {
         ("capture_funnel_steps", "classified_activity.top_events")
     };
     response.next_action.code == expected.0 && response.next_action.target == expected.1
-}
-
-/// Returns whether every count stays inside the server's public scan bound.
-fn bounded_counts(values: &[u64]) -> bool {
-    values.iter().all(|value| *value <= COUNT_LIMIT)
-}
-
-/// Verifies one optional exact proportion.
-fn ratio_matches(value: Option<f64>, numerator: u64, denominator: u64) -> bool {
-    if denominator == 0 {
-        return value.is_none();
-    }
-    let (Ok(numerator), Ok(denominator)) = (u32::try_from(numerator), u32::try_from(denominator))
-    else {
-        return false;
-    };
-    value.is_some_and(|value| {
-        value.is_finite()
-            && (0.0..=1.0).contains(&value)
-            && (value - f64::from(numerator) / f64::from(denominator)).abs() <= 1.0e-12
-    })
 }
 
 /// Verifies one optional exact per-unit quotient, which can be above one.

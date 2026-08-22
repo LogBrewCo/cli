@@ -7,6 +7,7 @@
 
 use serde::Deserialize;
 
+use crate::analytics_contract::{bounded_counts, ratio_matches};
 use crate::analytics_request::{self, Kind};
 use crate::http::{nonempty_control_safe as bounded_contract_text, terminal_safe as display_text};
 use crate::{AnalyticsPropertyOptions, CliEnvironment, RuntimeError};
@@ -15,8 +16,6 @@ use crate::{AnalyticsPropertyOptions, CliEnvironment, RuntimeError};
 const SCHEMA_VERSION: u8 = 1;
 /// Maximum accepted response body.
 const RESPONSE_LIMIT: usize = 1024 * 1024;
-/// Server-side classified-event scan cap.
-const COUNT_LIMIT: u64 = 10_000_000;
 /// Conservative bound for approximate cross-event cardinalities.
 const CARDINALITY_LIMIT: u64 = 500_000_000;
 /// Conservative bound for one approximate per-key value cardinality.
@@ -337,31 +336,6 @@ fn valid_next_action(response: &PropertyCatalogResponse) -> bool {
         )
     };
     response.next_action.code == expected.0 && response.next_action.target == expected.1
-}
-
-/// Returns whether every exact event counter stays inside the public scan bound.
-fn bounded_counts(values: &[u64]) -> bool {
-    values.iter().all(|value| *value <= COUNT_LIMIT)
-}
-
-/// Verifies one optional exact ratio bounded between zero and one.
-fn ratio_matches(value: Option<f64>, numerator: u64, denominator: u64) -> bool {
-    if denominator == 0 {
-        return value.is_none();
-    }
-    if numerator > denominator {
-        return false;
-    }
-    let (Ok(numerator), Ok(denominator)) = (u32::try_from(numerator), u32::try_from(denominator))
-    else {
-        return false;
-    };
-    let expected = f64::from(numerator) / f64::from(denominator);
-    value.is_some_and(|value| {
-        value.is_finite()
-            && (0.0..=1.0).contains(&value)
-            && (value - expected).abs() <= 1.0e-12 * expected.abs().max(1.0)
-    })
 }
 
 /// Validates the UTC RFC 3339 shape emitted by the versioned API.
