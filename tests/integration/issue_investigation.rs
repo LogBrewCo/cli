@@ -1784,6 +1784,10 @@ fn invalid_occurrence_selection_bundles() -> Vec<serde_json::Value> {
             serde_json::json!("hostile-service-marker"),
         ),
         (
+            "/event/context/resource/runtime/version",
+            serde_json::json!("/opt/example/runtime"),
+        ),
+        (
             "/event/context",
             serde_json::json!({
                 "schema_version": 1, "resource": null, "trace": null,
@@ -1832,6 +1836,13 @@ fn invalid_occurrence_selection_bundles() -> Vec<serde_json::Value> {
             serde_json::json!("../payment_gateway.ts"),
         ),
     ]);
+
+    let mut unknown_context = rich_investigation_bundle();
+    let _previous = unknown_context["event"]["context"]
+        .as_object_mut()
+        .expect("context")
+        .insert("raw_subject_id".to_owned(), serde_json::json!("private"));
+    cases.push(mark_invalid(unknown_context));
 
     let mut unknown_source_receipt = rich_investigation_bundle();
     unknown_source_receipt["source_locator"]["evidence"]["captured_fields"] =

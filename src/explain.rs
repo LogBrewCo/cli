@@ -966,7 +966,10 @@ fn validate_selected_occurrence_event(
         .ok_or_else(invalid_response)?;
     let stack = required_object(selected, "stack")?;
     let breadcrumbs = required_object(selected, "breadcrumbs")?;
-    let context_captured = validate_selected_event_context(event)?;
+    let context_captured = context::validate(
+        event.get("context"),
+        context::Expected::issue(facts.service_name, facts.environment, facts.release),
+    )?;
     let captured_frame_count = require_safe_u64(stack, "frame_count")?;
     let captured_stack_truncated = require_bool(stack, "truncated")?;
     let projected_frames_fit_capture = stack_count <= captured_frame_count;
@@ -979,62 +982,10 @@ fn validate_selected_occurrence_event(
         && require_bool(breadcrumbs, "truncated")? == require_bool(event, "breadcrumbs_truncated")?
         && facts.context_captured == context_captured
     {
-        validate_selected_event_resource_scope(facts, event)
+        Ok(())
     } else {
         Err(invalid_response())
     }
-}
-
-/// Validates the typed context envelope and returns whether it contains bounded evidence.
-fn validate_selected_event_context(event: &Map<String, Value>) -> Result<bool, RuntimeError> {
-    let context = match event.get("context") {
-        Some(Value::Null) => return Ok(false),
-        Some(Value::Object(context)) => context,
-        _ => return Err(invalid_response()),
-    };
-    validate_schema_version_value(context, 1)?;
-    let mut captured = false;
-    for field in ["resource", "trace", "session", "subject"] {
-        match context.get(field) {
-            Some(Value::Null) => {}
-            Some(Value::Object(_)) => captured = true,
-            _ => return Err(invalid_response()),
-        }
-    }
-    let tags = required_object(context, "tags")?;
-    Ok(captured || !tags.is_empty())
-}
-
-/// Binds any captured resource fields back to the selected occurrence summary.
-fn validate_selected_event_resource_scope(
-    selected: IssueOccurrenceFacts<'_>,
-    event: &Map<String, Value>,
-) -> Result<(), RuntimeError> {
-    let Some(context) = event.get("context").and_then(Value::as_object) else {
-        return Ok(());
-    };
-    let Some(resource) = context.get("resource").filter(|value| !value.is_null()) else {
-        return Ok(());
-    };
-    let resource = resource.as_object().ok_or_else(invalid_response)?;
-    if let Some(service) = resource.get("service").filter(|value| !value.is_null()) {
-        require_string_equals(
-            service.as_object().ok_or_else(invalid_response)?,
-            "name",
-            selected.service_name,
-        )?;
-    }
-    if let Some(deployment) = resource.get("deployment").filter(|value| !value.is_null()) {
-        let deployment = deployment.as_object().ok_or_else(invalid_response)?;
-        if optional_string(deployment, "environment")?
-            .is_some_and(|value| value != selected.environment)
-            || optional_string(deployment, "release")?
-                .is_some_and(|value| value != selected.release)
-        {
-            return Err(invalid_response());
-        }
-    }
-    Ok(())
 }
 
 /// Reads the exact selected-event trace identity from typed context.

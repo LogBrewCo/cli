@@ -50,6 +50,8 @@ enum Mode<'a> {
         /// Privacy-safe action subject classification.
         classification: &'a str,
     },
+    /// Accepts issue occurrence identities without binding them before correlation validation.
+    Issue,
 }
 
 impl<'a> Expected<'a> {
@@ -110,12 +112,25 @@ impl<'a> Expected<'a> {
             mode: Mode::Action { classification },
         }
     }
+
+    /// Validates one selected issue occurrence before its trace correlation is bound.
+    pub(super) const fn issue(service: &'a str, environment: &'a str, release: &'a str) -> Self {
+        Self {
+            service,
+            environment,
+            release,
+            mode: Mode::Issue,
+        }
+    }
 }
 
-/// Validates one explicitly nullable typed telemetry context.
-pub(super) fn validate(value: Option<&Value>, expected: Expected<'_>) -> Result<(), RuntimeError> {
+/// Validates one explicitly nullable typed context and reports whether it contains evidence.
+pub(super) fn validate(
+    value: Option<&Value>,
+    expected: Expected<'_>,
+) -> Result<bool, RuntimeError> {
     let Some(context) = nullable_object(value)? else {
-        return Ok(());
+        return Ok(false);
     };
     require_exact_fields(
         context,
@@ -137,8 +152,10 @@ pub(super) fn validate(value: Option<&Value>, expected: Expected<'_>) -> Result<
         | validate_subject(context.get("subject"), expected)?;
     let tags = required_object(context, "tags")?;
     validate_tags(tags, expected)?;
-    if populated || !tags.is_empty() || matches!(expected.mode, Mode::Action { .. }) {
-        Ok(())
+    if populated || !tags.is_empty() {
+        Ok(true)
+    } else if matches!(expected.mode, Mode::Action { .. } | Mode::Issue) {
+        Ok(false)
     } else {
         Err(invalid_response())
     }
@@ -192,7 +209,7 @@ fn validate_resource(value: Option<&Value>, expected: Expected<'_>) -> Result<bo
         let _version = nullable_text(os, "version")?;
         let _build = nullable_text(os, "build")?;
     }
-    let allow_empty = matches!(expected.mode, Mode::Action { .. });
+    let allow_empty = matches!(expected.mode, Mode::Action { .. } | Mode::Issue);
     validate_optional_group(
         resource.get("device"),
         &["family", "model", "architecture"],
@@ -247,7 +264,7 @@ fn validate_trace(value: Option<&Value>, expected: Expected<'_>) -> Result<bool,
                 || span_id != expected_span
                 || bind_parent && parent_span_id != expected_parent
         }
-        Mode::Action { .. } => false,
+        Mode::Action { .. } | Mode::Issue => false,
     };
     if !is_w3c_id(trace_id, 32)
         || identity_mismatch
@@ -286,7 +303,7 @@ fn validate_subject(value: Option<&Value>, expected: Expected<'_>) -> Result<boo
         Mode::Action { classification } => {
             id.is_some() || matches!(classification, "anonymous" | "user") && classification != kind
         }
-        Mode::Captured { .. } => false,
+        Mode::Captured { .. } | Mode::Issue => false,
     };
     if matches!(kind, "anonymous" | "user") && !classification_mismatch {
         Ok(true)
