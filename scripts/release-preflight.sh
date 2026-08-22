@@ -154,8 +154,6 @@ check_npm_version_available() {
 check_homebrew_tap_available() {
   local tap_repo="$1"
   local metadata
-  local is_private
-  local default_branch
 
   if ! metadata="$(
     gh repo view "$tap_repo" --json defaultBranchRef,isPrivate,nameWithOwner,url
@@ -163,16 +161,10 @@ check_homebrew_tap_available() {
     fail "could not verify Homebrew tap repository ${tap_repo}"
   fi
 
-  is_private="$(jq -r '.isPrivate' <<<"$metadata")"
-  default_branch="$(jq -r '.defaultBranchRef.name // ""' <<<"$metadata")"
-
-  if [[ "$is_private" != "false" ]]; then
+  jq -e '.isPrivate == false' <<<"$metadata" >/dev/null ||
     fail "Homebrew tap repository ${tap_repo} is not public"
-  fi
-
-  if [[ -z "$default_branch" ]]; then
+  jq -e '(.defaultBranchRef.name // "") != ""' <<<"$metadata" >/dev/null ||
     fail "Homebrew tap repository ${tap_repo} has no default branch"
-  fi
 }
 
 check_main_branch_protection() {
