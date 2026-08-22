@@ -205,7 +205,7 @@ async fn existing_project_key_create_posts_exact_request_then_persists_before_sa
 }
 
 #[cfg(unix)]
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test]
 async fn built_binary_creates_existing_project_key_over_loopback_without_secret_output()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
@@ -223,12 +223,9 @@ async fn built_binary_creates_existing_project_key_over_loopback_without_secret_
     .mount(&server)
     .await;
     let fixture = Fixture::new("built-binary")?;
-
-    let process = std::process::Command::new(env!("CARGO_BIN_EXE_logbrew"))
-        .env_clear()
+    let mut command = super::cli_command(&server);
+    let _command = command
         .env("HOME", fixture.home.as_path())
-        .env("LOGBREW_API_URL", server.uri())
-        .env("LOGBREW_TOKEN", "account-token")
         .current_dir(fixture.root.as_path())
         .args([
             "projects",
@@ -238,8 +235,8 @@ async fn built_binary_creates_existing_project_key_over_loopback_without_secret_
             "--ingest-key-file",
             fixture.key_file.to_string_lossy().as_ref(),
             "--json",
-        ])
-        .output()?;
+        ]);
+    let process = super::run_cli_command(command).await?;
 
     super::assert_cli_success(&process);
     let text = String::from_utf8(process.stdout)?;

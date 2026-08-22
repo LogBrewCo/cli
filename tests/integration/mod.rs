@@ -62,22 +62,26 @@ async fn run_cli(
     server: &MockServer,
     args: &[&str],
 ) -> Result<std::process::Output, Box<dyn std::error::Error>> {
-    let base_url = server.uri();
-    let args = args
-        .iter()
-        .map(std::ffi::OsString::from)
-        .collect::<Vec<_>>();
-    let process = tokio::task::spawn_blocking(move || {
-        std::process::Command::new(env!("CARGO_BIN_EXE_logbrew"))
-            .env_clear()
-            .env("HOME", std::env::temp_dir())
-            .env("LOGBREW_API_URL", base_url)
-            .env("LOGBREW_TOKEN", "account-token")
-            .args(args)
-            .output()
-    })
-    .await??;
-    Ok(process)
+    let mut command = cli_command(server);
+    let _command = command.env("HOME", std::env::temp_dir()).args(args);
+    run_cli_command(command).await
+}
+
+/// Returns the built CLI with isolated account auth for one loopback server.
+fn cli_command(server: &MockServer) -> std::process::Command {
+    let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_logbrew"));
+    let _command = command
+        .env_clear()
+        .env("LOGBREW_API_URL", server.uri())
+        .env("LOGBREW_TOKEN", "account-token");
+    command
+}
+
+/// Runs one configured CLI process without blocking its loopback server.
+async fn run_cli_command(
+    mut command: std::process::Command,
+) -> Result<std::process::Output, Box<dyn std::error::Error>> {
+    Ok(tokio::task::spawn_blocking(move || command.output()).await??)
 }
 
 /// Requires a successful CLI process with an empty diagnostic stream.

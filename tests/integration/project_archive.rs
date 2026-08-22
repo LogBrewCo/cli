@@ -251,7 +251,7 @@ async fn archive_and_delete_send_exact_requests_and_local_receipts() -> TestResu
     Ok(())
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test]
 async fn built_binary_deletes_over_loopback_with_a_local_receipt() -> TestResult {
     let server = MockServer::start().await;
     mount_delete(
@@ -261,13 +261,12 @@ async fn built_binary_deletes_over_loopback_with_a_local_receipt() -> TestResult
     )
     .await;
     let home = super::isolated_home("logbrew-project-delete", "binary")?;
-    let process = std::process::Command::new(env!("CARGO_BIN_EXE_logbrew"))
-        .env_clear()
-        .env("HOME", home)
-        .env("LOGBREW_API_URL", server.uri())
-        .env("LOGBREW_TOKEN", "account-token")
-        .args(["projects", "delete", ID, "--confirm", ID, "--json"])
-        .output()?;
+    let mut command = super::cli_command(&server);
+    let _command =
+        command
+            .env("HOME", home)
+            .args(["projects", "delete", ID, "--confirm", ID, "--json"]);
+    let process = super::run_cli_command(command).await?;
 
     super::assert_cli_success(&process);
     let text = String::from_utf8(process.stdout)?;
