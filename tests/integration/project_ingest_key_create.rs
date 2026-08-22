@@ -241,12 +241,7 @@ async fn built_binary_creates_existing_project_key_over_loopback_without_secret_
         ])
         .output()?;
 
-    assert!(
-        process.status.success(),
-        "built binary failed: {}",
-        String::from_utf8_lossy(process.stderr.as_slice())
-    );
-    assert!(process.stderr.is_empty());
+    super::assert_cli_success(&process);
     let text = String::from_utf8(process.stdout)?;
     let body: serde_json::Value = serde_json::from_str(text.as_str())?;
     assert_eq!(body["status"], "created");

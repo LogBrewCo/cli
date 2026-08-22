@@ -58,16 +58,15 @@ pub(crate) mod matchers {
 }
 
 /// Runs the built CLI against one loopback server with isolated credentials.
-async fn run_cli<I, S>(
+async fn run_cli(
     server: &MockServer,
-    args: I,
-) -> Result<std::process::Output, Box<dyn std::error::Error>>
-where
-    I: IntoIterator<Item = S>,
-    S: Into<std::ffi::OsString>,
-{
+    args: &[&str],
+) -> Result<std::process::Output, Box<dyn std::error::Error>> {
     let base_url = server.uri();
-    let args = args.into_iter().map(Into::into).collect::<Vec<_>>();
+    let args = args
+        .iter()
+        .map(std::ffi::OsString::from)
+        .collect::<Vec<_>>();
     let process = tokio::task::spawn_blocking(move || {
         std::process::Command::new(env!("CARGO_BIN_EXE_logbrew"))
             .env_clear()
@@ -79,6 +78,16 @@ where
     })
     .await??;
     Ok(process)
+}
+
+/// Requires a successful CLI process with an empty diagnostic stream.
+fn assert_cli_success(process: &std::process::Output) {
+    assert!(
+        process.status.success(),
+        "built binary failed: {}",
+        String::from_utf8_lossy(process.stderr.as_slice())
+    );
+    assert!(process.stderr.is_empty());
 }
 
 /// Executes one parsed command against isolated authenticated loopback state.

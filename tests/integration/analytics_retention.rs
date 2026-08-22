@@ -89,12 +89,7 @@ async fn built_binary_posts_exact_scope_and_preserves_validated_json()
 
     let process = run_binary(&server, true).await?;
 
-    assert!(
-        process.status.success(),
-        "built binary failed: {}",
-        String::from_utf8_lossy(process.stderr.as_slice())
-    );
-    assert!(process.stderr.is_empty());
+    super::assert_cli_success(&process);
     let actual: serde_json::Value = serde_json::from_slice(process.stdout.as_slice())?;
     assert_eq!(actual, response);
     Ok(())
@@ -182,7 +177,7 @@ async fn run_binary(
     if json {
         args.push("--json");
     }
-    super::run_cli(server, args).await
+    super::run_cli(server, args.as_slice()).await
 }
 
 /// Stable schema-version-1 fixture matching the API contract.

@@ -67,40 +67,29 @@ async fn built_binary_release_preserves_validated_version_3_json()
     let response = release_response();
     Mock::route("GET", "/api/telemetry/releases/investigation")
         .and(query_param("response_version", "3"))
-        .and(header("authorization", "Bearer test-token"))
+        .and(header("authorization", "Bearer account-token"))
         .respond_with(ResponseTemplate::new(200).set_body_json(response.clone()))
         .expect(1)
         .mount(&server)
         .await;
-    let base_url = server.uri();
-    let process = tokio::task::spawn_blocking(move || {
-        std::process::Command::new(env!("CARGO_BIN_EXE_logbrew"))
-            .env_clear()
-            .env("HOME", std::env::temp_dir())
-            .env("LOGBREW_API_URL", base_url)
-            .env("LOGBREW_TOKEN", "test-token")
-            .args([
-                "explain",
-                "release",
-                "checkout@1.2.3",
-                "--project",
-                PROJECT_ID,
-                "--environment",
-                "production",
-                "--service",
-                "checkout-api",
-                "--json",
-            ])
-            .output()
-    })
-    .await??;
+    let process = super::run_cli(
+        &server,
+        &[
+            "explain",
+            "release",
+            "checkout@1.2.3",
+            "--project",
+            PROJECT_ID,
+            "--environment",
+            "production",
+            "--service",
+            "checkout-api",
+            "--json",
+        ],
+    )
+    .await?;
 
-    assert!(
-        process.status.success(),
-        "built binary failed: {}",
-        String::from_utf8_lossy(process.stderr.as_slice())
-    );
-    assert!(process.stderr.is_empty());
+    super::assert_cli_success(&process);
     let actual: serde_json::Value = serde_json::from_slice(process.stdout.as_slice())?;
     assert_eq!(actual, response);
     Ok(())
@@ -276,46 +265,35 @@ async fn built_binary_metric_preserves_validated_version_2_description_json()
     let response = metric_response();
     Mock::route("GET", "/api/telemetry/metrics/investigation")
         .and(query_param("response_version", "2"))
-        .and(header("authorization", "Bearer test-token"))
+        .and(header("authorization", "Bearer account-token"))
         .respond_with(ResponseTemplate::new(200).set_body_json(response.clone()))
         .expect(1)
         .mount(&server)
         .await;
-    let base_url = server.uri();
-    let process = tokio::task::spawn_blocking(move || {
-        std::process::Command::new(env!("CARGO_BIN_EXE_logbrew"))
-            .env_clear()
-            .env("HOME", std::env::temp_dir())
-            .env("LOGBREW_API_URL", base_url)
-            .env("LOGBREW_TOKEN", "test-token")
-            .args([
-                "explain",
-                "metric",
-                "http.server.duration",
-                "--project",
-                PROJECT_ID,
-                "--since",
-                "24h",
-                "--interval",
-                "5m",
-                "--group-by",
-                "service",
-                "--environment",
-                "production",
-                "--series-limit",
-                "12",
-                "--json",
-            ])
-            .output()
-    })
-    .await??;
+    let process = super::run_cli(
+        &server,
+        &[
+            "explain",
+            "metric",
+            "http.server.duration",
+            "--project",
+            PROJECT_ID,
+            "--since",
+            "24h",
+            "--interval",
+            "5m",
+            "--group-by",
+            "service",
+            "--environment",
+            "production",
+            "--series-limit",
+            "12",
+            "--json",
+        ],
+    )
+    .await?;
 
-    assert!(
-        process.status.success(),
-        "built binary failed: {}",
-        String::from_utf8_lossy(process.stderr.as_slice())
-    );
-    assert!(process.stderr.is_empty());
+    super::assert_cli_success(&process);
     let actual: serde_json::Value = serde_json::from_slice(process.stdout.as_slice())?;
     assert_eq!(actual, response);
     Ok(())
