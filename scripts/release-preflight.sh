@@ -152,19 +152,18 @@ check_npm_version_available() {
 }
 
 check_homebrew_tap_available() {
-  local tap_repo="$1"
   local metadata
 
   if ! metadata="$(
-    gh repo view "$tap_repo" --json defaultBranchRef,isPrivate,nameWithOwner,url
+    gh repo view "$1" --json defaultBranchRef,isPrivate,nameWithOwner,url
   )"; then
-    fail "could not verify Homebrew tap repository ${tap_repo}"
+    fail "could not verify Homebrew tap repository $1"
   fi
 
   jq -e '.isPrivate == false' <<<"$metadata" >/dev/null ||
-    fail "Homebrew tap repository ${tap_repo} is not public"
+    fail "Homebrew tap repository $1 is not public"
   jq -e '(.defaultBranchRef.name // "") != ""' <<<"$metadata" >/dev/null ||
-    fail "Homebrew tap repository ${tap_repo} has no default branch"
+    fail "Homebrew tap repository $1 has no default branch"
 }
 
 check_main_branch_protection() {
