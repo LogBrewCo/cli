@@ -1,5 +1,6 @@
 //! Secure project bootstrap contract tests.
 
+use super::{assert_private_file, secure_directory, set_private_file_mode};
 use logbrew_cli::{
     CliEnvironment, HelpTopic, HttpMethod, RuntimeError, execute_command, help, parse_command,
     write_cli_error, write_runtime_error,
@@ -1315,39 +1316,4 @@ async fn received_requests(
         .received_requests()
         .await
         .ok_or_else(|| "request recording is disabled".into())
-}
-
-#[cfg(unix)]
-fn secure_directory(path: &std::path::Path) -> Result<(), std::io::Error> {
-    use std::os::unix::fs::PermissionsExt as _;
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))
-}
-
-#[cfg(not(unix))]
-fn secure_directory(_path: &std::path::Path) -> Result<(), std::io::Error> {
-    Ok(())
-}
-
-#[cfg(unix)]
-fn assert_private_file(path: &std::path::Path) -> Result<(), std::io::Error> {
-    use std::os::unix::fs::PermissionsExt as _;
-    assert_eq!(std::fs::metadata(path)?.permissions().mode() & 0o777, 0o600);
-    Ok(())
-}
-
-#[cfg(unix)]
-fn set_private_file_mode(path: &std::path::Path) -> Result<(), std::io::Error> {
-    use std::os::unix::fs::PermissionsExt as _;
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
-}
-
-#[cfg(not(unix))]
-fn set_private_file_mode(_path: &std::path::Path) -> Result<(), std::io::Error> {
-    Ok(())
-}
-
-#[cfg(not(unix))]
-fn assert_private_file(path: &std::path::Path) -> Result<(), std::io::Error> {
-    assert!(path.is_file());
-    Ok(())
 }

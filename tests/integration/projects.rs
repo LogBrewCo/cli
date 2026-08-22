@@ -234,12 +234,12 @@ async fn projects_refreshes_local_account_auth_once() -> Result<(), Box<dyn std:
         .expect(1)
         .mount(&server)
         .await;
-    let home = temporary_home("refresh")?;
-    write_session(
+    let home = super::isolated_home("logbrew-projects", "refresh")?;
+    let _session_path = super::write_test_session(
         home.as_path(),
+        server.uri().as_str(),
         "expired-access",
         "old-refresh",
-        server.uri().as_str(),
     )?;
     let command = parse_command(["logbrew", "projects", "--json"])?;
     let env = super::test_env(&server, None, Some(home.clone()));
@@ -327,35 +327,4 @@ fn project_catalog() -> serde_json::Value {
         "last_environment": "production",
         "created_at": "2026-07-25T07:00:00Z"
     }])
-}
-
-fn temporary_home(label: &str) -> Result<std::path::PathBuf, std::io::Error> {
-    let path =
-        std::env::temp_dir().join(format!("logbrew-projects-{label}-{}", std::process::id()));
-    match std::fs::remove_dir_all(path.as_path()) {
-        Ok(()) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => return Err(error),
-    }
-    std::fs::create_dir_all(path.as_path())?;
-    Ok(path)
-}
-
-fn write_session(
-    home: &std::path::Path,
-    access_token: &str,
-    refresh_token: &str,
-    origin: &str,
-) -> Result<(), std::io::Error> {
-    let auth_dir = home.join(".logbrew");
-    std::fs::create_dir_all(auth_dir.as_path())?;
-    std::fs::write(
-        auth_dir.join("session.json"),
-        serde_json::json!({
-            "access_token": access_token,
-            "refresh_token": refresh_token,
-            "origin": origin,
-        })
-        .to_string(),
-    )
 }

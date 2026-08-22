@@ -100,6 +100,79 @@ fn test_env(
     }
 }
 
+/// Creates one process-isolated test home below the system temporary directory.
+fn isolated_home(prefix: &str, label: &str) -> Result<std::path::PathBuf, std::io::Error> {
+    let path = std::env::temp_dir().join(format!("{prefix}-{label}-{}", std::process::id()));
+    match std::fs::remove_dir_all(path.as_path()) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
+    std::fs::create_dir_all(path.as_path())?;
+    Ok(path)
+}
+
+/// Writes one local account session and returns its exact path.
+fn write_test_session(
+    home: &std::path::Path,
+    origin: &str,
+    access_token: &str,
+    refresh_token: &str,
+) -> Result<std::path::PathBuf, std::io::Error> {
+    let auth_dir = home.join(".logbrew");
+    std::fs::create_dir_all(auth_dir.as_path())?;
+    let path = auth_dir.join("session.json");
+    std::fs::write(
+        path.as_path(),
+        serde_json::json!({
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+            "origin": origin,
+        })
+        .to_string(),
+    )?;
+    Ok(path)
+}
+
+#[cfg(unix)]
+fn secure_directory(path: &std::path::Path) -> Result<(), std::io::Error> {
+    use std::os::unix::fs::PermissionsExt as _;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))
+}
+
+#[cfg(not(unix))]
+fn secure_directory(_path: &std::path::Path) -> Result<(), std::io::Error> {
+    Ok(())
+}
+
+#[cfg(unix)]
+fn set_private_file_mode(path: &std::path::Path) -> Result<(), std::io::Error> {
+    use std::os::unix::fs::PermissionsExt as _;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+}
+
+#[cfg(not(unix))]
+fn set_private_file_mode(_path: &std::path::Path) -> Result<(), std::io::Error> {
+    Ok(())
+}
+
+#[cfg(unix)]
+fn assert_private_file(path: &std::path::Path) -> Result<(), std::io::Error> {
+    use std::os::unix::fs::PermissionsExt as _;
+    assert_eq!(
+        std::fs::metadata(path)?.permissions().mode() & 0o777,
+        0o600,
+        "test credential must remain owner-only"
+    );
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn assert_private_file(path: &std::path::Path) -> Result<(), std::io::Error> {
+    assert!(path.is_file(), "test credential must be a regular file");
+    Ok(())
+}
+
 async fn run_command<const N: usize>(
     server: &wiremock::MockServer,
     args: [&str; N],

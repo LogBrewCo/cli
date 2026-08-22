@@ -262,7 +262,7 @@ async fn built_binary_deletes_over_loopback_with_a_local_receipt() -> TestResult
         1,
     )
     .await;
-    let home = temporary_home("binary")?;
+    let home = super::isolated_home("logbrew-project-delete", "binary")?;
     let process = std::process::Command::new(env!("CARGO_BIN_EXE_logbrew"))
         .env_clear()
         .env("HOME", home)
@@ -426,12 +426,20 @@ async fn lifecycle_mutations_refresh_account_auth_once() -> TestResult {
             .expect(1)
             .mount(&server)
             .await;
-        let home = temporary_home(if verb == "DELETE" {
-            "archive-refresh"
-        } else {
-            "delete-refresh"
-        })?;
-        write_session(home.as_path(), server.uri().as_str())?;
+        let home = super::isolated_home(
+            "logbrew-project-delete",
+            if verb == "DELETE" {
+                "archive-refresh"
+            } else {
+                "delete-refresh"
+            },
+        )?;
+        let _session_path = super::write_test_session(
+            home.as_path(),
+            server.uri().as_str(),
+            "expired-access",
+            "old-refresh",
+        )?;
         let env = super::test_env(&server, None, Some(home.clone()));
         let mut output = Vec::new();
 
@@ -524,20 +532,4 @@ fn assert_private_text_absent(text: &str, server: &MockServer) {
     ] {
         assert!(!text.contains(private));
     }
-}
-
-fn temporary_home(label: &str) -> Result<std::path::PathBuf, std::io::Error> {
-    let path = std::env::temp_dir().join(format!(
-        "logbrew-project-delete-{label}-{}",
-        std::process::id()
-    ));
-    drop(std::fs::remove_dir_all(path.as_path()));
-    std::fs::create_dir_all(path.as_path())?;
-    Ok(path)
-}
-
-fn write_session(home: &std::path::Path, origin: &str) -> Result<(), std::io::Error> {
-    let auth_dir = home.join(".logbrew");
-    std::fs::create_dir_all(auth_dir.as_path())?;
-    std::fs::write(auth_dir.join("session.json"), serde_json::json!({"access_token":"expired-access","refresh_token":"old-refresh","origin":origin}).to_string())
 }
