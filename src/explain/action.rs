@@ -4,10 +4,8 @@ use std::collections::BTreeSet;
 
 use serde_json::{Map, Value};
 
-use super::projection::{
-    count_scalar_leaves, sensitive_context_tag_key, sensitive_key, sensitive_string,
-    validate_projection,
-};
+use super::context::{self, Expected as ExpectedContext};
+use super::projection::{count_scalar_leaves, validate_projection};
 use super::{
     append_actions, append_evidence, append_labeled_bool, append_labeled_integer,
     append_labeled_text, append_log_analysis, append_log_correlations, append_named_pair,
@@ -18,21 +16,14 @@ use super::{
     required_object, validate_availability, validate_correlated_collection,
     validate_correlated_log, validate_correlated_signal, validate_evidence,
     validate_exact_release_scope, validate_name_version, validate_next_actions,
-    validate_schema_version, validate_schema_version_value, validate_shared_span_summary,
-    validate_shared_trace_summary, validate_timeline,
+    validate_schema_version, validate_shared_span_summary, validate_shared_trace_summary,
+    validate_timeline,
 };
 use crate::RuntimeError;
 use crate::ids::is_uuid;
 
 /// Maximum scalar leaves retained by the backend action-property projection.
 const ACTION_PROPERTY_LEAF_LIMIT: u64 = 64;
-/// Maximum low-cardinality tags retained in typed context.
-const ACTION_CONTEXT_TAG_LIMIT: usize = 32;
-/// Maximum characters retained in a typed-context tag key.
-const ACTION_CONTEXT_TAG_KEY_LIMIT: usize = 64;
-/// Maximum characters retained in a typed-context tag value.
-const ACTION_CONTEXT_TAG_VALUE_LIMIT: usize = 256;
-
 /// Validates one versioned privacy-bounded product-action investigation.
 pub(super) fn validate_response(value: &Value, expected_id: &str) -> Result<(), RuntimeError> {
     let response = exact_response_object(
@@ -52,12 +43,14 @@ pub(super) fn validate_response(value: &Value, expected_id: &str) -> Result<(), 
     validate_schema_version(response)?;
     let subject = validate_action_subject(required_object(response, "subject")?, expected_id)?;
 
-    validate_action_context(
+    context::validate(
         response.get("context"),
-        subject.service_name,
-        subject.environment,
-        subject.release,
-        subject.classification,
+        ExpectedContext::action(
+            subject.service_name,
+            subject.environment,
+            subject.release,
+            subject.classification,
+        ),
     )?;
     let properties = validate_action_properties(required_object(response, "properties")?)?;
 
@@ -218,175 +211,6 @@ fn validate_action_properties(
     })
 }
 
-/// Validates strict typed context while ensuring actor and session IDs stay withheld.
-fn validate_action_context(
-    value: Option<&Value>,
-    service_name: &str,
-    environment: &str,
-    release: &str,
-    classification: &str,
-) -> Result<(), RuntimeError> {
-    let Some(context) = value else {
-        return Err(invalid_response());
-    };
-    let context = match context {
-        Value::Null => return Ok(()),
-        Value::Object(context) => context,
-        Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Array(_) => {
-            return Err(invalid_response());
-        }
-    };
-    require_exact_fields(
-        context,
-        &[
-            "schema_version",
-            "resource",
-            "trace",
-            "session",
-            "subject",
-            "tags",
-        ],
-    )?;
-    validate_schema_version_value(context, 1)?;
-    validate_action_resource_context(context.get("resource"), service_name, environment, release)?;
-    validate_action_trace_context(context.get("trace"))?;
-
-    match context.get("session") {
-        Some(Value::Null) => {}
-        Some(Value::Object(session)) => {
-            require_exact_fields(session, &["id", "previous_id"])?;
-            if session.get("id") != Some(&Value::Null)
-                || session.get("previous_id") != Some(&Value::Null)
-            {
-                return Err(invalid_response());
-            }
-        }
-        _ => return Err(invalid_response()),
-    }
-    match context.get("subject") {
-        Some(Value::Null) => {}
-        Some(Value::Object(subject)) => {
-            require_exact_fields(subject, &["id", "kind"])?;
-            if subject.get("id") != Some(&Value::Null) {
-                return Err(invalid_response());
-            }
-            let kind = require_string(subject, "kind")?;
-            if !matches!(kind, "user" | "anonymous")
-                || matches!(classification, "user" | "anonymous") && classification != kind
-            {
-                return Err(invalid_response());
-            }
-        }
-        _ => return Err(invalid_response()),
-    }
-    let tags = required_object(context, "tags")?;
-    if tags.len() > ACTION_CONTEXT_TAG_LIMIT {
-        return Err(invalid_response());
-    }
-    for (key, value) in tags {
-        let value = value
-            .as_str()
-            .filter(|value| !value.is_empty())
-            .ok_or_else(invalid_response)?;
-        let mut characters = key.chars();
-        if !characters
-            .next()
-            .is_some_and(|character| character.is_ascii_alphabetic())
-            || key.chars().count() > ACTION_CONTEXT_TAG_KEY_LIMIT
-            || !characters
-                .all(|character| character.is_ascii_alphanumeric() || "_.-".contains(character))
-            || value.chars().count() > ACTION_CONTEXT_TAG_VALUE_LIMIT
-            || value.chars().any(char::is_control)
-            || sensitive_key(key)
-            || sensitive_context_tag_key(key)
-            || sensitive_string(value, key)
-        {
-            return Err(invalid_response());
-        }
-    }
-    Ok(())
-}
-
-/// Validates optional resource identities and binds deployment scope to the subject.
-fn validate_action_resource_context(
-    value: Option<&Value>,
-    service_name: &str,
-    environment: &str,
-    release: &str,
-) -> Result<(), RuntimeError> {
-    let resource = match value {
-        Some(Value::Null) => return Ok(()),
-        Some(Value::Object(resource)) => resource,
-        _ => return Err(invalid_response()),
-    };
-    require_exact_fields(
-        resource,
-        &[
-            "service",
-            "deployment",
-            "runtime",
-            "framework",
-            "operating_system",
-            "device",
-            "application",
-        ],
-    )?;
-    for name in ["service", "runtime", "framework"] {
-        if let Some(identity) = optional_object_value(resource.get(name))? {
-            require_exact_fields(identity, &["name", "version"])?;
-            let identity_name = require_string(identity, "name")?;
-            let _version = optional_string(identity, "version")?;
-            if name == "service" && identity_name != service_name {
-                return Err(invalid_response());
-            }
-        }
-    }
-    if let Some(deployment) = optional_object_value(resource.get("deployment"))? {
-        require_exact_fields(deployment, &["environment", "release"])?;
-        if optional_string(deployment, "environment")?.is_some_and(|value| value != environment)
-            || optional_string(deployment, "release")?.is_some_and(|value| value != release)
-        {
-            return Err(invalid_response());
-        }
-    }
-    if let Some(os) = optional_object_value(resource.get("operating_system"))? {
-        require_exact_fields(os, &["name", "version", "build"])?;
-        let _name = require_string(os, "name")?;
-        let _version = optional_string(os, "version")?;
-        let _build = optional_string(os, "build")?;
-    }
-    if let Some(device) = optional_object_value(resource.get("device"))? {
-        require_exact_fields(device, &["family", "model", "architecture"])?;
-        for name in ["family", "model", "architecture"] {
-            let _value = optional_string(device, name)?;
-        }
-    }
-    if let Some(application) = optional_object_value(resource.get("application"))? {
-        require_exact_fields(application, &["name", "version", "build"])?;
-        for name in ["name", "version", "build"] {
-            let _value = optional_string(application, name)?;
-        }
-    }
-    Ok(())
-}
-
-/// Validates optional W3C context without accepting opaque identity-shaped additions.
-fn validate_action_trace_context(value: Option<&Value>) -> Result<(), RuntimeError> {
-    let Some(trace) = optional_object_value(value)? else {
-        return Ok(());
-    };
-    require_exact_fields(trace, &["trace_id", "span_id", "parent_span_id", "sampled"])?;
-    if !is_w3c_id(require_string(trace, "trace_id")?, 32) {
-        return Err(invalid_response());
-    }
-    let _span_id = nullable_w3c_id(trace, "span_id", 16)?;
-    let _parent_span_id = nullable_w3c_id(trace, "parent_span_id", 16)?;
-    match trace.get("sampled") {
-        Some(Value::Null | Value::Bool(_)) => Ok(()),
-        _ => Err(invalid_response()),
-    }
-}
-
 /// Validates every action correlation container and exact subject scope.
 fn validate_action_correlations(
     value: &Map<String, Value>,
@@ -475,12 +299,8 @@ fn validate_action_trace_link(
     let _truncated = require_bool(value, "truncated")?;
 
     let (context_trace, context_span) = action_context_trace_ids(context)?;
-    if context_trace
-        .as_deref()
-        .is_some_and(|expected| trace_id != Some(expected))
-        || context_span
-            .as_deref()
-            .is_some_and(|expected| span_id != Some(expected))
+    if context_trace.is_some_and(|expected| trace_id != Some(expected))
+        || context_span.is_some_and(|expected| span_id != Some(expected))
     {
         return Err(invalid_response());
     }
@@ -490,15 +310,15 @@ fn validate_action_trace_link(
 /// Reads already-validated typed context IDs for correlation binding.
 fn action_context_trace_ids(
     context: Option<&Value>,
-) -> Result<(Option<String>, Option<String>), RuntimeError> {
+) -> Result<(Option<&str>, Option<&str>), RuntimeError> {
     let Some(Value::Object(context)) = context else {
         return Ok((None, None));
     };
     let Some(Value::Object(trace)) = context.get("trace") else {
         return Ok((None, None));
     };
-    let trace_id = require_string(trace, "trace_id")?.to_owned();
-    let span_id = optional_string(trace, "span_id")?.map(str::to_owned);
+    let trace_id = require_string(trace, "trace_id")?;
+    let span_id = optional_string(trace, "span_id")?;
     Ok((Some(trace_id), span_id))
 }
 
