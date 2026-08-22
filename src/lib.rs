@@ -514,6 +514,31 @@ pub enum ReadTarget {
     Issue(String),
 }
 
+impl ReadTarget {
+    /// Returns whether this endpoint applies one canonical or aliased read filter.
+    pub(crate) fn supports_filter(&self, flag: &str) -> bool {
+        match flag {
+            "--name" | "--user" | "--distinct-id" => matches!(self, Self::Actions),
+            "--service" | "--service-name" | "--since" | "--limit" => matches!(
+                self,
+                Self::Logs | Self::Issues | Self::Actions | Self::Releases | Self::Traces
+            ),
+            "--trace" | "--trace-id" | "--level" | "--severity" | "--search" => {
+                matches!(self, Self::Logs)
+            }
+            "--project" | "--project-id" | "--release" | "--environment" | "--env" => {
+                !matches!(self, Self::Issue(_))
+            }
+            "--status" => matches!(self, Self::Issues | Self::Traces),
+            "--min-duration-ms" => matches!(self, Self::Traces),
+            "--pagination" | "--cursor-time" | "--cursor-id" => {
+                matches!(self, Self::Logs | Self::Issues | Self::Actions)
+            }
+            _ => false,
+        }
+    }
+}
+
 /// Filters for historical read commands.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ReadOptions {
@@ -552,30 +577,10 @@ pub struct ReadOptions {
 }
 
 impl ReadOptions {
-    /// Returns the first filter that trace-detail reads cannot apply.
+    /// Returns the first filter the selected read endpoint cannot apply.
     #[must_use]
-    pub(crate) fn first_trace_detail_unsupported_flag(&self) -> Option<&'static str> {
-        first_present_flag([
-            (self.name.is_some(), "--name"),
-            (self.service.is_some(), "--service"),
-            (self.since.is_some(), "--since"),
-            (self.user.is_some(), "--user"),
-            (self.trace.is_some(), "--trace"),
-            (self.level.is_some(), "--severity"),
-            (self.search.is_some(), "--search"),
-            (self.status.is_some(), "--status"),
-            (self.limit.is_some(), "--limit"),
-            (self.min_duration_ms.is_some(), "--min-duration-ms"),
-            (self.pagination.is_some(), "--pagination"),
-            (self.cursor_time.is_some(), "--cursor-time"),
-            (self.cursor_id.is_some(), "--cursor-id"),
-        ])
-    }
-
-    /// Returns the first filter that issue-detail reads cannot apply.
-    #[must_use]
-    pub(crate) fn first_issue_detail_unsupported_flag(&self) -> Option<&'static str> {
-        first_present_flag([
+    pub(crate) fn first_unsupported_flag(&self, target: &ReadTarget) -> Option<&'static str> {
+        [
             (self.name.is_some(), "--name"),
             (self.service.is_some(), "--service"),
             (self.since.is_some(), "--since"),
@@ -592,83 +597,10 @@ impl ReadOptions {
             (self.pagination.is_some(), "--pagination"),
             (self.cursor_time.is_some(), "--cursor-time"),
             (self.cursor_id.is_some(), "--cursor-id"),
-        ])
+        ]
+        .into_iter()
+        .find_map(|(present, flag)| (present && !target.supports_filter(flag)).then_some(flag))
     }
-
-    /// Returns the first filter that log reads cannot apply.
-    #[must_use]
-    pub(crate) fn first_log_unsupported_flag(&self) -> Option<&'static str> {
-        first_present_flag([
-            (self.name.is_some(), "--name"),
-            (self.user.is_some(), "--user"),
-            (self.status.is_some(), "--status"),
-            (self.min_duration_ms.is_some(), "--min-duration-ms"),
-        ])
-    }
-
-    /// Returns the first filter that issue list reads cannot apply.
-    #[must_use]
-    pub(crate) fn first_issue_list_unsupported_flag(&self) -> Option<&'static str> {
-        first_present_flag([
-            (self.name.is_some(), "--name"),
-            (self.user.is_some(), "--user"),
-            (self.trace.is_some(), "--trace"),
-            (self.level.is_some(), "--severity"),
-            (self.search.is_some(), "--search"),
-            (self.min_duration_ms.is_some(), "--min-duration-ms"),
-        ])
-    }
-
-    /// Returns the first filter that action reads cannot apply.
-    #[must_use]
-    pub(crate) fn first_action_unsupported_flag(&self) -> Option<&'static str> {
-        first_present_flag([
-            (self.trace.is_some(), "--trace"),
-            (self.level.is_some(), "--severity"),
-            (self.search.is_some(), "--search"),
-            (self.status.is_some(), "--status"),
-            (self.min_duration_ms.is_some(), "--min-duration-ms"),
-        ])
-    }
-
-    /// Returns the first filter that release reads cannot apply.
-    #[must_use]
-    pub(crate) fn first_release_unsupported_flag(&self) -> Option<&'static str> {
-        first_present_flag([
-            (self.name.is_some(), "--name"),
-            (self.user.is_some(), "--user"),
-            (self.trace.is_some(), "--trace"),
-            (self.level.is_some(), "--severity"),
-            (self.search.is_some(), "--search"),
-            (self.status.is_some(), "--status"),
-            (self.min_duration_ms.is_some(), "--min-duration-ms"),
-            (self.pagination.is_some(), "--pagination"),
-            (self.cursor_time.is_some(), "--cursor-time"),
-            (self.cursor_id.is_some(), "--cursor-id"),
-        ])
-    }
-
-    /// Returns the first filter that recent trace discovery cannot apply.
-    #[must_use]
-    pub(crate) fn first_trace_list_unsupported_flag(&self) -> Option<&'static str> {
-        first_present_flag([
-            (self.name.is_some(), "--name"),
-            (self.user.is_some(), "--user"),
-            (self.trace.is_some(), "--trace"),
-            (self.level.is_some(), "--severity"),
-            (self.search.is_some(), "--search"),
-            (self.pagination.is_some(), "--pagination"),
-            (self.cursor_time.is_some(), "--cursor-time"),
-            (self.cursor_id.is_some(), "--cursor-id"),
-        ])
-    }
-}
-
-/// Returns the first present flag in declaration order.
-fn first_present_flag<const N: usize>(flags: [(bool, &'static str); N]) -> Option<&'static str> {
-    flags
-        .iter()
-        .find_map(|(present, flag)| present.then_some(*flag))
 }
 
 /// Live stream target for `watch`.

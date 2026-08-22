@@ -4,31 +4,15 @@ use crate::flags::{Flags, parse_trace_flags};
 use crate::{CliError, Command, ExplainTarget, ReadTarget};
 
 use super::{
-    READ_TRACE_NEXT_STEP, READ_TRACES_NEXT_STEP, TRACE_DETAIL_UNSUPPORTED_FLAGS,
-    parse_detail_explain_suffix, parse_detail_read_flags, reject_unsupported_read_flags,
-    take_required_position, validate_read_filters,
+    READ_TRACE_NEXT_STEP, READ_TRACES_NEXT_STEP, parse_detail_explain_suffix,
+    parse_detail_read_flags, reject_unsupported_read_flags, take_required_position,
+    validate_read_filters,
 };
-
-/// Filters recent trace discovery cannot apply.
-const TRACE_LIST_UNSUPPORTED_FLAGS: &[&str] = &[
-    "--name",
-    "--user",
-    "--distinct-id",
-    "--trace",
-    "--trace-id",
-    "--level",
-    "--severity",
-    "--search",
-];
 
 /// Parses recent trace discovery with its target-specific status vocabulary.
 pub(super) fn parse_trace_list_read(rest: &[String]) -> Result<(ReadTarget, Flags), CliError> {
-    reject_unsupported_read_flags(
-        rest,
-        "read traces",
-        READ_TRACES_NEXT_STEP,
-        TRACE_LIST_UNSUPPORTED_FLAGS,
-    )?;
+    let target = ReadTarget::Traces;
+    reject_unsupported_read_flags(&target, rest, "read traces", READ_TRACES_NEXT_STEP)?;
     let flags = match parse_trace_flags(rest) {
         Ok(flags) => flags,
         Err(CliError::UnexpectedArgument { argument, .. }) => {
@@ -40,7 +24,7 @@ pub(super) fn parse_trace_list_read(rest: &[String]) -> Result<(ReadTarget, Flag
         }
         Err(error) => return Err(error),
     };
-    Ok((ReadTarget::Traces, flags))
+    Ok((target, flags))
 }
 
 /// Parses one trace detail read or trace explain suffix.
@@ -52,12 +36,8 @@ pub(super) fn parse_trace_detail_or_explain(rest: &[String]) -> Result<Command, 
         return Ok(command);
     }
     let target = ReadTarget::Trace(id);
-    let flags = parse_detail_read_flags(
-        tail.as_slice(),
-        "read trace",
-        READ_TRACE_NEXT_STEP,
-        TRACE_DETAIL_UNSUPPORTED_FLAGS,
-    )?;
+    let flags =
+        parse_detail_read_flags(&target, tail.as_slice(), "read trace", READ_TRACE_NEXT_STEP)?;
     let json = flags.is_json();
     let options = flags.into_read_options();
     validate_read_filters(&target, &options)?;
