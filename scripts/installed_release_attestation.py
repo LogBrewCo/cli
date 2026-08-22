@@ -21,6 +21,7 @@ from dataclasses import dataclass
 
 
 MAX_API_BYTES = 1024 * 1024
+MAX_ASSET_BYTES = 64 * 1024 * 1024
 MAX_CHECKSUM_BYTES = 64 * 1024
 MAX_VERIFIER_OUTPUT_BYTES = 16 * 1024
 MAX_RELEASED_VERIFIER_BYTES = 256 * 1024
@@ -28,6 +29,15 @@ MAX_GITHUB_TOKEN_BYTES = 1024
 NETWORK_TIMEOUT_SECONDS = 60
 VERIFIER_TIMEOUT_SECONDS = 1200
 COMMIT_PATTERN = re.compile(r"^[0-9a-f]{40}$")
+RELEASE_RUN_PATTERN = re.compile(r"^[1-9][0-9]{0,19}$")
+TAG_PATTERN = re.compile(
+    r"^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
+    r"(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$"
+)
+TIMESTAMP_PATTERN = re.compile(
+    r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+)
+SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 SAFE_ASSET_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 ATTESTATION_KEYS = frozenset(
     {
@@ -44,6 +54,8 @@ ATTESTATION_KEYS = frozenset(
 WORKFLOW_PATH = ".github/workflows/installed-release-attestations.yml"
 RELEASE_WORKFLOW_PATH = ".github/workflows/release.yml"
 VERIFIER_PATH = pathlib.PurePosixPath("scripts/real_user_public_install_smoke.py")
+REPOSITORY = "LogBrewCo/cli"
+RELEASE_WORKFLOW_ID = 289984708
 
 
 class AttestationError(RuntimeError):
@@ -51,14 +63,20 @@ class AttestationError(RuntimeError):
 
 
 @dataclass(frozen=True)
-class ReceiptPolicy:
-    """One exact public artifact and real execution platform."""
+class ReceiptSpec:
+    """One supported public artifact and real execution platform."""
 
     runner: str
     platform: str
     mode: str
     artifact_id: str
     asset_name: str
+
+
+@dataclass(frozen=True)
+class ReceiptPolicy(ReceiptSpec):
+    """One release-bound public artifact."""
+
     asset_id: int
     asset_size: int
     digest: str
@@ -68,15 +86,10 @@ class ReceiptPolicy:
 class ReleasePolicy:
     """Immutable public inputs accepted by this attestation workflow."""
 
-    repository: str
     tag: str
     version: str
     source_commit: str
-    tag_object_sha: str
     release_run_id: int
-    release_workflow_id: int
-    release_id: int
-    published_at: str
     checksum_asset_name: str
     checksum_asset_id: int
     checksum_asset_size: int
@@ -84,118 +97,51 @@ class ReleasePolicy:
     receipts: Mapping[str, ReceiptPolicy]
 
 
-PUBLIC_POLICY = ReleasePolicy(
-    repository="LogBrewCo/cli",
-    tag="v0.1.51",
-    version="0.1.51",
-    source_commit="16c3d4797332f4796d058e248ebc078a554c67da",
-    tag_object_sha="05478bd96512d2cfa04d8ea9527a8a93207133e2",
-    release_run_id=32058535082,
-    release_workflow_id=289984708,
-    release_id=371894673,
-    published_at="2026-08-17T19:12:14Z",
-    checksum_asset_name="sha256.sum",
-    checksum_asset_id=518391646,
-    checksum_asset_size=820,
-    checksum_asset_digest=(
-        "ad6753aa72fe9b96c866175265fb1b66400ffb9fa71242e165fc854f59917ff0"
+RECEIPTS = {
+    "shell-linux-x64": ReceiptSpec(
+        "ubuntu-24.04", "linux-x64", "shell", "installer:shell", "logbrew-cli-installer.sh"
     ),
-    receipts={
-        "shell-linux-x64": ReceiptPolicy(
-            runner="ubuntu-24.04",
-            platform="linux-x64",
-            mode="shell",
-            artifact_id="installer:shell",
-            asset_name="logbrew-cli-installer.sh",
-            asset_id=518391599,
-            asset_size=54183,
-            digest=(
-                "b6fc704c7c7ae046888d87fd42ffc043acbedaf9e541518eb476267f9a42e951"
-            ),
-        ),
-        "native-linux-arm64": ReceiptPolicy(
-            runner="ubuntu-24.04-arm",
-            platform="linux-arm64",
-            mode="native",
-            artifact_id="native:linux-arm64",
-            asset_name="logbrew-cli-aarch64-unknown-linux-gnu.tar.xz",
-            asset_id=518391578,
-            asset_size=2400244,
-            digest=(
-                "be5fa1384f518f046eee683a67b402f12b6b792a5bd6e4ee2a855e8a61ac9511"
-            ),
-        ),
-        "native-linux-x64": ReceiptPolicy(
-            runner="ubuntu-24.04",
-            platform="linux-x64",
-            mode="native",
-            artifact_id="native:linux-x64",
-            asset_name="logbrew-cli-x86_64-unknown-linux-gnu.tar.xz",
-            asset_id=518391640,
-            asset_size=2710444,
-            digest=(
-                "ad9452ff333b990b1bf7eb03850e5ea56d33209dc04916b305e1882f2a20845c"
-            ),
-        ),
-        "powershell-windows-x64": ReceiptPolicy(
-            runner="windows-2025",
-            platform="windows-x64",
-            mode="powershell",
-            artifact_id="installer:powershell",
-            asset_name="logbrew-cli-installer.ps1",
-            asset_id=518391595,
-            asset_size=22325,
-            digest=(
-                "029d133748a411b008655294e06177e05a46505fba90a04b2cead4aea8647a25"
-            ),
-        ),
-        "native-windows-x64": ReceiptPolicy(
-            runner="windows-2025",
-            platform="windows-x64",
-            mode="native",
-            artifact_id="native:windows-x64",
-            asset_name="logbrew-cli-x86_64-pc-windows-msvc.zip",
-            asset_id=518391628,
-            asset_size=3503012,
-            digest=(
-                "92436b85eb4c22662b4587e9574f1c6bc51b189a2f87bbafcf0e87013bf8d57d"
-            ),
-        ),
-        "native-macos-x64": ReceiptPolicy(
-            runner="macos-15-intel",
-            platform="macos-x64",
-            mode="native",
-            artifact_id="native:macos-x64",
-            asset_name="logbrew-cli-x86_64-apple-darwin.tar.xz",
-            asset_id=518391616,
-            asset_size=2661860,
-            digest=(
-                "684ddd1fc5cbe3f0c0080b07918107e1417c021d4f36b08deed8eac81103830d"
-            ),
-        ),
-    },
-)
+    "native-linux-arm64": ReceiptSpec(
+        "ubuntu-24.04-arm", "linux-arm64", "native", "native:linux-arm64",
+        "logbrew-cli-aarch64-unknown-linux-gnu.tar.xz",
+    ),
+    "native-linux-x64": ReceiptSpec(
+        "ubuntu-24.04", "linux-x64", "native", "native:linux-x64",
+        "logbrew-cli-x86_64-unknown-linux-gnu.tar.xz",
+    ),
+    "powershell-windows-x64": ReceiptSpec(
+        "windows-2025", "windows-x64", "powershell", "installer:powershell",
+        "logbrew-cli-installer.ps1",
+    ),
+    "native-windows-x64": ReceiptSpec(
+        "windows-2025", "windows-x64", "native", "native:windows-x64",
+        "logbrew-cli-x86_64-pc-windows-msvc.zip",
+    ),
+    "native-macos-x64": ReceiptSpec(
+        "macos-15-intel", "macos-x64", "native", "native:macos-x64",
+        "logbrew-cli-x86_64-apple-darwin.tar.xz",
+    ),
+}
 
 
-def validate_release_inputs(
-    policy: ReleasePolicy,
+def release_identity(
     tag: str,
-    version: str,
     source_commit: str,
     release_run: str,
-) -> None:
-    """Reject dispatch replay or substitution outside the fixed release."""
-    if (tag, version, source_commit, release_run) != (
-        policy.tag,
-        policy.version,
-        policy.source_commit,
-        str(policy.release_run_id),
+) -> tuple[str, int]:
+    """Validate and normalize one immutable release identity."""
+    match = TAG_PATTERN.fullmatch(tag)
+    if (
+        match is None
+        or COMMIT_PATTERN.fullmatch(source_commit) is None
+        or RELEASE_RUN_PATTERN.fullmatch(release_run) is None
     ):
         raise AttestationError
+    return tag[1:], int(release_run)
 
 
 def validate_matrix_inputs(
-    receipt: ReceiptPolicy,
+    receipt: ReceiptSpec,
     mode: str,
     artifact_id: str,
     asset: str,
@@ -208,77 +154,57 @@ def validate_matrix_inputs(
         raise AttestationError
 
 
-def validate_tag(
-    policy: ReleasePolicy,
+def validated_tag_object_sha(
+    tag: str,
+    source_commit: str,
     reference: Mapping[str, object],
     tag_object: Mapping[str, object],
-) -> None:
-    """Require the exact annotated tag object to resolve to the released source."""
+) -> str:
+    """Require one annotated tag object to resolve to the requested source."""
     reference_object = reference.get("object")
     target_object = tag_object.get("object")
     if (
-        reference.get("ref") != f"refs/tags/{policy.tag}"
+        reference.get("ref") != f"refs/tags/{tag}"
         or not isinstance(reference_object, dict)
         or reference_object.get("type") != "tag"
-        or reference_object.get("sha") != policy.tag_object_sha
-        or tag_object.get("tag") != policy.tag
+        or COMMIT_PATTERN.fullmatch(str(reference_object.get("sha", ""))) is None
+        or tag_object.get("tag") != tag
         or not isinstance(target_object, dict)
         or target_object.get("type") != "commit"
-        or target_object.get("sha") != policy.source_commit
+        or target_object.get("sha") != source_commit
     ):
         raise AttestationError
+    return str(reference_object["sha"])
 
 
-def validate_release_run(
-    policy: ReleasePolicy,
+def validate_release_run_identity(
+    tag: str,
+    source_commit: str,
+    release_run_id: int,
     run: Mapping[str, object],
 ) -> None:
     """Require the exact successful authoritative release workflow run."""
     expected = {
-        "id": policy.release_run_id,
+        "id": release_run_id,
         "name": "Release",
         "path": RELEASE_WORKFLOW_PATH,
         "event": "push",
         "status": "completed",
         "conclusion": "success",
-        "head_branch": policy.tag,
-        "head_sha": policy.source_commit,
+        "head_branch": tag,
+        "head_sha": source_commit,
         "run_attempt": 1,
-        "workflow_id": policy.release_workflow_id,
+        "workflow_id": RELEASE_WORKFLOW_ID,
     }
     if any(run.get(name) != value for name, value in expected.items()):
         raise AttestationError
 
 
-def expected_download_url(policy: ReleasePolicy, asset_name: str) -> str:
-    """Return the only accepted browser download URL for a release asset."""
+def release_download_url(repository: str, tag: str, asset_name: str) -> str:
+    """Return the only accepted browser download URL for one release asset."""
     if SAFE_ASSET_PATTERN.fullmatch(asset_name) is None:
         raise AttestationError
-    return (
-        f"https://github.com/{policy.repository}/releases/download/"
-        f"{policy.tag}/{asset_name}"
-    )
-
-
-def validate_asset(
-    policy: ReleasePolicy,
-    asset: Mapping[str, object],
-    *,
-    name: str,
-    asset_id: int,
-    size: int,
-    digest: str,
-) -> None:
-    """Validate one release asset against its frozen public identity."""
-    if (
-        asset.get("id") != asset_id
-        or asset.get("name") != name
-        or asset.get("state") != "uploaded"
-        or asset.get("size") != size
-        or asset.get("digest") != f"sha256:{digest}"
-        or asset.get("browser_download_url") != expected_download_url(policy, name)
-    ):
-        raise AttestationError
+    return f"https://github.com/{repository}/releases/download/{tag}/{asset_name}"
 
 
 def select_exact_asset(
@@ -296,47 +222,31 @@ def select_exact_asset(
     return matches[0]
 
 
-def select_release_assets(
-    policy: ReleasePolicy,
-    receipt: ReceiptPolicy,
-    release: Mapping[str, object],
-) -> tuple[Mapping[str, object], Mapping[str, object] | None]:
-    """Select exactly the policy-owned artifact and optional checksum metadata."""
+def asset_identity(
+    tag: str,
+    asset: Mapping[str, object],
+    name: str,
+    maximum_size: int,
+) -> tuple[int, int, str]:
+    """Read a bounded immutable asset identity from public release metadata."""
+    asset_id = asset.get("id")
+    size = asset.get("size")
+    api_digest = asset.get("digest")
     if (
-        release.get("id") != policy.release_id
-        or release.get("tag_name") != policy.tag
-        or release.get("target_commitish") != policy.source_commit
-        or release.get("draft") is not False
-        or release.get("prerelease") is not False
-        or release.get("published_at") != policy.published_at
+        not isinstance(asset_id, int)
+        or asset_id <= 0
+        or asset.get("name") != name
+        or asset.get("state") != "uploaded"
+        or not isinstance(size, int)
+        or not 0 < size <= maximum_size
+        or not isinstance(api_digest, str)
+        or not api_digest.startswith("sha256:")
+        or SHA256_PATTERN.fullmatch(api_digest[7:]) is None
+        or asset.get("browser_download_url")
+        != release_download_url(REPOSITORY, tag, name)
     ):
         raise AttestationError
-    assets = release.get("assets")
-    if not isinstance(assets, list):
-        raise AttestationError
-
-    artifact = select_exact_asset(assets, receipt.asset_name)
-    validate_asset(
-        policy,
-        artifact,
-        name=receipt.asset_name,
-        asset_id=receipt.asset_id,
-        size=receipt.asset_size,
-        digest=receipt.digest,
-    )
-
-    if receipt.mode != "native":
-        return artifact, None
-    checksum = select_exact_asset(assets, policy.checksum_asset_name)
-    validate_asset(
-        policy,
-        checksum,
-        name=policy.checksum_asset_name,
-        asset_id=policy.checksum_asset_id,
-        size=policy.checksum_asset_size,
-        digest=policy.checksum_asset_digest,
-    )
-    return artifact, checksum
+    return asset_id, size, api_digest[7:]
 
 
 def checksum_entries(content: bytes) -> Mapping[str, str]:
@@ -403,23 +313,21 @@ def platform_identity(system: str, machine: str) -> tuple[str, str, str]:
 
 def validate_workflow_context(
     environment: Mapping[str, str],
-    receipt: ReceiptPolicy,
+    receipt: ReceiptSpec,
     *,
-    policy: ReleasePolicy = PUBLIC_POLICY,
     system: str,
     machine: str,
 ) -> str:
     """Bind execution to the protected workflow and physical runner platform."""
     workflow_head = environment.get("GITHUB_SHA", "")
-    expected_workflow_ref = (
-        f"{policy.repository}/{WORKFLOW_PATH}@refs/heads/main"
-    )
+    expected_workflow_ref = f"{REPOSITORY}/{WORKFLOW_PATH}@refs/heads/main"
     actual_platform, runner_os, runner_arch = platform_identity(system, machine)
     if (
         environment.get("GITHUB_ACTIONS") != "true"
-        or environment.get("GITHUB_EVENT_NAME") != "workflow_dispatch"
+        or environment.get("GITHUB_EVENT_NAME")
+        not in {"workflow_dispatch", "workflow_run"}
         or environment.get("GITHUB_REF") != "refs/heads/main"
-        or environment.get("GITHUB_REPOSITORY") != policy.repository
+        or environment.get("GITHUB_REPOSITORY") != REPOSITORY
         or environment.get("GITHUB_WORKFLOW_REF") != expected_workflow_ref
         or COMMIT_PATTERN.fullmatch(workflow_head) is None
         or environment.get("GITHUB_WORKFLOW_SHA") != workflow_head
@@ -475,7 +383,7 @@ def build_attestation(
     receipt: ReceiptPolicy,
     workflow_head: str,
     digest: str,
-    policy: ReleasePolicy = PUBLIC_POLICY,
+    policy: ReleasePolicy,
 ) -> dict[str, object]:
     """Build the fixed minimal public attestation."""
     attestation: dict[str, object] = {
@@ -494,7 +402,7 @@ def build_attestation(
 
 def validate_attestation(
     attestation: Mapping[str, object],
-    policy: ReleasePolicy = PUBLIC_POLICY,
+    policy: ReleasePolicy,
 ) -> None:
     """Validate the exact public attestation schema and policy values."""
     if set(attestation) != ATTESTATION_KEYS:
@@ -524,7 +432,7 @@ def validate_attestation(
 def write_attestation(
     path: pathlib.Path,
     attestation: Mapping[str, object],
-    policy: ReleasePolicy = PUBLIC_POLICY,
+    policy: ReleasePolicy,
 ) -> None:
     """Create one owner-only attestation without following or replacing links."""
     validate_attestation(attestation, policy)
@@ -689,24 +597,104 @@ def download_release_asset(url: str, expected_size: int) -> bytes:
     return content
 
 
-def api_urls(policy: ReleasePolicy) -> Mapping[str, str]:
-    """Return the fixed public metadata endpoints used by one receipt."""
-    repository = policy.repository
-    encoded_tag = urllib.parse.quote(policy.tag, safe="")
+def metadata_urls(tag: str, release_run_id: int) -> dict[str, str]:
+    """Return the public metadata endpoints known before tag resolution."""
+    encoded_tag = urllib.parse.quote(tag, safe="")
     return {
-        "tag_ref": f"https://api.github.com/repos/{repository}/git/ref/tags/{encoded_tag}",
-        "tag_object": (
-            f"https://api.github.com/repos/{repository}/git/tags/"
-            f"{policy.tag_object_sha}"
-        ),
+        "tag_ref": f"https://api.github.com/repos/{REPOSITORY}/git/ref/tags/{encoded_tag}",
         "release_run": (
-            f"https://api.github.com/repos/{repository}/actions/runs/"
-            f"{policy.release_run_id}"
+            f"https://api.github.com/repos/{REPOSITORY}/actions/runs/"
+            f"{release_run_id}"
         ),
         "release": (
-            f"https://api.github.com/repos/{repository}/releases/tags/{encoded_tag}"
+            f"https://api.github.com/repos/{REPOSITORY}/releases/tags/{encoded_tag}"
         ),
     }
+
+
+def discover_release_policy(
+    tag: str,
+    source_commit: str,
+    release_run: str,
+    metadata_reader: Callable[[str], Mapping[str, object]],
+) -> tuple[ReleasePolicy, Mapping[str, object]]:
+    """Bind one successful tag release to its immutable public asset metadata."""
+    version, release_run_id = release_identity(tag, source_commit, release_run)
+    urls = metadata_urls(tag, release_run_id)
+    reference = metadata_reader(urls["tag_ref"])
+    reference_object = reference.get("object")
+    if not isinstance(reference_object, dict):
+        raise AttestationError
+    tag_object_sha = str(reference_object.get("sha", ""))
+    if COMMIT_PATTERN.fullmatch(tag_object_sha) is None:
+        raise AttestationError
+    tag_object = metadata_reader(
+        f"https://api.github.com/repos/{REPOSITORY}/git/tags/{tag_object_sha}"
+    )
+    if validated_tag_object_sha(tag, source_commit, reference, tag_object) != tag_object_sha:
+        raise AttestationError
+    validate_release_run_identity(
+        tag,
+        source_commit,
+        release_run_id,
+        metadata_reader(urls["release_run"]),
+    )
+    release = metadata_reader(urls["release"])
+    release_id = release.get("id")
+    published_at = release.get("published_at")
+    assets = release.get("assets")
+    if (
+        not isinstance(release_id, int)
+        or release_id <= 0
+        or release.get("tag_name") != tag
+        or release.get("target_commitish") != source_commit
+        or release.get("draft") is not False
+        or release.get("prerelease") is not False
+        or not isinstance(published_at, str)
+        or TIMESTAMP_PATTERN.fullmatch(published_at) is None
+        or not isinstance(assets, list)
+    ):
+        raise AttestationError
+
+    checksum = select_exact_asset(assets, "sha256.sum")
+    checksum_id, checksum_size, checksum_digest = asset_identity(
+        tag,
+        checksum,
+        "sha256.sum",
+        MAX_CHECKSUM_BYTES,
+    )
+    receipts = {}
+    for name, spec in RECEIPTS.items():
+        asset_id, asset_size, digest = asset_identity(
+            tag,
+            select_exact_asset(assets, spec.asset_name),
+            spec.asset_name,
+            MAX_ASSET_BYTES,
+        )
+        receipts[name] = ReceiptPolicy(
+            spec.runner,
+            spec.platform,
+            spec.mode,
+            spec.artifact_id,
+            spec.asset_name,
+            asset_id,
+            asset_size,
+            digest,
+        )
+    return (
+        ReleasePolicy(
+            tag,
+            version,
+            source_commit,
+            release_run_id,
+            "sha256.sum",
+            checksum_id,
+            checksum_size,
+            checksum_digest,
+            receipts,
+        ),
+        release,
+    )
 
 
 def exact_git_output_line(output: bytes) -> bytes:
@@ -905,7 +893,6 @@ def run_attestation(
     *,
     receipt_name: str,
     tag: str,
-    version: str,
     source_commit: str,
     release_run: str,
     mode: str,
@@ -915,37 +902,46 @@ def run_attestation(
     released_source: pathlib.Path,
     output: pathlib.Path,
     environment: Mapping[str, str],
-    policy: ReleasePolicy = PUBLIC_POLICY,
     json_reader: Callable[[str], Mapping[str, object]] | None = None,
     asset_reader: Callable[[str, int], bytes] = download_release_asset,
 ) -> None:
     """Produce one exact installed attestation from public immutable inputs."""
-    validate_release_inputs(policy, tag, version, source_commit, release_run)
     try:
-        receipt = policy.receipts[receipt_name]
+        receipt_spec = RECEIPTS[receipt_name]
     except KeyError as error:
         raise AttestationError from error
-    validate_matrix_inputs(receipt, mode, artifact_id, asset, execution_platform)
+    validate_matrix_inputs(
+        receipt_spec,
+        mode,
+        artifact_id,
+        asset,
+        execution_platform,
+    )
     workflow_head = validate_workflow_context(
         environment,
-        receipt,
-        policy=policy,
+        receipt_spec,
         system=host_platform.system(),
         machine=host_platform.machine(),
     )
+    metadata_reader = (
+        json_reader
+        if json_reader is not None
+        else github_metadata_reader(environment)
+    )
+    policy, release = discover_release_policy(
+        tag,
+        source_commit,
+        release_run,
+        metadata_reader,
+    )
+    receipt = policy.receipts[receipt_name]
     verifier_bytes = validate_released_source(released_source, source_commit)
-
-    metadata_reader = json_reader if json_reader is not None else github_metadata_reader(environment)
-
-    urls = api_urls(policy)
-    tag_reference = metadata_reader(urls["tag_ref"])
-    tag_object = metadata_reader(urls["tag_object"])
-    validate_tag(policy, tag_reference, tag_object)
-    validate_release_run(policy, metadata_reader(urls["release_run"]))
-    artifact_metadata, checksum_metadata = select_release_assets(
-        policy,
-        receipt,
-        metadata_reader(urls["release"]),
+    assets = release["assets"]
+    artifact_metadata = select_exact_asset(assets, receipt.asset_name)
+    checksum_metadata = (
+        select_exact_asset(assets, policy.checksum_asset_name)
+        if receipt.mode == "native"
+        else None
     )
     artifact_bytes = asset_reader(
         str(artifact_metadata["browser_download_url"]),
@@ -979,7 +975,7 @@ def run_attestation(
         stdout, stderr = execute_verifier(
             verifier,
             receipt,
-            version,
+            policy.version,
             artifact_path,
         )
         validate_verifier_output(
@@ -1000,7 +996,6 @@ def parse_arguments(argv: Sequence[str]) -> Mapping[str, str]:
     allowed = {
         "--receipt": "receipt_name",
         "--tag": "tag",
-        "--version": "version",
         "--source-commit": "source_commit",
         "--release-run": "release_run",
         "--mode": "mode",
@@ -1038,7 +1033,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         run_attestation(
             receipt_name=arguments["receipt_name"],
             tag=arguments["tag"],
-            version=arguments["version"],
             source_commit=arguments["source_commit"],
             release_run=arguments["release_run"],
             mode=arguments["mode"],
