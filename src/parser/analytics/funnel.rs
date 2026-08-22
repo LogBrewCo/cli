@@ -2,10 +2,7 @@
 
 use super::Grammar;
 use crate::ids::is_uuid;
-use crate::{
-    AnalyticsFunnelEventKind, AnalyticsFunnelOptions, AnalyticsFunnelStep, AnalyticsFunnelUnit,
-    CliError, Command,
-};
+use crate::{AnalyticsFunnelOptions, AnalyticsFunnelStep, AnalyticsFunnelUnit, CliError, Command};
 
 /// Exact recovery text shared by every malformed funnel invocation.
 pub(super) const ANALYTICS_FUNNEL_NEXT_STEP: &str = "use logbrew analytics funnel --project <project_id> --since <24h|RFC3339> --step <page-view|screen-view|interaction> <name> --step <kind> <name> with two through eight ordered --step values and optional --until, --service, --release, --environment, --unit session|identified-user, --conversion-window <seconds|1h|1d>, and --json";
@@ -139,10 +136,16 @@ impl ParsedFunnelFlags {
             .steps
             .iter()
             .map(|(kind, event_name)| {
-                let kind = normalize_event_kind(kind.as_str())?;
+                let kind =
+                    GRAMMAR.normalize_event_kind(kind.as_str(), "invalid funnel step kind")?;
                 Ok(AnalyticsFunnelStep {
                     kind,
-                    event_name: normalize_event_name(kind, event_name.as_str())?,
+                    event_name: GRAMMAR.normalize_event_name(
+                        kind,
+                        event_name.as_str(),
+                        "invalid analytics funnel value",
+                        "invalid funnel interaction name",
+                    )?,
                 })
             })
             .collect::<Result<Vec<_>, CliError>>()?;
@@ -164,30 +167,6 @@ impl ParsedFunnelFlags {
 /// Requires one named funnel flag.
 fn required<'a>(value: Option<&'a str>, argument: &'static str) -> Result<&'a str, CliError> {
     GRAMMAR.required(value, argument)
-}
-
-/// Normalizes one supported classified event kind.
-fn normalize_event_kind(value: &str) -> Result<AnalyticsFunnelEventKind, CliError> {
-    match value.trim() {
-        "page-view" | "page_view" | "page" => Ok(AnalyticsFunnelEventKind::PageView),
-        "screen-view" | "screen_view" | "screen" => Ok(AnalyticsFunnelEventKind::ScreenView),
-        "interaction" => Ok(AnalyticsFunnelEventKind::Interaction),
-        _ => Err(GRAMMAR.invalid_argument("invalid funnel step kind")),
-    }
-}
-
-/// Applies the server's exact public event-name bounds before any request.
-fn normalize_event_name(kind: AnalyticsFunnelEventKind, value: &str) -> Result<String, CliError> {
-    let value = normalize_text(value, 256)?;
-    if kind == AnalyticsFunnelEventKind::Interaction
-        && (value.len() > 64
-            || !value.bytes().all(|byte| {
-                byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.' | b':')
-            }))
-    {
-        return Err(GRAMMAR.invalid_argument("invalid funnel interaction name"));
-    }
-    Ok(value)
 }
 
 /// Normalizes the explicit funnel counting boundary.
@@ -282,7 +261,10 @@ mod tests {
         assert_eq!(options.analysis_unit, AnalyticsFunnelUnit::IdentifiedUser);
         assert_eq!(options.conversion_window_seconds, Some(7_200));
         assert_eq!(options.steps.len(), 2);
-        assert_eq!(options.steps[0].kind, AnalyticsFunnelEventKind::PageView);
+        assert_eq!(
+            options.steps[0].kind,
+            crate::AnalyticsPathEventKind::PageView
+        );
         assert!(json);
     }
 

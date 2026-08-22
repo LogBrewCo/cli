@@ -8,9 +8,9 @@
 use serde::Deserialize;
 
 use crate::analytics_contract::{bounded_counts, ratio_matches};
-use crate::analytics_request::{self, Kind};
+use crate::analytics_request::{self, Kind, valid_event_name};
 use crate::http::{nonempty_control_safe as bounded_contract_text, terminal_safe as display_text};
-use crate::{AnalyticsOverviewOptions, CliEnvironment, RuntimeError};
+use crate::{AnalyticsOverviewOptions, AnalyticsPathEventKind, CliEnvironment, RuntimeError};
 
 /// Public response version implemented by this CLI.
 const SCHEMA_VERSION: u8 = 2;
@@ -277,35 +277,11 @@ struct ClassifiedPoint {
     interactions: u64,
 }
 
-/// Supported version-1 classified event kind.
-#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, Hash)]
-#[serde(rename_all = "snake_case")]
-enum ClassifiedKind {
-    /// Browser route view.
-    PageView,
-    /// Application screen view.
-    ScreenView,
-    /// Explicit product interaction.
-    Interaction,
-}
-
-impl ClassifiedKind {
-    /// Returns the stable public token.
-    #[must_use]
-    const fn as_str(self) -> &'static str {
-        match self {
-            Self::PageView => "page_view",
-            Self::ScreenView => "screen_view",
-            Self::Interaction => "interaction",
-        }
-    }
-}
-
 /// One highest-volume classified surface.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct TopSurface {
-    kind: ClassifiedKind,
+    kind: AnalyticsPathEventKind,
     surface: String,
     events: u64,
     active_identified_users: u64,
@@ -317,7 +293,7 @@ struct TopSurface {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct TopEvent {
-    kind: ClassifiedKind,
+    kind: AnalyticsPathEventKind,
     event_name: String,
     events: u64,
     active_identified_users: u64,
@@ -831,8 +807,10 @@ fn valid_top_events(response: &OverviewResponse) -> bool {
     let mut total = 0_u64;
     let mut keys = std::collections::HashSet::new();
     for event in &activity.top_events {
-        if !valid_event_name(event.kind, event.event_name.as_str())
-            || event.events == 0
+        if !valid_event_name(
+            event.kind == AnalyticsPathEventKind::Interaction,
+            event.event_name.as_str(),
+        ) || event.events == 0
             || !bounded_counts(&[event.events, event.active_identified_users, event.sessions])
             || event.events > activity.summary.events
             || event.active_identified_users > event.events
@@ -855,16 +833,6 @@ fn valid_top_events(response: &OverviewResponse) -> bool {
     }
     total <= activity.summary.events
         && (activity.summary.distinct_event_names == 0 || !activity.top_events.is_empty())
-}
-
-/// Applies the version-1 event-name contract to one ranked classified key.
-fn valid_event_name(kind: ClassifiedKind, value: &str) -> bool {
-    valid_name(value, 256)
-        && (kind != ClassifiedKind::Interaction
-            || value.len() <= 64
-                && value.bytes().all(|byte| {
-                    byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.' | b':')
-                }))
 }
 
 /// Validates one bounded telemetry name without terminal control characters.

@@ -8,7 +8,7 @@
 use serde::Deserialize;
 
 use crate::analytics_contract::{bounded_counts, ratio_matches};
-use crate::analytics_request::{self, Kind, insert_optional};
+use crate::analytics_request::{self, Kind, insert_optional, valid_event_name};
 use crate::http::{nonempty_control_safe as bounded_contract_text, terminal_safe as display_text};
 use crate::time::{parse_utc_timestamp, timestamp_nanos};
 use crate::{
@@ -338,7 +338,10 @@ fn valid_step(
     step.position == position
         && step.kind == requested.kind
         && step.event_name == requested.event_name
-        && valid_event_name(step.kind, step.event_name.as_str())
+        && valid_event_name(
+            step.kind == AnalyticsFunnelEventKind::Interaction,
+            step.event_name.as_str(),
+        )
         && step.units <= response.summary.candidate_units
         && previous.is_none_or(|previous_units| step.units <= previous_units)
         && previous.map_or_else(
@@ -357,16 +360,6 @@ fn valid_step(
             || step.drop_off_to_next_rate.is_none(),
             |drop_off| ratio_matches(step.drop_off_to_next_rate, drop_off, step.units),
         )
-}
-
-/// Applies the server's exact event-name contract to response echoes.
-fn valid_event_name(kind: AnalyticsFunnelEventKind, value: &str) -> bool {
-    bounded_contract_text(value, 256)
-        && (kind != AnalyticsFunnelEventKind::Interaction
-            || (value.len() <= 64
-                && value.bytes().all(|byte| {
-                    byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.' | b':')
-                })))
 }
 
 /// Verifies bounded next-action text and the exact state-derived code and target.

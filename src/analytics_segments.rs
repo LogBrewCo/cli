@@ -8,7 +8,7 @@
 use serde::Deserialize;
 
 use crate::analytics_contract::{bounded_counts, ratio_matches};
-use crate::analytics_request::{self, Kind, insert_optional};
+use crate::analytics_request::{self, Kind, insert_optional, valid_event_name};
 use crate::http::{nonempty_control_safe as bounded_contract_text, terminal_safe as display_text};
 use crate::time::{
     ParsedTimestamp as UtcTimestamp, add_seconds, parse_utc_timestamp, timestamp_nanos,
@@ -423,7 +423,10 @@ fn valid_query(options: &AnalyticsSegmentComparisonOptions, query: &ComparisonQu
         && query.analysis_unit == options.analysis_unit
         && query.target.kind == options.target_kind
         && query.target.event_name == options.target_event
-        && valid_event_name(query.target.kind, query.target.event_name.as_str())
+        && valid_event_name(
+            query.target.kind == AnalyticsSegmentEventKind::Interaction,
+            query.target.event_name.as_str(),
+        )
         && query.segments.len() == options.segments.len()
         && query
             .segments
@@ -510,16 +513,6 @@ fn valid_segment_key(value: &str) -> bool {
         && value.bytes().all(|byte| {
             byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'_' | b'-')
         })
-}
-
-/// Applies the public target-name contract to response echoes.
-fn valid_event_name(kind: AnalyticsSegmentEventKind, value: &str) -> bool {
-    bounded_contract_text(value, 256)
-        && (kind != AnalyticsSegmentEventKind::Interaction
-            || (value.len() <= 64
-                && value.bytes().all(|byte| {
-                    byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.' | b':')
-                })))
 }
 
 /// Proves the fixed interpretation and bounded material limitations.

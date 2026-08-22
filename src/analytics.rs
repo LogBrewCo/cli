@@ -8,7 +8,7 @@
 use serde::Deserialize;
 
 use crate::analytics_contract::{COUNT_LIMIT, bounded_counts, ratio_matches};
-use crate::analytics_request::{self, Kind, insert_optional};
+use crate::analytics_request::{self, Kind, insert_optional, valid_event_name};
 use crate::http::{nonempty_control_safe as bounded_contract_text, terminal_safe as display_text};
 use crate::{
     AnalyticsPathDirection, AnalyticsPathEventKind, AnalyticsPathOptions,
@@ -468,7 +468,10 @@ fn valid_nodes(options: &AnalyticsPathOptions, nodes: &[PathNode]) -> bool {
             AnalyticsPathDirection::Preceding => index.saturating_sub(last),
         };
         if node.relative_position != expected
-            || !valid_event_name(node.kind, node.event_name.as_str())
+            || !valid_event_name(
+                node.kind == AnalyticsPathEventKind::Interaction,
+                node.event_name.as_str(),
+            )
         {
             return false;
         }
@@ -489,18 +492,6 @@ fn valid_nodes(options: &AnalyticsPathOptions, nodes: &[PathNode]) -> bool {
             && anchor.kind == options.anchor_kind
             && anchor.event_name == options.anchor_event
     })
-}
-
-/// Applies the same version-1 public name contract to every returned node.
-fn valid_event_name(kind: AnalyticsPathEventKind, value: &str) -> bool {
-    if value.is_empty() || value.chars().count() > 256 || value.chars().any(char::is_control) {
-        return false;
-    }
-    kind != AnalyticsPathEventKind::Interaction
-        || value.len() <= 64
-            && value.bytes().all(|byte| {
-                byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.' | b':')
-            })
 }
 
 /// Requires the stable action code and target implied by the response state.
