@@ -72,12 +72,7 @@ async fn built_binary_human_output_explains_status_privacy_and_cross_signal_evid
 
     let process = run_binary(&server, false).await?;
 
-    assert!(
-        process.status.success(),
-        "human action explanation failed: {}",
-        String::from_utf8_lossy(process.stderr.as_slice())
-    );
-    assert!(process.stderr.is_empty());
+    super::assert_cli_success(&process);
     let text = String::from_utf8(process.stdout)?;
     for expected in [
         "Action 14141414-1414-4141-8141-141414141414 name=checkout.submit status=failure subject=user session_captured=true",

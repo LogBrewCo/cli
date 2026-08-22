@@ -93,8 +93,7 @@ async fn built_binary_human_output_separates_capture_privacy_and_truncation()
 
     let process = run_binary(&server, false).await?;
 
-    assert!(process.status.success());
-    assert!(process.stderr.is_empty());
+    super::assert_cli_success(&process);
     let text = String::from_utf8(process.stdout)?;
     for expected in [
         "Product analytics properties",

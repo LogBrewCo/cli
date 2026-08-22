@@ -98,8 +98,7 @@ async fn built_binary_human_output_explains_activity_coverage_and_next_step()
 
     let process = run_binary(&server, false).await?;
 
-    assert!(process.status.success());
-    assert!(process.stderr.is_empty());
+    super::assert_cli_success(&process);
     let text = String::from_utf8(process.stdout)?;
     for expected in [
         "Product analytics overview",
