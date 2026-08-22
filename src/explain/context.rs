@@ -27,14 +27,29 @@ pub(super) struct Expected<'a> {
     environment: &'a str,
     /// Exact deployment release.
     release: &'a str,
-    /// Optional distributed-trace identity.
-    trace_id: Option<&'a str>,
-    /// Optional exact span identity.
-    span_id: Option<&'a str>,
-    /// Optional captured parent identity.
-    parent_span_id: Option<&'a str>,
-    /// Whether the selected envelope knows the exact parent.
-    bind_parent: bool,
+    /// Signal-specific trace and identity policy.
+    mode: Mode<'a>,
+}
+
+/// Signal-specific context invariants beyond the shared resource grammar.
+#[derive(Clone, Copy)]
+enum Mode<'a> {
+    /// Binds captured trace identities to their enclosing signal.
+    Captured {
+        /// Optional distributed-trace identity.
+        trace_id: Option<&'a str>,
+        /// Optional exact span identity.
+        span_id: Option<&'a str>,
+        /// Optional captured parent identity.
+        parent_span_id: Option<&'a str>,
+        /// Whether the selected envelope knows the exact parent.
+        bind_parent: bool,
+    },
+    /// Withholds actor/session IDs while preserving action classification.
+    Action {
+        /// Privacy-safe action subject classification.
+        classification: &'a str,
+    },
 }
 
 impl<'a> Expected<'a> {
@@ -51,10 +66,12 @@ impl<'a> Expected<'a> {
             service,
             environment,
             release,
-            trace_id: Some(trace_id),
-            span_id: Some(span_id),
-            parent_span_id,
-            bind_parent: true,
+            mode: Mode::Captured {
+                trace_id: Some(trace_id),
+                span_id: Some(span_id),
+                parent_span_id,
+                bind_parent: true,
+            },
         }
     }
 
@@ -70,10 +87,27 @@ impl<'a> Expected<'a> {
             service,
             environment,
             release,
-            trace_id,
-            span_id,
-            parent_span_id: None,
-            bind_parent: false,
+            mode: Mode::Captured {
+                trace_id,
+                span_id,
+                parent_span_id: None,
+                bind_parent: false,
+            },
+        }
+    }
+
+    /// Withholds action identities while accepting separately bound trace context.
+    pub(super) const fn action(
+        service: &'a str,
+        environment: &'a str,
+        release: &'a str,
+        classification: &'a str,
+    ) -> Self {
+        Self {
+            service,
+            environment,
+            release,
+            mode: Mode::Action { classification },
         }
     }
 }
@@ -99,11 +133,11 @@ pub(super) fn validate(value: Option<&Value>, expected: Expected<'_>) -> Result<
     }
     let populated = validate_resource(context.get("resource"), expected)?
         | validate_trace(context.get("trace"), expected)?
-        | validate_session(context.get("session"))?
-        | validate_subject(context.get("subject"))?;
+        | validate_session(context.get("session"), expected)?
+        | validate_subject(context.get("subject"), expected)?;
     let tags = required_object(context, "tags")?;
-    validate_tags(tags)?;
-    if populated || !tags.is_empty() {
+    validate_tags(tags, expected)?;
+    if populated || !tags.is_empty() || matches!(expected.mode, Mode::Action { .. }) {
         Ok(())
     } else {
         Err(invalid_response())
@@ -143,7 +177,9 @@ fn validate_resource(value: Option<&Value>, expected: Expected<'_>) -> Result<bo
         require_exact_fields(deployment, &["environment", "release"])?;
         let environment = nullable_text(deployment, "environment")?;
         let release = nullable_text(deployment, "release")?;
-        if environment.is_none() && release.is_none()
+        if matches!(expected.mode, Mode::Captured { .. })
+            && environment.is_none()
+            && release.is_none()
             || environment.is_some_and(|value| value != expected.environment)
             || release.is_some_and(|value| value != expected.release)
         {
@@ -156,13 +192,26 @@ fn validate_resource(value: Option<&Value>, expected: Expected<'_>) -> Result<bo
         let _version = nullable_text(os, "version")?;
         let _build = nullable_text(os, "build")?;
     }
-    validate_optional_group(resource.get("device"), &["family", "model", "architecture"])?;
-    validate_optional_group(resource.get("application"), &["name", "version", "build"])?;
+    let allow_empty = matches!(expected.mode, Mode::Action { .. });
+    validate_optional_group(
+        resource.get("device"),
+        &["family", "model", "architecture"],
+        allow_empty,
+    )?;
+    validate_optional_group(
+        resource.get("application"),
+        &["name", "version", "build"],
+        allow_empty,
+    )?;
     Ok(true)
 }
 
 /// Requires one optional structured identity to contain at least one value.
-fn validate_optional_group(value: Option<&Value>, fields: &[&str]) -> Result<(), RuntimeError> {
+fn validate_optional_group(
+    value: Option<&Value>,
+    fields: &[&str],
+    allow_empty: bool,
+) -> Result<(), RuntimeError> {
     let Some(group) = nullable_object(value)? else {
         return Ok(());
     };
@@ -171,7 +220,7 @@ fn validate_optional_group(value: Option<&Value>, fields: &[&str]) -> Result<(),
     for field in fields {
         populated |= nullable_text(group, field)?.is_some();
     }
-    if populated {
+    if populated || allow_empty {
         Ok(())
     } else {
         Err(invalid_response())
@@ -187,10 +236,21 @@ fn validate_trace(value: Option<&Value>, expected: Expected<'_>) -> Result<bool,
     let trace_id = require_string(trace, "trace_id")?;
     let span_id = nullable_w3c_id(trace, "span_id", 16)?;
     let parent_span_id = nullable_w3c_id(trace, "parent_span_id", 16)?;
+    let identity_mismatch = match expected.mode {
+        Mode::Captured {
+            trace_id: expected_trace,
+            span_id: expected_span,
+            parent_span_id: expected_parent,
+            bind_parent,
+        } => {
+            Some(trace_id) != expected_trace
+                || span_id != expected_span
+                || bind_parent && parent_span_id != expected_parent
+        }
+        Mode::Action { .. } => false,
+    };
     if !is_w3c_id(trace_id, 32)
-        || Some(trace_id) != expected.trace_id
-        || span_id != expected.span_id
-        || expected.bind_parent && parent_span_id != expected.parent_span_id
+        || identity_mismatch
         || !matches!(trace.get("sampled"), Some(Value::Null | Value::Bool(_)))
     {
         return Err(invalid_response());
@@ -199,27 +259,36 @@ fn validate_trace(value: Option<&Value>, expected: Expected<'_>) -> Result<bool,
 }
 
 /// Validates optional privacy-bounded session context.
-fn validate_session(value: Option<&Value>) -> Result<bool, RuntimeError> {
+fn validate_session(value: Option<&Value>, expected: Expected<'_>) -> Result<bool, RuntimeError> {
     let Some(session) = nullable_object(value)? else {
         return Ok(false);
     };
     require_exact_fields(session, &["id", "previous_id"])?;
     let id = nullable_id(session, "id")?;
     let previous = nullable_id(session, "previous_id")?;
-    if id.is_some() && id == previous {
+    if matches!(expected.mode, Mode::Action { .. }) && (id.is_some() || previous.is_some())
+        || id.is_some() && id == previous
+    {
         return Err(invalid_response());
     }
     Ok(true)
 }
 
 /// Validates optional privacy-bounded subject context.
-fn validate_subject(value: Option<&Value>) -> Result<bool, RuntimeError> {
+fn validate_subject(value: Option<&Value>, expected: Expected<'_>) -> Result<bool, RuntimeError> {
     let Some(subject) = nullable_object(value)? else {
         return Ok(false);
     };
     require_exact_fields(subject, &["id", "kind"])?;
-    let _id = nullable_id(subject, "id")?;
-    if matches!(require_string(subject, "kind")?, "anonymous" | "user") {
+    let id = nullable_id(subject, "id")?;
+    let kind = require_string(subject, "kind")?;
+    let classification_mismatch = match expected.mode {
+        Mode::Action { classification } => {
+            id.is_some() || matches!(classification, "anonymous" | "user") && classification != kind
+        }
+        Mode::Captured { .. } => false,
+    };
+    if matches!(kind, "anonymous" | "user") && !classification_mismatch {
         Ok(true)
     } else {
         Err(invalid_response())
@@ -227,7 +296,7 @@ fn validate_subject(value: Option<&Value>) -> Result<bool, RuntimeError> {
 }
 
 /// Validates sorted low-cardinality context tags.
-fn validate_tags(tags: &Map<String, Value>) -> Result<(), RuntimeError> {
+fn validate_tags(tags: &Map<String, Value>, expected: Expected<'_>) -> Result<(), RuntimeError> {
     if tags.len() > TAG_LIMIT {
         return Err(invalid_response());
     }
@@ -249,7 +318,14 @@ fn validate_tags(tags: &Map<String, Value>) -> Result<(), RuntimeError> {
             || text.chars().any(char::is_control)
             || sensitive_key(key)
             || sensitive_context_tag_key(key)
-            || sensitive_string(text, "context_value")
+            || sensitive_string(
+                text,
+                if matches!(expected.mode, Mode::Action { .. }) {
+                    key
+                } else {
+                    "context_value"
+                },
+            )
         {
             return Err(invalid_response());
         }
