@@ -1,7 +1,6 @@
 //! Closed product-analytics overview command grammar.
 
-use super::Grammar;
-use crate::ids::is_uuid;
+use super::{Grammar, ScopeFlags};
 use crate::{AnalyticsOverviewOptions, CliError, Command};
 
 /// Exact recovery text shared by every malformed overview invocation.
@@ -16,45 +15,20 @@ pub(super) fn parse_overview(args: &[String]) -> Result<Command, CliError> {
     let mut seen = Vec::new();
     let mut index = 0;
     while index < args.len() {
+        if parsed
+            .scope
+            .parse(GRAMMAR, &mut seen, args, &mut index, true)?
+        {
+            index += 1;
+            continue;
+        }
         let raw = &args[index];
         let (flag, inline) = Grammar::split_flag(raw);
         match flag {
-            "--json" => {
-                GRAMMAR.reject_inline(flag, inline)?;
-                GRAMMAR.mark_seen(&mut seen, "--json")?;
-                parsed.json = true;
-            }
-            "--project" | "--project-id" => {
-                GRAMMAR.mark_seen(&mut seen, "--project")?;
-                parsed.project_id =
-                    Some(GRAMMAR.flag_value(args, &mut index, "--project", inline)?);
-            }
-            "--since" => {
-                GRAMMAR.mark_seen(&mut seen, "--since")?;
-                parsed.since = Some(GRAMMAR.flag_value(args, &mut index, "--since", inline)?);
-            }
-            "--until" => {
-                GRAMMAR.mark_seen(&mut seen, "--until")?;
-                parsed.until = Some(GRAMMAR.flag_value(args, &mut index, "--until", inline)?);
-            }
             "--interval" => {
                 GRAMMAR.mark_seen(&mut seen, "--interval")?;
                 parsed.interval =
                     Some(GRAMMAR.flag_value(args, &mut index, "--interval", inline)?);
-            }
-            "--service" | "--service-name" => {
-                GRAMMAR.mark_seen(&mut seen, "--service")?;
-                parsed.service_name =
-                    Some(GRAMMAR.flag_value(args, &mut index, "--service", inline)?);
-            }
-            "--release" => {
-                GRAMMAR.mark_seen(&mut seen, "--release")?;
-                parsed.release = Some(GRAMMAR.flag_value(args, &mut index, "--release", inline)?);
-            }
-            "--environment" | "--env" => {
-                GRAMMAR.mark_seen(&mut seen, "--environment")?;
-                parsed.environment =
-                    Some(GRAMMAR.flag_value(args, &mut index, "--environment", inline)?);
             }
             "--top-limit" | "--limit" => {
                 GRAMMAR.mark_seen(&mut seen, "--top-limit")?;
@@ -80,7 +54,7 @@ pub(super) fn parse_overview(args: &[String]) -> Result<Command, CliError> {
 
     Ok(Command::AnalyticsOverview {
         options: parsed.finish()?,
-        json: parsed.json,
+        json: parsed.scope.json,
     })
 }
 
@@ -91,62 +65,28 @@ pub(super) fn parse_overview(args: &[String]) -> Result<Command, CliError> {
 )]
 #[derive(Default)]
 struct ParsedOverviewFlags {
-    project_id: Option<String>,
-    since: Option<String>,
-    until: Option<String>,
+    scope: ScopeFlags,
     interval: Option<String>,
-    service_name: Option<String>,
-    release: Option<String>,
-    environment: Option<String>,
     top_limit: Option<String>,
-    json: bool,
 }
 
 impl ParsedOverviewFlags {
     /// Requires and normalizes every public request field.
     fn finish(&self) -> Result<AnalyticsOverviewOptions, CliError> {
-        let project_id = GRAMMAR
-            .required(self.project_id.as_deref(), "project")?
-            .trim();
-        if !is_uuid(project_id) {
-            return Err(GRAMMAR.invalid_argument("invalid project id"));
-        }
-        let since = GRAMMAR.normalize_text(
-            GRAMMAR.required(self.since.as_deref(), "since")?,
-            64,
-            "invalid analytics overview value",
-        )?;
-        let until = GRAMMAR.normalize_optional(
-            self.until.as_deref(),
-            64,
-            "invalid analytics overview value",
-        )?;
+        let scope = self
+            .scope
+            .finish(GRAMMAR, "invalid analytics overview value")?;
         let interval = normalize_interval(self.interval.as_deref())?;
-        let service_name = GRAMMAR.normalize_optional(
-            self.service_name.as_deref(),
-            256,
-            "invalid analytics overview value",
-        )?;
-        let release = GRAMMAR.normalize_optional(
-            self.release.as_deref(),
-            256,
-            "invalid analytics overview value",
-        )?;
-        let environment = GRAMMAR.normalize_optional(
-            self.environment.as_deref(),
-            256,
-            "invalid analytics overview value",
-        )?;
         let top_limit = bounded_top_limit(self.top_limit.as_deref())?;
 
         Ok(AnalyticsOverviewOptions {
-            project_id: project_id.to_ascii_lowercase(),
-            since,
-            until,
+            project_id: scope.project_id,
+            since: scope.since,
+            until: scope.until,
             interval,
-            service_name,
-            release,
-            environment,
+            service_name: scope.service_name,
+            release: scope.release,
+            environment: scope.environment,
             top_limit,
         })
     }

@@ -1,7 +1,6 @@
 //! Closed product-analytics lifecycle command grammar.
 
-use super::{Grammar, retention_event_kind};
-use crate::ids::is_uuid;
+use super::{Grammar, ScopeFlags, retention_event_kind};
 use crate::{AnalyticsLifecycleInterval, AnalyticsLifecycleOptions, CliError, Command};
 
 /// Exact recovery text shared by every malformed lifecycle invocation.
@@ -16,41 +15,16 @@ pub(super) fn parse_lifecycle(args: &[String]) -> Result<Command, CliError> {
     let mut seen = Vec::new();
     let mut index = 0;
     while index < args.len() {
+        if parsed
+            .scope
+            .parse(GRAMMAR, &mut seen, args, &mut index, true)?
+        {
+            index += 1;
+            continue;
+        }
         let raw = &args[index];
         let (flag, inline) = Grammar::split_flag(raw);
         match flag {
-            "--json" => {
-                GRAMMAR.reject_inline(flag, inline)?;
-                GRAMMAR.mark_seen(&mut seen, "--json")?;
-                parsed.json = true;
-            }
-            "--project" | "--project-id" => {
-                GRAMMAR.mark_seen(&mut seen, "--project")?;
-                parsed.project_id =
-                    Some(GRAMMAR.flag_value(args, &mut index, "--project", inline)?);
-            }
-            "--since" => {
-                GRAMMAR.mark_seen(&mut seen, "--since")?;
-                parsed.since = Some(GRAMMAR.flag_value(args, &mut index, "--since", inline)?);
-            }
-            "--until" => {
-                GRAMMAR.mark_seen(&mut seen, "--until")?;
-                parsed.until = Some(GRAMMAR.flag_value(args, &mut index, "--until", inline)?);
-            }
-            "--service" | "--service-name" => {
-                GRAMMAR.mark_seen(&mut seen, "--service")?;
-                parsed.service_name =
-                    Some(GRAMMAR.flag_value(args, &mut index, "--service", inline)?);
-            }
-            "--release" => {
-                GRAMMAR.mark_seen(&mut seen, "--release")?;
-                parsed.release = Some(GRAMMAR.flag_value(args, &mut index, "--release", inline)?);
-            }
-            "--environment" | "--env" => {
-                GRAMMAR.mark_seen(&mut seen, "--environment")?;
-                parsed.environment =
-                    Some(GRAMMAR.flag_value(args, &mut index, "--environment", inline)?);
-            }
             "--event-kind" => {
                 GRAMMAR.mark_seen(&mut seen, "--event-kind")?;
                 parsed.event_kind =
@@ -89,7 +63,7 @@ pub(super) fn parse_lifecycle(args: &[String]) -> Result<Command, CliError> {
 
     Ok(Command::AnalyticsLifecycle {
         options: parsed.finish()?,
-        json: parsed.json,
+        json: parsed.scope.json,
     })
 }
 
@@ -100,31 +74,19 @@ pub(super) fn parse_lifecycle(args: &[String]) -> Result<Command, CliError> {
 )]
 #[derive(Default)]
 struct ParsedLifecycleFlags {
-    project_id: Option<String>,
-    since: Option<String>,
-    until: Option<String>,
-    service_name: Option<String>,
-    release: Option<String>,
-    environment: Option<String>,
+    scope: ScopeFlags,
     event_kind: Option<String>,
     event_name: Option<String>,
     interval: Option<String>,
     history_period_count: Option<String>,
-    json: bool,
 }
 
 impl ParsedLifecycleFlags {
     /// Requires and normalizes every public request field.
     fn finish(&self) -> Result<AnalyticsLifecycleOptions, CliError> {
-        let project_id = required(self.project_id.as_deref(), "project")?.trim();
-        if !is_uuid(project_id) {
-            return Err(GRAMMAR.invalid_argument("invalid project id"));
-        }
-        let since = normalize_text(required(self.since.as_deref(), "since")?, 64)?;
-        let until = normalize_optional(self.until.as_deref(), 64)?;
-        let service_name = normalize_optional(self.service_name.as_deref(), 256)?;
-        let release = normalize_optional(self.release.as_deref(), 256)?;
-        let environment = normalize_optional(self.environment.as_deref(), 256)?;
+        let scope = self
+            .scope
+            .finish(GRAMMAR, "invalid analytics lifecycle value")?;
         let parsed_kind = GRAMMAR.normalize_event_kind(
             required(self.event_kind.as_deref(), "event-kind")?,
             "invalid lifecycle event kind",
@@ -141,12 +103,12 @@ impl ParsedLifecycleFlags {
         validate_history_span(interval, history_period_count)?;
 
         Ok(AnalyticsLifecycleOptions {
-            project_id: project_id.to_ascii_lowercase(),
-            since,
-            until,
-            service_name,
-            release,
-            environment,
+            project_id: scope.project_id,
+            since: scope.since,
+            until: scope.until,
+            service_name: scope.service_name,
+            release: scope.release,
+            environment: scope.environment,
             event_kind,
             event_name,
             interval,
@@ -200,16 +162,6 @@ fn validate_history_span(
         return Err(GRAMMAR.invalid_argument("lifecycle history exceeds 62 days"));
     }
     Ok(())
-}
-
-/// Trims one non-empty, control-free bounded public value.
-fn normalize_text(value: &str, limit: usize) -> Result<String, CliError> {
-    GRAMMAR.normalize_text(value, limit, "invalid analytics lifecycle value")
-}
-
-/// Normalizes one optional bounded context value.
-fn normalize_optional(value: Option<&str>, limit: usize) -> Result<Option<String>, CliError> {
-    GRAMMAR.normalize_optional(value, limit, "invalid analytics lifecycle value")
 }
 
 #[cfg(test)]
