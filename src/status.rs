@@ -13,10 +13,7 @@ pub(crate) async fn execute_status<W: std::io::Write>(
     output: &mut W,
 ) -> Result<(), RuntimeError> {
     let url = format!("{}/health", env.base_url.trim_end_matches('/'));
-    let client = crate::http::client_builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .connect_timeout(std::time::Duration::from_secs(10))
-        .build()?;
+    let client = crate::http::api_client()?;
 
     let response = match client.get(url).send().await {
         Ok(response) => response,
