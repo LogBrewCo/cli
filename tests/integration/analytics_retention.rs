@@ -107,8 +107,7 @@ async fn built_binary_human_output_explains_retention_maturity_coverage_and_next
 
     let process = run_binary(&server, false).await?;
 
-    assert!(process.status.success());
-    assert!(process.stderr.is_empty());
+    super::assert_cli_success(&process);
     let text = String::from_utf8(process.stdout)?;
     for expected in [
         "Product retention page_view /signup -> interaction dashboard_opened",

@@ -182,12 +182,7 @@ async fn human_output_explains_topology_baseline_correlations_and_evidence()
 
     let process = run_binary(&server, false, None).await?;
 
-    assert!(
-        process.status.success(),
-        "human span explanation failed: {}",
-        String::from_utf8_lossy(process.stderr.as_slice())
-    );
-    assert!(process.stderr.is_empty());
+    super::assert_cli_success(&process);
     let text = String::from_utf8(process.stdout)?;
     for expected in [
         "Span 00f067aa0ba902b7 name=SELECT checkout operation=db.query status=error duration_ms=250",

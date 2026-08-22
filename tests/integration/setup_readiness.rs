@@ -63,10 +63,9 @@ async fn swiftpm_emits_exact_non_mutating_install_plan() -> TestResult {
 
 #[tokio::test]
 async fn cmake_emits_exact_pinned_cpp_install_plan() -> TestResult {
-    let root = fixture_file(
+    let root = fixture(
         "cmake-ready",
-        "CMakeLists.txt",
-        "project(Fixture LANGUAGES CXX)\n",
+        &[("CMakeLists.txt", "project(Fixture LANGUAGES CXX)\n")],
     )?;
 
     let body = setup_json(root.as_path()).await?;
@@ -326,6 +325,37 @@ async fn java_builds_emit_exact_released_dependency_plans() -> TestResult {
 }
 
 #[tokio::test]
+async fn go_module_emits_the_current_non_mutating_install_plan() -> TestResult {
+    let root = fixture(
+        "go-module",
+        &[("go.mod", "module example.com/service\n\ngo 1.24\n")],
+    )?;
+    let body = setup_json(&root).await?;
+    assert_eq!(
+        body["install_plan"],
+        serde_json::json!({
+            "mode": "non_mutating", "ecosystem": "go", "package_manager": "go",
+            "integration": "go",
+            "package": {"module": "github.com/LogBrewCo/sdk/go/logbrew", "version_query": "latest"},
+            "compatibility": {"status": "review_required", "requires_go": ">=1.24"},
+            "surfaces": [{"surface": "server", "integration": "go", "credential_kind": "server", "service_name_required": true, "deployment_context_required": ["environment", "release"]}],
+            "install_command": "go get github.com/LogBrewCo/sdk/go/logbrew@latest",
+            "next_action": {"code": "review_compatibility_and_install", "target": "project_environment"},
+        })
+    );
+    assert_eq!(body["detected"][0]["manifest"], "go.mod");
+    assert_contains_all(
+        &setup_text(&root, &["logbrew", "setup"]).await?,
+        &[
+            "Integration: Go",
+            "Go >=1.24",
+            "go get github.com/LogBrewCo/sdk/go/logbrew@latest",
+        ],
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn javascript_executables_and_frameworks_emit_scoped_plans() -> TestResult {
     let server = serde_json::json!([{
         "surface": "server", "integration": "node", "credential_kind": "server",
@@ -486,10 +516,9 @@ async fn aspnetcore_wins_a_mixed_repo_without_claiming_plain_dotnet() -> TestRes
         ],
     );
 
-    let plain = fixture_file(
+    let plain = fixture(
         "plain-dotnet",
-        "Library.csproj",
-        r#"<Project Sdk="Microsoft.NET.Sdk" />"#,
+        &[("Library.csproj", r#"<Project Sdk="Microsoft.NET.Sdk" />"#)],
     )?;
     let body = setup_json(&plain).await?;
     assert_eq!(body["detected"][0]["runtime"], "dotnet");
@@ -590,10 +619,9 @@ async fn framework_detection_is_bounded_and_exact() -> TestResult {
 #[cfg(unix)]
 #[tokio::test]
 async fn scanner_does_not_follow_manifest_or_metadata_symlinks() -> TestResult {
-    let root = fixture_file(
+    let root = fixture(
         "metadata-symlink",
-        "pyproject.toml",
-        "[project]\nname = \"fixture\"\n",
+        &[("pyproject.toml", "[project]\nname = \"fixture\"\n")],
     )?;
     let outside = root.with_extension("outside-requirements");
     std::fs::write(&outside, "Django>=5.2\n")?;
@@ -660,10 +688,9 @@ async fn scanner_classifies_and_prioritizes_apple_projects() -> TestResult {
 
 #[tokio::test]
 async fn runtimes_without_structured_plans_get_truthful_recovery() -> TestResult {
-    let root = fixture_file(
+    let root = fixture(
         "rust-not-ready",
-        "Cargo.toml",
-        "[package]\nname = \"fixture\"\n",
+        &[("Cargo.toml", "[package]\nname = \"fixture\"\n")],
     )?;
     let body = setup_json(root.as_path()).await?;
     assert_eq!(body["install_ready"], false);
@@ -743,12 +770,4 @@ fn fixture(label: &str, files: &[(&str, &str)]) -> Result<std::path::PathBuf, st
         std::fs::write(path, contents)?;
     }
     Ok(root)
-}
-
-fn fixture_file(
-    label: &str,
-    name: &str,
-    contents: &str,
-) -> Result<std::path::PathBuf, std::io::Error> {
-    fixture(label, &[(name, contents)])
 }

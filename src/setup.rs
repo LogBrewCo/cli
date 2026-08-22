@@ -17,6 +17,8 @@ const PACKAGE_NEXT_STEP: &str =
 /// Current released Java SDK coordinate and compatibility floor.
 const JAVA_SDK_VERSION: &str = "0.1.6";
 const JAVA_MINIMUM_VERSION: &str = ">=11";
+const GO_MODULE: &str = "github.com/LogBrewCo/sdk/go/logbrew";
+const GO_MINIMUM_VERSION: &str = ">=1.24";
 /// Minimum Python version required by the current public Python SDK family.
 const PYTHON_MINIMUM_VERSION: &str = ">=3.10";
 /// Supported Django range for the current public Django integration.
@@ -107,6 +109,7 @@ type PythonSetup = (PythonIntegration, bool);
 /// Released package-registry integration selected from local project evidence.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PackageIntegration {
+    Go,
     Java(bool),
     Python(PythonSetup),
     Php(bool),
@@ -115,6 +118,19 @@ enum PackageIntegration {
     Node,
     SvelteKit,
     ReactExpress,
+}
+
+macro_rules! package_plan {
+    ($ecosystem:expr, $manager:expr, $integration:expr, {$($details:tt)*}) => {
+        serde_json::json!({
+            "mode": "non_mutating",
+            "ecosystem": $ecosystem,
+            "package_manager": $manager,
+            "integration": $integration,
+            $($details)*
+            "next_action": {"code": "review_compatibility_and_install", "target": "project_environment"},
+        })
+    };
 }
 
 /// A truthful, non-mutating install plan for one released SDK family.
@@ -197,6 +213,12 @@ impl InstallPlan {
                 package_manager,
                 integration,
             } => match integration {
+                PackageIntegration::Go => package_plan!("go", package_manager, "go", {
+                    "package": {"module": GO_MODULE, "version_query": "latest"},
+                    "compatibility": {"status": "review_required", "requires_go": GO_MINIMUM_VERSION},
+                    "surfaces": [{"surface": "server", "integration": "go", "credential_kind": "server", "service_name_required": true, "deployment_context_required": ["environment", "release"]}],
+                    "install_command": format!("go get {GO_MODULE}@latest"),
+                }),
                 PackageIntegration::Python(value) => python_plan_json(package_manager, value),
                 PackageIntegration::Java(value) => java_plan_json(package_manager, value),
                 PackageIntegration::Php(value) => composer_plan_json(package_manager, value),
@@ -247,26 +269,6 @@ impl InstallPlan {
             Self::Package { .. } => PACKAGE_NEXT_STEP,
         }
     }
-}
-
-fn package_next_action() -> serde_json::Value {
-    serde_json::json!({
-        "code": "review_compatibility_and_install",
-        "target": "project_environment",
-    })
-}
-
-macro_rules! package_plan {
-    ($ecosystem:expr, $manager:expr, $integration:expr, {$($details:tt)*}) => {
-        serde_json::json!({
-            "mode": "non_mutating",
-            "ecosystem": $ecosystem,
-            "package_manager": $manager,
-            "integration": $integration,
-            $($details)*
-            "next_action": package_next_action(),
-        })
-    };
 }
 
 fn java_plan_json(package_manager: &str, spring: bool) -> serde_json::Value {
@@ -412,10 +414,12 @@ fn write_package_human<W: std::io::Write>(
     integration: PackageIntegration,
     output: &mut W,
 ) -> Result<(), std::io::Error> {
-    match integration {
-        PackageIntegration::Java(spring) => writeln!(
-            output,
-            "Package manager: {package_manager}\nIntegration: {}\nPackage: co.logbrew:logbrew-sdk:{JAVA_SDK_VERSION}\nCompatibility review: Java {JAVA_MINIMUM_VERSION}{}\nDependency: {}",
+    let body = match integration {
+        PackageIntegration::Go => format!(
+            "Integration: Go\nPackage: {GO_MODULE}@latest\nCompatibility review: Go {GO_MINIMUM_VERSION}\nSurface: server; key kind: server; stable service name, environment, and release required\nCommand: go get {GO_MODULE}@latest"
+        ),
+        PackageIntegration::Java(spring) => format!(
+            "Integration: {}\nPackage: co.logbrew:logbrew-sdk:{JAVA_SDK_VERSION}\nCompatibility review: Java {JAVA_MINIMUM_VERSION}{}\nDependency: {}",
             if spring { "Spring" } else { "Java" },
             if spring { "; Spring Boot 3+" } else { "" },
             java_dependency_declaration(package_manager),
@@ -423,16 +427,14 @@ fn write_package_human<W: std::io::Write>(
         PackageIntegration::Python(setup @ (integration, _)) => {
             let (_, display, framework) = integration;
             let requirement = framework.map_or(String::new(), |(_, value)| format!("; {value}"));
-            writeln!(
-                output,
-                "Package manager: {package_manager}\nIntegration: {display}\nPackages: {}\nCompatibility review: Python {PYTHON_MINIMUM_VERSION}{requirement}\nCommand: {}",
+            format!(
+                "Integration: {display}\nPackages: {}\nCompatibility review: Python {PYTHON_MINIMUM_VERSION}{requirement}\nCommand: {}",
                 python_package_names(setup),
                 python_install_command(package_manager, setup),
             )
         }
-        PackageIntegration::Php(symfony) => writeln!(
-            output,
-            "Package manager: {package_manager}\nIntegration: {}\nPackage: logbrew/sdk\nCompatibility review: PHP {PHP_MINIMUM_VERSION}{}\nCommand: composer require logbrew/sdk",
+        PackageIntegration::Php(symfony) => format!(
+            "Integration: {}\nPackage: logbrew/sdk\nCompatibility review: PHP {PHP_MINIMUM_VERSION}{}\nCommand: composer require logbrew/sdk",
             if symfony { "Symfony" } else { "PHP" },
             if symfony {
                 "; Symfony^6.4 || ^7.0 || ^8.0"
@@ -440,31 +442,27 @@ fn write_package_human<W: std::io::Write>(
                 ""
             },
         ),
-        PackageIntegration::Ruby(rails) => writeln!(
-            output,
-            "Package manager: {package_manager}\nIntegration: {}\nPackage: logbrew-sdk\nCompatibility review: Ruby {RUBY_MINIMUM_VERSION}\nCommand: {RUBY_INSTALL_COMMAND}",
+        PackageIntegration::Ruby(rails) => format!(
+            "Integration: {}\nPackage: logbrew-sdk\nCompatibility review: Ruby {RUBY_MINIMUM_VERSION}\nCommand: {RUBY_INSTALL_COMMAND}",
             if rails { "Rails" } else { "Ruby" },
         ),
-        PackageIntegration::AspNetCore => writeln!(
-            output,
-            "Package manager: {package_manager}\nIntegration: ASP.NET Core\nPackage: {ASPNETCORE_PACKAGE}:{ASPNETCORE_VERSION}\nCompatibility review: .NET >=10; ASP.NET Core 10+\nSurface: server; key kind: server; stable service name, environment, and release required\nCommand: dotnet add package {ASPNETCORE_PACKAGE} --version {ASPNETCORE_VERSION}",
+        PackageIntegration::AspNetCore => format!(
+            "Integration: ASP.NET Core\nPackage: {ASPNETCORE_PACKAGE}:{ASPNETCORE_VERSION}\nCompatibility review: .NET >=10; ASP.NET Core 10+\nSurface: server; key kind: server; stable service name, environment, and release required\nCommand: dotnet add package {ASPNETCORE_PACKAGE} --version {ASPNETCORE_VERSION}"
         ),
-        PackageIntegration::Node => writeln!(
-            output,
-            "Package manager: {package_manager}\nIntegration: Node.js\nPackages: {NODE_PACKAGES}\nCompatibility review: Node >=18\nSurface: server; key kind: server; stable service name, environment, and release required\nCommand: {}",
+        PackageIntegration::Node => format!(
+            "Integration: Node.js\nPackages: {NODE_PACKAGES}\nCompatibility review: Node >=18\nSurface: server; key kind: server; stable service name, environment, and release required\nCommand: {}",
             javascript_install_command(package_manager, NODE_PACKAGES),
         ),
-        PackageIntegration::SvelteKit => writeln!(
-            output,
-            "Package manager: {package_manager}\nIntegration: SvelteKit\nPackages: {SVELTE_PACKAGES}\nCompatibility review: Node >=18; Svelte >=5\nSurfaces:\n- browser: Svelte; key kind: browser; stable service name, environment, and release required\n- server: SvelteKit; key kind: server; stable service name, environment, and release required\nCommand: {}",
+        PackageIntegration::SvelteKit => format!(
+            "Integration: SvelteKit\nPackages: {SVELTE_PACKAGES}\nCompatibility review: Node >=18; Svelte >=5\nSurfaces:\n- browser: Svelte; key kind: browser; stable service name, environment, and release required\n- server: SvelteKit; key kind: server; stable service name, environment, and release required\nCommand: {}",
             javascript_install_command(package_manager, SVELTE_PACKAGES),
         ),
-        PackageIntegration::ReactExpress => writeln!(
-            output,
-            "Package manager: {package_manager}\nIntegration: React + Express\nPackages: {REACT_EXPRESS_PACKAGES}\nCompatibility review: Node >=18; React >=18; Express >=4\nSurfaces:\n- browser: React; key kind: browser; stable service name, environment, and release required\n- server: Express; key kind: server; stable service name, environment, and release required\nCommand: {}",
+        PackageIntegration::ReactExpress => format!(
+            "Integration: React + Express\nPackages: {REACT_EXPRESS_PACKAGES}\nCompatibility review: Node >=18; React >=18; Express >=4\nSurfaces:\n- browser: React; key kind: browser; stable service name, environment, and release required\n- server: Express; key kind: server; stable service name, environment, and release required\nCommand: {}",
             javascript_install_command(package_manager, REACT_EXPRESS_PACKAGES),
         ),
-    }
+    };
+    writeln!(output, "Package manager: {package_manager}\n{body}")
 }
 
 fn javascript_install_command(package_manager: &str, packages: &str) -> String {
@@ -584,7 +582,7 @@ fn install_plan(detected: &[ProjectDetection]) -> Option<InstallPlan> {
                 "objective-c" => (0, InstallPlan::ObjectiveC),
                 "swift" | "swift-ios" => (1, InstallPlan::Swift),
                 "cpp" => (2, InstallPlan::Cmake),
-                "aspnetcore" | "java" | "python" | "php" | "ruby" | "node" | "sveltekit"
+                "aspnetcore" | "go" | "java" | "python" | "php" | "ruby" | "node" | "sveltekit"
                 | "react-express" => (
                     match detection.runtime {
                         "aspnetcore" => 3,
@@ -592,7 +590,8 @@ fn install_plan(detected: &[ProjectDetection]) -> Option<InstallPlan> {
                         "python" => 5,
                         "php" => 6,
                         "ruby" => 7,
-                        _ => 8,
+                        "go" => 8,
+                        _ => 9,
                     },
                     InstallPlan::Package {
                         package_manager: detection.package_manager,
@@ -625,7 +624,12 @@ fn detect_projects(root: &Path) -> Vec<ProjectDetection> {
     let mut detected = Vec::new();
     collect_manifests(root, root, 0, &mut detected);
     if detected.is_empty() {
-        collect_parent_manifests(root, &mut detected);
+        for parent in root.ancestors().skip(1).take(MAX_PARENT_SCAN_DEPTH) {
+            collect_manifests(root, parent, MAX_SCAN_DEPTH, &mut detected);
+            if !detected.is_empty() {
+                break;
+            }
+        }
     }
     detected.sort_by(|left, right| detection_key(left).cmp(&detection_key(right)));
     let mut runtimes = HashSet::new();
@@ -645,16 +649,6 @@ fn detection_key(detection: &ProjectDetection) -> (usize, &'static str, usize, &
         },
         &detection.manifest,
     )
-}
-
-/// Collects project manifests from nearby parent directories.
-fn collect_parent_manifests(root: &Path, detected: &mut Vec<ProjectDetection>) {
-    for parent in root.ancestors().skip(1).take(MAX_PARENT_SCAN_DEPTH) {
-        collect_manifests(root, parent, MAX_SCAN_DEPTH, detected);
-        if !detected.is_empty() {
-            return;
-        }
-    }
 }
 
 /// Recursively collects supported manifests.
@@ -697,6 +691,7 @@ fn manifest_detection(root: &Path, path: &Path) -> Option<ProjectDetection> {
         return None;
     }
     let package_integration = match runtime {
+        "go" => Some(PackageIntegration::Go),
         "java" => Some(PackageIntegration::Java(
             read_framework_manifest(path).is_some_and(|text| {
                 ["org.springframework", "spring-boot", "spring-kafka"]
