@@ -1,12 +1,12 @@
 //! Rich issue-investigation alias, output, and recovery contracts.
 
+use crate::matchers::{header, query_param};
+use crate::{Mock, MockServer, ResponseTemplate};
 use logbrew_cli::{
     CliEnvironment, CliError, Command, ExplainTarget, IssueCorrectionTarget,
     IssueOccurrenceSelection, RuntimeError, execute_command, parse_command, write_cli_error,
     write_runtime_error,
 };
-use wiremock::matchers::{header, method, path, query_param};
-use wiremock::{Mock, MockServer, ResponseTemplate};
 
 const ISSUE_ID: &str = "11111111-1111-4111-8111-111111111111";
 const OCCURRENCE_ID: &str = "22222222-2222-4222-8222-222222222222";
@@ -529,13 +529,13 @@ async fn invalid_or_duplicate_bundles_fail_closed_without_reflection()
         ),
     ] {
         let server = MockServer::start().await;
-        Mock::given(method("GET"))
-            .and(path(format!(
-                "/api/telemetry/issues/{ISSUE_ID}/investigation"
-            )))
-            .respond_with(ResponseTemplate::new(200).set_body_string(body))
-            .mount(&server)
-            .await;
+        Mock::route(
+            "GET",
+            format!("/api/telemetry/issues/{ISSUE_ID}/investigation"),
+        )
+        .respond_with(ResponseTemplate::new(200).set_body_string(body))
+        .mount(&server)
+        .await;
         let command = parse_command(["logbrew", "investigate", "issue", ISSUE_ID, "--json"])?;
         let mut output = Vec::new();
 
@@ -597,20 +597,18 @@ async fn exact_selector_rejects_a_recommended_server_receipt()
 async fn redirects_are_not_followed_with_authentication() -> Result<(), Box<dyn std::error::Error>>
 {
     let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path(format!(
-            "/api/telemetry/issues/{ISSUE_ID}/investigation"
-        )))
-        .respond_with(
-            ResponseTemplate::new(302)
-                .insert_header("location", format!("{}/redirected", server.uri())),
-        )
-        .expect(1)
-        .mount(&server)
-        .await;
-    Mock::given(method("GET"))
-        .and(path("/redirected"))
-        .and(header("authorization", "Bearer test-token"))
+    Mock::route(
+        "GET",
+        format!("/api/telemetry/issues/{ISSUE_ID}/investigation"),
+    )
+    .respond_with(
+        ResponseTemplate::new(302)
+            .insert_header("location", format!("{}/redirected", server.uri())),
+    )
+    .expect(1)
+    .mount(&server)
+    .await;
+    Mock::auth("GET", "/redirected", "test-token")
         .respond_with(ResponseTemplate::new(200).set_body_json(rich_investigation_bundle()))
         .expect(0)
         .mount(&server)
@@ -633,16 +631,16 @@ async fn redirects_are_not_followed_with_authentication() -> Result<(), Box<dyn 
 async fn api_failures_discard_backend_text_and_keep_typed_recovery()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path(format!(
-            "/api/telemetry/issues/{ISSUE_ID}/investigation"
-        )))
-        .respond_with(
-            ResponseTemplate::new(503)
-                .set_body_string("hostile-upstream-marker test-token private detail"),
-        )
-        .mount(&server)
-        .await;
+    Mock::route(
+        "GET",
+        format!("/api/telemetry/issues/{ISSUE_ID}/investigation"),
+    )
+    .respond_with(
+        ResponseTemplate::new(503)
+            .set_body_string("hostile-upstream-marker test-token private detail"),
+    )
+    .mount(&server)
+    .await;
     let command = parse_command(["logbrew", "investigate", "issue", ISSUE_ID, "--json"])?;
     let mut output = Vec::new();
 
@@ -687,17 +685,17 @@ async fn unsafe_origin_fails_before_network_use_without_reflection()
 }
 
 async fn mount_bundle(server: &MockServer, bundle: serde_json::Value, expected_requests: u64) {
-    Mock::given(method("GET"))
-        .and(path(format!(
-            "/api/telemetry/issues/{ISSUE_ID}/investigation"
-        )))
-        .and(query_param("response_version", "10"))
-        .and(query_param("selection", "recommended"))
-        .and(header("authorization", "Bearer test-token"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(bundle))
-        .expect(expected_requests)
-        .mount(server)
-        .await;
+    Mock::route(
+        "GET",
+        format!("/api/telemetry/issues/{ISSUE_ID}/investigation"),
+    )
+    .and(query_param("response_version", "10"))
+    .and(query_param("selection", "recommended"))
+    .and(header("authorization", "Bearer test-token"))
+    .respond_with(ResponseTemplate::new(200).set_body_json(bundle))
+    .expect(expected_requests)
+    .mount(server)
+    .await;
 }
 
 async fn mount_exact_bundle(
@@ -705,31 +703,31 @@ async fn mount_exact_bundle(
     bundle: serde_json::Value,
     expected_requests: u64,
 ) {
-    Mock::given(method("GET"))
-        .and(path(format!(
-            "/api/telemetry/issues/{ISSUE_ID}/investigation"
-        )))
-        .and(query_param("response_version", "10"))
-        .and(query_param("occurrence_id", OCCURRENCE_ID))
-        .and(header("authorization", "Bearer test-token"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(bundle))
-        .expect(expected_requests)
-        .mount(server)
-        .await;
+    Mock::route(
+        "GET",
+        format!("/api/telemetry/issues/{ISSUE_ID}/investigation"),
+    )
+    .and(query_param("response_version", "10"))
+    .and(query_param("occurrence_id", OCCURRENCE_ID))
+    .and(header("authorization", "Bearer test-token"))
+    .respond_with(ResponseTemplate::new(200).set_body_json(bundle))
+    .expect(expected_requests)
+    .mount(server)
+    .await;
 }
 
 async fn mount_correction(server: &MockServer, bundle: serde_json::Value, expected_requests: u64) {
-    Mock::given(method("GET"))
-        .and(path(format!(
-            "/api/telemetry/issues/{ISSUE_ID}/correction-verification"
-        )))
-        .and(query_param("baseline_occurrence_id", OCCURRENCE_ID))
-        .and(query_param("candidate_deployment_id", DEPLOYMENT_ID))
-        .and(header("authorization", "Bearer test-token"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(bundle))
-        .expect(expected_requests)
-        .mount(server)
-        .await;
+    Mock::route(
+        "GET",
+        format!("/api/telemetry/issues/{ISSUE_ID}/correction-verification"),
+    )
+    .and(query_param("baseline_occurrence_id", OCCURRENCE_ID))
+    .and(query_param("candidate_deployment_id", DEPLOYMENT_ID))
+    .and(header("authorization", "Bearer test-token"))
+    .respond_with(ResponseTemplate::new(200).set_body_json(bundle))
+    .expect(expected_requests)
+    .mount(server)
+    .await;
 }
 
 fn correction_command(json: bool) -> Result<Command, CliError> {

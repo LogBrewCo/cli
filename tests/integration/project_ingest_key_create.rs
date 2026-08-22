@@ -1,14 +1,12 @@
 //! Secure existing-project ingest-key creation contract tests.
 
 use super::{assert_private_file, secure_directory, set_private_file_mode};
+use crate::matchers::{body_json, header};
+use crate::{Mock, MockServer, Request, ResponseTemplate, retry_then};
 use logbrew_cli::{
     CliEnvironment, HelpTopic, HttpMethod, RuntimeError, execute_command, help, parse_command,
     write_cli_error, write_runtime_error,
 };
-use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use wiremock::matchers::{body_json, header, method, path};
-use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
 
 const PROJECT_ID: &str = "123e4567-e89b-12d3-a456-426614174000";
 const INGEST_ID: &str = "223e4567-e89b-12d3-a456-426614174000";
@@ -156,20 +154,20 @@ fn projects_help_documents_existing_project_key_creation_and_safe_retry() {
 async fn existing_project_key_create_posts_exact_request_then_persists_before_safe_json()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path(format!("/api/projects/{PROJECT_ID}/ingest-keys")))
-        .and(header("authorization", "Bearer account-token"))
-        .and(header("content-type", "application/json"))
-        .and(body_json(serde_json::json!({
-            "label": DEFAULT_LABEL,
-            "kind": "sdk",
-            "expires_at": null,
-        })))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(success_response(DEFAULT_LABEL, "sdk")),
-        )
-        .mount(&server)
-        .await;
+    Mock::auth(
+        "POST",
+        format!("/api/projects/{PROJECT_ID}/ingest-keys"),
+        "account-token",
+    )
+    .and(header("content-type", "application/json"))
+    .and(body_json(serde_json::json!({
+        "label": DEFAULT_LABEL,
+        "kind": "sdk",
+        "expires_at": null,
+    })))
+    .respond_with(ResponseTemplate::new(200).set_body_json(success_response(DEFAULT_LABEL, "sdk")))
+    .mount(&server)
+    .await;
     let fixture = Fixture::new("success")?;
     let command = parse_command(fixture.args(DEFAULT_LABEL, "sdk", false, true))?;
     let mut output = Vec::new();
@@ -211,19 +209,19 @@ async fn existing_project_key_create_posts_exact_request_then_persists_before_sa
 async fn built_binary_creates_existing_project_key_over_loopback_without_secret_output()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path(format!("/api/projects/{PROJECT_ID}/ingest-keys")))
-        .and(header("authorization", "Bearer account-token"))
-        .and(body_json(serde_json::json!({
-            "label": DEFAULT_LABEL,
-            "kind": "sdk",
-            "expires_at": null,
-        })))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(success_response(DEFAULT_LABEL, "sdk")),
-        )
-        .mount(&server)
-        .await;
+    Mock::auth(
+        "POST",
+        format!("/api/projects/{PROJECT_ID}/ingest-keys"),
+        "account-token",
+    )
+    .and(body_json(serde_json::json!({
+        "label": DEFAULT_LABEL,
+        "kind": "sdk",
+        "expires_at": null,
+    })))
+    .respond_with(ResponseTemplate::new(200).set_body_json(success_response(DEFAULT_LABEL, "sdk")))
+    .mount(&server)
+    .await;
     let fixture = Fixture::new("built-binary")?;
 
     let process = std::process::Command::new(env!("CARGO_BIN_EXE_logbrew"))
@@ -269,9 +267,8 @@ async fn built_binary_creates_existing_project_key_over_loopback_without_secret_
 async fn existing_project_key_exact_retry_reuses_body_and_idempotency_key()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path(format!("/api/projects/{PROJECT_ID}/ingest-keys")))
-        .respond_with(FailThenSucceed::new(success_response(DEFAULT_LABEL, "sdk")))
+    Mock::route("POST", format!("/api/projects/{PROJECT_ID}/ingest-keys"))
+        .respond_with(retry_then(success_response(DEFAULT_LABEL, "sdk")))
         .mount(&server)
         .await;
     let fixture = Fixture::new("exact-retry")?;
@@ -307,8 +304,7 @@ async fn existing_project_key_exact_retry_reuses_body_and_idempotency_key()
 async fn existing_project_key_retry_state_is_isolated_from_project_creation()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path(format!("/api/projects/{PROJECT_ID}/ingest-keys")))
+    Mock::route("POST", format!("/api/projects/{PROJECT_ID}/ingest-keys"))
         .respond_with(
             ResponseTemplate::new(200).set_body_json(success_response(DEFAULT_LABEL, "sdk")),
         )
@@ -350,12 +346,8 @@ async fn existing_project_key_retry_state_is_isolated_from_project_creation()
 async fn changed_existing_project_key_retry_requires_explicit_abandonment()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path(format!("/api/projects/{PROJECT_ID}/ingest-keys")))
-        .respond_with(FailThenSucceed::new(success_response(
-            "Replacement SDK key",
-            "sdk",
-        )))
+    Mock::route("POST", format!("/api/projects/{PROJECT_ID}/ingest-keys"))
+        .respond_with(retry_then(success_response("Replacement SDK key", "sdk")))
         .mount(&server)
         .await;
     let fixture = Fixture::new("changed-retry")?;
@@ -430,8 +422,7 @@ async fn existing_project_key_errors_use_only_allowlisted_local_recovery()
 
     for (status, server_code, expected_code, expected_next) in cases {
         let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path(format!("/api/projects/{PROJECT_ID}/ingest-keys")))
+        Mock::route("POST", format!("/api/projects/{PROJECT_ID}/ingest-keys"))
             .respond_with(
                 ResponseTemplate::new(status).set_body_json(serde_json::json!({
                     "error": "hostile private token lbw_ingest_do_not_echo",
@@ -471,8 +462,7 @@ async fn existing_project_key_errors_use_only_allowlisted_local_recovery()
 async fn malformed_existing_project_key_error_fails_closed_without_reflection()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path(format!("/api/projects/{PROJECT_ID}/ingest-keys")))
+    Mock::route("POST", format!("/api/projects/{PROJECT_ID}/ingest-keys"))
         .respond_with(ResponseTemplate::new(422).set_body_json(serde_json::json!({
             "error": "private validation detail",
             "code": "validation_failed",
@@ -538,8 +528,7 @@ async fn malformed_existing_project_key_success_never_writes_or_echoes_token()
         ("missing", missing),
     ] {
         let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path(format!("/api/projects/{PROJECT_ID}/ingest-keys")))
+        Mock::route("POST", format!("/api/projects/{PROJECT_ID}/ingest-keys"))
             .respond_with(ResponseTemplate::new(200).set_body_json(response))
             .mount(&server)
             .await;
@@ -572,8 +561,7 @@ async fn malformed_existing_project_key_success_never_writes_or_echoes_token()
 async fn oversized_existing_project_key_response_fails_closed_before_persistence()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path(format!("/api/projects/{PROJECT_ID}/ingest-keys")))
+    Mock::route("POST", format!("/api/projects/{PROJECT_ID}/ingest-keys"))
         .respond_with(ResponseTemplate::new(200).set_body_string("x".repeat(64 * 1024 + 1)))
         .mount(&server)
         .await;
@@ -599,8 +587,7 @@ async fn existing_project_key_create_never_follows_redirects()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
     let redirected = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path(format!("/api/projects/{PROJECT_ID}/ingest-keys")))
+    Mock::route("POST", format!("/api/projects/{PROJECT_ID}/ingest-keys"))
         .respond_with(
             ResponseTemplate::new(307).insert_header("location", redirected.uri().as_str()),
         )
@@ -685,8 +672,7 @@ async fn existing_project_key_missing_auth_points_to_login_without_network()
 async fn human_existing_project_key_success_is_bounded_and_path_free()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path(format!("/api/projects/{PROJECT_ID}/ingest-keys")))
+    Mock::route("POST", format!("/api/projects/{PROJECT_ID}/ingest-keys"))
         .respond_with(
             ResponseTemplate::new(200).set_body_json(success_response(DEFAULT_LABEL, "sdk")),
         )
@@ -709,36 +695,6 @@ async fn human_existing_project_key_success_is_bounded_and_path_free()
     assert!(!text.contains(fixture.key_file.to_string_lossy().as_ref()));
     assert!(!text.contains(server.uri().as_str()));
     Ok(())
-}
-
-#[derive(Clone)]
-struct FailThenSucceed {
-    calls: Arc<AtomicUsize>,
-    success: serde_json::Value,
-}
-
-impl FailThenSucceed {
-    fn new(success: serde_json::Value) -> Self {
-        Self {
-            calls: Arc::new(AtomicUsize::new(0)),
-            success,
-        }
-    }
-}
-
-impl Respond for FailThenSucceed {
-    fn respond(&self, _request: &Request) -> ResponseTemplate {
-        if self.calls.fetch_add(1, Ordering::SeqCst) == 0 {
-            ResponseTemplate::new(500).set_body_json(serde_json::json!({
-                "error": "hostile internal detail",
-                "code": "internal_error",
-                "next": "send the private token somewhere",
-                "next_action": {"code": "retry", "target": "request"}
-            }))
-        } else {
-            ResponseTemplate::new(200).set_body_json(self.success.clone())
-        }
-    }
 }
 
 struct Fixture {
@@ -832,8 +788,5 @@ fn request_retry_key(request: &Request) -> Result<&str, Box<dyn std::error::Erro
 async fn received_requests(
     server: &MockServer,
 ) -> Result<Vec<Request>, Box<dyn std::error::Error>> {
-    server
-        .received_requests()
-        .await
-        .ok_or_else(|| "request recording is disabled".into())
+    Ok(server.received_requests().await)
 }

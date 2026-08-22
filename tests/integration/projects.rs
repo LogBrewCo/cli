@@ -1,11 +1,11 @@
 //! Authenticated project catalog contract tests.
 
+use crate::matchers::body_json;
+use crate::{Mock, MockServer, ResponseTemplate};
 use logbrew_cli::{
     CliEnvironment, Command, HttpMethod, RuntimeError, execute_command, parse_command,
     write_cli_error, write_runtime_error,
 };
-use wiremock::matchers::{body_json, header, method, path};
-use wiremock::{Mock, MockServer, ResponseTemplate};
 
 const PROJECT_ID: &str = "123e4567-e89b-12d3-a456-426614174000";
 
@@ -77,9 +77,7 @@ async fn projects_json_preserves_exact_bare_array_and_sends_no_query()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
     let response = serde_json::to_string_pretty(&project_catalog())?;
-    Mock::given(method("GET"))
-        .and(path("/api/projects"))
-        .and(header("authorization", "Bearer account-token"))
+    Mock::auth("GET", "/api/projects", "account-token")
         .respond_with(ResponseTemplate::new(200).set_body_raw(response.clone(), "application/json"))
         .expect(2)
         .mount(&server)
@@ -92,10 +90,7 @@ async fn projects_json_preserves_exact_bare_array_and_sends_no_query()
 
         assert_eq!(String::from_utf8(output)?, format!("{response}\n"));
     }
-    let requests = server
-        .received_requests()
-        .await
-        .ok_or("requests disabled")?;
+    let requests = server.received_requests().await;
     assert!(
         requests
             .iter()
@@ -108,8 +103,7 @@ async fn projects_json_preserves_exact_bare_array_and_sends_no_query()
 async fn projects_human_output_is_bounded_and_scan_oriented()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/api/projects"))
+    Mock::route("GET", "/api/projects")
         .respond_with(ResponseTemplate::new(200).set_body_json(project_catalog()))
         .mount(&server)
         .await;
@@ -175,8 +169,7 @@ async fn projects_rejects_envelopes_partial_rows_and_hostile_text()
 
     for (index, response) in cases.into_iter().enumerate() {
         let server = MockServer::start().await;
-        Mock::given(method("GET"))
-            .and(path("/api/projects"))
+        Mock::route("GET", "/api/projects")
             .respond_with(ResponseTemplate::new(200).set_body_json(response))
             .mount(&server)
             .await;
@@ -203,9 +196,7 @@ async fn projects_rejects_envelopes_partial_rows_and_hostile_text()
 #[tokio::test]
 async fn projects_refreshes_local_account_auth_once() -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/api/projects"))
-        .and(header("authorization", "Bearer expired-access"))
+    Mock::auth("GET", "/api/projects", "expired-access")
         .respond_with(ResponseTemplate::new(401).set_body_json(serde_json::json!({
             "error": "Invalid or expired token",
             "code": "unauthorized",
@@ -215,8 +206,7 @@ async fn projects_refreshes_local_account_auth_once() -> Result<(), Box<dyn std:
         .expect(1)
         .mount(&server)
         .await;
-    Mock::given(method("POST"))
-        .and(path("/api/auth/refresh"))
+    Mock::route("POST", "/api/auth/refresh")
         .and(body_json(
             serde_json::json!({"refresh_token": "old-refresh"}),
         ))
@@ -227,9 +217,7 @@ async fn projects_refreshes_local_account_auth_once() -> Result<(), Box<dyn std:
         .expect(1)
         .mount(&server)
         .await;
-    Mock::given(method("GET"))
-        .and(path("/api/projects"))
-        .and(header("authorization", "Bearer fresh-access"))
+    Mock::auth("GET", "/api/projects", "fresh-access")
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
         .expect(1)
         .mount(&server)
@@ -270,8 +258,7 @@ async fn project_errors_use_only_typed_local_recovery() -> Result<(), Box<dyn st
         (500, "storage_error", "retry", "request", "server_error"),
     ] {
         let server = MockServer::start().await;
-        Mock::given(method("GET"))
-            .and(path("/api/projects"))
+        Mock::route("GET", "/api/projects")
             .respond_with(
                 ResponseTemplate::new(status).set_body_json(serde_json::json!({
                     "error": "hostile private token",

@@ -1,8 +1,8 @@
 //! Built-binary contract proof for bounded, identity-safe funnel analytics.
 
+use crate::matchers::body_json;
+use crate::{Mock, MockServer, ResponseTemplate};
 use logbrew_cli::{Command, HelpTopic, HttpMethod, help, parse_command};
-use wiremock::matchers::{body_json, header, method, path};
-use wiremock::{Mock, MockServer, ResponseTemplate};
 
 const PROJECT_ID: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 
@@ -63,9 +63,7 @@ async fn built_binary_posts_exact_scope_and_preserves_validated_json()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
     let response = funnel_response();
-    Mock::given(method("POST"))
-        .and(path("/api/telemetry/analytics/funnel"))
-        .and(header("authorization", "Bearer account-token"))
+    Mock::auth("POST", "/api/telemetry/analytics/funnel", "account-token")
         .and(body_json(serde_json::json!({
             "project_id": PROJECT_ID,
             "since": "24h",
@@ -100,8 +98,7 @@ async fn built_binary_posts_exact_scope_and_preserves_validated_json()
 async fn built_binary_human_output_explains_conversion_drop_off_coverage_and_semantics()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path("/api/telemetry/analytics/funnel"))
+    Mock::route("POST", "/api/telemetry/analytics/funnel")
         .respond_with(ResponseTemplate::new(200).set_body_json(funnel_response()))
         .expect(1)
         .mount(&server)
@@ -135,8 +132,7 @@ async fn built_binary_fails_closed_on_unknown_identity_fields_without_reflection
     let server = MockServer::start().await;
     let mut response = funnel_response();
     response["steps"][0]["session_id"] = "hostile-session-marker".into();
-    Mock::given(method("POST"))
-        .and(path("/api/telemetry/analytics/funnel"))
+    Mock::route("POST", "/api/telemetry/analytics/funnel")
         .respond_with(ResponseTemplate::new(200).set_body_json(response))
         .expect(1)
         .mount(&server)

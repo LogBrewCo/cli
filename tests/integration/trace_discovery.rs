@@ -1,11 +1,11 @@
 //! Recent trace discovery command and rendering contracts.
 
 use super::{authenticated_env, run_command};
+use crate::matchers::{header, query_param};
+use crate::{Mock, MockServer, ResponseTemplate};
 use logbrew_cli::{
     Command, execute_command, help, parse_command, write_cli_error, write_runtime_error,
 };
-use wiremock::matchers::{header, method, path, query_param};
-use wiremock::{Mock, MockServer, ResponseTemplate};
 
 const PROJECT_ID: &str = "123e4567-e89b-12d3-a456-426614174000";
 
@@ -157,8 +157,7 @@ async fn trace_discovery_preserves_bare_json_and_renders_human_triage()
             "target": "trace_summary"
         }
     }]);
-    Mock::given(method("GET"))
-        .and(path("/api/telemetry/traces"))
+    Mock::route("GET", "/api/telemetry/traces")
         .and(query_param("service_name", "checkout-api"))
         .and(query_param("status", "error"))
         .and(query_param("since", "24h"))
@@ -219,8 +218,7 @@ async fn trace_discovery_preserves_bare_json_and_renders_human_triage()
 async fn empty_trace_discovery_has_a_concrete_human_next_step()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/api/telemetry/traces"))
+    Mock::route("GET", "/api/telemetry/traces")
         .and(query_param("min_duration_ms", "999999"))
         .and(header("authorization", "Bearer test-token"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
@@ -363,8 +361,7 @@ fn watch_traces_recovers_to_historical_discovery() {
 async fn trace_discovery_preserves_backend_validation_recovery()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/api/telemetry/traces"))
+    Mock::route("GET", "/api/telemetry/traces")
         .and(query_param("since", "0h"))
         .and(header("authorization", "Bearer test-token"))
         .respond_with(ResponseTemplate::new(422).set_body_json(serde_json::json!({

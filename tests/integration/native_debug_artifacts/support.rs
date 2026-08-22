@@ -1,11 +1,10 @@
 //! Shared native debug-artifact integration fixtures.
 
+use crate::{Mock, MockServer, Request, ResponseTemplate};
 use std::ffi::OsString;
 use std::process::{Command, Output};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use wiremock::matchers::{method, path};
-use wiremock::{Mock, MockServer, Request, ResponseTemplate};
 
 pub(crate) const PROJECT_ID: &str = "123e4567-e89b-12d3-a456-426614174000";
 pub(crate) const ARM64_UUID: &str = "10111213-1415-1617-1819-1a1b1c1d1e1f";
@@ -105,8 +104,7 @@ pub(crate) fn json_failure(
 }
 
 pub(crate) async fn mount_lookup(server: &MockServer, body: serde_json::Value) {
-    Mock::given(method("GET"))
-        .and(path("/api/native-debug-artifacts"))
+    Mock::route("GET", "/api/native-debug-artifacts")
         .respond_with(ResponseTemplate::new(200).set_body_json(body))
         .expect(1)
         .mount(server)
@@ -114,8 +112,7 @@ pub(crate) async fn mount_lookup(server: &MockServer, body: serde_json::Value) {
 }
 
 pub(crate) async fn mount_upload_success(server: &MockServer, artifact_count: usize) {
-    Mock::given(method("POST"))
-        .and(path("/api/native-debug-artifacts"))
+    Mock::route("POST", "/api/native-debug-artifacts")
         .respond_with(ResponseTemplate::new(200).set_body_json(upload_success_body(artifact_count)))
         .expect(1)
         .mount(server)
@@ -128,8 +125,7 @@ pub(crate) async fn mount_lookup_sequence(server: &MockServer, bodies: Vec<serde
     let bodies_for_response = Arc::clone(&bodies);
     let attempt_for_response = Arc::clone(&attempt);
     let expected = u64::try_from(bodies.len()).unwrap_or(u64::MAX);
-    Mock::given(method("GET"))
-        .and(path("/api/native-debug-artifacts"))
+    Mock::route("GET", "/api/native-debug-artifacts")
         .respond_with(move |_request: &Request| {
             let index = attempt_for_response.fetch_add(1, Ordering::SeqCst);
             let body = bodies_for_response
@@ -349,10 +345,7 @@ pub(crate) fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 pub(crate) async fn received_requests(
     server: &MockServer,
 ) -> Result<Vec<Request>, Box<dyn std::error::Error>> {
-    server
-        .received_requests()
-        .await
-        .ok_or_else(|| "request recording is disabled".into())
+    Ok(server.received_requests().await)
 }
 
 pub(crate) struct Fixture {

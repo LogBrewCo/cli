@@ -1,8 +1,8 @@
 //! Built-binary contract proof for bounded, identity-safe lifecycle analytics.
 
+use crate::matchers::body_json;
+use crate::{Mock, MockServer, ResponseTemplate};
 use logbrew_cli::{Command, HelpTopic, HttpMethod, help, parse_command};
-use wiremock::matchers::{body_json, header, method, path};
-use wiremock::{Mock, MockServer, ResponseTemplate};
 
 const PROJECT_ID: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 
@@ -61,21 +61,23 @@ async fn built_binary_posts_exact_scope_and_preserves_validated_json()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
     let response = lifecycle_response();
-    Mock::given(method("POST"))
-        .and(path("/api/telemetry/analytics/lifecycle"))
-        .and(header("authorization", "Bearer account-token"))
-        .and(body_json(serde_json::json!({
-            "project_id": PROJECT_ID,
-            "since": "24h",
-            "environment": "production",
-            "event": {"kind": "interaction", "event_name": "checkout_completed"},
-            "interval": "hour",
-            "history_period_count": 2
-        })))
-        .respond_with(ResponseTemplate::new(200).set_body_json(response.clone()))
-        .expect(1)
-        .mount(&server)
-        .await;
+    Mock::auth(
+        "POST",
+        "/api/telemetry/analytics/lifecycle",
+        "account-token",
+    )
+    .and(body_json(serde_json::json!({
+        "project_id": PROJECT_ID,
+        "since": "24h",
+        "environment": "production",
+        "event": {"kind": "interaction", "event_name": "checkout_completed"},
+        "interval": "hour",
+        "history_period_count": 2
+    })))
+    .respond_with(ResponseTemplate::new(200).set_body_json(response.clone()))
+    .expect(1)
+    .mount(&server)
+    .await;
 
     let process = run_binary(&server, true).await?;
 
@@ -94,8 +96,7 @@ async fn built_binary_posts_exact_scope_and_preserves_validated_json()
 async fn built_binary_human_output_explains_states_coverage_and_provisional_data()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path("/api/telemetry/analytics/lifecycle"))
+    Mock::route("POST", "/api/telemetry/analytics/lifecycle")
         .respond_with(ResponseTemplate::new(200).set_body_json(lifecycle_response()))
         .expect(1)
         .mount(&server)
@@ -128,8 +129,7 @@ async fn built_binary_fails_closed_on_unknown_identity_fields_without_reflection
     let server = MockServer::start().await;
     let mut response = lifecycle_response();
     response["buckets"][0]["distinct_id"] = "hostile-subject-marker".into();
-    Mock::given(method("POST"))
-        .and(path("/api/telemetry/analytics/lifecycle"))
+    Mock::route("POST", "/api/telemetry/analytics/lifecycle")
         .respond_with(ResponseTemplate::new(200).set_body_json(response))
         .expect(1)
         .mount(&server)

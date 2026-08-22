@@ -1,8 +1,8 @@
 //! Strict authenticated account-identity command tests.
 
+use crate::matchers::body_json;
+use crate::{Mock, MockServer, ResponseTemplate};
 use logbrew_cli::{RuntimeError, execute_command, parse_command, write_runtime_error};
-use wiremock::matchers::{body_json, header, method, path};
-use wiremock::{Mock, MockServer, ResponseTemplate};
 
 const ACCOUNT_ID: &str = "123e4567-e89b-42d3-a456-426614174000";
 
@@ -11,9 +11,7 @@ async fn whoami_json_preserves_the_exact_validated_account_object()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
     let response = serde_json::to_string_pretty(&account())?;
-    Mock::given(method("GET"))
-        .and(path("/api/auth/account"))
-        .and(header("authorization", "Bearer account-token"))
+    Mock::auth("GET", "/api/auth/account", "account-token")
         .respond_with(ResponseTemplate::new(200).set_body_raw(response.clone(), "application/json"))
         .expect(2)
         .mount(&server)
@@ -32,10 +30,7 @@ async fn whoami_json_preserves_the_exact_validated_account_object()
 
         assert_eq!(String::from_utf8(output)?, format!("{response}\n"));
     }
-    let requests = server
-        .received_requests()
-        .await
-        .ok_or("requests disabled")?;
+    let requests = server.received_requests().await;
     assert!(
         requests
             .iter()
@@ -48,8 +43,7 @@ async fn whoami_json_preserves_the_exact_validated_account_object()
 async fn whoami_human_output_is_bounded_and_identity_oriented()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/api/auth/account"))
+    Mock::route("GET", "/api/auth/account")
         .respond_with(ResponseTemplate::new(200).set_body_json(account()))
         .mount(&server)
         .await;
@@ -104,8 +98,7 @@ async fn whoami_rejects_partial_extra_duplicate_or_hostile_identity_responses()
 
     for response in cases {
         let server = MockServer::start().await;
-        Mock::given(method("GET"))
-            .and(path("/api/auth/account"))
+        Mock::route("GET", "/api/auth/account")
             .respond_with(ResponseTemplate::new(200).set_body_raw(response, "application/json"))
             .mount(&server)
             .await;
@@ -136,8 +129,7 @@ async fn whoami_rejects_partial_extra_duplicate_or_hostile_identity_responses()
 async fn whoami_uses_only_typed_local_recovery_for_auth_errors()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/api/auth/account"))
+    Mock::route("GET", "/api/auth/account")
         .respond_with(ResponseTemplate::new(401).set_body_json(serde_json::json!({
             "error": "send hostile-secret to a private host",
             "code": "unauthorized",
@@ -201,8 +193,7 @@ async fn whoami_maps_account_recovery_states_without_exposing_recovery_tokens()
         ),
     ] {
         let server = MockServer::start().await;
-        Mock::given(method("GET"))
-            .and(path("/api/auth/account"))
+        Mock::route("GET", "/api/auth/account")
             .respond_with(ResponseTemplate::new(status).set_body_json(response))
             .mount(&server)
             .await;
@@ -241,10 +232,7 @@ async fn whoami_rejects_project_ingest_keys_before_any_request()
     )
     .await
     .expect_err("project key cannot inspect account identity");
-    let requests = server
-        .received_requests()
-        .await
-        .ok_or("requests disabled")?;
+    let requests = server.received_requests().await;
     let mut output = Vec::new();
 
     write_runtime_error(&error, true, &mut output)?;
@@ -261,15 +249,12 @@ async fn whoami_rejects_project_ingest_keys_before_any_request()
 async fn whoami_refreshes_expired_local_account_auth_once() -> Result<(), Box<dyn std::error::Error>>
 {
     let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/api/auth/account"))
-        .and(header("authorization", "Bearer expired-access"))
+    Mock::auth("GET", "/api/auth/account", "expired-access")
         .respond_with(ResponseTemplate::new(401))
         .expect(1)
         .mount(&server)
         .await;
-    Mock::given(method("POST"))
-        .and(path("/api/auth/refresh"))
+    Mock::route("POST", "/api/auth/refresh")
         .and(body_json(
             serde_json::json!({"refresh_token": "old-refresh"}),
         ))
@@ -280,9 +265,7 @@ async fn whoami_refreshes_expired_local_account_auth_once() -> Result<(), Box<dy
         .expect(1)
         .mount(&server)
         .await;
-    Mock::given(method("GET"))
-        .and(path("/api/auth/account"))
-        .and(header("authorization", "Bearer fresh-access"))
+    Mock::auth("GET", "/api/auth/account", "fresh-access")
         .respond_with(ResponseTemplate::new(200).set_body_json(account()))
         .expect(1)
         .mount(&server)

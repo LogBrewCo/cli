@@ -1,8 +1,8 @@
 //! Built-binary contract proof for privacy-safe product-analytics paths.
 
+use crate::matchers::body_json;
+use crate::{Mock, MockServer, ResponseTemplate};
 use logbrew_cli::{Command, HelpTopic, HttpMethod, help, parse_command};
-use wiremock::matchers::{body_json, header, method, path};
-use wiremock::{Mock, MockServer, ResponseTemplate};
 
 const PROJECT_ID: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const TRACE_ID: &str = "4bf92f3577b34da6a3ce929d0e0e4736";
@@ -80,9 +80,7 @@ async fn built_binary_posts_exact_scope_and_preserves_validated_json()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
     let response = paths_response();
-    Mock::given(method("POST"))
-        .and(path("/api/telemetry/analytics/paths"))
-        .and(header("authorization", "Bearer account-token"))
+    Mock::auth("POST", "/api/telemetry/analytics/paths", "account-token")
         .and(body_json(serde_json::json!({
             "project_id": PROJECT_ID,
             "since": "24h",
@@ -116,8 +114,7 @@ async fn built_binary_posts_exact_scope_and_preserves_validated_json()
 async fn built_binary_human_output_explains_journey_coverage_and_next_step()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path("/api/telemetry/analytics/paths"))
+    Mock::route("POST", "/api/telemetry/analytics/paths")
         .respond_with(ResponseTemplate::new(200).set_body_json(paths_response()))
         .expect(1)
         .mount(&server)
@@ -152,8 +149,7 @@ async fn built_binary_fails_closed_on_unknown_identity_fields_without_reflection
     let server = MockServer::start().await;
     let mut response = paths_response();
     response["query"]["session_id"] = "hostile-session-marker".into();
-    Mock::given(method("POST"))
-        .and(path("/api/telemetry/analytics/paths"))
+    Mock::route("POST", "/api/telemetry/analytics/paths")
         .respond_with(ResponseTemplate::new(200).set_body_json(response))
         .expect(1)
         .mount(&server)

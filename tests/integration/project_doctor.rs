@@ -1,8 +1,8 @@
 //! Read-only project doctor contract tests.
 
+use crate::matchers::{header, query_param};
+use crate::{Mock, MockServer, ResponseTemplate};
 use logbrew_cli::{CliEnvironment, execute_command, parse_command};
-use wiremock::matchers::{header, method, path, query_param};
-use wiremock::{Mock, MockServer, ResponseTemplate};
 
 const PROJECT_ID: &str = "123e4567-e89b-12d3-a456-426614174000";
 const UPPER_PROJECT_ID: &str = "123E4567-E89B-12D3-A456-426614174000";
@@ -236,13 +236,15 @@ async fn missing_local_auth_is_typed_without_a_network_request()
 async fn rejected_persisted_auth_does_not_refresh_or_rewrite_the_session()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path(format!("/api/projects/{PROJECT_ID}/doctor")))
-        .and(header("authorization", "Bearer local-access"))
-        .respond_with(ResponseTemplate::new(401).set_body_json(unauthorized_error()))
-        .expect(1)
-        .mount(&server)
-        .await;
+    Mock::auth(
+        "GET",
+        format!("/api/projects/{PROJECT_ID}/doctor"),
+        "local-access",
+    )
+    .respond_with(ResponseTemplate::new(401).set_body_json(unauthorized_error()))
+    .expect(1)
+    .mount(&server)
+    .await;
     let home = local_auth_home(&server)?;
     let session_path = home.join(".logbrew/session.json");
     let original_session = std::fs::read(session_path.as_path())?;
@@ -289,15 +291,16 @@ async fn owner_safe_project_missing_is_typed_and_stops_before_logs()
 async fn uppercase_uuid_input_binds_to_the_canonical_lowercase_response()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path(format!("/api/projects/{UPPER_PROJECT_ID}/doctor")))
-        .and(header("authorization", format!("Bearer {TOKEN}")))
-        .respond_with(ResponseTemplate::new(200).set_body_json(doctor_body("ready", "active")))
-        .expect(1)
-        .mount(&server)
-        .await;
-    Mock::given(method("GET"))
-        .and(path("/api/logs"))
+    Mock::auth(
+        "GET",
+        format!("/api/projects/{UPPER_PROJECT_ID}/doctor"),
+        TOKEN,
+    )
+    .respond_with(ResponseTemplate::new(200).set_body_json(doctor_body("ready", "active")))
+    .expect(1)
+    .mount(&server)
+    .await;
+    Mock::route("GET", "/api/logs")
         .and(query_param("project_id", UPPER_PROJECT_ID))
         .and(query_param("limit", "1"))
         .and(header("authorization", format!("Bearer {TOKEN}")))
@@ -482,9 +485,7 @@ async fn non_json_and_oversized_doctor_bodies_fail_closed() -> Result<(), Box<dy
         "x".repeat(256 * 1024 + 1),
     ] {
         let server = MockServer::start().await;
-        Mock::given(method("GET"))
-            .and(path(format!("/api/projects/{PROJECT_ID}/doctor")))
-            .and(header("authorization", format!("Bearer {TOKEN}")))
+        Mock::auth("GET", format!("/api/projects/{PROJECT_ID}/doctor"), TOKEN)
             .respond_with(ResponseTemplate::new(200).set_body_string(raw))
             .expect(1)
             .mount(&server)
@@ -632,9 +633,7 @@ async fn transport_failure_is_api_unreachable_and_value_safe()
 }
 
 async fn mount_doctor(server: &MockServer, status: u16, body: serde_json::Value) {
-    Mock::given(method("GET"))
-        .and(path(format!("/api/projects/{PROJECT_ID}/doctor")))
-        .and(header("authorization", format!("Bearer {TOKEN}")))
+    Mock::auth("GET", format!("/api/projects/{PROJECT_ID}/doctor"), TOKEN)
         .respond_with(ResponseTemplate::new(status).set_body_json(body))
         .expect(1)
         .mount(server)
@@ -642,8 +641,7 @@ async fn mount_doctor(server: &MockServer, status: u16, body: serde_json::Value)
 }
 
 async fn mount_logs(server: &MockServer, status: u16, body: serde_json::Value) {
-    Mock::given(method("GET"))
-        .and(path("/api/logs"))
+    Mock::route("GET", "/api/logs")
         .and(query_param("project_id", PROJECT_ID))
         .and(query_param("limit", "1"))
         .and(header("authorization", format!("Bearer {TOKEN}")))
@@ -824,13 +822,8 @@ fn unique_home_from_url(base_url: &str, label: &str) -> std::path::PathBuf {
     ))
 }
 
-async fn requests(
-    server: &MockServer,
-) -> Result<Vec<wiremock::Request>, Box<dyn std::error::Error>> {
-    server
-        .received_requests()
-        .await
-        .ok_or_else(|| "wiremock request recording is enabled".into())
+async fn requests(server: &MockServer) -> Result<Vec<crate::Request>, Box<dyn std::error::Error>> {
+    Ok(server.received_requests().await)
 }
 
 async fn request_count(server: &MockServer) -> Result<usize, Box<dyn std::error::Error>> {

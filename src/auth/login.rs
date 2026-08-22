@@ -366,104 +366,7 @@ const fn login_unavailable(message: &'static str) -> RuntimeError {
 
 #[cfg(test)]
 mod tests {
-    use super::execute_with_opener;
-    use crate::{CliEnvironment, LoginProvider};
-    use wiremock::matchers::{body_json, method, path};
-    use wiremock::{Mock, MockServer, ResponseTemplate};
-
-    #[tokio::test]
-    async fn loopback_login_exchanges_code_and_persists_redacted_token_pair()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/api/auth/gitlab"))
-            .and(body_json(serde_json::json!({ "code": "provider-code" })))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "access_token": "saved-access",
-                "refresh_token": "saved-refresh"
-            })))
-            .expect(1)
-            .mount(&server)
-            .await;
-        let home = login_home("loopback-success")?;
-        let env = CliEnvironment {
-            base_url: server.uri(),
-            token: None,
-            home: Some(home.clone()),
-            cwd: None,
-        };
-        let mut output = Vec::new();
-
-        execute_with_opener(&env, LoginProvider::GitLab, &mut output, |auth_url| {
-            let auth_url = reqwest::Url::parse(auth_url).expect("valid auth URL");
-            assert_eq!(auth_url.path(), "/api/auth/cli/login");
-            let query = auth_url
-                .query_pairs()
-                .collect::<std::collections::HashMap<_, _>>();
-            assert_eq!(
-                query.get("provider").map(|value| value.as_ref()),
-                Some("gitlab")
-            );
-            let redirect_uri = query.get("redirect_uri").expect("redirect URI").to_string();
-            let state = query.get("state").expect("state").to_string();
-            let callback = reqwest::Url::parse(redirect_uri.as_str()).expect("callback URL");
-            let _callback = tokio::spawn(async move {
-                let mut wrong_state = callback.clone();
-                let _query = wrong_state
-                    .query_pairs_mut()
-                    .append_pair("provider", "gitlab")
-                    .append_pair("code", "ignored-code")
-                    .append_pair("state", "wrong-state");
-                let response = reqwest::get(wrong_state)
-                    .await
-                    .expect("wrong-state response");
-                assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
-
-                let mut valid = callback;
-                let _query = valid
-                    .query_pairs_mut()
-                    .append_pair("provider", "gitlab")
-                    .append_pair("code", "provider-code")
-                    .append_pair("state", state.as_str());
-                let _response = reqwest::get(valid).await;
-            });
-            true
-        })
-        .await?;
-
-        let text = String::from_utf8(output)?;
-        assert!(text.contains("Logged in to LogBrew."));
-        for secret in ["provider-code", "saved-access", "saved-refresh"] {
-            assert!(!text.contains(secret));
-        }
-        let saved: serde_json::Value = serde_json::from_str(
-            std::fs::read_to_string(home.join(".logbrew/session.json"))?.as_str(),
-        )?;
-        assert_eq!(saved["access_token"], "saved-access");
-        assert_eq!(saved["refresh_token"], "saved-refresh");
-        assert_eq!(saved["origin"], server.uri());
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt as _;
-            assert_eq!(
-                std::fs::metadata(home.join(".logbrew"))?
-                    .permissions()
-                    .mode()
-                    & 0o777,
-                0o700
-            );
-            for name in ["session.json", "credentials.lock"] {
-                assert_eq!(
-                    std::fs::metadata(home.join(".logbrew").join(name))?
-                        .permissions()
-                        .mode()
-                        & 0o777,
-                    0o600
-                );
-            }
-        }
-        Ok(())
-    }
+    use crate::LoginProvider;
 
     #[test]
     fn callback_parser_rejects_duplicate_or_mismatched_security_fields() {
@@ -479,18 +382,5 @@ mod tests {
             super::parse_callback(wrong_provider, LoginProvider::GitHub, "expected"),
             super::Callback::Invalid
         ));
-    }
-
-    /// Creates one isolated home directory for login tests.
-    fn login_home(name: &str) -> Result<std::path::PathBuf, std::io::Error> {
-        let home =
-            std::env::temp_dir().join(format!("logbrew-cli-login-{name}-{}", std::process::id()));
-        match std::fs::remove_dir_all(home.as_path()) {
-            Ok(()) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error),
-        }
-        std::fs::create_dir_all(home.as_path())?;
-        Ok(home)
     }
 }

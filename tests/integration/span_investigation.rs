@@ -1,11 +1,11 @@
 //! Built-binary, strict-contract, and recovery proof for exact-span investigation.
 
+use crate::matchers::{header, query_param};
+use crate::{Mock, MockServer, ResponseTemplate};
 use logbrew_cli::{
     CliEnvironment, Command, ExplainSpanTarget, ExplainTarget, RuntimeError, execute_command, help,
     parse_command,
 };
-use wiremock::matchers::{header, method, path, query_param};
-use wiremock::{Mock, MockServer, ResponseTemplate};
 
 const TRACE_ID: &str = "4bf92f3577b34da6a3ce929d0e0e4736";
 const SPAN_ID: &str = "00f067aa0ba902b7";
@@ -476,8 +476,7 @@ async fn human_output_escapes_terminal_controls_in_untrusted_subject_text()
 }
 
 async fn mount_response(server: &MockServer, response: serde_json::Value) {
-    Mock::given(method("GET"))
-        .and(path(SPAN_PATH))
+    Mock::route("GET", SPAN_PATH)
         .and(query_param("project_id", PROJECT_ID))
         .and(query_param("environment", "production"))
         .and(query_param("release", "checkout@1.2.3"))

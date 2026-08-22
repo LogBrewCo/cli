@@ -1,12 +1,12 @@
 //! Issue cursor pagination command, response, and recovery contracts.
 
 use super::{authenticated_env, run_command};
+use crate::matchers::{header, query_param};
+use crate::{Mock, MockServer, ResponseTemplate};
 use logbrew_cli::{
     Command, execute_command, help, parse_command, write_cli_error, write_runtime_error,
 };
 use std::collections::BTreeMap;
-use wiremock::matchers::{header, method, path, query_param};
-use wiremock::{Mock, MockServer, ResponseTemplate};
 
 const PROJECT_ID: &str = "123e4567-e89b-12d3-a456-426614174000";
 const CURSOR_ID: &str = "9b2b4b3a-bd4e-4f85-a0f6-48118f037c17";
@@ -180,14 +180,11 @@ async fn issue_cursor_json_preserves_legacy_array_and_cursor_envelope()
             "id": CURSOR_ID
         }
     });
-    Mock::given(method("GET"))
-        .and(path("/api/telemetry/issues"))
-        .and(header("authorization", "Bearer test-token"))
+    Mock::auth("GET", "/api/telemetry/issues", "test-token")
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([issue.clone()])))
         .mount(&legacy_server)
         .await;
-    Mock::given(method("GET"))
-        .and(path("/api/telemetry/issues"))
+    Mock::route("GET", "/api/telemetry/issues")
         .and(query_param("pagination", "cursor"))
         .and(query_param("limit", "1"))
         .and(header("authorization", "Bearer test-token"))
@@ -231,8 +228,7 @@ async fn issue_cursor_json_preserves_legacy_array_and_cursor_envelope()
 async fn issue_cursor_human_output_keeps_rows_and_gives_continuation_retry()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/api/telemetry/issues"))
+    Mock::route("GET", "/api/telemetry/issues")
         .and(query_param("pagination", "cursor"))
         .and(query_param("limit", "1"))
         .and(header("authorization", "Bearer test-token"))
@@ -273,8 +269,7 @@ async fn issue_cursor_human_output_keeps_rows_and_gives_continuation_retry()
 #[tokio::test]
 async fn terminal_issue_cursor_page_is_explicit() -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/api/telemetry/issues"))
+    Mock::route("GET", "/api/telemetry/issues")
         .and(query_param("pagination", "cursor"))
         .and(query_param("cursor_time", CURSOR_TIME))
         .and(query_param("cursor_id", CURSOR_ID))
@@ -359,8 +354,7 @@ async fn malformed_issue_cursor_envelope_has_value_safe_human_recovery()
 
     for (index, body) in malformed.into_iter().enumerate() {
         let server = MockServer::start().await;
-        Mock::given(method("GET"))
-            .and(path("/api/telemetry/issues"))
+        Mock::route("GET", "/api/telemetry/issues")
             .and(query_param("pagination", "cursor"))
             .and(header("authorization", "Bearer test-token"))
             .respond_with(ResponseTemplate::new(200).set_body_json(body))
@@ -389,8 +383,7 @@ async fn malformed_issue_cursor_envelope_has_value_safe_human_recovery()
 async fn non_json_issue_cursor_response_has_value_safe_human_recovery()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/api/telemetry/issues"))
+    Mock::route("GET", "/api/telemetry/issues")
         .and(query_param("pagination", "cursor"))
         .and(header("authorization", "Bearer test-token"))
         .respond_with(
@@ -419,8 +412,7 @@ async fn non_json_issue_cursor_response_has_value_safe_human_recovery()
 async fn issue_cursor_preserves_backend_validation_without_echoing_values()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/api/telemetry/issues"))
+    Mock::route("GET", "/api/telemetry/issues")
         .and(query_param("pagination", "cursor"))
         .and(query_param("cursor_time", "not-a-time"))
         .and(query_param("cursor_id", CURSOR_ID))

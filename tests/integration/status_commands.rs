@@ -1,14 +1,13 @@
 //! CLI status command output tests.
 
+use crate::matchers::body_json;
+use crate::{Mock, MockServer, ResponseTemplate};
 use logbrew_cli::{CliEnvironment, execute_command, parse_command, write_runtime_error};
-use wiremock::matchers::{body_json, header, method, path};
-use wiremock::{Mock, MockServer, ResponseTemplate};
 
 #[tokio::test]
 async fn status_json_reports_api_and_missing_auth_for_agents() {
     let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/health"))
+    Mock::route("GET", "/health")
         .respond_with(ResponseTemplate::new(200).set_body_string("ok"))
         .mount(&server)
         .await;
@@ -35,13 +34,11 @@ async fn status_json_reports_api_and_missing_auth_for_agents() {
 #[tokio::test]
 async fn status_json_reports_env_auth_without_exposing_token() {
     let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/health"))
+    Mock::route("GET", "/health")
         .respond_with(ResponseTemplate::new(200).set_body_string("ok"))
         .mount(&server)
         .await;
-    Mock::given(method("GET"))
-        .and(path("/api/auth/account"))
+    Mock::route("GET", "/api/auth/account")
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "id": "00000000-0000-4000-8000-000000000001"
         })))
@@ -105,13 +102,11 @@ async fn status_json_reports_env_auth_without_exposing_token() {
 #[tokio::test]
 async fn status_json_reports_expired_token_as_unauthenticated() {
     let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/health"))
+    Mock::route("GET", "/health")
         .respond_with(ResponseTemplate::new(200).set_body_string("ok"))
         .mount(&server)
         .await;
-    Mock::given(method("GET"))
-        .and(path("/api/auth/account"))
+    Mock::route("GET", "/api/auth/account")
         .respond_with(ResponseTemplate::new(401).set_body_json(serde_json::json!({
             "code": "unauthorized",
             "error": "Invalid or expired token",
@@ -144,20 +139,16 @@ async fn status_json_reports_expired_token_as_unauthenticated() {
 async fn status_refreshes_expired_local_auth_before_reporting_authenticated()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/health"))
+    Mock::route("GET", "/health")
         .respond_with(ResponseTemplate::new(200).set_body_string("ok"))
         .mount(&server)
         .await;
-    Mock::given(method("GET"))
-        .and(path("/api/auth/account"))
-        .and(header("authorization", "Bearer expired-local"))
+    Mock::auth("GET", "/api/auth/account", "expired-local")
         .respond_with(ResponseTemplate::new(401))
         .expect(1)
         .mount(&server)
         .await;
-    Mock::given(method("POST"))
-        .and(path("/api/auth/refresh"))
+    Mock::route("POST", "/api/auth/refresh")
         .and(body_json(serde_json::json!({
             "refresh_token": "old-local-refresh"
         })))
@@ -168,9 +159,7 @@ async fn status_refreshes_expired_local_auth_before_reporting_authenticated()
         .expect(1)
         .mount(&server)
         .await;
-    Mock::given(method("GET"))
-        .and(path("/api/auth/account"))
-        .and(header("authorization", "Bearer fresh-local"))
+    Mock::auth("GET", "/api/auth/account", "fresh-local")
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "id": "00000000-0000-4000-8000-000000000001"
         })))
@@ -213,8 +202,7 @@ async fn status_refreshes_expired_local_auth_before_reporting_authenticated()
 #[tokio::test]
 async fn status_human_output_includes_api_and_auth_next_step() {
     let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/health"))
+    Mock::route("GET", "/health")
         .respond_with(ResponseTemplate::new(200).set_body_string("ok"))
         .mount(&server)
         .await;
@@ -251,13 +239,11 @@ fn status_home(name: &str) -> Result<std::path::PathBuf, std::io::Error> {
 #[tokio::test]
 async fn status_human_authenticated_output_points_to_first_read_without_leaking_token() {
     let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/health"))
+    Mock::route("GET", "/health")
         .respond_with(ResponseTemplate::new(200).set_body_string("ok"))
         .mount(&server)
         .await;
-    Mock::given(method("GET"))
-        .and(path("/api/auth/account"))
+    Mock::route("GET", "/api/auth/account")
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "id": "00000000-0000-4000-8000-000000000001"
         })))
@@ -292,8 +278,7 @@ async fn status_human_authenticated_output_points_to_first_read_without_leaking_
 #[tokio::test]
 async fn status_json_reports_unreachable_api_without_exposing_token() {
     let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/health"))
+    Mock::route("GET", "/health")
         .respond_with(ResponseTemplate::new(503).set_body_string("maintenance"))
         .mount(&server)
         .await;
@@ -322,8 +307,7 @@ async fn status_json_reports_unreachable_api_without_exposing_token() {
 #[tokio::test]
 async fn status_human_reports_unreachable_api_with_next_step() {
     let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/health"))
+    Mock::route("GET", "/health")
         .respond_with(ResponseTemplate::new(503).set_body_string("maintenance"))
         .mount(&server)
         .await;
