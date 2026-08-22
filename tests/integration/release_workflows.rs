@@ -5,11 +5,8 @@ const HOMEBREW: &str = include_str!("../../.github/workflows/publish-homebrew-ta
 const PUBLISH_BOUNDARY: &str = include_str!("../../scripts/validate-publish-boundary.sh");
 const DIST: &str = include_str!("../../dist-workspace.toml");
 
-fn ordered(source: &str, required: &[&str]) {
-    let mut cursor = 0;
-    for value in required {
-        cursor += source[cursor..].find(value).expect("missing ordered step");
-    }
+fn ordered(text: &str, values: &[&str]) {
+    let _ = values.iter().fold(0, |i, v| i + text[i..].find(v).unwrap());
 }
 
 #[test]
@@ -37,6 +34,8 @@ fn release_workflows_prebuild_publish_and_recover_safely() {
         "inputs.release_tag != '' && inputs.artifacts_run_id != ''",
         "artifacts_run_id: ${{ inputs.artifacts_run_id || needs.plan.outputs.prebuild-run-id }}",
         "gh release create \"${{ needs.plan.outputs.tag }}\" --target \"$GITHUB_SHA\"",
+        "Verify public shell installation",
+        "cmp \"$installer\" target/distrib/logbrew-cli-installer.sh",
     ] {
         assert!(RELEASE.contains(required), "missing {required}");
     }
