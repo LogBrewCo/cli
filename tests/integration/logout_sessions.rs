@@ -543,17 +543,7 @@ async fn run_logout_json(
 }
 
 fn logout_home(name: &str) -> Result<std::path::PathBuf, std::io::Error> {
-    let path = std::env::temp_dir().join(format!(
-        "logbrew-cli-logout-session-{name}-{}",
-        std::process::id()
-    ));
-    match std::fs::remove_dir_all(path.as_path()) {
-        Ok(()) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => return Err(error),
-    }
-    std::fs::create_dir_all(path.as_path())?;
-    Ok(path)
+    super::isolated_home("logbrew-cli-logout-session", name)
 }
 
 fn write_session(
@@ -562,19 +552,7 @@ fn write_session(
     access_token: &str,
     refresh_token: &str,
 ) -> Result<std::path::PathBuf, std::io::Error> {
-    let auth_dir = home.join(".logbrew");
-    std::fs::create_dir_all(auth_dir.as_path())?;
-    let session_path = auth_dir.join("session.json");
-    std::fs::write(
-        session_path.as_path(),
-        serde_json::json!({
-            "access_token": access_token,
-            "refresh_token": refresh_token,
-            "origin": origin,
-        })
-        .to_string(),
-    )?;
-    Ok(session_path)
+    super::write_test_session(home, origin, access_token, refresh_token)
 }
 
 fn write_new_session_after_lock(home: std::path::PathBuf) -> Result<(), std::io::Error> {
