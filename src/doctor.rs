@@ -188,11 +188,7 @@ pub async fn execute<W: std::io::Write>(
     json: bool,
     output: &mut W,
 ) -> Result<(), RuntimeError> {
-    let Ok(client) = crate::http::client_builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .connect_timeout(std::time::Duration::from_secs(10))
-        .build()
-    else {
+    let Ok(client) = crate::http::api_client() else {
         return write_report(&api_unreachable(), json, output);
     };
     let report = run_checks(&client, env, project_id).await;

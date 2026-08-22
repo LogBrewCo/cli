@@ -21,7 +21,7 @@ pub(super) async fn execute_login<W: std::io::Write>(
     if json || !should_open_browser {
         return write_auth_handoff(env, provider, json, output);
     }
-    execute_with_opener(env, provider, output, open_browser).await
+    execute_interactive(env, provider, output).await
 }
 
 /// Writes the legacy agent/manual handoff without binding or persisting state.
@@ -71,17 +71,12 @@ fn open_browser(url: &str) -> bool {
         .is_ok_and(|status| status.success())
 }
 
-/// Executes interactive login with an injectable browser opener.
-pub(super) async fn execute_with_opener<W, F>(
+/// Executes interactive browser login.
+async fn execute_interactive<W: std::io::Write>(
     env: &CliEnvironment,
     provider: LoginProvider,
     output: &mut W,
-    open_browser: F,
-) -> Result<(), RuntimeError>
-where
-    W: std::io::Write,
-    F: FnOnce(&str) -> bool,
-{
+) -> Result<(), RuntimeError> {
     let Some(home) = env.home.clone() else {
         return Err(login_unavailable("a home directory is required for login"));
     };
@@ -96,10 +91,7 @@ where
         redirect_uri.as_str(),
         state.as_str(),
     )?;
-    let client = crate::http::client_builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .connect_timeout(std::time::Duration::from_secs(10))
-        .build()?;
+    let client = crate::http::api_client()?;
 
     if !open_browser(auth_url.as_str()) {
         return Err(login_unavailable("could not open the browser for login"));

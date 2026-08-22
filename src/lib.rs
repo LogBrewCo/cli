@@ -2025,11 +2025,7 @@ async fn execute_http<W: std::io::Write>(
         }
     })?;
     let url = format!("{origin}{path}");
-    let client = http::client_builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .connect_timeout(std::time::Duration::from_secs(10))
-        .redirect(reqwest::redirect::Policy::none())
-        .build()?;
+    let client = http::api_client()?;
 
     let response_result = send_authenticated_with_refresh(&client, env, |client, credential| {
         build_command_request(client, command, url.as_str(), credential)
@@ -2246,10 +2242,7 @@ fn websocket_error_is_auth(error: &WebSocketError) -> bool {
 /// Requests a short-lived WebSocket feed ticket from the public API.
 async fn request_feed_ticket(env: &CliEnvironment) -> Result<String, RuntimeError> {
     let url = format!("{}/api/feed/ticket", env.base_url.trim_end_matches('/'));
-    let client = http::client_builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .connect_timeout(std::time::Duration::from_secs(10))
-        .build()?;
+    let client = http::api_client()?;
     let (response, credential) =
         send_authenticated_with_refresh(&client, env, |client, credential| {
             client.post(url.as_str()).bearer_auth(credential.token())

@@ -18,6 +18,16 @@ pub(crate) fn client_builder() -> reqwest::ClientBuilder {
     reqwest::Client::builder()
 }
 
+/// Builds the bounded redirect-refusing client used by API commands.
+pub(crate) fn api_client() -> Result<reqwest::Client, reqwest::Error> {
+    client_builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .retry(reqwest::retry::never())
+        .timeout(std::time::Duration::from_secs(30))
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .build()
+}
+
 /// Normalizes an HTTP(S) API origin without credentials, path, query, or fragment.
 pub(crate) fn normalized_origin(value: &str) -> Option<String> {
     let parsed = reqwest::Url::parse(value).ok()?;

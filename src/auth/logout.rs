@@ -84,12 +84,7 @@ async fn logout_local_session(
 
 /// Calls the public logout endpoint without attaching an access-token bearer.
 async fn revoke_refresh_family(base_url: &str, refresh_token: &str) -> ServerSessionOutcome {
-    let Ok(client) = crate::http::client_builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .connect_timeout(std::time::Duration::from_secs(10))
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-    else {
+    let Ok(client) = crate::http::api_client() else {
         return ServerSessionOutcome::Unknown;
     };
     let url = format!("{}/api/auth/logout", base_url.trim_end_matches('/'));

@@ -237,12 +237,7 @@ pub(super) async fn execute<W: std::io::Write>(
 ) -> Result<(), RuntimeError> {
     let origin =
         crate::http::normalized_origin(env.base_url.as_str()).ok_or_else(transport_error)?;
-    let client = crate::http::client_builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .timeout(std::time::Duration::from_secs(30))
-        .connect_timeout(std::time::Duration::from_secs(10))
-        .build()
-        .map_err(|_error| transport_error())?;
+    let client = crate::http::api_client().map_err(|_error| transport_error())?;
     let path = explain_path(target);
     let url = format!("{origin}{path}");
     let response = send_account_authenticated_with_refresh(&client, env, |client, credential| {
