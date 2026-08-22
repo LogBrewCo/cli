@@ -22,14 +22,14 @@ const EVIDENCE_FIELD_LIMIT: usize = 256;
 const NEXT_ACTION_LIMIT: usize = 16;
 
 /// Evidence facts that control capture-improvement follow-up generation.
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub(super) struct EvidenceFacts {
     /// Whether typed context or SDK identity is explicitly missing.
     pub(super) capture_incomplete: bool,
 }
 
 /// One expected stable follow-up action derived from returned evidence.
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 struct ExpectedAction<'a> {
     /// Stable action code.
     code: &'a str,
@@ -110,7 +110,7 @@ pub(super) fn validate_timeline(
 }
 
 /// Strict references to the payload and correlation sources projected into a timeline.
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 struct TimelineSources<'a> {
     /// Application-reported span events.
     events: &'a [Value],
@@ -365,7 +365,7 @@ fn any_optional_signal_field(item: &Map<String, Value>) -> bool {
 }
 
 /// Stable chronological key for one UTC RFC3339 timestamp.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 struct TimestampKey<'a> {
     /// Fixed calendar and whole-second prefix.
     seconds: &'a str,

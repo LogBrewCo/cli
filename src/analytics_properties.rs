@@ -7,7 +7,7 @@
 
 use serde::Deserialize;
 
-use crate::analytics_contract::{bounded_counts, ratio_matches};
+use crate::analytics_contract::{NextAction, bounded_counts, ratio_matches};
 use crate::analytics_request::{self, Kind};
 use crate::http::{nonempty_control_safe as bounded_contract_text, terminal_safe as display_text};
 use crate::{AnalyticsPropertyOptions, CliEnvironment, RuntimeError};
@@ -70,7 +70,7 @@ pub(super) async fn execute<W: std::io::Write>(
 }
 
 /// Complete response with unknown fields rejected at every level.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PropertyCatalogResponse {
     schema_version: u8,
@@ -84,7 +84,7 @@ struct PropertyCatalogResponse {
 }
 
 /// Normalized effective scope echoed by the backend.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PropertyQuery {
     project_id: String,
@@ -97,7 +97,7 @@ struct PropertyQuery {
 }
 
 /// Aggregate property availability in the selected window.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PropertySummary {
     classified_events: u64,
@@ -106,7 +106,7 @@ struct PropertySummary {
 }
 
 /// Capture, migration, privacy, and result-bound receipts.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PropertyCoverage {
     indexed_events: u64,
@@ -151,7 +151,7 @@ enum PropertyValueType {
 }
 
 /// One key-only descriptor and aggregate availability receipt.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PropertyDescriptor {
     key: String,
@@ -171,21 +171,12 @@ enum CountAccuracy {
 }
 
 /// Cardinality-estimation contract.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PropertyEstimation {
     count_accuracy: CountAccuracy,
     method: String,
     description: String,
-}
-
-/// Stable server-selected follow-up.
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct NextAction {
-    code: String,
-    target: String,
-    reason: String,
 }
 
 /// Parses and proves the complete schema-version-1 response.
@@ -315,9 +306,6 @@ fn valid_estimation(estimation: &PropertyEstimation) -> bool {
 
 /// Requires the stable action code and target implied by aggregate state.
 fn valid_next_action(response: &PropertyCatalogResponse) -> bool {
-    if !bounded_contract_text(response.next_action.reason.as_str(), 768) {
-        return false;
-    }
     let expected = if response.summary.classified_events == 0 {
         ("capture_product_activity", "analyticsSchemaVersion=1")
     } else if response.coverage.indexed_events == 0 {
@@ -335,7 +323,7 @@ fn valid_next_action(response: &PropertyCatalogResponse) -> bool {
             "/api/telemetry/analytics/segments/compare",
         )
     };
-    response.next_action.code == expected.0 && response.next_action.target == expected.1
+    response.next_action.matches(expected.0, expected.1, 768)
 }
 
 /// Validates the UTC RFC 3339 shape emitted by the versioned API.

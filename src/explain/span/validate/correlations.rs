@@ -16,7 +16,7 @@ use crate::RuntimeError;
 /// Maximum evidence rows returned per related signal kind.
 const CORRELATION_LIMIT: usize = 20;
 /// Validated correlation state used by analysis, evidence, and follow-up checks.
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub(super) struct CorrelationFacts<'a> {
     /// Containing-trace read state.
     pub(super) trace: SourceState<'a>,
@@ -37,7 +37,7 @@ pub(super) struct CorrelationFacts<'a> {
 }
 
 /// One collection's validated availability and truncation receipt.
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub(super) struct SourceState<'a> {
     /// Read status.
     pub(super) status: &'a str,

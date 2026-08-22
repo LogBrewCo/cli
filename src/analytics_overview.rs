@@ -7,7 +7,7 @@
 
 use serde::Deserialize;
 
-use crate::analytics_contract::{bounded_counts, ratio_matches};
+use crate::analytics_contract::{NextAction, bounded_counts, ratio_matches};
 use crate::analytics_request::{self, Kind, valid_event_name};
 use crate::http::{nonempty_control_safe as bounded_contract_text, terminal_safe as display_text};
 use crate::{AnalyticsOverviewOptions, AnalyticsPathEventKind, CliEnvironment, RuntimeError};
@@ -72,7 +72,7 @@ pub(super) async fn execute<W: std::io::Write>(
 }
 
 /// Complete response with unknown fields rejected at every level.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct OverviewResponse {
     schema_version: u8,
@@ -89,7 +89,7 @@ struct OverviewResponse {
 }
 
 /// Normalized effective query echoed by the backend.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct OverviewQuery {
     project_id: String,
@@ -131,7 +131,7 @@ impl AnalysisLevel {
 }
 
 /// Aggregate action activity in the selected window.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ActionSummary {
     actions: u64,
@@ -144,7 +144,7 @@ struct ActionSummary {
 }
 
 /// Capture and result coverage qualifying the action summary.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ActionCoverage {
     identified_actions: u64,
@@ -165,7 +165,7 @@ struct ActionCoverage {
 }
 
 /// Exact exhaustive subject-kind receipt for one retained event population.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SubjectCoverage {
     index_version: u8,
@@ -177,7 +177,7 @@ struct SubjectCoverage {
 }
 
 /// Accuracy contract for approximate unique counts.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Estimation {
     unique_counts_are_approximate: bool,
@@ -186,7 +186,7 @@ struct Estimation {
 }
 
 /// One non-empty action bucket.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ActionPoint {
     bucket_start: String,
@@ -200,7 +200,7 @@ struct ActionPoint {
 }
 
 /// One highest-volume action name.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct TopAction {
     name: String,
@@ -211,7 +211,7 @@ struct TopAction {
 }
 
 /// Explicitly classified page, screen, and interaction activity.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ClassifiedActivity {
     summary: ClassifiedSummary,
@@ -222,7 +222,7 @@ struct ClassifiedActivity {
 }
 
 /// Aggregate counts for the supported versioned analytics vocabulary.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ClassifiedSummary {
     events: u64,
@@ -237,7 +237,7 @@ struct ClassifiedSummary {
 }
 
 /// Capture and result coverage qualifying classified activity.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ClassifiedCoverage {
     classified_actions: u64,
@@ -266,7 +266,7 @@ struct ClassifiedCoverage {
 }
 
 /// One non-empty classified-activity bucket.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ClassifiedPoint {
     bucket_start: String,
@@ -278,7 +278,7 @@ struct ClassifiedPoint {
 }
 
 /// One highest-volume classified surface.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct TopSurface {
     kind: AnalyticsPathEventKind,
@@ -290,7 +290,7 @@ struct TopSurface {
 }
 
 /// One highest-volume exact classified event key.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct TopEvent {
     kind: AnalyticsPathEventKind,
@@ -299,15 +299,6 @@ struct TopEvent {
     active_identified_users: u64,
     sessions: u64,
     share_of_classified_events: f64,
-}
-
-/// Stable recommended follow-up.
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct NextAction {
-    code: String,
-    target: String,
-    reason: String,
 }
 
 /// Parses and proves the complete schema-version-2 response.
@@ -861,9 +852,6 @@ fn valid_analysis_level(response: &OverviewResponse) -> bool {
 
 /// Requires the stable action code and target implied by aggregate state.
 fn valid_next_action(response: &OverviewResponse) -> bool {
-    if !bounded_contract_text(response.next_action.reason.as_str(), 512) {
-        return false;
-    }
     let classified = &response.classified_activity.summary;
     let expected = if response.summary.actions == 0 && classified.events == 0 {
         ("capture_product_activity", "/api/telemetry/ingest")
@@ -880,7 +868,7 @@ fn valid_next_action(response: &OverviewResponse) -> bool {
     } else {
         ("capture_funnel_steps", "classified_activity.top_events")
     };
-    response.next_action.code == expected.0 && response.next_action.target == expected.1
+    response.next_action.matches(expected.0, expected.1, 512)
 }
 
 /// Verifies one optional exact per-unit quotient, which can be above one.

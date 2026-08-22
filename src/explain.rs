@@ -118,7 +118,6 @@ const SOURCE_LOCATOR_EVIDENCE_FIELDS: [&str; 10] = [
 ];
 
 /// Duplicate-aware JSON value.
-#[derive(Debug)]
 struct UniqueValue(Value);
 
 impl<'de> Deserialize<'de> for UniqueValue {
@@ -1409,7 +1408,6 @@ fn validate_release_response(
 }
 
 /// One exact deterministic release follow-up derived from bounded signal evidence.
-#[derive(Debug, Clone, Copy)]
 struct ReleaseNextActionExpectation<'a> {
     /// Stable action code.
     code: &'static str,

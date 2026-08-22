@@ -7,7 +7,6 @@ use crate::{CliEnvironment, RuntimeError};
 const RESPONSE_LIMIT: usize = 256 * 1024;
 
 /// Validated fields needed for bounded human rendering.
-#[derive(Debug, Clone, Copy)]
 struct UsageView<'a> {
     /// Current plan tier.
     tier: &'a str,
@@ -40,7 +39,6 @@ struct UsageView<'a> {
 }
 
 /// Nullable account limits needed for human totals.
-#[derive(Debug, Clone, Copy)]
 struct UsageLimits {
     /// Configured event limit.
     events: Option<u64>,
@@ -55,7 +53,7 @@ struct UsageLimits {
     clippy::missing_docs_in_private_items,
     reason = "field names intentionally mirror the validated public JSON contract"
 )]
-#[derive(Debug, serde::Deserialize)]
+#[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct UsageShape {
     #[serde(rename = "period_start")]
@@ -97,7 +95,7 @@ struct UsageShape {
     clippy::missing_docs_in_private_items,
     reason = "field names intentionally mirror the validated public JSON contract"
 )]
-#[derive(Debug, serde::Deserialize)]
+#[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PlanShape {
     #[serde(rename = "tier")]
@@ -111,7 +109,7 @@ struct PlanShape {
     clippy::missing_docs_in_private_items,
     reason = "field names intentionally mirror the validated public JSON contract"
 )]
-#[derive(Debug, serde::Deserialize)]
+#[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct LimitsShape {
     #[serde(rename = "events")]
@@ -129,7 +127,7 @@ struct LimitsShape {
     clippy::missing_docs_in_private_items,
     reason = "field names intentionally mirror the validated public JSON contract"
 )]
-#[derive(Debug, serde::Deserialize)]
+#[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct TotalsShape {
     #[serde(rename = "events")]
@@ -145,7 +143,7 @@ struct TotalsShape {
     clippy::missing_docs_in_private_items,
     reason = "field names intentionally mirror the validated public JSON contract"
 )]
-#[derive(Debug, serde::Deserialize)]
+#[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct UsageActionShape {
     #[serde(rename = "code")]
@@ -165,7 +163,7 @@ struct UsageActionShape {
     clippy::missing_docs_in_private_items,
     reason = "field names intentionally mirror the validated public JSON contract"
 )]
-#[derive(Debug, serde::Deserialize)]
+#[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ProjectUsageShape {
     #[serde(rename = "project_id")]
@@ -181,7 +179,7 @@ struct ProjectUsageShape {
     clippy::missing_docs_in_private_items,
     reason = "field names intentionally mirror the validated public JSON contract"
 )]
-#[derive(Debug, serde::Deserialize)]
+#[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct StreamUsageShape {
     #[serde(rename = "kind")]
@@ -190,38 +188,6 @@ struct StreamUsageShape {
     _events: serde_json::Value,
     #[serde(rename = "bytes")]
     _bytes: serde_json::Value,
-}
-
-/// Duplicate-aware standard error envelope.
-#[expect(
-    clippy::missing_docs_in_private_items,
-    reason = "field names intentionally mirror the validated public JSON contract"
-)]
-#[derive(Debug, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-struct UsageErrorShape {
-    #[serde(rename = "error")]
-    _error: serde_json::Value,
-    #[serde(rename = "code")]
-    _code: serde_json::Value,
-    #[serde(rename = "next")]
-    _next: serde_json::Value,
-    #[serde(rename = "next_action")]
-    _next_action: ErrorActionShape,
-}
-
-/// Duplicate-aware standard error action.
-#[expect(
-    clippy::missing_docs_in_private_items,
-    reason = "field names intentionally mirror the validated public JSON contract"
-)]
-#[derive(Debug, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ErrorActionShape {
-    #[serde(rename = "code")]
-    _code: serde_json::Value,
-    #[serde(rename = "target")]
-    _target: serde_json::Value,
 }
 
 /// Executes the exact account-usage read and writes JSON or bounded human output.
@@ -467,7 +433,8 @@ fn validate_error(
     body: &str,
     credential: &AuthCredential,
 ) -> Result<RuntimeError, RuntimeError> {
-    let _shape = serde_json::from_str::<UsageErrorShape>(body).map_err(|_| invalid_response())?;
+    let _shape =
+        serde_json::from_str::<crate::http::ErrorShape>(body).map_err(|_| invalid_response())?;
     let value = serde_json::from_str::<serde_json::Value>(body).map_err(|_| invalid_response())?;
     let object = exact_object(&value, &["error", "code", "next", "next_action"])?;
     let _error = safe_string(object.get("error"), 256)?;

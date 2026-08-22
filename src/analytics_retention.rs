@@ -7,8 +7,8 @@
 
 use serde::Deserialize;
 
-use crate::analytics_contract::{bounded_counts, ratio_matches};
-use crate::analytics_request::{self, Kind, insert_optional};
+use crate::analytics_contract::{NextAction, bounded_counts, ratio_matches};
+use crate::analytics_request::{self, Kind, scoped_body};
 use crate::http::{nonempty_control_safe as bounded_contract_text, terminal_safe as display_text};
 use crate::time::{
     ParsedTimestamp as UtcTimestamp, add_seconds, parse_utc_timestamp, timestamp_nanos,
@@ -35,19 +35,14 @@ const NANOS_PER_SECOND: i128 = 1_000_000_000;
     reason = "the parent command model consumes this private-module helper"
 )]
 pub(super) fn request_body(options: &AnalyticsRetentionOptions) -> serde_json::Value {
-    let mut body = serde_json::Map::new();
-    drop(body.insert(
-        "project_id".to_owned(),
-        serde_json::Value::String(options.project_id.clone()),
-    ));
-    drop(body.insert(
-        "since".to_owned(),
-        serde_json::Value::String(options.since.clone()),
-    ));
-    insert_optional(&mut body, "until", options.until.as_deref());
-    insert_optional(&mut body, "service_name", options.service_name.as_deref());
-    insert_optional(&mut body, "release", options.release.as_deref());
-    insert_optional(&mut body, "environment", options.environment.as_deref());
+    let mut body = scoped_body(
+        &options.project_id,
+        &options.since,
+        options.until.as_deref(),
+        options.service_name.as_deref(),
+        options.release.as_deref(),
+        options.environment.as_deref(),
+    );
     drop(body.insert(
         "start_event".to_owned(),
         serde_json::json!({
@@ -108,7 +103,7 @@ pub(super) async fn execute<W: std::io::Write>(
 }
 
 /// Complete response with unknown fields rejected at every level.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RetentionResponse {
     schema_version: u8,
@@ -122,7 +117,7 @@ struct RetentionResponse {
 }
 
 /// Normalized effective query echoed by the backend.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RetentionQuery {
     project_id: String,
@@ -141,7 +136,7 @@ struct RetentionQuery {
 }
 
 /// One exact classified event selector.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RetentionEvent {
     kind: AnalyticsRetentionEventKind,
@@ -149,7 +144,7 @@ struct RetentionEvent {
 }
 
 /// Aggregate identified-subject outcome.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RetentionSummary {
     cohort_subjects: u64,
@@ -161,7 +156,7 @@ struct RetentionSummary {
 }
 
 /// Capture coverage qualifying the retention result.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RetentionCoverage {
     classified_events: u64,
@@ -181,7 +176,7 @@ struct RetentionCoverage {
 }
 
 /// One maturity-aware aggregate retention period.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RetentionPeriod {
     period: u8,
@@ -196,7 +191,7 @@ struct RetentionPeriod {
 }
 
 /// One period cell in a query-relative cohort row.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RetentionCell {
     period: u8,
@@ -207,7 +202,7 @@ struct RetentionCell {
 }
 
 /// One non-empty query-relative cohort.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RetentionCohort {
     cohort: u64,
@@ -216,15 +211,6 @@ struct RetentionCohort {
     subjects: u64,
     subjects_returned_after_start: u64,
     periods: Vec<RetentionCell>,
-}
-
-/// Stable server-selected follow-up.
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct NextAction {
-    code: String,
-    target: String,
-    reason: String,
 }
 
 /// Parses and proves the complete schema-version-1 response.
@@ -559,11 +545,8 @@ fn aggregate_period(response: &RetentionResponse, index: usize) -> Option<Period
 
 /// Requires the stable action code and target implied by the response state.
 fn valid_next_action(response: &RetentionResponse) -> bool {
-    if !bounded_contract_text(response.next_action.reason.as_str(), 768) {
-        return false;
-    }
     let expected = expected_next_action(response);
-    response.next_action.code == expected.0 && response.next_action.target == expected.1
+    response.next_action.matches(expected.0, expected.1, 768)
 }
 
 /// Derives the server's stable next action from validated result state.

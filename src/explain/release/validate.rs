@@ -28,7 +28,7 @@ const BASE_LIMITATIONS: [&str; 3] = [
 ];
 
 /// Optional-read availability accepted by release v3.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum Availability {
     /// The optional read completed with usable evidence.
     Available,

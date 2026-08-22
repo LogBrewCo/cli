@@ -27,7 +27,7 @@ const EVENT_LIMIT: usize = 8;
 /// Maximum causal links returned on one exact span.
 const LINK_LIMIT: usize = 8;
 /// Validated exact subject fields needed by every later invariant.
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub(super) struct SubjectFacts<'a> {
     /// Stored project identity.
     pub(super) project_id: &'a str,
@@ -58,7 +58,7 @@ pub(super) struct SubjectFacts<'a> {
 }
 
 /// Validated payload receipt needed by evidence checks.
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub(super) struct PayloadFacts {
     /// Whether privacy filtering removed payload fields.
     pub(super) redacted: bool,

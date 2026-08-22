@@ -7,7 +7,7 @@ use crate::{CliEnvironment, RuntimeError, path_with_query};
 const RESPONSE_LIMIT: u64 = 256 * 1024;
 
 /// One fixed diagnostic check rendered for humans and agents.
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 struct DoctorCheck {
     /// Stable check identifier.
     check: &'static str,
@@ -18,7 +18,6 @@ struct DoctorCheck {
 }
 
 /// Complete CLI-owned project diagnostic report.
-#[derive(Debug, Clone, Copy)]
 struct DoctorReport {
     /// Stable overall state.
     status: &'static str,
@@ -62,7 +61,7 @@ impl DoctorReport {
 }
 
 /// Canonical backend-owned project readiness state.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum ProjectState {
     /// The project needs an active ingest key.
     NeedsIngestKey,
@@ -109,7 +108,7 @@ impl ProjectState {
 }
 
 /// Valid setup progress after exact doctor-response validation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum SetupProgress {
     /// Project exists but setup has not started.
     NotStarted,
@@ -122,7 +121,6 @@ enum SetupProgress {
 }
 
 /// Safe fields retained from the exact doctor response.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct DoctorSnapshot {
     /// Canonical readiness state.
     state: ProjectState,
@@ -135,7 +133,6 @@ struct DoctorSnapshot {
 }
 
 /// Result of the authoritative doctor read.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DoctorOutcome {
     /// Exact 200 response was accepted.
     Success(DoctorSnapshot),
@@ -154,7 +151,6 @@ enum DoctorOutcome {
 }
 
 /// Result of the optional newest-log visibility probe.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LogsOutcome {
     /// At least one retained log is visible.
     Visible,
@@ -171,7 +167,6 @@ enum LogsOutcome {
 }
 
 /// Safe result of sending one authenticated GET without refresh.
-#[derive(Debug)]
 enum AuthenticatedGet {
     /// Server returned an HTTP response.
     Response(reqwest::Response),
@@ -248,13 +243,13 @@ async fn run_checks(
         DoctorOutcome::TransportFailed => return api_unreachable(),
     };
 
-    apply_snapshot(&mut report, snapshot);
-    apply_logs_outcome(&mut report, logs_outcome(client, env, project_id).await);
+    apply_snapshot(&mut report, &snapshot);
+    apply_logs_outcome(&mut report, &logs_outcome(client, env, project_id).await);
     report
 }
 
 /// Applies one validated canonical state without retaining server text or identifiers.
-const fn apply_snapshot(report: &mut DoctorReport, snapshot: DoctorSnapshot) {
+const fn apply_snapshot(report: &mut DoctorReport, snapshot: &DoctorSnapshot) {
     report.api = check("api", "reachable", "validate persisted auth");
     report.auth = check("auth", "valid", "inspect the selected project");
     report.project = check("project", "usable", "inspect project readiness");
@@ -294,7 +289,7 @@ const fn apply_snapshot(report: &mut DoctorReport, snapshot: DoctorSnapshot) {
 }
 
 /// Applies log visibility without reconstructing or overriding canonical readiness.
-const fn apply_logs_outcome(report: &mut DoctorReport, outcome: LogsOutcome) {
+const fn apply_logs_outcome(report: &mut DoctorReport, outcome: &LogsOutcome) {
     match outcome {
         LogsOutcome::Visible => {
             report.logs = check("logs", "visible", "inspect the newest visible log");

@@ -7,7 +7,7 @@
 
 use serde::Deserialize;
 
-use crate::analytics_contract::{bounded_counts, ratio_matches};
+use crate::analytics_contract::{NextAction, bounded_counts, ratio_matches};
 use crate::analytics_request::{self, Kind, insert_optional, valid_event_name};
 use crate::http::{nonempty_control_safe as bounded_contract_text, terminal_safe as display_text};
 use crate::time::{
@@ -137,7 +137,7 @@ pub(super) async fn execute<W: std::io::Write>(
 }
 
 /// Complete response with unknown fields rejected at every level.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ComparisonResponse {
     schema_version: u8,
@@ -150,7 +150,7 @@ struct ComparisonResponse {
 }
 
 /// Normalized effective query echoed by the backend.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ComparisonQuery {
     project_id: String,
@@ -225,7 +225,7 @@ impl ComparisonInterval {
 }
 
 /// One exact classified outcome.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ComparisonTarget {
     kind: AnalyticsSegmentEventKind,
@@ -233,7 +233,7 @@ struct ComparisonTarget {
 }
 
 /// One normalized exact context segment.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SegmentScope {
     key: String,
@@ -246,7 +246,7 @@ struct SegmentScope {
 }
 
 /// One normalized exact property predicate echoed by the backend.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PropertyFilter {
     key: String,
@@ -254,7 +254,7 @@ struct PropertyFilter {
 }
 
 /// High-level comparison state.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ComparisonSummary {
     segment_count: u8,
@@ -265,7 +265,7 @@ struct ComparisonSummary {
 }
 
 /// Accuracy and interpretation boundary.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ComparisonConfidence {
     interpretation: String,
@@ -310,7 +310,7 @@ enum SegmentOverlap {
 }
 
 /// One complete segment outcome.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SegmentResult {
     key: String,
@@ -325,7 +325,7 @@ struct SegmentResult {
 }
 
 /// Capture coverage qualifying one segment result.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SegmentCoverage {
     classified_events: u64,
@@ -342,7 +342,7 @@ struct SegmentCoverage {
 }
 
 /// Property-index readiness and exact-value match coverage for one segment.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PropertyCoverage {
     context_events: u64,
@@ -355,7 +355,7 @@ struct PropertyCoverage {
 }
 
 /// One ordered non-empty comparison bucket.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SegmentPoint {
     bucket_start: String,
@@ -369,7 +369,7 @@ struct SegmentPoint {
 }
 
 /// Descriptive difference from the first requested segment.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct BaselineComparison {
     eligible_units_difference: i64,
@@ -377,15 +377,6 @@ struct BaselineComparison {
     target_events_difference: i64,
     reach_rate_difference: Option<f64>,
     relative_reach_rate_lift: Option<f64>,
-}
-
-/// Stable server-selected follow-up.
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct NextAction {
-    code: String,
-    target: String,
-    reason: String,
 }
 
 /// Parses and proves the complete schema-version-1 response.
@@ -817,11 +808,8 @@ fn signed_difference(current: u64, baseline: u64) -> Option<i64> {
 
 /// Requires the stable action code and target implied by validated response state.
 fn valid_next_action(response: &ComparisonResponse) -> bool {
-    if !bounded_contract_text(response.next_action.reason.as_str(), 768) {
-        return false;
-    }
     let expected = expected_next_action(response);
-    response.next_action.code == expected.0 && response.next_action.target == expected.1
+    response.next_action.matches(expected.0, expected.1, 768)
 }
 
 /// Derives the backend's stable next action from validated result state.
