@@ -282,22 +282,12 @@ fn validate_receipts(
     validate_field_receipts(
         evidence,
         "exception_chain.messages",
-        [
-            facts.message_states.contains("captured") || facts.message_states.contains("truncated"),
-            facts.message_states.contains("not_captured"),
-            facts.message_states.contains("redacted"),
-            facts.message_states.contains("truncated"),
-        ],
+        aggregate_receipts(&facts.message_states, true),
     )?;
     validate_field_receipts(
         evidence,
         "exception_chain.stack_frames",
-        [
-            facts.stack_states.contains("captured") || facts.stack_states.contains("truncated"),
-            facts.stack_states.contains("not_captured"),
-            false,
-            facts.stack_states.contains("truncated"),
-        ],
+        aggregate_receipts(&facts.stack_states, false),
     )?;
     validate_field_receipts(
         evidence,
@@ -306,16 +296,25 @@ fn validate_receipts(
     )?;
     let chain_is_partial = facts.status != "captured"
         || facts.truncated
-        || facts
-            .message_states
+        || [&facts.message_states, &facts.stack_states]
             .iter()
-            .any(|state| *state != "captured")
-        || facts.stack_states.iter().any(|state| *state != "captured");
+            .any(|states| states.iter().any(|state| *state != "captured"));
     if chain_is_partial && require_string(evidence, "status")? != "partial" {
         Err(invalid_response())
     } else {
         Ok(())
     }
+}
+
+/// Classifies aggregate evidence without marking a partially captured field missing.
+fn aggregate_receipts(states: &BTreeSet<&str>, supports_redaction: bool) -> [bool; 4] {
+    let captured = states.contains("captured") || states.contains("truncated");
+    [
+        captured,
+        !captured && states.contains("not_captured"),
+        supports_redaction && states.contains("redacted"),
+        states.contains("truncated"),
+    ]
 }
 
 /// Binds the runtime-chain cause signal to the presence of an underlying node.

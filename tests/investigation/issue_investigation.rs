@@ -296,7 +296,7 @@ async fn captured_native_frame_count_accepts_a_receipted_safe_projection()
             "Recommended occurrence:",
             "frames=17 stack_truncated=false",
             "Stack frames: 1",
-            "exception_chain.stack_frames, stack_frames",
+            "exception_chain.entries, stack_frames",
         ],
     )
     .await
@@ -348,9 +348,7 @@ async fn human_output_surfaces_failure_fix_timeline_correlations_and_limits()
          module=checkout.payment message_state=captured message=Payment capture failed",
         "Exception node id=1 parent=0 relationship=cause type=UpstreamTimeoutError \
          module=checkout.provider message_state=redacted mechanism=javascript.cause handled=true",
-        "Exception stack node=1 state=truncated frames=1",
-        "Exception frame node=1 index=0 module=checkout.provider function=requestPayment \
-         file=provider_client.ts line=142 column=9 in_app=true",
+        "Exception stack node=1 state=not_captured frames=0",
         "Request: method=POST route=/checkout/{cart_id} status=503",
         "Frame: module=checkout function=capturePayment file=apps/checkout/payment_gateway.ts line=87",
         "Breadcrumb: at=2026-08-04T07:59:58Z category=checkout.submit",
@@ -886,16 +884,9 @@ fn rich_investigation_bundle() -> serde_json::Value {
                         "message_state": "captured",
                         "module": "checkout.payment",
                         "mechanism": {"type": "javascript.promise", "handled": false},
-                        "stack_frames": [{
-                            "index": 0,
-                            "module": "checkout",
-                            "function": "capturePayment",
-                            "file": "apps/checkout/payment_gateway.ts",
-                            "line": 87,
-                            "column": 12,
-                            "in_app": true,
-                            "source": "captured"
-                        }],
+                        "stack_frames": [captured_stack_frame((
+                            "checkout", "capturePayment", "apps/checkout/payment_gateway.ts", 87, 12
+                        ))],
                         "stack_frames_state": "captured"
                     },
                     {
@@ -907,17 +898,8 @@ fn rich_investigation_bundle() -> serde_json::Value {
                         "message_state": "redacted",
                         "module": "checkout.provider",
                         "mechanism": {"type": "javascript.cause", "handled": true},
-                        "stack_frames": [{
-                            "index": 0,
-                            "module": "checkout.provider",
-                            "function": "requestPayment",
-                            "file": "provider_client.ts",
-                            "line": 142,
-                            "column": 9,
-                            "in_app": true,
-                            "source": "captured"
-                        }],
-                        "stack_frames_state": "truncated"
+                        "stack_frames": [],
+                        "stack_frames_state": "not_captured"
                     }
                 ],
                 "truncated": true
@@ -927,16 +909,9 @@ fn rich_investigation_bundle() -> serde_json::Value {
                 "route_template": "/checkout/{cart_id}",
                 "response_status_code": 503
             },
-            "stack_frames": [{
-                "index": 0,
-                "module": "checkout",
-                "function": "capturePayment",
-                "file": "apps/checkout/payment_gateway.ts",
-                "line": 87,
-                "column": 12,
-                "in_app": true,
-                "source": "captured"
-            }],
+            "stack_frames": [captured_stack_frame((
+                "checkout", "capturePayment", "apps/checkout/payment_gateway.ts", 87, 12
+            ))],
             "breadcrumbs": [{
                 "timestamp": "2026-08-04T07:59:58Z",
                 "type": "user",
@@ -1194,10 +1169,7 @@ fn rich_investigation_bundle() -> serde_json::Value {
             ],
             "missing_fields": ["affected_users.complete_coverage"],
             "redacted_fields": ["exception_chain.messages"],
-            "truncated_fields": [
-                "exception_chain.entries",
-                "exception_chain.stack_frames"
-            ]
+            "truncated_fields": ["exception_chain.entries"]
         },
         "next_actions": [
             {
@@ -1590,8 +1562,21 @@ fn invalid_exception_chain_bundle() -> serde_json::Value {
 
 fn underlying_exception_fix_bundle() -> serde_json::Value {
     let mut bundle = rich_investigation_bundle();
-    bundle["event"]["exception_chain"]["entries"][1]["stack_frames"][0]["file"] =
-        serde_json::json!("apps/checkout/provider_client.ts");
+    bundle["event"]["exception_chain"]["entries"][1]["stack_frames"] =
+        serde_json::json!([captured_stack_frame((
+            "checkout.provider",
+            "requestPayment",
+            "apps/checkout/provider_client.ts",
+            142,
+            9,
+        ))]);
+    bundle["event"]["exception_chain"]["entries"][1]["stack_frames_state"] =
+        serde_json::json!("truncated");
+    add_evidence_field(
+        &mut bundle,
+        "truncated_fields",
+        "exception_chain.stack_frames",
+    );
     bundle["fix"] = serde_json::json!({
         "status": "observed_underlying_exception_frame",
         "location": {
@@ -1638,6 +1623,20 @@ fn add_evidence_field(bundle: &mut serde_json::Value, category: &str, field: &st
         .expect("evidence category is an array");
     fields.push(serde_json::json!(field));
     fields.sort_by(|left, right| left.as_str().cmp(&right.as_str()));
+}
+
+fn captured_stack_frame(frame: (&str, &str, &str, u32, u32)) -> serde_json::Value {
+    let (module, function, file, line, column) = frame;
+    serde_json::json!({
+        "index": 0,
+        "module": module,
+        "function": function,
+        "file": file,
+        "line": line,
+        "column": column,
+        "in_app": true,
+        "source": "captured"
+    })
 }
 
 fn mutated_bundles(cases: Vec<(&str, serde_json::Value)>) -> Vec<serde_json::Value> {
