@@ -71,7 +71,7 @@ def release_run_fixture(policy) -> dict[str, object]:
         "conclusion": "success",
         "head_branch": policy.tag,
         "head_sha": policy.source_commit,
-        "run_attempt": 1,
+        "run_attempt": 2,
         "workflow_id": 289984708,
     }
 
@@ -287,15 +287,13 @@ class InstalledReleaseAttestationTests(unittest.TestCase):
     def test_tag_and_run_require_exact_source_and_release_workflow(self) -> None:
         module = load_subject()
         policy = fixture_policy(module)
-        self.assertEqual(
-            module.validated_tag_object_sha(
-                policy.tag,
-                policy.source_commit,
-                tag_ref_fixture(policy),
-                tag_object_fixture(policy),
-            ),
-            TAG_OBJECT_SHA,
+        tag_sha = module.validated_tag_object_sha(
+            policy.tag,
+            policy.source_commit,
+            tag_ref_fixture(policy),
+            tag_object_fixture(policy),
         )
+        self.assertEqual(tag_sha, TAG_OBJECT_SHA)
         module.validate_release_run_identity(
             policy.tag,
             policy.source_commit,
@@ -317,12 +315,13 @@ class InstalledReleaseAttestationTests(unittest.TestCase):
             ("path", ".github/workflows/release-copy.yml"),
             ("workflow_id", module.RELEASE_WORKFLOW_ID + 1),
             ("head_sha", "4" * 40),
-            ("run_attempt", 2),
+            ("run_attempt", 0),
+            ("run_attempt", True),
             ("conclusion", "failure"),
         ]:
             run = release_run_fixture(policy)
             run[field] = value
-            with self.subTest(field=field):
+            with self.subTest(field=field, value=value):
                 with self.assertRaises(module.AttestationError):
                     module.validate_release_run_identity(
                         policy.tag,

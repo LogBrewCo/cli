@@ -193,10 +193,10 @@ def validate_release_run_identity(
         "conclusion": "success",
         "head_branch": tag,
         "head_sha": source_commit,
-        "run_attempt": 1,
         "workflow_id": RELEASE_WORKFLOW_ID,
     }
-    if any(run.get(name) != value for name, value in expected.items()):
+    attempt = run.get("run_attempt")
+    if type(attempt) is not int or attempt < 1 or not (expected.items() <= run.items()):
         raise AttestationError
 
 
