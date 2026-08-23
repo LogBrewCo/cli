@@ -30,12 +30,20 @@ path = "src/main.rs"
 name = "integration"
 path = "tests/integration/mod.rs"
 
+[[test]]
+name = "grammar"
+path = "tests/grammar/mod.rs"
+
+[[test]]
+name = "investigation"
+path = "tests/investigation/mod.rs"
+
 [dependencies]
 atomic-write-file = "0.3.0"
 bytes = "1.11.1"
 fs2 = "0.4.3"
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
-futures-util = { version = "0.3.32", features = ["sink"] }
+futures-util = { version = "0.3.32", default-features = false, features = ["sink", "std"] }
 getrandom = "0.4.3"
 object = { version = "0.40.0", default-features = false, features = ["macho", "read_core", "std", "unaligned"] }
 reqwest = { version = "0.13", default-features = false, features = ["json", "multipart", "rustls-no-provider"] }

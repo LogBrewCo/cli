@@ -537,6 +537,8 @@ fn authenticated_env(server: &MockServer) -> CliEnvironment {
 }
 
 fn span_response() -> serde_json::Value {
-    serde_json::from_str(include_str!("fixtures/span_investigation_v1.json"))
-        .expect("checked-in span investigation fixture is valid JSON")
+    serde_json::from_str(include_str!(
+        "../integration/fixtures/span_investigation_v1.json"
+    ))
+    .expect("checked-in span investigation fixture is valid JSON")
 }
