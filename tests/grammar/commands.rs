@@ -100,10 +100,21 @@ fn parses_examples_help_for_first_run_discovery() {
 }
 
 #[test]
-fn parses_global_json_before_command_for_agents() {
+fn parses_global_json_before_commands_for_agents() {
     assert_command(
         &["logbrew", "--json", "status"],
         Command::Status { json: true },
+    );
+    assert_command(
+        &["logbrew", "--json", "logs", "--release", "checkout@1"],
+        read_command(
+            ReadTarget::Logs,
+            ReadOptions {
+                release: Some("checkout@1".to_owned()),
+                ..ReadOptions::default()
+            },
+            true,
+        ),
     );
 }
 
@@ -187,66 +198,38 @@ fn parses_whoami_and_me_as_authenticated_identity_reads() {
 }
 
 #[test]
-fn parses_global_json_before_read_shortcut_for_agents() {
-    assert_command(
-        &["logbrew", "--json", "logs", "--release", "checkout@1"],
-        read_command(
-            ReadTarget::Logs,
-            ReadOptions {
-                release: Some("checkout@1".to_owned()),
-                ..ReadOptions::default()
-            },
-            true,
-        ),
-    );
-}
-
-#[test]
-fn status_help_advertises_identity_aliases() {
-    let text = help::help_text(HelpTopic::Status);
-
-    assert!(text.contains("logbrew whoami [--json]"));
-    assert!(text.contains("logbrew me [--json]"));
-    assert!(text.contains("logbrew auth status [--json]"));
-    assert!(text.contains("Status checks API reachability and authentication."));
-    assert!(text.contains("Whoami/me return the authenticated account identity."));
-}
-
-#[test]
-fn login_help_explains_json_handoff_without_browser() {
-    let text = help::help_text(HelpTopic::Login);
-
-    assert!(text.contains("stores a private local access/refresh pair"));
-    assert!(text.contains("refresh local auth once after an expired-token response"));
-    assert!(text.contains("--provider github|gitlab|bitbucket"));
-    assert!(text.contains("--json prints the auth handoff without opening a browser."));
-}
-
-#[test]
-fn watch_help_explains_websocket_ticket_flow() {
-    let text = help::help_text(HelpTopic::Watch);
-
-    assert!(text.contains("logbrew watch --json"));
-    assert!(text.contains("logbrew watch issues [--json]"));
-    assert!(text.contains("logbrew watch --severity error,critical --json"));
-    assert!(text.contains("Aliases: tail, follow, and stream use the same live watch flow."));
-    assert!(text.contains("Live watch uses a short-lived feed ticket and WebSocket stream."));
-    assert!(text.contains("Transient disconnects reconnect with a fresh ticket and backoff."));
-}
-
-#[test]
-fn explain_help_explains_pasted_id_inference() {
-    let text = help::help_text(HelpTopic::Explain);
-
-    assert!(text.contains("logbrew explain <issue_id_or_trace_id> [--json]"));
-    assert!(text.contains(
-        "logbrew issue <issue_id> explain [--occurrence \
-         <recommended|first|latest|occurrence_id>] [--json]"
-    ));
-    assert!(text.contains("logbrew trace <trace_id> explain [--json]"));
-    assert!(text.contains("logbrew <issue_id_or_trace_id> explain [--json]"));
-    assert!(text.contains("Pasted UUID/issue_* values are treated as issues"));
-    assert!(text.contains("32-hex/trace_* values are treated as traces"));
+fn help_keeps_agent_auth_watch_and_investigation_contracts() {
+    macro_rules! assert_help {
+        ($topic:expr; $($expected:literal),+ $(,)?) => {
+            let text = help::help_text($topic);
+            $(assert!(text.contains($expected), "{}: {}", stringify!($topic), $expected);)+
+        };
+    }
+    assert_help!(HelpTopic::Status;
+        "logbrew whoami [--json]",
+        "logbrew me [--json]",
+        "logbrew auth status [--json]",
+        "Status checks API reachability and authentication.",
+        "Whoami/me return the authenticated account identity.");
+    assert_help!(HelpTopic::Login;
+        "stores a private local access/refresh pair",
+        "refresh local auth once after an expired-token response",
+        "--provider github|gitlab|bitbucket",
+        "--json prints the auth handoff without opening a browser.");
+    assert_help!(HelpTopic::Watch;
+        "logbrew watch --json",
+        "logbrew watch issues [--json]",
+        "logbrew watch --severity error,critical --json",
+        "Aliases: tail, follow, and stream use the same live watch flow.",
+        "Live watch uses a short-lived feed ticket and WebSocket stream.",
+        "Transient disconnects reconnect with a fresh ticket and backoff.");
+    assert_help!(HelpTopic::Explain;
+        "logbrew explain <issue_id_or_trace_id> [--json]",
+        "logbrew issue <issue_id> explain [--occurrence <recommended|first|latest|occurrence_id>] [--json]",
+        "logbrew trace <trace_id> explain [--json]",
+        "logbrew <issue_id_or_trace_id> explain [--json]",
+        "Pasted UUID/issue_* values are treated as issues",
+        "32-hex/trace_* values are treated as traces");
 }
 
 #[test]
@@ -506,7 +489,7 @@ fn parses_project_setup_seen_contract_call() {
 }
 
 #[test]
-fn parses_bare_singular_trace_terms_as_detail_help() {
+fn parses_bare_trace_terms_by_singular_or_plural_meaning() {
     for args in [
         &["logbrew", "trace", "--json"][..],
         &["logbrew", "span", "--json"],
@@ -521,10 +504,6 @@ fn parses_bare_singular_trace_terms_as_detail_help() {
             }
         );
     }
-}
-
-#[test]
-fn parses_bare_plural_trace_terms_as_recent_discovery() {
     for args in [
         &["logbrew", "traces", "--json"][..],
         &["logbrew", "spans", "--json"],

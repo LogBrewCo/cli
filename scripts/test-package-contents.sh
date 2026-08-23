@@ -13,7 +13,7 @@ required_files=(
   README.md
   src/main.rs
   src/lib.rs
-  tests/integration/commands.rs
+  tests/grammar/commands.rs
 )
 
 for file in "${required_files[@]}"; do
