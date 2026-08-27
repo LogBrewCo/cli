@@ -1,11 +1,9 @@
 //! Action cursor pagination command, response, and recovery contracts.
 
-use super::{authenticated_env, run_command};
+use super::{assert_cursor_flag_errors, assert_cursor_help, authenticated_env, run_command};
 use crate::matchers::{header, query_param};
 use crate::{Mock, MockServer, ResponseTemplate};
-use logbrew_cli::{
-    Command, execute_command, help, parse_command, write_cli_error, write_runtime_error,
-};
+use logbrew_cli::{execute_command, parse_command, write_cli_error, write_runtime_error};
 
 const PROJECT_ID: &str = "123e4567-e89b-12d3-a456-426614174000";
 const CURSOR_ID: &str = "9b2b4b3a-bd4e-4f85-a0f6-48118f037c17";
@@ -78,61 +76,7 @@ fn action_cursor_pages_repeat_exact_active_query_filters() {
 
 #[test]
 fn action_cursor_flags_fail_closed_with_concrete_recovery() {
-    for (args, error, message) in [
-        (
-            &[
-                "logbrew",
-                "actions",
-                "--cursor-time",
-                CURSOR_TIME,
-                "--cursor-id",
-                CURSOR_ID,
-                "--json",
-            ][..],
-            "invalid_action_cursor",
-            "invalid action cursor: cursor fields require --pagination cursor",
-        ),
-        (
-            &[
-                "logbrew",
-                "actions",
-                "--pagination",
-                "cursor",
-                "--cursor-time",
-                CURSOR_TIME,
-                "--json",
-            ],
-            "invalid_action_cursor",
-            "invalid action cursor: --cursor-time and --cursor-id must be used together",
-        ),
-        (
-            &[
-                "logbrew",
-                "actions",
-                "--pagination",
-                "secret-pagination-sentinel",
-                "--json",
-            ],
-            "unknown_pagination",
-            "unknown pagination mode",
-        ),
-    ] {
-        let parse_error = parse_command(args.iter().copied()).expect_err("cursor input fails");
-        let mut output = Vec::new();
-
-        write_cli_error(&parse_error, true, &mut output).expect("error writes");
-
-        let body: serde_json::Value =
-            serde_json::from_slice(output.as_slice()).expect("valid JSON");
-        assert_eq!(body["ok"], false);
-        assert_eq!(body["error"], error);
-        assert_eq!(body["message"], message);
-        assert!(!String::from_utf8_lossy(output.as_slice()).contains("secret-pagination-sentinel"));
-        assert_eq!(
-            body["next"],
-            "use --pagination cursor alone for the first page, then use --cursor-time and --cursor-id together from next_cursor"
-        );
-    }
+    assert_cursor_flag_errors("actions", CURSOR_TIME, CURSOR_ID, "invalid_action_cursor");
 
     let unsupported = parse_command(["logbrew", "releases", "--pagination", "cursor", "--json"])
         .expect_err("cursor pagination stays limited to supported targets");
@@ -149,18 +93,7 @@ fn action_cursor_flags_fail_closed_with_concrete_recovery() {
 
 #[test]
 fn action_cursor_help_documents_first_and_next_page_contract() {
-    let command =
-        parse_command(["logbrew", "actions", "--help"]).expect("action cursor help parses");
-    let Command::Help { topic, .. } = command else {
-        panic!("actions help should resolve");
-    };
-    let text = help::help_text(topic);
-
-    assert!(text.contains("--pagination cursor"));
-    assert!(text.contains("--cursor-time <RFC3339>"));
-    assert!(text.contains("--cursor-id <uuid>"));
-    assert!(text.contains("next_cursor"));
-    assert!(text.contains("Keep the same active filters"));
+    assert_cursor_help("actions");
 }
 
 #[tokio::test]

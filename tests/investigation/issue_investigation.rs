@@ -54,7 +54,7 @@ fn parses_only_the_explicit_issue_investigation_grammar() {
         exact.http_path().as_deref(),
         Some(
             "/api/telemetry/issues/11111111-1111-4111-8111-111111111111/investigation?\
-             response_version=10&occurrence_id=22222222-2222-4222-8222-222222222222"
+             response_version=11&occurrence_id=22222222-2222-4222-8222-222222222222"
         )
     );
     assert!(exact.wants_json());
@@ -71,7 +71,7 @@ fn parses_only_the_explicit_issue_investigation_grammar() {
         latest.http_path().as_deref(),
         Some(
             "/api/telemetry/issues/11111111-1111-4111-8111-111111111111/investigation?\
-             response_version=10&selection=latest"
+             response_version=11&selection=latest"
         )
     );
 }
@@ -359,6 +359,8 @@ async fn human_output_surfaces_failure_fix_timeline_correlations_and_limits()
         "Source locator: status=available provider=github repository=example/checkout \
          component=apps/checkout revision=0123456789abcdef \
          revision_source=deployment_commit file=apps/checkout/payment_gateway.ts evidence=complete",
+        "Reproducer: status=ready \
+         baseline=22222222-2222-4222-8222-222222222222 evidence=complete",
         "Known affected users: ~2 status=partial method=approximate_uniq_combined64",
         "User-impact coverage: retained=3 indexed=3 identified=2 anonymous=0 missing=0 \
          privacy_filtered=1 historical_unindexed=0 index=100.00% identified_share=66.66%",
@@ -687,7 +689,7 @@ async fn mount_bundle(server: &MockServer, bundle: serde_json::Value, expected_r
         "GET",
         format!("/api/telemetry/issues/{ISSUE_ID}/investigation"),
     )
-    .and(query_param("response_version", "10"))
+    .and(query_param("response_version", "11"))
     .and(query_param("selection", "recommended"))
     .and(header("authorization", "Bearer test-token"))
     .respond_with(ResponseTemplate::new(200).set_body_json(bundle))
@@ -705,7 +707,7 @@ async fn mount_exact_bundle(
         "GET",
         format!("/api/telemetry/issues/{ISSUE_ID}/investigation"),
     )
-    .and(query_param("response_version", "10"))
+    .and(query_param("response_version", "11"))
     .and(query_param("occurrence_id", OCCURRENCE_ID))
     .and(header("authorization", "Bearer test-token"))
     .respond_with(ResponseTemplate::new(200).set_body_json(bundle))
@@ -829,7 +831,7 @@ fn rich_investigation_bundle() -> serde_json::Value {
         "0.1.4",
     );
     serde_json::json!({
-        "schema_version": 10,
+        "schema_version": 11,
         "subject": {
             "kind": "issue",
             "id": ISSUE_ID,
@@ -995,6 +997,20 @@ fn rich_investigation_bundle() -> serde_json::Value {
                 "captured_fields": [
                     "source.component", "source.deployment_revision", "source.repository",
                     "source.repository_relative_file", "source.service"
+                ],
+                "missing_fields": [],
+                "redacted_fields": [],
+                "truncated_fields": []
+            }
+        },
+        "reproduction": {
+            "status": "ready",
+            "baseline_occurrence_id": OCCURRENCE_ID,
+            "evidence": {
+                "status": "complete",
+                "captured_fields": [
+                    "reproduction.baseline_occurrence", "reproduction.code_location",
+                    "reproduction.expected_failure", "reproduction.trigger"
                 ],
                 "missing_fields": [],
                 "redacted_fields": [],
@@ -1674,6 +1690,18 @@ fn invalid_event_evidence_bundles() -> Vec<serde_json::Value> {
             serde_json::json!("/checkout/12345"),
         ),
         ("/event/request/method", serde_json::json!("INVALID")),
+        (
+            "/reproduction/status",
+            serde_json::json!("insufficient_evidence"),
+        ),
+        (
+            "/reproduction/baseline_occurrence_id",
+            serde_json::json!("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+        ),
+        (
+            "/reproduction/evidence/status",
+            serde_json::json!("partial"),
+        ),
     ]);
 
     let mut missing_receipt = rich_investigation_bundle();
@@ -1691,6 +1719,17 @@ fn invalid_event_evidence_bundles() -> Vec<serde_json::Value> {
     let mut missing_request_receipt = rich_investigation_bundle();
     remove_evidence_fields(&mut missing_request_receipt, &["request.route_template"]);
     cases.push(mark_invalid(missing_request_receipt));
+
+    let mut forged_reproduction = rich_investigation_bundle();
+    forged_reproduction["reproduction"]["status"] = serde_json::json!("insufficient_evidence");
+    forged_reproduction["reproduction"]["evidence"] = serde_json::json!({
+        "status": "partial",
+        "captured_fields": ["reproduction.baseline_occurrence", "reproduction.code_location",
+            "reproduction.expected_failure"],
+        "missing_fields": ["reproduction.trigger"],
+        "redacted_fields": [], "truncated_fields": []
+    });
+    cases.push(mark_invalid(forged_reproduction));
 
     let mut unknown_request_receipt = rich_investigation_bundle();
     add_evidence_field(
