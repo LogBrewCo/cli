@@ -296,7 +296,7 @@ async fn captured_native_frame_count_accepts_a_receipted_safe_projection()
             "Recommended occurrence:",
             "frames=17 stack_truncated=false",
             "Stack frames: 1",
-            "exception_chain.entries, stack_frames",
+            "exception_chain.entries, request.body, stack_frames",
         ],
     )
     .await
@@ -1185,7 +1185,7 @@ fn rich_investigation_bundle() -> serde_json::Value {
             ],
             "missing_fields": ["affected_users.complete_coverage"],
             "redacted_fields": ["exception_chain.messages"],
-            "truncated_fields": ["exception_chain.entries"]
+            "truncated_fields": ["exception_chain.entries", "request.body"]
         },
         "next_actions": [
             {
@@ -1521,26 +1521,15 @@ fn occurrence_analysis_unavailable_bundle() -> serde_json::Value {
 }
 
 fn move_evidence_field_to_missing(bundle: &mut serde_json::Value, field: &str) {
-    bundle["evidence"]["captured_fields"]
-        .as_array_mut()
-        .expect("captured fields are an array")
-        .retain(|value| value != field);
-    let missing = bundle["evidence"]["missing_fields"]
-        .as_array_mut()
-        .expect("missing fields are an array");
-    missing.push(serde_json::json!(field));
-    missing.sort_by(|left, right| left.as_str().cmp(&right.as_str()));
+    remove_evidence_fields(bundle, &[field]);
+    add_evidence_field(bundle, "missing_fields", field);
 }
 
 fn projected_stack_investigation_bundle() -> serde_json::Value {
     let mut bundle = rich_investigation_bundle();
     bundle["occurrence_selection"]["selected"]["stack"]["frame_count"] = serde_json::json!(17);
     bundle["occurrence_selection"]["recommended"]["stack"]["frame_count"] = serde_json::json!(17);
-    let truncated = bundle["evidence"]["truncated_fields"]
-        .as_array_mut()
-        .expect("truncated fields are an array");
-    truncated.push(serde_json::json!("stack_frames"));
-    truncated.sort_by(|left, right| left.as_str().cmp(&right.as_str()));
+    add_evidence_field(&mut bundle, "truncated_fields", "stack_frames");
     bundle
 }
 
@@ -1731,13 +1720,11 @@ fn invalid_event_evidence_bundles() -> Vec<serde_json::Value> {
     });
     cases.push(mark_invalid(forged_reproduction));
 
-    let mut unknown_request_receipt = rich_investigation_bundle();
-    add_evidence_field(
-        &mut unknown_request_receipt,
-        "captured_fields",
-        "request.raw_url",
-    );
-    cases.push(mark_invalid(unknown_request_receipt));
+    for field in ["request.body", "request.raw_url"] {
+        let mut invalid_request_receipt = rich_investigation_bundle();
+        add_evidence_field(&mut invalid_request_receipt, "captured_fields", field);
+        cases.push(mark_invalid(invalid_request_receipt));
+    }
 
     let mut missing_request = rich_investigation_bundle();
     let _removed = missing_request["event"]
