@@ -17,16 +17,10 @@ pub async fn execute<W: std::io::Write>(
         id: issue_id.to_owned(),
         occurrence: occurrence.clone(),
     };
-    crate::explain::execute(env, &target, json, output)
-        .await
-        .map_err(investigation_error)
-}
-
-/// Preserves the established investigation-specific invalid-response code.
-fn investigation_error(error: RuntimeError) -> RuntimeError {
-    if matches!(&error, RuntimeError::ExplainResponseInvalid) {
-        RuntimeError::InvestigationResponseInvalid
-    } else {
-        error
+    match crate::explain::execute(env, &target, json, output).await {
+        Err(RuntimeError::ExplainResponseInvalid) => {
+            Err(RuntimeError::InvestigationResponseInvalid)
+        }
+        error => error,
     }
 }

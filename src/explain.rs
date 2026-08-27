@@ -68,6 +68,7 @@ const ISSUE_RESPONSE_FIELDS: &[&str] = &[
     "cause",
     "fix",
     "source_locator",
+    "reproduction",
     "impact",
     "correlations",
     "evidence",
@@ -318,11 +319,11 @@ fn validate_issue_response(
     expected_occurrence: &IssueOccurrenceSelection,
 ) -> Result<(), RuntimeError> {
     let response = exact_response_object(value, ISSUE_RESPONSE_FIELDS)?;
-    validate_schema_version_value(response, 10)?;
+    validate_schema_version_value(response, 11)?;
     let subject = required_object(response, "subject")?;
     require_string_equals(subject, "kind", "issue")?;
     require_string_equals(subject, "id", expected_id)?;
-    require_uuid(subject, "project_id")?;
+    let project_id = required_uuid_text(subject, "project_id")?;
     let _fingerprint = require_string(subject, "fingerprint")?;
     let subject_status = require_string(subject, "status")?;
     if !issue_lifecycle::is_persisted_status(subject_status) {
@@ -334,7 +335,7 @@ fn validate_issue_response(
     let last_seen = require_timestamp(subject, "last_seen_at")?;
 
     let event = required_object(response, "event")?;
-    require_uuid(event, "id")?;
+    let _event_id = required_uuid_text(event, "id")?;
     let _occurred_at = require_timestamp(event, "occurred_at")?;
     validate_name_version(required_object(event, "sdk")?)?;
     validate_nullable_object(event, "context")?;
@@ -397,18 +398,81 @@ fn validate_issue_response(
     }
     validate_issue_user_impact(impact, occurrence_count)?;
     validate_nullable_object(impact, "reported")?;
+    validate_issue_reproduction(
+        required_object(response, "reproduction")?,
+        event,
+        impact,
+        fix,
+    )?;
 
     let correlations = required_object(response, "correlations")?;
-    validate_issue_correlations(
-        correlations,
-        event,
-        evidence,
-        expected_id,
-        require_string(subject, "project_id")?,
-    )?;
+    validate_issue_correlations(correlations, event, evidence, expected_id, project_id)?;
     validate_selected_occurrence_correlations(selected_occurrence, event, correlations)?;
     validate_next_actions(response.get("next_actions"))?;
     issue_lifecycle::validate_next_action(response.get("next_actions"), regression_detected)
+}
+
+/// Validates exact reproducer readiness and its phased evidence receipt.
+fn validate_issue_reproduction(
+    reproduction: &Map<String, Value>,
+    event: &Map<String, Value>,
+    impact: &Map<String, Value>,
+    fix: &Map<String, Value>,
+) -> Result<(), RuntimeError> {
+    require_exact_fields(
+        reproduction,
+        &["status", "baseline_occurrence_id", "evidence"],
+    )?;
+    require_string_equals(
+        reproduction,
+        "baseline_occurrence_id",
+        require_string(event, "id")?,
+    )?;
+    let evidence = required_object(reproduction, "evidence")?;
+    validate_evidence(evidence)?;
+    let fields = [
+        "reproduction.baseline_occurrence",
+        "reproduction.trigger",
+        "reproduction.expected_failure",
+        "reproduction.code_location",
+    ];
+    validate_evidence_vocabulary(evidence, "reproduction", &fields)?;
+    let request = event.get("request").filter(|value| !value.is_null());
+    let captured = [
+        true,
+        request.is_some()
+            || impact
+                .get("reported")
+                .and_then(|value| value.get("failed_action"))
+                .and_then(Value::as_str)
+                .is_some(),
+        event.get("exception").is_some_and(|value| !value.is_null())
+            || request
+                .and_then(|value| value.get("response_status_code"))
+                .is_some_and(|value| !value.is_null()),
+        fix.get("location").is_some_and(|value| !value.is_null()),
+    ];
+    for (field, is_captured) in fields.into_iter().zip(captured) {
+        validate_field_receipts(evidence, field, [is_captured, !is_captured, false, false])?;
+    }
+    require_string_equals(
+        reproduction,
+        "status",
+        match (captured[1] && captured[2], captured[3]) {
+            (true, true) => "ready",
+            (true, false) => "partial",
+            (false, _) => "insufficient_evidence",
+        },
+    )?;
+    require_string_equals(
+        evidence,
+        "status",
+        if captured.into_iter().all(|set| set) {
+            "complete"
+        } else {
+            "partial"
+        },
+    )
 }
 
 /// Validates exact repository, component, revision, and source-path evidence.
@@ -1269,7 +1333,7 @@ fn validate_log_response(value: &Value, expected_id: &str) -> Result<(), Runtime
     let subject = required_object(response, "subject")?;
     require_string_equals(subject, "kind", "log")?;
     require_string_equals(subject, "id", expected_id)?;
-    require_uuid(subject, "project_id")?;
+    let _project_id = required_uuid_text(subject, "project_id")?;
     require_string_equals(subject, "content_trust", "untrusted_telemetry")?;
     validate_strings(subject, &["severity", "source", "message"])?;
     let _occurred_at = require_timestamp(subject, "occurred_at")?;
@@ -1735,15 +1799,6 @@ fn validate_release_action_evidence(
         return Err(invalid_response());
     }
     Ok(())
-}
-
-/// Validates one UUID string field.
-fn require_uuid(value: &Map<String, Value>, name: &str) -> Result<(), RuntimeError> {
-    if is_uuid(require_string(value, name)?) {
-        Ok(())
-    } else {
-        Err(invalid_response())
-    }
 }
 
 /// Returns whether a string is one canonical non-zero lowercase W3C identifier.
@@ -2380,7 +2435,7 @@ fn validate_trace_correlations(value: &Map<String, Value>) -> Result<(), Runtime
     }
     for scope in scopes {
         let scope = scope.as_object().ok_or_else(invalid_response)?;
-        require_uuid(scope, "project_id")?;
+        let _project_id = required_uuid_text(scope, "project_id")?;
         validate_strings(scope, &["environment", "release"])?;
     }
     let _truncated = require_bool(window, "truncated")?;
@@ -2949,11 +3004,30 @@ fn render_issue(value: &Value) -> Option<String> {
     append_issue_cause(&mut output, value.get("cause"));
     append_issue_fix(&mut output, value.get("fix"));
     append_issue_source_locator(&mut output, value.get("source_locator"));
+    append_issue_reproduction(&mut output, value.get("reproduction"));
     append_issue_impact(&mut output, value.get("impact"));
     append_issue_correlations(&mut output, value.get("correlations"));
     append_evidence(&mut output, value.get("evidence"));
     append_actions(&mut output, value.get("next_actions"));
     Some(output)
+}
+
+/// Appends bounded reproducer readiness and its exact baseline.
+fn append_issue_reproduction(output: &mut String, reproduction: Option<&Value>) {
+    let Some(reproduction) = reproduction else {
+        return;
+    };
+    output.push_str("Reproducer:");
+    for (label, name, limit) in [
+        ("status", "status", 32),
+        ("baseline", "baseline_occurrence_id", 80),
+    ] {
+        append_labeled_text(output, label, reproduction, name, limit);
+    }
+    if let Some(evidence) = reproduction.get("evidence") {
+        append_labeled_text(output, "evidence", evidence, "status", 32);
+    }
+    output.push('\n');
 }
 
 /// Appends one compact, provenance-labeled customer-source locator.

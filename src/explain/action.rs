@@ -12,8 +12,8 @@ use super::{
     append_named_text, append_runtime_context, append_timeline, collect_scalar_fields,
     exact_response_object, field_text, invalid_response, is_w3c_id, nullable_w3c_id,
     optional_object_value, optional_string, require_bool, require_exact_fields, require_safe_u64,
-    require_string, require_string_equals, require_timestamp, require_u64, require_uuid,
-    required_object, validate_availability, validate_correlated_collection,
+    require_string, require_string_equals, require_timestamp, require_u64, required_object,
+    required_uuid_text, validate_availability, validate_correlated_collection,
     validate_correlated_log, validate_correlated_signal, validate_evidence,
     validate_exact_release_scope, validate_name_version, validate_next_actions,
     validate_schema_version, validate_shared_span_summary, validate_shared_trace_summary,
@@ -142,8 +142,8 @@ fn validate_action_subject<'a>(
     )?;
     require_string_equals(subject, "kind", "action")?;
     require_string_equals(subject, "id", expected_id)?;
-    require_uuid(subject, "id")?;
-    require_uuid(subject, "project_id")?;
+    let _id = required_uuid_text(subject, "id")?;
+    let _project_id = required_uuid_text(subject, "project_id")?;
     let status = optional_string(subject, "status")?;
     if status.is_some_and(|status| !matches!(status, "queued" | "running" | "success" | "failure"))
     {
