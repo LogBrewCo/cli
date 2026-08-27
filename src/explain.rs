@@ -82,8 +82,9 @@ const EVIDENCE_CATEGORIES: [&str; 4] = [
     "truncated_fields",
 ];
 /// Exact schema-version-6-and-later request receipt vocabulary.
-const REQUEST_EVIDENCE_FIELDS: [&str; 4] = [
+const REQUEST_EVIDENCE_FIELDS: [&str; 5] = [
     "request",
+    "request.body",
     "request.method",
     "request.route_template",
     "request.response_status_code",
@@ -650,6 +651,13 @@ fn validate_issue_request(
     evidence: &Map<String, Value>,
 ) -> Result<(), RuntimeError> {
     validate_evidence_vocabulary(evidence, "request", &REQUEST_EVIDENCE_FIELDS)?;
+    let body_receipts = EVIDENCE_CATEGORIES
+        .map(|category| evidence_has_field(evidence, category, "request.body"))
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()?;
+    if body_receipts[0] || body_receipts.iter().filter(|present| **present).count() > 1 {
+        return Err(invalid_response());
+    }
     let Some(value) = event.get("request") else {
         let redacted = evidence_has_field(evidence, "redacted_fields", "request")?;
         let truncated = evidence_has_field(evidence, "truncated_fields", "request.route_template")?;
