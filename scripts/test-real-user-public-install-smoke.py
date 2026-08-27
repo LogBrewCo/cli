@@ -24,7 +24,7 @@ from unittest import mock
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 VERIFIER = ROOT / "scripts" / "real_user_public_install_smoke.py"
-VERSION = "0.1.64"
+VERSION = "0.1.65"
 sys.dont_write_bytecode = True
 
 
@@ -395,12 +395,13 @@ class PublicInstallVerifierTests(unittest.TestCase):
         mode: str,
         version: str = VERSION,
         artifact_override: tuple[str, pathlib.Path] | None = None,
+        environment: dict[str, str] | None = None,
     ) -> subprocess.CompletedProcess[str]:
         artifact_id, artifact = artifact_override or self.artifact_for(mode)
         return subprocess.run(
             [sys.executable, str(VERIFIER), mode, version],
             cwd=ROOT,
-            env=self.environment(artifact_id, artifact),
+            env=environment or self.environment(artifact_id, artifact),
             capture_output=True,
             text=True,
             timeout=30,
@@ -544,14 +545,10 @@ class PublicInstallVerifierTests(unittest.TestCase):
         environment = self.environment(artifact_id, artifact)
         environment["FAKE_BREW_MODE"] = "install-failure"
 
-        result = subprocess.run(
-            [sys.executable, str(VERIFIER), "homebrew", VERSION],
-            cwd=ROOT,
-            env=environment,
-            capture_output=True,
-            text=True,
-            timeout=30,
-            check=False,
+        result = self.run_verifier(
+            "homebrew",
+            artifact_override=(artifact_id, artifact),
+            environment=environment,
         )
 
         self.assertEqual(result.returncode, 2)
@@ -742,14 +739,10 @@ class PublicInstallVerifierTests(unittest.TestCase):
             {artifact_id: str(artifact), "extra": str(artifact)}
         )
 
-        result = subprocess.run(
-            [sys.executable, str(VERIFIER), "npm", VERSION],
-            cwd=ROOT,
-            env=environment,
-            capture_output=True,
-            text=True,
-            timeout=30,
-            check=False,
+        result = self.run_verifier(
+            "npm",
+            artifact_override=(artifact_id, artifact),
+            environment=environment,
         )
 
         self.assertEqual(result.returncode, 2)
