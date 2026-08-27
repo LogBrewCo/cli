@@ -164,7 +164,7 @@ fn help_describes_the_complete_versioned_bundle() {
     assert!(text.contains("approximate affected-user coverage and limitations"));
     assert!(text.contains("trace, sibling issues, related logs, actions, metric exemplars"));
     assert!(text.contains("same contract as logbrew explain issue"));
-    assert!(text.contains("exact validated schema-version-10 response"));
+    assert!(text.contains("exact validated schema-version-11 response"));
     assert!(text.contains("deterministic grouping"));
     assert!(text.contains("exact preceding-deployment and customer-source locator evidence"));
     assert!(text.contains("explicit selected, first, latest, and recommended occurrence"));
@@ -296,7 +296,7 @@ async fn captured_native_frame_count_accepts_a_receipted_safe_projection()
             "Recommended occurrence:",
             "frames=17 stack_truncated=false",
             "Stack frames: 1",
-            "exception_chain.entries, request.body, stack_frames",
+            "exception_chain.entries, exception_chain.stack_frames, request.body, stack_frames",
         ],
     )
     .await
@@ -348,7 +348,7 @@ async fn human_output_surfaces_failure_fix_timeline_correlations_and_limits()
          module=checkout.payment message_state=captured message=Payment capture failed",
         "Exception node id=1 parent=0 relationship=cause type=UpstreamTimeoutError \
          module=checkout.provider message_state=redacted mechanism=javascript.cause handled=true",
-        "Exception stack node=1 state=not_captured frames=0",
+        "Exception stack node=1 state=truncated frames=0",
         "Request: method=POST route=/checkout/{cart_id} status=503",
         "Frame: module=checkout function=capturePayment file=apps/checkout/payment_gateway.ts line=87",
         "Breadcrumb: at=2026-08-04T07:59:58Z category=checkout.submit",
@@ -901,7 +901,7 @@ fn rich_investigation_bundle() -> serde_json::Value {
                         "module": "checkout.provider",
                         "mechanism": {"type": "javascript.cause", "handled": true},
                         "stack_frames": [],
-                        "stack_frames_state": "not_captured"
+                        "stack_frames_state": "truncated"
                     }
                 ],
                 "truncated": true
@@ -1185,7 +1185,7 @@ fn rich_investigation_bundle() -> serde_json::Value {
             ],
             "missing_fields": ["affected_users.complete_coverage"],
             "redacted_fields": ["exception_chain.messages"],
-            "truncated_fields": ["exception_chain.entries", "request.body"]
+            "truncated_fields": ["exception_chain.entries", "exception_chain.stack_frames", "request.body"]
         },
         "next_actions": [
             {
@@ -1577,11 +1577,6 @@ fn underlying_exception_fix_bundle() -> serde_json::Value {
         ))]);
     bundle["event"]["exception_chain"]["entries"][1]["stack_frames_state"] =
         serde_json::json!("truncated");
-    add_evidence_field(
-        &mut bundle,
-        "truncated_fields",
-        "exception_chain.stack_frames",
-    );
     bundle["fix"] = serde_json::json!({
         "status": "observed_underlying_exception_frame",
         "location": {

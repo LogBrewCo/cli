@@ -199,9 +199,9 @@ fn validate_entry(
         .get("stack_frames")
         .and_then(Value::as_array)
         .ok_or_else(invalid_response)?;
-    match stack_state {
-        "captured" | "truncated" if !frames.is_empty() && frames.len() <= FRAME_LIMIT => {}
-        "not_captured" if frames.is_empty() => {}
+    match (stack_state, frames.is_empty()) {
+        ("captured", false) | ("truncated", _) | ("not_captured", true)
+            if frames.len() <= FRAME_LIMIT => {}
         _ => return Err(invalid_response()),
     }
     let mut frame_facts = Vec::with_capacity(frames.len());
