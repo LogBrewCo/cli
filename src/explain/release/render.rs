@@ -4,8 +4,13 @@ use std::fmt::Write as _;
 
 use serde_json::Value;
 
+use super::super::{
+    RELATED_PREVIEW_LIMIT, append_collection, append_labeled_bool, append_labeled_integer,
+    append_labeled_text, append_string_array,
+};
+
 /// Appends comparison availability, boundaries, prior snapshot, exact deltas, and caveats.
-pub(super) fn render_comparison(output: &mut String, comparison: Option<&Value>) {
+pub(in crate::explain) fn comparison(output: &mut String, comparison: Option<&Value>) {
     let Some(comparison) = comparison.and_then(Value::as_object) else {
         return;
     };
@@ -27,19 +32,16 @@ pub(super) fn render_comparison(output: &mut String, comparison: Option<&Value>)
     let Some(details) = details else {
         return;
     };
-    if let Some(deployment) = details.get("subject_deployment").and_then(Value::as_object) {
-        append_subject_deployment(output, deployment);
+    if let Some(deployment) = details.get("subject_deployment") {
+        append_deployment(output, "Subject deployment", deployment, false);
     }
-    if let Some(deployment) = details
-        .get("previous_deployment")
-        .and_then(Value::as_object)
-    {
-        append_previous_deployment(output, deployment);
+    if let Some(deployment) = details.get("previous_deployment") {
+        append_deployment(output, "Previous deployment", deployment, true);
     }
-    if let Some(previous) = details.get("previous_release").and_then(Value::as_object) {
+    if let Some(previous) = details.get("previous_release") {
         append_previous_release(output, previous);
     }
-    if let Some(changes) = details.get("changes").and_then(Value::as_object) {
+    if let Some(changes) = details.get("changes") {
         append_changes(output, changes, assessment);
     }
     if let Some(limitations) = details.get("limitations").and_then(Value::as_array) {
@@ -55,71 +57,86 @@ pub(super) fn render_comparison(output: &mut String, comparison: Option<&Value>)
     );
 }
 
-/// Appends the investigated release deployment boundary.
-fn append_subject_deployment(output: &mut String, deployment: &serde_json::Map<String, Value>) {
-    let _ = write!(
+/// Appends bounded retained SDK release-marker evidence.
+pub(in crate::explain) fn markers(output: &mut String, markers: Option<&Value>) {
+    let Some(markers) = markers else {
+        return;
+    };
+    let items = append_collection(output, "Release markers", markers);
+    append_string_array(
         output,
-        "Subject deployment: id={} status={} started={} finished={}",
-        text(deployment, "deployment_id"),
-        text(deployment, "status"),
-        text(deployment, "started_at"),
-        text(deployment, "finished_at")
+        "Release marker limits",
+        markers.get("limitations"),
+        2,
     );
-    if let Some(commit) = deployment.get("commit_sha").and_then(Value::as_str) {
-        let _ = write!(output, " commit={commit}");
+    for marker in items.into_iter().flatten().take(RELATED_PREVIEW_LIMIT) {
+        output.push_str("Release marker:");
+        append_labeled_text(output, "occurred", marker, "occurred_at", 64);
+        append_labeled_text(output, "ingested", marker, "ingested_at", 64);
+        append_labeled_text(output, "sdk", marker, "sdk_name", 120);
+        append_labeled_text(output, "version", marker, "sdk_version", 80);
+        append_labeled_bool(output, "untrusted_telemetry", marker, "untrusted_telemetry");
+        for (name, limit) in [("commit", 256), ("notes", 512)] {
+            if let Some(field) = marker.get(name) {
+                append_labeled_text(
+                    output,
+                    format!("{name}_status").as_str(),
+                    field,
+                    "status",
+                    32,
+                );
+                append_labeled_text(output, name, field, "value", limit);
+            }
+        }
+        output.push('\n');
     }
-    output.push('\n');
 }
 
-/// Appends the prior successful deployment boundary.
-fn append_previous_deployment(output: &mut String, deployment: &serde_json::Map<String, Value>) {
-    let _ = write!(
-        output,
-        "Previous deployment: id={} release={} status={} started={} finished={}",
-        text(deployment, "deployment_id"),
-        text(deployment, "release"),
-        text(deployment, "status"),
-        text(deployment, "started_at"),
-        text(deployment, "finished_at")
-    );
-    if let Some(commit) = deployment.get("commit_sha").and_then(Value::as_str) {
-        let _ = write!(output, " commit={commit}");
+/// Appends one current or previous deployment boundary.
+fn append_deployment(output: &mut String, label: &str, deployment: &Value, include_release: bool) {
+    output.push_str(label);
+    output.push(':');
+    append_labeled_text(output, "id", deployment, "deployment_id", 128);
+    if include_release {
+        append_labeled_text(output, "release", deployment, "release", 256);
     }
+    append_labeled_text(output, "status", deployment, "status", 32);
+    append_labeled_text(output, "started", deployment, "started_at", 64);
+    append_labeled_text(output, "finished", deployment, "finished_at", 64);
+    append_labeled_text(output, "commit", deployment, "commit_sha", 64);
     output.push('\n');
 }
 
 /// Appends the exact prior-release aggregate and observation window.
-fn append_previous_release(output: &mut String, previous: &serde_json::Map<String, Value>) {
-    let _ = writeln!(
-        output,
-        "Previous release: {} issues={} logs={} spans={} actions={} metrics={}",
-        text(previous, "release"),
-        integer(previous, "issue_count"),
-        integer(previous, "log_count"),
-        integer(previous, "trace_span_count"),
-        integer(previous, "action_count"),
-        integer(previous, "metric_count")
-    );
-    let _ = writeln!(
-        output,
-        "Previous observed window: first={} last={}",
-        text(previous, "first_seen_at"),
-        text(previous, "last_seen_at")
-    );
-    if let Some(health) = previous.get("trace_health").and_then(Value::as_object) {
-        let _ = writeln!(
-            output,
-            "Previous trace health: status={} traces={} error_traces={} error_rate_bps={}",
-            text(previous, "trace_health_status"),
-            integer(health, "trace_count"),
-            integer(health, "error_trace_count"),
-            integer(health, "error_rate_basis_points")
-        );
+fn append_previous_release(output: &mut String, previous: &Value) {
+    output.push_str("Previous release: ");
+    output.push_str(previous["release"].as_str().unwrap_or("unavailable"));
+    for (label, name) in [
+        ("issues", "issue_count"),
+        ("logs", "log_count"),
+        ("spans", "trace_span_count"),
+        ("actions", "action_count"),
+        ("metrics", "metric_count"),
+    ] {
+        append_labeled_integer(output, label, previous, name);
+    }
+    output.push('\n');
+    output.push_str("Previous observed window:");
+    append_labeled_text(output, "first", previous, "first_seen_at", 64);
+    append_labeled_text(output, "last", previous, "last_seen_at", 64);
+    output.push('\n');
+    if let Some(health) = previous.get("trace_health") {
+        output.push_str("Previous trace health:");
+        append_labeled_text(output, "status", previous, "trace_health_status", 32);
+        append_labeled_integer(output, "traces", health, "trace_count");
+        append_labeled_integer(output, "error_traces", health, "error_trace_count");
+        append_labeled_integer(output, "error_rate_bps", health, "error_rate_basis_points");
+        output.push('\n');
     }
 }
 
 /// Appends exact signed count and trace-error-rate changes.
-fn append_changes(output: &mut String, changes: &serde_json::Map<String, Value>, assessment: &str) {
+fn append_changes(output: &mut String, changes: &Value, assessment: &str) {
     let _ = writeln!(
         output,
         "Observed count change (current - previous): issues={} logs={} spans={} actions={} metrics={}",
@@ -131,28 +148,15 @@ fn append_changes(output: &mut String, changes: &serde_json::Map<String, Value>,
     );
     let current = optional_integer(changes, "current_trace_error_rate_basis_points");
     let previous = optional_integer(changes, "previous_trace_error_rate_basis_points");
-    let delta = optional_signed(changes, "trace_error_rate_delta_basis_points");
+    let delta = signed(changes, "trace_error_rate_delta_basis_points");
     let _ = writeln!(
         output,
         "Trace error-rate change: current_bps={current} previous_bps={previous} delta_bps={delta} assessment={assessment}"
     );
 }
 
-/// Returns one already-validated response string.
-fn text<'a>(value: &'a serde_json::Map<String, Value>, name: &str) -> &'a str {
-    value
-        .get(name)
-        .and_then(Value::as_str)
-        .unwrap_or("unavailable")
-}
-
-/// Returns one already-validated unsigned integer.
-fn integer(value: &serde_json::Map<String, Value>, name: &str) -> u64 {
-    value.get(name).and_then(Value::as_u64).unwrap_or(0)
-}
-
 /// Formats one already-validated signed integer with an explicit positive sign.
-fn signed(value: &serde_json::Map<String, Value>, name: &str) -> String {
+fn signed(value: &Value, name: &str) -> String {
     value
         .get(name)
         .and_then(Value::as_i64)
@@ -160,17 +164,9 @@ fn signed(value: &serde_json::Map<String, Value>, name: &str) -> String {
 }
 
 /// Formats one nullable unsigned integer.
-fn optional_integer(value: &serde_json::Map<String, Value>, name: &str) -> String {
+fn optional_integer(value: &Value, name: &str) -> String {
     value
         .get(name)
         .and_then(Value::as_u64)
         .map_or_else(|| String::from("unavailable"), |value| value.to_string())
-}
-
-/// Formats one nullable signed integer with an explicit positive sign.
-fn optional_signed(value: &serde_json::Map<String, Value>, name: &str) -> String {
-    value
-        .get(name)
-        .and_then(Value::as_i64)
-        .map_or_else(|| String::from("unavailable"), |value| format!("{value:+}"))
 }

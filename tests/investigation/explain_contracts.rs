@@ -19,7 +19,7 @@ async fn human_release_explanation_connects_health_sdk_and_every_signal()
         .and(query_param("release", "checkout@1.2.3"))
         .and(query_param("environment", "production"))
         .and(query_param("service_name", "checkout-api"))
-        .and(query_param("response_version", "3"))
+        .and(query_param("response_version", "4"))
         .respond_with(ResponseTemplate::new(200).set_body_json(release_response()))
         .mount(&server)
         .await;
@@ -34,6 +34,9 @@ async fn human_release_explanation_connects_health_sdk_and_every_signal()
         "Signals: issues=1 logs=1 spans=2 actions=4 metrics=3",
         "Trace health: status=available traces=1 error_traces=1 error_rate_bps=10000",
         "SDK: name=logbrew-rust version=1.2.3 stream=issues items=1",
+        "Release markers: status=available count=1 truncated=false",
+        "Release marker limits: historical_markers_not_backfilled",
+        "Release marker: occurred=2026-08-03T09:59:30Z ingested=2026-08-03T09:59:30.250Z sdk=logbrew-rust version=1.2.3 untrusted_telemetry=true commit_status=captured commit=abc123def456 notes_status=captured notes=Checkout correction",
         "Release issues: status=available count=1",
         "High-severity logs: status=available count=1",
         "Log: message=processor rejected charge level=error",
@@ -61,12 +64,12 @@ async fn human_release_explanation_connects_health_sdk_and_every_signal()
 }
 
 #[tokio::test]
-async fn built_binary_release_preserves_validated_version_3_json()
+async fn built_binary_release_preserves_validated_version_4_json()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
     let response = release_response();
     Mock::route("GET", "/api/telemetry/releases/investigation")
-        .and(query_param("response_version", "3"))
+        .and(query_param("response_version", "4"))
         .and(header("authorization", "Bearer account-token"))
         .respond_with(ResponseTemplate::new(200).set_body_json(response.clone()))
         .expect(1)
@@ -98,90 +101,97 @@ async fn built_binary_release_preserves_validated_version_3_json()
 #[tokio::test]
 async fn release_explanation_rejects_contradictory_or_unversioned_subject_receipts()
 -> Result<(), Box<dyn std::error::Error>> {
-    let mut contradictory_partition = release_response();
-    contradictory_partition["signals"]["actions"]["items"][0]["subject_coverage"]["missing_subject_events"] =
-        serde_json::json!(2);
-    let mut impossible_cardinality = release_response();
-    impossible_cardinality["signals"]["actions"]["items"][0]["identified_user_count"] =
-        serde_json::json!(3);
-    let mut unlabelled_estimate = release_response();
-    unlabelled_estimate["signals"]["actions"]["estimation"]["unique_counts_are_approximate"] =
-        serde_json::json!(false);
-    let mut legacy_schema = release_response();
-    legacy_schema["schema_version"] = serde_json::json!(1);
-    let mut unsafe_count = release_response();
-    unsafe_count["signals"]["actions"]["items"][0]["event_count"] =
-        serde_json::json!(9_007_199_254_740_992_u64);
-    let mut missing_evidence_receipt = release_response();
-    missing_evidence_receipt["evidence"]["captured_fields"] =
-        serde_json::json!(["release.issues", "release.traces"]);
-    let mut legacy_priority = release_response();
-    legacy_priority["next_actions"][0]["priority"] = serde_json::json!(1);
-    let mut mismatched_release_action = release_response();
-    mismatched_release_action["next_actions"][0]["issue_id"] =
-        serde_json::json!("dddddddd-dddd-4ddd-8ddd-dddddddddddd");
-    let mut missing_boundary_action = release_response();
-    missing_boundary_action["next_actions"]
-        .as_array_mut()
-        .ok_or("next-actions fixture")?
-        .push(serde_json::json!({
-            "code": "capture_deployment_boundary",
-            "target": "release_instrumentation",
-            "reason": "comparison_unavailable",
-            "issue_id": null,
-            "trace_id": null
-        }));
-    let mut wrong_deployment_project = release_response();
-    wrong_deployment_project["comparison"]["details"]["subject_deployment"]["project_id"] =
-        serde_json::json!("dddddddd-dddd-4ddd-8ddd-dddddddddddd");
-    let mut same_previous_release = release_response();
-    same_previous_release["comparison"]["details"]["previous_deployment"]["release"] =
-        serde_json::json!("checkout@1.2.3");
-    let mut overlapping_deployments = release_response();
-    overlapping_deployments["comparison"]["details"]["previous_deployment"]["finished_at"] =
-        serde_json::json!("2026-08-03T10:01:00Z");
-    let mut wrong_count_delta = release_response();
-    wrong_count_delta["comparison"]["details"]["changes"]["observed_log_count_delta"] =
-        serde_json::json!(0);
-    let mut wrong_trace_rate = release_response();
-    wrong_trace_rate["comparison"]["details"]["previous_release"]["trace_health"]["error_rate_basis_points"] =
-        serde_json::json!(1);
-    let mut wrong_assessment = release_response();
-    wrong_assessment["comparison"]["details"]["assessment"] = serde_json::json!("improved");
-    let mut duplicate_limitation = release_response();
-    duplicate_limitation["comparison"]["details"]["limitations"]
-        .as_array_mut()
-        .ok_or("limitations fixture")?
-        .push(serde_json::json!("deployment_correlation_not_causation"));
-    let mut unknown_limitation = release_response();
-    unknown_limitation["comparison"]["details"]["limitations"][0] =
-        serde_json::json!("traffic_normalized");
-    let mut wrong_boundary_timeline = release_response();
-    wrong_boundary_timeline["timeline"]["items"][2]["occurred_at"] =
-        serde_json::json!("2026-08-03T10:00:01Z");
-    let mut unknown_comparison_field = release_response();
-    unknown_comparison_field["comparison"]["confidence"] = serde_json::json!("high");
-
     for response in [
-        contradictory_partition,
-        impossible_cardinality,
-        unlabelled_estimate,
-        legacy_schema,
-        unsafe_count,
-        missing_evidence_receipt,
-        legacy_priority,
-        mismatched_release_action,
-        missing_boundary_action,
-        wrong_deployment_project,
-        same_previous_release,
-        overlapping_deployments,
-        wrong_count_delta,
-        wrong_trace_rate,
-        wrong_assessment,
-        duplicate_limitation,
-        unknown_limitation,
-        wrong_boundary_timeline,
-        unknown_comparison_field,
+        mutated_release(|value| {
+            value["signals"]["actions"]["items"][0]["subject_coverage"]["missing_subject_events"] =
+                serde_json::json!(2)
+        }),
+        mutated_release(|value| {
+            value["signals"]["actions"]["items"][0]["identified_user_count"] = serde_json::json!(3);
+        }),
+        mutated_release(|value| {
+            value["signals"]["actions"]["estimation"]["unique_counts_are_approximate"] =
+                serde_json::json!(false);
+        }),
+        mutated_release(|value| value["schema_version"] = serde_json::json!(1)),
+        mutated_release(|value| {
+            value["signals"]["actions"]["items"][0]["event_count"] =
+                serde_json::json!(9_007_199_254_740_992_u64);
+        }),
+        mutated_release(|value| {
+            value["evidence"]["captured_fields"] =
+                serde_json::json!(["release.issues", "release.traces"]);
+        }),
+        mutated_release(|value| value["next_actions"][0]["priority"] = serde_json::json!(1)),
+        mutated_release(|value| {
+            value["next_actions"][0]["issue_id"] =
+                serde_json::json!("dddddddd-dddd-4ddd-8ddd-dddddddddddd");
+        }),
+        mutated_release(|value| {
+            value["next_actions"]
+                .as_array_mut()
+                .expect("actions fixture")
+                .push(serde_json::json!({
+                    "code": "capture_deployment_boundary",
+                    "target": "release_instrumentation",
+                    "reason": "comparison_unavailable",
+                    "issue_id": null,
+                    "trace_id": null
+                }));
+        }),
+        mutated_release(|value| {
+            value["comparison"]["details"]["subject_deployment"]["project_id"] =
+                serde_json::json!("dddddddd-dddd-4ddd-8ddd-dddddddddddd");
+        }),
+        mutated_release(|value| {
+            value["comparison"]["details"]["previous_deployment"]["release"] =
+                serde_json::json!("checkout@1.2.3");
+        }),
+        mutated_release(|value| {
+            value["comparison"]["details"]["previous_deployment"]["finished_at"] =
+                serde_json::json!("2026-08-03T10:01:00Z");
+        }),
+        mutated_release(|value| {
+            value["comparison"]["details"]["changes"]["observed_log_count_delta"] =
+                serde_json::json!(0);
+        }),
+        mutated_release(|value| {
+            value["comparison"]["details"]["previous_release"]["trace_health"]["error_rate_basis_points"] =
+                serde_json::json!(1);
+        }),
+        mutated_release(|value| {
+            value["comparison"]["details"]["assessment"] = serde_json::json!("improved");
+        }),
+        mutated_release(|value| {
+            value["comparison"]["details"]["limitations"]
+                .as_array_mut()
+                .expect("limitations fixture")
+                .push(serde_json::json!("deployment_correlation_not_causation"));
+        }),
+        mutated_release(|value| {
+            value["comparison"]["details"]["limitations"][0] =
+                serde_json::json!("traffic_normalized");
+        }),
+        mutated_release(|value| {
+            value["timeline"]["items"][2]["occurred_at"] =
+                serde_json::json!("2026-08-03T10:00:01Z");
+        }),
+        mutated_release(|value| value["comparison"]["confidence"] = serde_json::json!("high")),
+        mutated_release(|value| {
+            value["markers"]["items"][0]["untrusted_telemetry"] = serde_json::json!(false);
+        }),
+        mutated_release(|value| {
+            value["markers"]["items"][0]["notes"]["status"] = serde_json::json!("truncated");
+        }),
+        mutated_release(|value| {
+            value["markers"]["limitations"][0] = serde_json::json!("markers_complete");
+        }),
+        mutated_release(|value| {
+            value["timeline"]["items"]
+                .as_array_mut()
+                .expect("timeline fixture")
+                .retain(|item| item["kind"] != "release_marker");
+        }),
     ] {
         let server = MockServer::start().await;
         Mock::route("GET", "/api/telemetry/releases/investigation")
@@ -205,16 +215,18 @@ async fn release_explanation_rejects_contradictory_or_unversioned_subject_receip
 }
 
 #[tokio::test]
-async fn release_v3_accepts_exact_capture_retry_and_partial_trace_recovery_states()
+async fn release_v4_accepts_exact_capture_retry_and_partial_recovery_states()
 -> Result<(), Box<dyn std::error::Error>> {
     for response in [
         release_without_subject_deployment(),
         release_with_deployment_read_unavailable(),
         release_with_previous_trace_unavailable(),
+        release_without_markers("not_found"),
+        release_without_markers("unavailable"),
     ] {
         let server = MockServer::start().await;
         Mock::route("GET", "/api/telemetry/releases/investigation")
-            .and(query_param("response_version", "3"))
+            .and(query_param("response_version", "4"))
             .respond_with(ResponseTemplate::new(200).set_body_json(response.clone()))
             .mount(&server)
             .await;
@@ -1173,7 +1185,7 @@ fn log_response() -> serde_json::Value {
 
 fn release_response() -> serde_json::Value {
     serde_json::json!({
-        "schema_version": 3,
+        "schema_version": 4,
         "subject": {
             "kind": "release",
             "project_id": PROJECT_ID,
@@ -1207,6 +1219,20 @@ fn release_response() -> serde_json::Value {
                 "last_seen_at": "2026-08-03T11:05:00Z"
             }],
             "truncated": false
+        },
+        "markers": {
+            "status": "available",
+            "items": [{
+                "occurred_at": "2026-08-03T09:59:30Z",
+                "ingested_at": "2026-08-03T09:59:30.250Z",
+                "sdk_name": "logbrew-rust",
+                "sdk_version": "1.2.3",
+                "commit": {"status": "captured", "value": "abc123def456"},
+                "notes": {"status": "captured", "value": "Checkout correction"},
+                "untrusted_telemetry": true
+            }],
+            "truncated": false,
+            "limitations": ["historical_markers_not_backfilled"]
         },
         "signals": {
             "issues": {
@@ -1310,6 +1336,12 @@ fn release_response() -> serde_json::Value {
                 "kind": "subject_deployment_finished",
                 "occurred_at": "2026-08-03T09:59:00Z",
                 "summary": "subject deployment finished",
+                "issue_id": null,
+                "trace_id": null
+            }, {
+                "kind": "release_marker",
+                "occurred_at": "2026-08-03T09:59:30Z",
+                "summary": "SDK release marker captured",
                 "issue_id": null,
                 "trace_id": null
             }, {
@@ -1432,6 +1464,9 @@ fn release_response() -> serde_json::Value {
                 "release.identity",
                 "release.issues",
                 "release.logs",
+                "release.markers",
+                "release.markers.commit",
+                "release.markers.notes",
                 "release.metrics",
                 "release.observed_window",
                 "release.sdk_coverage",
@@ -1485,6 +1520,12 @@ fn release_response() -> serde_json::Value {
             "trace_id": null
         }]
     })
+}
+
+fn mutated_release(change: impl FnOnce(&mut serde_json::Value)) -> serde_json::Value {
+    let mut response = release_response();
+    change(&mut response);
+    response
 }
 
 fn release_without_subject_deployment() -> serde_json::Value {
@@ -1564,6 +1605,47 @@ fn release_with_previous_trace_unavailable() -> serde_json::Value {
         "release_investigation",
         "related_evidence_unavailable",
     );
+    response
+}
+
+fn release_without_markers(status: &str) -> serde_json::Value {
+    let mut response = release_response();
+    let unavailable = status == "unavailable";
+    response["markers"] = serde_json::json!({
+        "status": status,
+        "items": [],
+        "truncated": false,
+        "limitations": if unavailable {
+            vec!["historical_markers_not_backfilled", "marker_read_unavailable"]
+        } else {
+            vec!["historical_markers_not_backfilled"]
+        }
+    });
+    response["timeline"]["items"]
+        .as_array_mut()
+        .expect("timeline fixture")
+        .retain(|item| item["kind"] != "release_marker");
+    response["evidence"]["captured_fields"]
+        .as_array_mut()
+        .expect("captured fixture")
+        .retain(|field| {
+            !field
+                .as_str()
+                .is_some_and(|field| field.starts_with("release.markers"))
+        });
+    let missing = response["evidence"]["missing_fields"]
+        .as_array_mut()
+        .expect("missing fixture");
+    missing.push(serde_json::json!("release.markers"));
+    missing.sort_by(|left, right| left.as_str().cmp(&right.as_str()));
+    if unavailable {
+        push_release_action(
+            &mut response,
+            "retry_unavailable_evidence",
+            "release_investigation",
+            "related_evidence_unavailable",
+        );
+    }
     response
 }
 

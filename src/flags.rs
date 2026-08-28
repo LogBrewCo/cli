@@ -70,51 +70,27 @@ pub(crate) enum FlagScope {
 }
 
 impl FlagScope {
-    /// Returns the command name shown in parse errors.
-    const fn command(self) -> &'static str {
+    /// Returns the command name and matching help action shown in parse errors.
+    const fn identity(self) -> (&'static str, &'static str) {
         match self {
-            Self::Login => "login",
-            Self::Logout => "logout",
-            Self::Setup => "setup",
-            Self::Status => "status",
-            Self::WhoAmI => "whoami",
-            Self::Version => "version",
-            Self::Read => "read",
-            Self::Explain => "explain",
-            Self::Set => "set",
-            Self::Resolve => "resolve",
-            Self::Close => "close",
-            Self::Ignore => "ignore",
-            Self::Reopen => "reopen",
-            Self::StatusResolved => "resolved",
-            Self::StatusClosed => "closed",
-            Self::StatusIgnored => "ignored",
-            Self::StatusOpen => "open",
-            Self::StatusUnresolved => "unresolved",
-        }
-    }
-
-    /// Returns command-specific help for parse errors.
-    const fn help_next(self) -> &'static str {
-        match self {
-            Self::Login => "run logbrew login --help",
-            Self::Logout => "run logbrew logout --help",
-            Self::Setup => "run logbrew setup --help",
-            Self::Status => "run logbrew status --help",
-            Self::WhoAmI => "run logbrew whoami --help",
-            Self::Version => "run logbrew version --help",
-            Self::Read => "run logbrew read --help",
-            Self::Explain => "run logbrew explain --help",
-            Self::Set => "run logbrew set --help",
-            Self::Resolve => "run logbrew resolve --help",
-            Self::Close => "run logbrew close --help",
-            Self::Ignore => "run logbrew ignore --help",
-            Self::Reopen => "run logbrew reopen --help",
-            Self::StatusResolved => "run logbrew resolved --help",
-            Self::StatusClosed => "run logbrew closed --help",
-            Self::StatusIgnored => "run logbrew ignored --help",
-            Self::StatusOpen => "run logbrew open --help",
-            Self::StatusUnresolved => "run logbrew unresolved --help",
+            Self::Login => ("login", "run logbrew login --help"),
+            Self::Logout => ("logout", "run logbrew logout --help"),
+            Self::Setup => ("setup", "run logbrew setup --help"),
+            Self::Status => ("status", "run logbrew status --help"),
+            Self::WhoAmI => ("whoami", "run logbrew whoami --help"),
+            Self::Version => ("version", "run logbrew version --help"),
+            Self::Read => ("read", "run logbrew read --help"),
+            Self::Explain => ("explain", "run logbrew explain --help"),
+            Self::Set => ("set", "run logbrew set --help"),
+            Self::Resolve => ("resolve", "run logbrew resolve --help"),
+            Self::Close => ("close", "run logbrew close --help"),
+            Self::Ignore => ("ignore", "run logbrew ignore --help"),
+            Self::Reopen => ("reopen", "run logbrew reopen --help"),
+            Self::StatusResolved => ("resolved", "run logbrew resolved --help"),
+            Self::StatusClosed => ("closed", "run logbrew closed --help"),
+            Self::StatusIgnored => ("ignored", "run logbrew ignored --help"),
+            Self::StatusOpen => ("open", "run logbrew open --help"),
+            Self::StatusUnresolved => ("unresolved", "run logbrew unresolved --help"),
         }
     }
 
@@ -154,23 +130,7 @@ impl FlagScope {
             }
             (Self::Read, "limit") => "use --limit with a positive whole number",
             (Self::Read, _) => "use --release <release> or run logbrew read --help",
-            (Self::Login, _) => "run logbrew login --help",
-            (Self::Logout, _) => "run logbrew logout --help",
-            (Self::Setup, _) => "run logbrew setup --help",
-            (Self::Status, _) => "run logbrew status --help",
-            (Self::WhoAmI, _) => "run logbrew whoami --help",
-            (Self::Version, _) => "run logbrew version --help",
-            (Self::Explain, _) => "run logbrew explain --help",
-            (Self::Set, _) => "run logbrew set --help",
-            (Self::Resolve, _) => "run logbrew resolve --help",
-            (Self::Close, _) => "run logbrew close --help",
-            (Self::Ignore, _) => "run logbrew ignore --help",
-            (Self::Reopen, _) => "run logbrew reopen --help",
-            (Self::StatusResolved, _) => "run logbrew resolved --help",
-            (Self::StatusClosed, _) => "run logbrew closed --help",
-            (Self::StatusIgnored, _) => "run logbrew ignored --help",
-            (Self::StatusOpen, _) => "run logbrew open --help",
-            (Self::StatusUnresolved, _) => "run logbrew unresolved --help",
+            _ => self.identity().1,
         }
     }
 
@@ -188,8 +148,8 @@ impl FlagScope {
     fn unsupported(self, flag: &str) -> CliError {
         CliError::UnsupportedFlag {
             flag: flag.to_owned(),
-            command: self.command(),
-            next: self.help_next(),
+            command: self.identity().0,
+            next: self.identity().1,
         }
     }
 
@@ -197,7 +157,7 @@ impl FlagScope {
     fn unknown_flag(self, flag: &str) -> CliError {
         CliError::UnknownFlag {
             flag: flag.to_owned(),
-            next: self.help_next(),
+            next: self.identity().1,
         }
     }
 
@@ -205,7 +165,7 @@ impl FlagScope {
     fn unexpected_argument(self, argument: &str) -> CliError {
         CliError::UnexpectedArgument {
             argument: argument.to_owned(),
-            command: self.command(),
+            command: self.identity().0,
             next: self.unexpected_next(argument),
         }
     }
@@ -445,35 +405,12 @@ fn parse_read_filter(
         return Ok(false);
     };
     let value = read_filter_value(args, index, scope, seen, spec, inline_value)?;
-    apply_read_filter(&mut flags.read, spec.kind, value, status_kind)?;
+    apply_read_filter(&mut flags.read, spec.0, value, status_kind)?;
     Ok(true)
 }
 
-/// Read filter metadata used for validation and duplicate handling.
-#[derive(Debug, Clone, Copy)]
-struct ReadFilterSpec {
-    /// Field populated by this flag.
-    kind: ReadFilterKind,
-    /// Canonical flag name used for duplicate detection.
-    canonical_flag: &'static str,
-    /// User-visible flag name used in errors.
-    visible_flag: &'static str,
-}
-
-impl ReadFilterSpec {
-    /// Builds one read filter spec.
-    const fn new(
-        kind: ReadFilterKind,
-        canonical_flag: &'static str,
-        visible_flag: &'static str,
-    ) -> Self {
-        Self {
-            kind,
-            canonical_flag,
-            visible_flag,
-        }
-    }
-}
+/// Field, canonical flag, and visible alias for one read filter.
+type ReadFilterSpec = (ReadFilterKind, &'static str, &'static str);
 
 /// Read option populated by a flag.
 #[derive(Debug, Clone, Copy)]
@@ -515,45 +452,35 @@ enum ReadFilterKind {
 /// Resolves a raw flag name to read filter metadata.
 fn read_filter_spec(flag: &str) -> Option<ReadFilterSpec> {
     let spec = match flag {
-        "--name" => ReadFilterSpec::new(ReadFilterKind::Name, "--name", "--name"),
-        "--service" => ReadFilterSpec::new(ReadFilterKind::Service, "--service", "--service"),
-        "--service-name" => {
-            ReadFilterSpec::new(ReadFilterKind::Service, "--service", "--service-name")
-        }
-        "--since" => ReadFilterSpec::new(ReadFilterKind::Since, "--since", "--since"),
-        "--user" => ReadFilterSpec::new(ReadFilterKind::User, "--user", "--user"),
-        "--distinct-id" => ReadFilterSpec::new(ReadFilterKind::User, "--user", "--distinct-id"),
-        "--trace" => ReadFilterSpec::new(ReadFilterKind::Trace, "--trace", "--trace"),
-        "--trace-id" => ReadFilterSpec::new(ReadFilterKind::Trace, "--trace", "--trace-id"),
-        "--level" | "--severity" => {
-            ReadFilterSpec::new(ReadFilterKind::Level, "--severity", "--severity")
-        }
-        "--search" => ReadFilterSpec::new(ReadFilterKind::Search, "--search", "--search"),
-        "--project" => ReadFilterSpec::new(ReadFilterKind::Project, "--project", "--project"),
-        "--project-id" => ReadFilterSpec::new(ReadFilterKind::Project, "--project", "--project-id"),
-        "--release" => ReadFilterSpec::new(ReadFilterKind::Release, "--release", "--release"),
-        "--environment" => ReadFilterSpec::new(
+        "--name" => (ReadFilterKind::Name, "--name", "--name"),
+        "--service" => (ReadFilterKind::Service, "--service", "--service"),
+        "--service-name" => (ReadFilterKind::Service, "--service", "--service-name"),
+        "--since" => (ReadFilterKind::Since, "--since", "--since"),
+        "--user" => (ReadFilterKind::User, "--user", "--user"),
+        "--distinct-id" => (ReadFilterKind::User, "--user", "--distinct-id"),
+        "--trace" => (ReadFilterKind::Trace, "--trace", "--trace"),
+        "--trace-id" => (ReadFilterKind::Trace, "--trace", "--trace-id"),
+        "--level" | "--severity" => (ReadFilterKind::Level, "--severity", "--severity"),
+        "--search" => (ReadFilterKind::Search, "--search", "--search"),
+        "--project" => (ReadFilterKind::Project, "--project", "--project"),
+        "--project-id" => (ReadFilterKind::Project, "--project", "--project-id"),
+        "--release" => (ReadFilterKind::Release, "--release", "--release"),
+        "--environment" => (
             ReadFilterKind::Environment,
             "--environment",
             "--environment",
         ),
-        "--env" => ReadFilterSpec::new(ReadFilterKind::Environment, "--environment", "--env"),
-        "--status" => ReadFilterSpec::new(ReadFilterKind::Status, "--status", "--status"),
-        "--limit" => ReadFilterSpec::new(ReadFilterKind::Limit, "--limit", "--limit"),
-        "--min-duration-ms" => ReadFilterSpec::new(
+        "--env" => (ReadFilterKind::Environment, "--environment", "--env"),
+        "--status" => (ReadFilterKind::Status, "--status", "--status"),
+        "--limit" => (ReadFilterKind::Limit, "--limit", "--limit"),
+        "--min-duration-ms" => (
             ReadFilterKind::MinDuration,
             "--min-duration-ms",
             "--min-duration-ms",
         ),
-        "--pagination" => {
-            ReadFilterSpec::new(ReadFilterKind::Pagination, "--pagination", "--pagination")
-        }
-        "--cursor-time" => {
-            ReadFilterSpec::new(ReadFilterKind::CursorTime, "--cursor-time", "--cursor-time")
-        }
-        "--cursor-id" => {
-            ReadFilterSpec::new(ReadFilterKind::CursorId, "--cursor-id", "--cursor-id")
-        }
+        "--pagination" => (ReadFilterKind::Pagination, "--pagination", "--pagination"),
+        "--cursor-time" => (ReadFilterKind::CursorTime, "--cursor-time", "--cursor-time"),
+        "--cursor-id" => (ReadFilterKind::CursorId, "--cursor-id", "--cursor-id"),
         _ => return None,
     };
     Some(spec)
@@ -609,13 +536,14 @@ fn read_filter_value(
     spec: ReadFilterSpec,
     inline_value: Option<&str>,
 ) -> Result<String, CliError> {
-    scope.ensure_allows(FlagKind::ReadFilter, spec.visible_flag)?;
-    mark_seen(seen, spec.canonical_flag)?;
+    let (kind, canonical_flag, visible_flag) = spec;
+    scope.ensure_allows(FlagKind::ReadFilter, visible_flag)?;
+    mark_seen(seen, canonical_flag)?;
     if let Some(value) = inline_value {
-        return take_inline_value(value, spec.visible_flag);
+        return take_inline_value(value, visible_flag);
     }
     *index += 1;
-    if matches!(spec.kind, ReadFilterKind::MinDuration)
+    if matches!(kind, ReadFilterKind::MinDuration)
         && args.get(*index).is_some_and(|value| {
             value.strip_prefix('-').is_some_and(|digits| {
                 !digits.is_empty() && digits.bytes().all(|byte| byte.is_ascii_digit())
@@ -624,7 +552,7 @@ fn read_filter_value(
     {
         return Ok(args[*index].clone());
     }
-    take_value(args, *index, spec.visible_flag)
+    take_value(args, *index, visible_flag)
 }
 
 /// Records a flag and rejects duplicate occurrences.
