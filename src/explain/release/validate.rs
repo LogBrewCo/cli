@@ -20,6 +20,10 @@ const SDK_ITEM_LIMIT: usize = 32;
 const SIGNAL_ITEM_LIMIT: usize = 20;
 /// Public cap for the mixed release timeline.
 const TIMELINE_ITEM_LIMIT: usize = 100;
+/// Maximum preserved source revision characters.
+const MARKER_COMMIT_LIMIT: usize = 256;
+/// Maximum preserved release-note characters.
+const MARKER_NOTES_LIMIT: usize = 2_048;
 /// Stable base interpretation limits always emitted by release comparison v3.
 const BASE_LIMITATIONS: [&str; 3] = [
     "raw_counts_not_rate_normalized",
@@ -107,6 +111,20 @@ struct SignalFacts {
     log_failure_observed: bool,
 }
 
+/// Validated SDK release-marker availability and field evidence.
+struct MarkerFacts {
+    /// Bounded marker collection receipt.
+    collection: CollectionFacts,
+    /// Marker fields present as captured evidence.
+    captured: BTreeSet<&'static str>,
+    /// Marker fields withheld by capture privacy rules.
+    redacted: BTreeSet<&'static str>,
+    /// Marker fields shortened to their public bounds.
+    truncated: BTreeSet<&'static str>,
+    /// Exact marker times used to rebuild the mixed timeline.
+    occurred_at: Vec<String>,
+}
+
 /// Validated previous-release snapshot facts.
 struct SnapshotFacts {
     /// Issue, log, span, action, and metric counts in stable order.
@@ -144,7 +162,7 @@ struct ExpectedTimelineItem {
 }
 
 /// Validates exact schema, identities, signals, deployment comparison, timeline, and receipts.
-pub(super) fn validate_response(
+pub(in crate::explain) fn response(
     response: &Map<String, Value>,
     expected: &ExplainReleaseTarget,
 ) -> Result<(), RuntimeError> {
@@ -155,6 +173,7 @@ pub(super) fn validate_response(
             "subject",
             "analysis",
             "sdk_coverage",
+            "markers",
             "signals",
             "timeline",
             "comparison",
@@ -162,12 +181,14 @@ pub(super) fn validate_response(
             "next_actions",
         ],
     )?;
-    if response.get("schema_version").and_then(Value::as_u64) != Some(3) {
+    if response.get("schema_version").and_then(Value::as_u64) != Some(4) {
         return Err(invalid_response());
     }
 
     let subject = validate_subject(required_object(response, "subject")?, expected)?;
     let sdk = validate_sdk_coverage(required_object(response, "sdk_coverage")?)?;
+    let markers_value = required_object(response, "markers")?;
+    let markers = validate_markers(markers_value)?;
     let signals_value = required_object(response, "signals")?;
     let signals = validate_signals(signals_value, &subject)?;
     validate_analysis(required_object(response, "analysis")?, &subject, &signals)?;
@@ -176,16 +197,142 @@ pub(super) fn validate_response(
         required_object(response, "timeline")?,
         &subject,
         signals_value,
+        &markers,
         &comparison,
     )?;
     validate_evidence(
         required_object(response, "evidence")?,
         &subject,
         sdk,
+        &markers,
         &signals,
         &comparison,
         timeline_truncated,
     )
+}
+
+/// Validates bounded untrusted SDK release markers and exact field-state semantics.
+fn validate_markers(value: &Map<String, Value>) -> Result<MarkerFacts, RuntimeError> {
+    require_exact_fields(value, &["status", "items", "truncated", "limitations"])?;
+    let (collection, items) = validate_collection(value, SIGNAL_ITEM_LIMIT)?;
+    let expected_limitations = if matches!(collection.status, Availability::Unavailable) {
+        &[
+            "historical_markers_not_backfilled",
+            "marker_read_unavailable",
+        ][..]
+    } else {
+        &["historical_markers_not_backfilled"]
+    };
+    if value
+        .get("limitations")
+        .and_then(Value::as_array)
+        .is_none_or(|actual| {
+            actual
+                .iter()
+                .map(Value::as_str)
+                .ne(expected_limitations.iter().map(|value| Some(*value)))
+        })
+    {
+        return Err(invalid_response());
+    }
+
+    let mut captured = BTreeSet::new();
+    let mut redacted = BTreeSet::new();
+    let mut truncated = BTreeSet::new();
+    let mut occurred_at = Vec::with_capacity(items.len());
+    for item in items {
+        let item = item.as_object().ok_or_else(invalid_response)?;
+        require_exact_fields(
+            item,
+            &[
+                "occurred_at",
+                "ingested_at",
+                "sdk_name",
+                "sdk_version",
+                "commit",
+                "notes",
+                "untrusted_telemetry",
+            ],
+        )?;
+        if !require_bool(item, "untrusted_telemetry")? {
+            return Err(invalid_response());
+        }
+        occurred_at.push(require_timestamp(item, "occurred_at")?.to_owned());
+        let _ingested_at = require_timestamp(item, "ingested_at")?;
+        let _sdk_name = require_string(item, "sdk_name")?;
+        let _sdk_version = require_string(item, "sdk_version")?;
+        for (name, limit, multiline, field) in [
+            (
+                "commit",
+                MARKER_COMMIT_LIMIT,
+                false,
+                "release.markers.commit",
+            ),
+            ("notes", MARKER_NOTES_LIMIT, true, "release.markers.notes"),
+        ] {
+            match validate_marker_field(required_object(item, name)?, limit, multiline)? {
+                "captured" => {
+                    let _ = captured.insert(field);
+                }
+                "truncated" => {
+                    let _ = captured.insert(field);
+                    let _ = truncated.insert(field);
+                }
+                "redacted" => {
+                    let _ = redacted.insert(field);
+                }
+                "not_captured" => {}
+                _ => unreachable!("release marker state was validated"),
+            }
+        }
+    }
+    Ok(MarkerFacts {
+        collection,
+        captured,
+        redacted,
+        truncated,
+        occurred_at,
+    })
+}
+
+/// Validates one marker field without interpreting its application-authored value.
+fn validate_marker_field(
+    field: &Map<String, Value>,
+    limit: usize,
+    multiline: bool,
+) -> Result<&str, RuntimeError> {
+    require_exact_fields(field, &["status", "value"])?;
+    let status = require_string(field, "status")?;
+    match (status, field.get("value")) {
+        ("not_captured" | "redacted", Some(Value::Null)) => Ok(status),
+        ("captured", Some(Value::String(value))) if marker_text_valid(value, limit, multiline) => {
+            Ok(status)
+        }
+        ("truncated", Some(Value::String(value)))
+            if value.chars().count() == limit && marker_text_valid(value, limit, multiline) =>
+        {
+            Ok(status)
+        }
+        _ => Err(invalid_response()),
+    }
+}
+
+/// Returns whether one application-authored marker value matches its capture bound.
+fn marker_text_valid(value: &str, limit: usize, multiline: bool) -> bool {
+    !value.is_empty()
+        && value.trim() == value
+        && value.chars().count() <= limit
+        && !value.chars().any(|character| {
+            (character.is_control() && !(multiline && matches!(character, '\n' | '\t')))
+                || matches!(
+                    character,
+                    '\u{061c}'
+                        | '\u{200e}'
+                        | '\u{200f}'
+                        | '\u{2028}'..='\u{202e}'
+                        | '\u{2066}'..='\u{206f}'
+                )
+        })
 }
 
 /// Validates the exact query identity, safe counts, window, and current trace health.
@@ -343,7 +490,7 @@ fn validate_signals(
     let issues = validate_issues(required_object(signals, "issues")?)?;
     let traces = validate_traces(required_object(signals, "traces")?)?;
     let (logs, log_failure_observed) = validate_logs(required_object(signals, "logs")?)?;
-    let actions = validate_actions(required_object(signals, "actions")?)?;
+    let actions = validate_actions(required_object(signals, "actions")?, subject.counts[3])?;
     let metrics = validate_metrics(required_object(signals, "metrics")?)?;
     if subject.counts[3] == 0 && matches!(actions.status, Availability::Available) {
         return Err(invalid_response());
@@ -468,8 +615,11 @@ fn validate_logs(value: &Map<String, Value>) -> Result<(CollectionFacts, bool), 
     Ok((facts, failure))
 }
 
-/// Validates typed action aggregates while the parent validator checks exhaustive arithmetic.
-fn validate_actions(value: &Map<String, Value>) -> Result<CollectionFacts, RuntimeError> {
+/// Validates typed action aggregates and their exhaustive event partitions.
+fn validate_actions(
+    value: &Map<String, Value>,
+    release_action_count: u64,
+) -> Result<CollectionFacts, RuntimeError> {
     require_exact_fields(value, &["status", "items", "truncated", "estimation"])?;
     let estimation = required_object(value, "estimation")?;
     require_exact_fields(estimation, &["unique_counts_are_approximate", "method"])?;
@@ -479,6 +629,8 @@ fn validate_actions(value: &Map<String, Value>) -> Result<CollectionFacts, Runti
         return Err(invalid_response());
     }
     let (facts, items) = validate_collection(value, SIGNAL_ITEM_LIMIT)?;
+    let mut names = BTreeSet::new();
+    let mut represented_events = 0_u64;
     for item in items {
         let item = item.as_object().ok_or_else(invalid_response)?;
         require_exact_fields(
@@ -495,11 +647,11 @@ fn validate_actions(value: &Map<String, Value>) -> Result<CollectionFacts, Runti
                 "trace_id",
             ],
         )?;
-        let _name = require_string(item, "name")?;
-        let _event_count = require_safe_positive_u64(item, "event_count")?;
-        let _identified = require_safe_u64(item, "identified_user_count")?;
-        let _anonymous = require_safe_u64(item, "anonymous_subject_count")?;
-        let _sessions = require_safe_u64(item, "session_count")?;
+        let name = require_string(item, "name")?;
+        let event_count = require_safe_positive_u64(item, "event_count")?;
+        let identified = require_safe_u64(item, "identified_user_count")?;
+        let anonymous = require_safe_u64(item, "anonymous_subject_count")?;
+        let sessions = require_safe_u64(item, "session_count")?;
         validate_ordered_times(item, "first_seen_at", "last_seen_at")?;
         let _trace_id = validate_nullable_trace_id(item, "trace_id")?;
         let coverage = required_object(item, "subject_coverage")?;
@@ -514,6 +666,43 @@ fn validate_actions(value: &Map<String, Value>) -> Result<CollectionFacts, Runti
                 "historical_unindexed_events",
             ],
         )?;
+        if require_safe_u64(coverage, "index_version")? != 1 {
+            return Err(invalid_response());
+        }
+        let classified_events = [
+            "identified_user_events",
+            "anonymous_subject_events",
+            "legacy_unknown_kind_events",
+            "missing_subject_events",
+            "historical_unindexed_events",
+        ]
+        .into_iter()
+        .try_fold(0_u64, |count, field| {
+            count
+                .checked_add(require_safe_u64(coverage, field)?)
+                .ok_or_else(invalid_response)
+        })?;
+        if !names.insert(name)
+            || classified_events != event_count
+            || identified > require_safe_u64(coverage, "identified_user_events")?
+            || anonymous > require_safe_u64(coverage, "anonymous_subject_events")?
+            || sessions > event_count
+        {
+            return Err(invalid_response());
+        }
+        represented_events = represented_events
+            .checked_add(event_count)
+            .ok_or_else(invalid_response)?;
+    }
+    if represented_events > release_action_count
+        || matches!(facts.status, Availability::Available)
+            && if facts.truncated {
+                represented_events >= release_action_count
+            } else {
+                represented_events != release_action_count
+            }
+    {
+        return Err(invalid_response());
     }
     Ok(facts)
 }
@@ -866,6 +1055,7 @@ fn validate_timeline(
     timeline: &Map<String, Value>,
     subject: &SubjectFacts<'_>,
     signals: &Map<String, Value>,
+    markers: &MarkerFacts,
     comparison: &ComparisonFacts<'_>,
 ) -> Result<bool, RuntimeError> {
     require_exact_fields(timeline, &["items", "truncated"])?;
@@ -875,7 +1065,7 @@ fn validate_timeline(
         .filter(|items| items.len() <= TIMELINE_ITEM_LIMIT)
         .ok_or_else(invalid_response)?;
     let truncated = require_bool(timeline, "truncated")?;
-    let (expected, expected_truncated) = expected_timeline(subject, signals, comparison)?;
+    let (expected, expected_truncated) = expected_timeline(subject, signals, markers, comparison)?;
     if truncated != expected_truncated || items.len() != expected.len() {
         return Err(invalid_response());
     }
@@ -901,9 +1091,10 @@ fn validate_timeline(
 fn expected_timeline(
     subject: &SubjectFacts<'_>,
     signals: &Map<String, Value>,
+    markers: &MarkerFacts,
     comparison: &ComparisonFacts<'_>,
 ) -> Result<(Vec<ExpectedTimelineItem>, bool), RuntimeError> {
-    let mut evidence = signal_timeline(signals)?;
+    let mut evidence = signal_timeline(signals, markers)?;
     let mut boundaries = vec![
         expected_item(
             "release_first_seen",
@@ -958,6 +1149,7 @@ fn expected_timeline(
 /// Projects every bounded signal item into the backend's pre-boundary timeline order.
 fn signal_timeline(
     signals: &Map<String, Value>,
+    markers: &MarkerFacts,
 ) -> Result<Vec<ExpectedTimelineItem>, RuntimeError> {
     let mut evidence = Vec::new();
     for item in collection_items(signals, "issues")? {
@@ -1010,6 +1202,15 @@ fn signal_timeline(
             validate_nullable_trace_id(item, "trace_id")?,
         )?);
     }
+    for occurred_at in &markers.occurred_at {
+        evidence.push(expected_item(
+            "release_marker",
+            occurred_at,
+            "SDK release marker captured",
+            None,
+            None,
+        )?);
+    }
     sort_timeline(evidence.as_mut_slice());
     Ok(evidence)
 }
@@ -1047,14 +1248,15 @@ fn timeline_kind_rank(kind: &str) -> u8 {
     match kind {
         "previous_deployment_finished" => 0,
         "subject_deployment_started" => 1,
-        "release_first_seen" => 2,
-        "action" => 3,
-        "trace" => 4,
-        "log" => 5,
-        "metric" => 6,
-        "issue" => 7,
-        "subject_deployment_finished" => 8,
-        "release_last_seen" => 9,
+        "release_marker" => 2,
+        "release_first_seen" => 3,
+        "action" => 4,
+        "trace" => 5,
+        "log" => 6,
+        "metric" => 7,
+        "issue" => 8,
+        "subject_deployment_finished" => 9,
+        "release_last_seen" => 10,
         _ => u8::MAX,
     }
 }
@@ -1098,6 +1300,7 @@ fn validate_evidence(
     evidence: &Map<String, Value>,
     subject: &SubjectFacts<'_>,
     sdk: CollectionFacts,
+    markers: &MarkerFacts,
     signals: &SignalFacts,
     comparison: &ComparisonFacts<'_>,
     timeline_truncated: bool,
@@ -1112,9 +1315,11 @@ fn validate_evidence(
             "truncated_fields",
         ],
     )?;
-    let (captured, missing) = expected_availability_fields(subject, sdk, signals, comparison)?;
-    let redacted = expected_redacted_fields(subject.counts);
-    let truncated = expected_truncated_fields(sdk, signals, timeline_truncated);
+    let (captured, missing) =
+        expected_availability_fields(subject, sdk, markers, signals, comparison)?;
+    let mut redacted = expected_redacted_fields(subject.counts);
+    redacted.extend(markers.redacted.iter().copied());
+    let truncated = expected_truncated_fields(sdk, markers, signals, timeline_truncated);
     require_exact_string_set(evidence, "captured_fields", &captured)?;
     require_exact_string_set(evidence, "missing_fields", &missing)?;
     require_exact_string_set(evidence, "redacted_fields", &redacted)?;
@@ -1131,6 +1336,7 @@ fn validate_evidence(
 fn expected_availability_fields(
     subject: &SubjectFacts<'_>,
     sdk: CollectionFacts,
+    markers: &MarkerFacts,
     signals: &SignalFacts,
     comparison: &ComparisonFacts<'_>,
 ) -> Result<(BTreeSet<&'static str>, BTreeSet<&'static str>), RuntimeError> {
@@ -1141,69 +1347,51 @@ fn expected_availability_fields(
         "release.timeline",
     ]);
     let mut missing = BTreeSet::new();
-    record_availability(
-        subject.trace_health.availability,
-        "release.trace_health",
-        true,
-        &mut captured,
-        &mut missing,
-    );
-    record_availability(
-        sdk.status,
-        "release.sdk_coverage",
-        true,
-        &mut captured,
-        &mut missing,
-    );
-    record_availability(
-        signals.issues.status,
-        "release.issues",
-        subject.counts[0] > 0,
-        &mut captured,
-        &mut missing,
-    );
-    record_availability(
-        signals.traces.status,
-        "release.traces",
-        subject.counts[2] > 0,
-        &mut captured,
-        &mut missing,
-    );
-    record_availability(
-        signals.logs.status,
-        "release.logs",
-        false,
-        &mut captured,
-        &mut missing,
-    );
-    record_availability(
-        signals.actions.status,
-        "release.actions",
-        subject.counts[3] > 0,
-        &mut captured,
-        &mut missing,
-    );
-    record_availability(
-        signals.actions.status,
-        "release.actions.subject_coverage",
-        subject.counts[3] > 0,
-        &mut captured,
-        &mut missing,
-    );
-    record_availability(
-        signals.metrics.status,
-        "release.metrics",
-        subject.counts[4] > 0,
-        &mut captured,
-        &mut missing,
-    );
-    record_availability(
-        comparison.status,
-        "release.deployment_comparison",
-        true,
-        &mut captured,
-        &mut missing,
-    );
+    for (status, field, expected_when_empty) in [
+        (
+            subject.trace_health.availability,
+            "release.trace_health",
+            true,
+        ),
+        (sdk.status, "release.sdk_coverage", true),
+        (markers.collection.status, "release.markers", true),
+        (
+            signals.issues.status,
+            "release.issues",
+            subject.counts[0] > 0,
+        ),
+        (
+            signals.traces.status,
+            "release.traces",
+            subject.counts[2] > 0,
+        ),
+        (signals.logs.status, "release.logs", false),
+        (
+            signals.actions.status,
+            "release.actions",
+            subject.counts[3] > 0,
+        ),
+        (
+            signals.actions.status,
+            "release.actions.subject_coverage",
+            subject.counts[3] > 0,
+        ),
+        (
+            signals.metrics.status,
+            "release.metrics",
+            subject.counts[4] > 0,
+        ),
+        (comparison.status, "release.deployment_comparison", true),
+    ] {
+        record_availability(
+            status,
+            field,
+            expected_when_empty,
+            &mut captured,
+            &mut missing,
+        );
+    }
+    captured.extend(markers.captured.iter().copied());
     let previous_trace_status = comparison
         .previous_release
         .map(|snapshot| require_availability(snapshot, "trace_health_status", false))
@@ -1222,24 +1410,20 @@ fn expected_availability_fields(
 /// Derives exact privacy-redaction receipts from nonzero release signal counts.
 fn expected_redacted_fields(counts: [u64; 5]) -> BTreeSet<&'static str> {
     let mut redacted = BTreeSet::new();
-    if counts[0] > 0 {
-        redacted.extend(["release.issues.attributes", "release.issues.stack_trace"]);
-    }
-    if counts[2] > 0 {
-        let _ = redacted.insert("release.traces.attributes");
-    }
-    if counts[1] > 0 {
-        let _ = redacted.insert("release.logs.attributes");
-    }
-    if counts[3] > 0 {
-        redacted.extend([
+    for (count, fields) in counts.into_iter().zip([
+        &["release.issues.attributes", "release.issues.stack_trace"][..],
+        &["release.logs.attributes"],
+        &["release.traces.attributes"],
+        &[
             "release.actions.distinct_id",
             "release.actions.properties",
             "release.actions.session_id",
-        ]);
-    }
-    if counts[4] > 0 {
-        let _ = redacted.insert("release.metrics.attributes");
+        ],
+        &["release.metrics.attributes"],
+    ]) {
+        if count > 0 {
+            redacted.extend(fields.iter().copied());
+        }
     }
     redacted
 }
@@ -1247,12 +1431,14 @@ fn expected_redacted_fields(counts: [u64; 5]) -> BTreeSet<&'static str> {
 /// Derives exact truncation receipts from collection and timeline caps.
 fn expected_truncated_fields(
     sdk: CollectionFacts,
+    markers: &MarkerFacts,
     signals: &SignalFacts,
     timeline_truncated: bool,
 ) -> BTreeSet<&'static str> {
     let mut truncated = BTreeSet::new();
     for (is_truncated, field) in [
         (sdk.truncated, "release.sdk_coverage"),
+        (markers.collection.truncated, "release.markers"),
         (signals.issues.truncated, "release.issues"),
         (signals.traces.truncated, "release.traces"),
         (signals.logs.truncated, "release.logs"),
@@ -1264,6 +1450,7 @@ fn expected_truncated_fields(
             let _ = truncated.insert(field);
         }
     }
+    truncated.extend(markers.truncated.iter().copied());
     truncated
 }
 

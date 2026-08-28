@@ -44,8 +44,6 @@ const NEXT_ACTION_LIMIT: usize = 16;
 const RELATED_PREVIEW_LIMIT: usize = 3;
 /// Maximum sibling issues retained by one investigation response.
 const RELATED_ISSUE_LIMIT: usize = 20;
-/// Maximum action aggregates returned by one release investigation.
-const RELEASE_ACTION_LIMIT: usize = 20;
 /// Maximum metric series returned by the public API.
 const METRIC_SERIES_LIMIT: usize = 20;
 /// Maximum points returned for one metric series.
@@ -1416,83 +1414,19 @@ fn validate_release_response(
     value: &Value,
     expected: &ExplainReleaseTarget,
 ) -> Result<(), RuntimeError> {
-    let response = response_object(
-        value,
-        &[
-            "schema_version",
-            "subject",
-            "analysis",
-            "sdk_coverage",
-            "signals",
-            "timeline",
-            "comparison",
-            "evidence",
-            "next_actions",
-        ],
-    )?;
-    validate_schema_version_value(response, 3)?;
-    let subject = required_object(response, "subject")?;
-    require_string_equals(subject, "kind", "release")?;
-    require_string_equals(subject, "project_id", expected.project_id.as_str())?;
-    require_string_equals(subject, "release", expected.release.as_str())?;
-    require_string_equals(subject, "environment", expected.environment.as_str())?;
-    require_string_equals(subject, "service_name", expected.service_name.as_str())?;
-    for name in [
-        "issue_count",
-        "log_count",
-        "trace_span_count",
-        "metric_count",
-    ] {
-        let _count = require_safe_u64(subject, name)?;
-    }
-    let action_count = require_safe_u64(subject, "action_count")?;
-    let _first_seen = require_timestamp(subject, "first_seen_at")?;
-    let _last_seen = require_timestamp(subject, "last_seen_at")?;
-    let _trace_health_status = validate_availability(subject, "trace_health_status")?;
-    let trace_health = required_object(subject, "trace_health")?;
-    let _trace_health_status = require_string(trace_health, "status")?;
-    let trace_count = require_u64(trace_health, "trace_count")?;
-    let error_trace_count = require_u64(trace_health, "error_trace_count")?;
-    let error_rate = require_u64(trace_health, "error_rate_basis_points")?;
-    if error_trace_count > trace_count || error_rate > 10_000 {
-        return Err(invalid_response());
-    }
-
-    let analysis = required_object(response, "analysis")?;
-    let _analysis_status = require_string(analysis, "status")?;
-    let _causality = require_string(analysis, "causality")?;
-    validate_items_collection(required_object(response, "sdk_coverage")?, true)?;
-
-    let signals = required_object(response, "signals")?;
-    for name in ["issues", "traces", "logs", "metrics"] {
-        validate_items_collection(required_object(signals, name)?, true)?;
-    }
-    let actions = required_object(signals, "actions")?;
-    validate_release_actions(actions, action_count)?;
-    validate_timeline(required_object(response, "timeline")?)?;
-    let comparison = required_object(response, "comparison")?;
-    let _comparison_status = validate_availability(comparison, "status")?;
-    let _comparison_reason = require_string(comparison, "reason")?;
-    let evidence = required_object(response, "evidence")?;
-    validate_evidence(evidence)?;
-    validate_release_action_evidence(evidence, require_string(actions, "status")?, action_count)?;
-    release::validate_response(response, expected)?;
+    let response = value.as_object().ok_or_else(invalid_response)?;
+    release::validate::response(response, expected)?;
     validate_release_next_actions(response)
 }
 
-/// One exact deterministic release follow-up derived from bounded signal evidence.
-struct ReleaseNextActionExpectation<'a> {
-    /// Stable action code.
-    code: &'static str,
-    /// Stable destination type.
-    target: &'static str,
-    /// Stable evidence-derived reason.
-    reason: &'static str,
-    /// Exact grouped issue target when applicable.
-    issue_id: Option<&'a str>,
-    /// Exact distributed trace target when applicable.
-    trace_id: Option<&'a str>,
-}
+/// Code, target, reason, issue, and trace for one deterministic release follow-up.
+type ReleaseNextActionExpectation<'a> = (
+    &'static str,
+    &'static str,
+    &'static str,
+    Option<&'a str>,
+    Option<&'a str>,
+);
 
 /// Validates the version-3 priority-by-order release action contract and source bindings.
 fn validate_release_next_actions(response: &Map<String, Value>) -> Result<(), RuntimeError> {
@@ -1504,17 +1438,17 @@ fn validate_release_next_actions(response: &Map<String, Value>) -> Result<(), Ru
     if actions.len() != expected.len() || actions.len() > NEXT_ACTION_LIMIT {
         return Err(invalid_response());
     }
-    for (action, expected) in actions.iter().zip(expected) {
+    for (action, (code, target, reason, issue_id, trace_id)) in actions.iter().zip(expected) {
         let action = action.as_object().ok_or_else(invalid_response)?;
         require_exact_fields(
             action,
             &["code", "target", "reason", "issue_id", "trace_id"],
         )?;
-        if require_string(action, "code")? != expected.code
-            || require_string(action, "target")? != expected.target
-            || require_string(action, "reason")? != expected.reason
-            || nullable_uuid(action, "issue_id")? != expected.issue_id
-            || nullable_trace_id(action, "trace_id")? != expected.trace_id
+        if require_string(action, "code")? != code
+            || require_string(action, "target")? != target
+            || require_string(action, "reason")? != reason
+            || nullable_uuid(action, "issue_id")? != issue_id
+            || nullable_trace_id(action, "trace_id")? != trace_id
         {
             return Err(invalid_response());
         }
@@ -1530,23 +1464,23 @@ fn expected_release_next_actions(
     let mut expected = Vec::new();
     if let Some(issue) = release_signal_items(signals, "issues")?.first() {
         let issue = issue.as_object().ok_or_else(invalid_response)?;
-        expected.push(ReleaseNextActionExpectation {
-            code: "inspect_release_issue",
-            target: "issue_investigation",
-            reason: "issue_observed",
-            issue_id: Some(required_uuid_text(issue, "issue_id")?),
-            trace_id: nullable_trace_id(issue, "trace_id")?,
-        });
+        expected.push((
+            "inspect_release_issue",
+            "issue_investigation",
+            "issue_observed",
+            Some(required_uuid_text(issue, "issue_id")?),
+            nullable_trace_id(issue, "trace_id")?,
+        ));
     }
     if let Some(trace) = release_signal_items(signals, "traces")?.first() {
         let trace = trace.as_object().ok_or_else(invalid_response)?;
-        expected.push(ReleaseNextActionExpectation {
-            code: "inspect_release_trace",
-            target: "trace_investigation",
-            reason: "trace_observed",
-            issue_id: None,
-            trace_id: Some(required_trace_id(trace, "trace_id")?),
-        });
+        expected.push((
+            "inspect_release_trace",
+            "trace_investigation",
+            "trace_observed",
+            None,
+            Some(required_trace_id(trace, "trace_id")?),
+        ));
     }
     for (signal, code, target, reason) in [
         (
@@ -1569,13 +1503,7 @@ fn expected_release_next_actions(
         ),
     ] {
         if !release_signal_items(signals, signal)?.is_empty() {
-            expected.push(ReleaseNextActionExpectation {
-                code,
-                target,
-                reason,
-                issue_id: None,
-                trace_id: None,
-            });
+            expected.push((code, target, reason, None, None));
         }
     }
     let signal_unavailable =
@@ -1583,6 +1511,7 @@ fn expected_release_next_actions(
             == "unavailable"
             || require_string(required_object(response, "sdk_coverage")?, "status")?
                 == "unavailable"
+            || require_string(required_object(response, "markers")?, "status")? == "unavailable"
             || ["issues", "traces", "logs", "actions", "metrics"]
                 .iter()
                 .any(|name| {
@@ -1602,13 +1531,13 @@ fn expected_release_next_actions(
         .and_then(Value::as_str)
         == Some("unavailable");
     if signal_unavailable || comparison_status == "unavailable" || previous_trace_unavailable {
-        expected.push(ReleaseNextActionExpectation {
-            code: "retry_unavailable_evidence",
-            target: "release_investigation",
-            reason: "related_evidence_unavailable",
-            issue_id: None,
-            trace_id: None,
-        });
+        expected.push((
+            "retry_unavailable_evidence",
+            "release_investigation",
+            "related_evidence_unavailable",
+            None,
+            None,
+        ));
     }
     if matches!(
         comparison_reason,
@@ -1616,13 +1545,13 @@ fn expected_release_next_actions(
             | "subject_deployment_not_found"
             | "previous_successful_deployment_not_found"
     ) {
-        expected.push(ReleaseNextActionExpectation {
-            code: "capture_deployment_boundary",
-            target: "release_instrumentation",
-            reason: "comparison_unavailable",
-            issue_id: None,
-            trace_id: None,
-        });
+        expected.push((
+            "capture_deployment_boundary",
+            "release_instrumentation",
+            "comparison_unavailable",
+            None,
+            None,
+        ));
     }
     Ok(expected)
 }
@@ -1687,127 +1616,6 @@ fn nullable_trace_id<'a>(
         Some(Value::String(id)) if is_trace_id(id) => Ok(Some(id.as_str())),
         _ => Err(invalid_response()),
     }
-}
-
-/// Validates version-2 release action estimates and their exhaustive event partition.
-fn validate_release_actions(
-    value: &Map<String, Value>,
-    release_action_count: u64,
-) -> Result<(), RuntimeError> {
-    validate_items_collection(value, true)?;
-    let status = require_string(value, "status")?;
-    let items = value
-        .get("items")
-        .and_then(Value::as_array)
-        .ok_or_else(invalid_response)?;
-    let truncated = require_bool(value, "truncated")?;
-    if items.len() > RELEASE_ACTION_LIMIT
-        || (status == "available") == items.is_empty()
-        || (status != "available" && truncated)
-        || (truncated && items.len() != RELEASE_ACTION_LIMIT)
-    {
-        return Err(invalid_response());
-    }
-
-    let estimation = required_object(value, "estimation")?;
-    if !require_bool(estimation, "unique_counts_are_approximate")?
-        || require_string(estimation, "method")? != "approximate_uniq_combined64"
-    {
-        return Err(invalid_response());
-    }
-
-    let mut names = BTreeSet::new();
-    let mut represented_events = 0_u64;
-    for item in items {
-        let (name, event_count) =
-            validate_release_action(item.as_object().ok_or_else(invalid_response)?)?;
-        if !names.insert(name) {
-            return Err(invalid_response());
-        }
-        represented_events = represented_events
-            .checked_add(event_count)
-            .ok_or_else(invalid_response)?;
-    }
-    if represented_events > release_action_count
-        || (status == "available"
-            && if truncated {
-                represented_events >= release_action_count
-            } else {
-                represented_events != release_action_count
-            })
-    {
-        return Err(invalid_response());
-    }
-    Ok(())
-}
-
-/// Validates one release action without trusting approximate values or partial coverage.
-fn validate_release_action(action: &Map<String, Value>) -> Result<(&str, u64), RuntimeError> {
-    let name = require_string(action, "name")?;
-    let event_count = require_safe_positive_u64(action, "event_count")?;
-    let identified_users = require_safe_u64(action, "identified_user_count")?;
-    let anonymous_subjects = require_safe_u64(action, "anonymous_subject_count")?;
-    let sessions = require_safe_u64(action, "session_count")?;
-    let _first_seen = require_timestamp(action, "first_seen_at")?;
-    let _last_seen = require_timestamp(action, "last_seen_at")?;
-    if optional_string(action, "trace_id")?.is_some_and(|trace_id| !is_trace_id(trace_id)) {
-        return Err(invalid_response());
-    }
-
-    let coverage = required_object(action, "subject_coverage")?;
-    if require_u64(coverage, "index_version")? != 1 {
-        return Err(invalid_response());
-    }
-    let identified_events = require_safe_u64(coverage, "identified_user_events")?;
-    let anonymous_events = require_safe_u64(coverage, "anonymous_subject_events")?;
-    let legacy_events = require_safe_u64(coverage, "legacy_unknown_kind_events")?;
-    let missing_events = require_safe_u64(coverage, "missing_subject_events")?;
-    let historical_events = require_safe_u64(coverage, "historical_unindexed_events")?;
-    let classified_events = identified_events
-        .checked_add(anonymous_events)
-        .and_then(|count| count.checked_add(legacy_events))
-        .and_then(|count| count.checked_add(missing_events))
-        .and_then(|count| count.checked_add(historical_events))
-        .ok_or_else(invalid_response)?;
-    if classified_events != event_count
-        || identified_users > identified_events
-        || anonymous_subjects > anonymous_events
-        || sessions > event_count
-    {
-        return Err(invalid_response());
-    }
-    Ok((name, event_count))
-}
-
-/// Requires the version-2 coverage field in exactly one evidence receipt partition.
-fn validate_release_action_evidence(
-    evidence: &Map<String, Value>,
-    action_status: &str,
-    release_action_count: u64,
-) -> Result<(), RuntimeError> {
-    let field = "release.actions.subject_coverage";
-    let captured = evidence
-        .get("captured_fields")
-        .and_then(Value::as_array)
-        .ok_or_else(invalid_response)?;
-    let missing = evidence
-        .get("missing_fields")
-        .and_then(Value::as_array)
-        .ok_or_else(invalid_response)?;
-    let captured_count = captured
-        .iter()
-        .filter(|value| value.as_str() == Some(field))
-        .count();
-    let missing_count = missing
-        .iter()
-        .filter(|value| value.as_str() == Some(field))
-        .count();
-    let should_be_captured =
-        action_status == "available" || (action_status == "not_found" && release_action_count == 0);
-    if (captured_count, missing_count) != if should_be_captured { (1, 0) } else { (0, 1) } {
-        return Err(invalid_response());
-    }
-    Ok(())
 }
 
 /// Returns whether a string is one canonical non-zero lowercase W3C identifier.
@@ -3790,9 +3598,10 @@ fn render_release(value: &Value) -> Option<String> {
             output.push('\n');
         }
     }
+    release::render::markers(&mut output, value.get("markers"));
     append_release_signals(&mut output, value.get("signals"));
     append_timeline(&mut output, value.get("timeline"));
-    release::render_comparison(&mut output, value.get("comparison"));
+    release::render::comparison(&mut output, value.get("comparison"));
     append_evidence(&mut output, value.get("evidence"));
     append_actions(&mut output, value.get("next_actions"));
     Some(output)
@@ -4110,24 +3919,12 @@ fn append_string_array(output: &mut String, label: &str, value: Option<&Value>, 
 
 /// Appends one named string field on its own line.
 fn append_named_text(output: &mut String, label: &str, value: &Value, name: &str, limit: usize) {
-    let Some(value) = field_text(value, name, limit) else {
-        return;
-    };
-    output.push_str(label);
-    output.push_str(": ");
-    output.push_str(value.as_str());
-    output.push('\n');
+    append_named(output, label, field_text(value, name, limit));
 }
 
 /// Appends one named integer field on its own line.
 fn append_named_integer(output: &mut String, label: &str, value: &Value, name: &str) {
-    let Some(value) = integer_text(value, name) else {
-        return;
-    };
-    output.push_str(label);
-    output.push_str(": ");
-    output.push_str(value.as_str());
-    output.push('\n');
+    append_named(output, label, integer_text(value, name));
 }
 
 /// Appends a name/version pair using one separator.
@@ -4153,72 +3950,75 @@ fn append_named_pair(
 
 /// Appends one compact bounded string field.
 fn append_labeled_text(output: &mut String, label: &str, value: &Value, name: &str, limit: usize) {
-    let Some(value) = field_text(value, name, limit) else {
-        return;
-    };
-    output.push(' ');
-    output.push_str(label);
-    output.push('=');
-    output.push_str(value.as_str());
+    append_labeled(output, label, field_text(value, name, limit), false);
 }
 
 /// Appends one compact integer field.
 fn append_labeled_integer(output: &mut String, label: &str, value: &Value, name: &str) {
-    let Some(value) = integer_text(value, name) else {
-        return;
-    };
-    output.push(' ');
-    output.push_str(label);
-    output.push('=');
-    output.push_str(value.as_str());
+    append_labeled(output, label, integer_text(value, name), false);
 }
 
 /// Appends one compact approximate integer field with an explicit approximation marker.
 fn append_labeled_approximate_integer(output: &mut String, label: &str, value: &Value, name: &str) {
-    let Some(value) = integer_text(value, name) else {
-        return;
-    };
-    output.push(' ');
-    output.push_str(label);
-    output.push_str("=~");
-    output.push_str(value.as_str());
+    append_labeled(output, label, integer_text(value, name), true);
 }
 
 /// Appends one compact basis-point field as a two-decimal percentage.
 fn append_labeled_basis_points(output: &mut String, label: &str, value: &Value, name: &str) {
-    let Some(value) = value.get(name).and_then(Value::as_u64) else {
-        return;
-    };
-    output.push(' ');
-    output.push_str(label);
-    output.push('=');
-    output.push_str(format!("{}.{:02}%", value / 100, value % 100).as_str());
+    append_labeled(
+        output,
+        label,
+        value
+            .get(name)
+            .and_then(Value::as_u64)
+            .map(|value| format!("{}.{:02}%", value / 100, value % 100)),
+        false,
+    );
 }
 
 /// Appends one compact finite numeric field.
 fn append_labeled_number(output: &mut String, label: &str, value: &Value, name: &str) {
-    let Some(value) = value
-        .get(name)
-        .and_then(Value::as_f64)
-        .filter(|value| value.is_finite())
-    else {
-        return;
-    };
-    output.push(' ');
-    output.push_str(label);
-    output.push('=');
-    output.push_str(value.to_string().as_str());
+    append_labeled(
+        output,
+        label,
+        value
+            .get(name)
+            .and_then(Value::as_f64)
+            .filter(|value| value.is_finite())
+            .map(|value| value.to_string()),
+        false,
+    );
 }
 
 /// Appends one compact boolean field.
 fn append_labeled_bool(output: &mut String, label: &str, value: &Value, name: &str) {
-    let Some(value) = value.get(name).and_then(Value::as_bool) else {
-        return;
-    };
+    append_labeled(
+        output,
+        label,
+        value
+            .get(name)
+            .and_then(Value::as_bool)
+            .map(|value| value.to_string()),
+        false,
+    );
+}
+
+/// Appends one optional value on its own named line.
+fn append_named(output: &mut String, label: &str, value: Option<String>) {
+    let Some(value) = value else { return };
+    output.push_str(label);
+    output.push_str(": ");
+    output.push_str(value.as_str());
+    output.push('\n');
+}
+
+/// Appends one optional compact value with an exact or approximate marker.
+fn append_labeled(output: &mut String, label: &str, value: Option<String>, approximate: bool) {
+    let Some(value) = value else { return };
     output.push(' ');
     output.push_str(label);
-    output.push('=');
-    output.push_str(if value { "true" } else { "false" });
+    output.push_str(if approximate { "=~" } else { "=" });
+    output.push_str(value.as_str());
 }
 
 /// Returns a terminal-safe bounded string field.
