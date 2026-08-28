@@ -360,37 +360,6 @@ fn validate_evidence_receipts(
     }
 }
 
-/// Requires regression-aware release guidance only when recurrence was detected.
-pub(super) fn validate_next_action(
-    value: Option<&Value>,
-    regression_detected: bool,
-) -> Result<(), RuntimeError> {
-    let actions = value
-        .and_then(Value::as_array)
-        .ok_or_else(invalid_response)?;
-    let regression_actions = actions
-        .iter()
-        .filter_map(Value::as_object)
-        .filter(|action| {
-            action.get("reason").and_then(Value::as_str) == Some("regression_detected")
-        })
-        .collect::<Vec<_>>();
-    if regression_detected {
-        if regression_actions.len() == 1
-            && require_string(regression_actions[0], "code")? == "compare_release"
-            && require_string(regression_actions[0], "target")? == "release_summary"
-        {
-            Ok(())
-        } else {
-            Err(invalid_response())
-        }
-    } else if regression_actions.is_empty() {
-        Ok(())
-    } else {
-        Err(invalid_response())
-    }
-}
-
 /// Returns whether a status belongs to the public persisted-state vocabulary.
 pub(super) fn is_persisted_status(status: &str) -> bool {
     matches!(status, "unresolved" | "resolved" | "ignored")

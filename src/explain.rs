@@ -320,7 +320,7 @@ fn validate_issue_response(
     expected_occurrence: &IssueOccurrenceSelection,
 ) -> Result<(), RuntimeError> {
     let response = exact_response_object(value, ISSUE_RESPONSE_FIELDS)?;
-    validate_schema_version_value(response, 11)?;
+    validate_schema_version_value(response, 12)?;
     let subject = required_object(response, "subject")?;
     require_string_equals(subject, "kind", "issue")?;
     require_string_equals(subject, "id", expected_id)?;
@@ -399,7 +399,7 @@ fn validate_issue_response(
     }
     validate_issue_user_impact(impact, occurrence_count)?;
     validate_nullable_object(impact, "reported")?;
-    validate_issue_reproduction(
+    let reproduction_ready = validate_issue_reproduction(
         required_object(response, "reproduction")?,
         event,
         impact,
@@ -409,8 +409,11 @@ fn validate_issue_response(
     let correlations = required_object(response, "correlations")?;
     validate_issue_correlations(correlations, event, evidence, expected_id, project_id)?;
     validate_selected_occurrence_correlations(selected_occurrence, event, correlations)?;
-    validate_next_actions(response.get("next_actions"))?;
-    issue_lifecycle::validate_next_action(response.get("next_actions"), regression_detected)
+    validate_issue_actions(
+        response.get("next_actions"),
+        reproduction_ready,
+        regression_detected,
+    )
 }
 
 /// Validates exact reproducer readiness and its phased evidence receipt.
@@ -419,7 +422,7 @@ fn validate_issue_reproduction(
     event: &Map<String, Value>,
     impact: &Map<String, Value>,
     fix: &Map<String, Value>,
-) -> Result<(), RuntimeError> {
+) -> Result<bool, RuntimeError> {
     require_exact_fields(
         reproduction,
         &["status", "baseline_occurrence_id", "evidence"],
@@ -456,15 +459,12 @@ fn validate_issue_reproduction(
     for (field, is_captured) in fields.into_iter().zip(captured) {
         validate_field_receipts(evidence, field, [is_captured, !is_captured, false, false])?;
     }
-    require_string_equals(
-        reproduction,
-        "status",
-        match (captured[1] && captured[2], captured[3]) {
-            (true, true) => "ready",
-            (true, false) => "partial",
-            (false, _) => "insufficient_evidence",
-        },
-    )?;
+    let status = match (captured[1] && captured[2], captured[3]) {
+        (true, true) => "ready",
+        (true, false) => "partial",
+        (false, _) => "insufficient_evidence",
+    };
+    require_string_equals(reproduction, "status", status)?;
     require_string_equals(
         evidence,
         "status",
@@ -473,7 +473,8 @@ fn validate_issue_reproduction(
         } else {
             "partial"
         },
-    )
+    )?;
+    Ok(status == "ready")
 }
 
 /// Validates exact repository, component, revision, and source-path evidence.
@@ -2768,6 +2769,47 @@ fn validate_next_actions(value: Option<&Value>) -> Result<(), RuntimeError> {
             return Err(invalid_response());
         }
         validate_strings(action, &["code", "target", "reason"])?;
+    }
+    Ok(())
+}
+
+/// Validates evidence-bound issue actions after their common structure.
+fn validate_issue_actions(
+    value: Option<&Value>,
+    reproduction_ready: bool,
+    regression_detected: bool,
+) -> Result<(), RuntimeError> {
+    validate_next_actions(value)?;
+    let actions = value
+        .and_then(Value::as_array)
+        .ok_or_else(invalid_response)?;
+    for (expected, code, target, reason) in [
+        (
+            reproduction_ready,
+            "verify_correction",
+            "issue_correction_verification",
+            "reproduction_ready",
+        ),
+        (
+            regression_detected,
+            "compare_release",
+            "release_summary",
+            "regression_detected",
+        ),
+    ] {
+        let matching = actions
+            .iter()
+            .filter_map(Value::as_object)
+            .filter(|action| action.get("reason").and_then(Value::as_str) == Some(reason))
+            .collect::<Vec<_>>();
+        if matching.len() != usize::from(expected)
+            || matching.iter().any(|action| {
+                action.get("code").and_then(Value::as_str) != Some(code)
+                    || action.get("target").and_then(Value::as_str) != Some(target)
+            })
+        {
+            return Err(invalid_response());
+        }
     }
     Ok(())
 }
