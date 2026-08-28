@@ -14,6 +14,7 @@ const PROJECT_ID: &str = "123e4567-e89b-12d3-a456-426614174000";
 const TRACE_ID: &str = "4bf92f3577b34da6a3ce929d0e0e4736";
 const HOSTILE_MARKER: &str = "hostile-response-marker";
 const DEPLOYMENT_ID: &str = "candidate-deploy-42";
+const RECOMMENDED: (&str, &str) = ("selection", "recommended");
 
 #[test]
 fn parses_only_the_explicit_issue_investigation_grammar() {
@@ -54,7 +55,7 @@ fn parses_only_the_explicit_issue_investigation_grammar() {
         exact.http_path().as_deref(),
         Some(
             "/api/telemetry/issues/11111111-1111-4111-8111-111111111111/investigation?\
-             response_version=11&occurrence_id=22222222-2222-4222-8222-222222222222"
+             response_version=12&occurrence_id=22222222-2222-4222-8222-222222222222"
         )
     );
     assert!(exact.wants_json());
@@ -71,7 +72,7 @@ fn parses_only_the_explicit_issue_investigation_grammar() {
         latest.http_path().as_deref(),
         Some(
             "/api/telemetry/issues/11111111-1111-4111-8111-111111111111/investigation?\
-             response_version=11&selection=latest"
+             response_version=12&selection=latest"
         )
     );
 }
@@ -164,7 +165,7 @@ fn help_describes_the_complete_versioned_bundle() {
     assert!(text.contains("approximate affected-user coverage and limitations"));
     assert!(text.contains("trace, sibling issues, related logs, actions, metric exemplars"));
     assert!(text.contains("same contract as logbrew explain issue"));
-    assert!(text.contains("exact validated schema-version-11 response"));
+    assert!(text.contains("exact validated schema-version-12 response"));
     assert!(text.contains("deterministic grouping"));
     assert!(text.contains("exact preceding-deployment and customer-source locator evidence"));
     assert!(text.contains("explicit selected, first, latest, and recommended occurrence"));
@@ -250,7 +251,8 @@ async fn correction_verification_rejects_contradictions_and_unknown_fields_witho
 #[tokio::test]
 async fn investigation_uses_the_versioned_cross_signal_bundle()
 -> Result<(), Box<dyn std::error::Error>> {
-    assert_json_bundle(rich_investigation_bundle()).await
+    drop(assert_bundle_outputs(rich_investigation_bundle(), &[]).await?);
+    Ok(())
 }
 
 #[tokio::test]
@@ -260,7 +262,7 @@ async fn exact_occurrence_request_uses_the_exact_id_and_validates_its_receipt()
     let mut bundle = rich_investigation_bundle();
     bundle["occurrence_selection"]["requested"] = serde_json::json!("exact");
     bundle["occurrence_selection"]["reason"] = serde_json::json!("exact_occurrence_requested");
-    mount_exact_bundle(&server, bundle.clone(), 1).await;
+    mount_bundle(&server, bundle.clone(), 1, ("occurrence_id", OCCURRENCE_ID)).await;
     let command = parse_command([
         "logbrew",
         "investigate",
@@ -284,7 +286,7 @@ async fn selected_trace_link_remains_valid_when_typed_trace_context_is_absent()
 -> Result<(), Box<dyn std::error::Error>> {
     let mut bundle = rich_investigation_bundle();
     bundle["event"]["context"]["trace"] = serde_json::Value::Null;
-    assert_json_bundle(bundle).await
+    assert_bundle_outputs(bundle, &[]).await.map(drop)
 }
 
 #[tokio::test]
@@ -312,7 +314,7 @@ async fn coverage_and_source_locator_states_preserve_exact_json()
     ] {
         assert_eq!(bundle["impact"]["user_impact"]["status"], impact);
         assert_eq!(bundle["source_locator"]["status"], locator);
-        assert_json_bundle(bundle).await?;
+        drop(assert_bundle_outputs(bundle, &[]).await?);
     }
     Ok(())
 }
@@ -380,7 +382,8 @@ async fn human_output_surfaces_failure_fix_timeline_correlations_and_limits()
         "Metric: name=payment.retry.count kind=counter temporality=delta value=3 unit=attempts",
         "Evidence: status=partial",
         "Next 1: code=inspect_code_location target=source_code reason=likely_fix_location_available",
-        "Next 7: code=improve_capture target=sdk_configuration reason=evidence_incomplete",
+        "Next 7: code=verify_correction target=issue_correction_verification reason=reproduction_ready",
+        "Next 8: code=improve_capture target=sdk_configuration reason=evidence_incomplete",
     ]).await.map(drop)
 }
 
@@ -492,7 +495,7 @@ async fn partial_and_unavailable_occurrence_analysis_keep_the_primary_investigat
 async fn investigate_and_explain_issue_share_one_output_contract()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
-    mount_bundle(&server, rich_investigation_bundle(), 2).await;
+    mount_bundle(&server, rich_investigation_bundle(), 2, RECOMMENDED).await;
 
     let investigate = run(&server, false, "investigate").await?;
     let explain = run(&server, false, "explain").await?;
@@ -569,7 +572,7 @@ async fn exact_selector_rejects_a_recommended_server_receipt()
     let server = MockServer::start().await;
     let mut bundle = rich_investigation_bundle();
     bundle["subject"]["message"] = serde_json::json!(HOSTILE_MARKER);
-    mount_exact_bundle(&server, bundle, 1).await;
+    mount_bundle(&server, bundle, 1, ("occurrence_id", OCCURRENCE_ID)).await;
     let command = parse_command([
         "logbrew",
         "investigate",
@@ -684,31 +687,18 @@ async fn unsafe_origin_fails_before_network_use_without_reflection()
     Ok(())
 }
 
-async fn mount_bundle(server: &MockServer, bundle: serde_json::Value, expected_requests: u64) {
-    Mock::route(
-        "GET",
-        format!("/api/telemetry/issues/{ISSUE_ID}/investigation"),
-    )
-    .and(query_param("response_version", "11"))
-    .and(query_param("selection", "recommended"))
-    .and(header("authorization", "Bearer test-token"))
-    .respond_with(ResponseTemplate::new(200).set_body_json(bundle))
-    .expect(expected_requests)
-    .mount(server)
-    .await;
-}
-
-async fn mount_exact_bundle(
+async fn mount_bundle(
     server: &MockServer,
     bundle: serde_json::Value,
     expected_requests: u64,
+    selector: (&str, &str),
 ) {
     Mock::route(
         "GET",
         format!("/api/telemetry/issues/{ISSUE_ID}/investigation"),
     )
-    .and(query_param("response_version", "11"))
-    .and(query_param("occurrence_id", OCCURRENCE_ID))
+    .and(query_param("response_version", "12"))
+    .and(query_param(selector.0, selector.1))
     .and(header("authorization", "Bearer test-token"))
     .respond_with(ResponseTemplate::new(200).set_body_json(bundle))
     .expect(expected_requests)
@@ -754,7 +744,7 @@ async fn assert_invalid_bundles(
 ) -> Result<(), Box<dyn std::error::Error>> {
     for bundle in cases {
         let server = MockServer::start().await;
-        mount_bundle(&server, bundle, 1).await;
+        mount_bundle(&server, bundle, 1, RECOMMENDED).await;
         let command = parse_command(["logbrew", "investigate", "issue", ISSUE_ID, "--json"])?;
         let mut output = Vec::new();
         let error = execute_command(&command, &authenticated_env(&server), &mut output)
@@ -774,7 +764,7 @@ async fn assert_bundle_outputs(
     expected_human: &[&str],
 ) -> Result<String, Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
-    mount_bundle(&server, bundle.clone(), 2).await;
+    mount_bundle(&server, bundle.clone(), 2, RECOMMENDED).await;
     let json: serde_json::Value =
         serde_json::from_str(run(&server, true, "investigate").await?.as_str())?;
     assert_eq!(json, bundle);
@@ -786,15 +776,6 @@ async fn assert_bundle_outputs(
         );
     }
     Ok(human)
-}
-
-async fn assert_json_bundle(bundle: serde_json::Value) -> Result<(), Box<dyn std::error::Error>> {
-    let server = MockServer::start().await;
-    mount_bundle(&server, bundle.clone(), 1).await;
-    let actual: serde_json::Value =
-        serde_json::from_str(run(&server, true, "investigate").await?.as_str())?;
-    assert_eq!(actual, bundle);
-    Ok(())
 }
 
 async fn run(
@@ -831,7 +812,7 @@ fn rich_investigation_bundle() -> serde_json::Value {
         "0.1.4",
     );
     serde_json::json!({
-        "schema_version": 11,
+        "schema_version": 12,
         "subject": {
             "kind": "issue",
             "id": ISSUE_ID,
@@ -1226,6 +1207,12 @@ fn rich_investigation_bundle() -> serde_json::Value {
             },
             {
                 "priority": 7,
+                "code": "verify_correction",
+                "target": "issue_correction_verification",
+                "reason": "reproduction_ready"
+            },
+            {
+                "priority": 8,
                 "code": "improve_capture",
                 "target": "sdk_configuration",
                 "reason": "evidence_incomplete"
@@ -1686,6 +1673,7 @@ fn invalid_event_evidence_bundles() -> Vec<serde_json::Value> {
             "/reproduction/evidence/status",
             serde_json::json!("partial"),
         ),
+        ("/next_actions/6/target", serde_json::json!("source_code")),
     ]);
 
     let mut missing_receipt = rich_investigation_bundle();
