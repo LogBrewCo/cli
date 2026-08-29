@@ -1328,7 +1328,7 @@ fn parses_explain_trace_for_agent_context() {
     );
     assert_eq!(
         command.http_path().expect("explain trace has endpoint"),
-        "/api/telemetry/traces/trace-123/investigation"
+        "/api/telemetry/traces/trace-123/investigation?response_version=2"
     );
 }
 

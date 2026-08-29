@@ -51,145 +51,64 @@ async fn authenticated_read_logs_sends_bearer_token_and_prints_api_body() {
 }
 
 #[tokio::test]
-async fn human_read_logs_prints_scan_friendly_summary() {
-    let server = MockServer::start().await;
-    Mock::route("GET", "/api/logs")
-        .and(query_param("release", "checkout@1.2.3"))
-        .and(query_param("environment", "production"))
-        .and(header("authorization", "Bearer test-token"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "logs": [
-                {
-                    "level": "warning",
-                    "severity": "warning",
-                    "message": "checkout failed",
-                    "release": "checkout@1.2.3",
-                    "environment": "production",
-                    "trace_id": "trace_123"
-                }
-            ]
-        })))
-        .mount(&server)
-        .await;
-    let text = successful_human_output(
-        &server,
-        [
-            "logbrew",
-            "logs",
-            "--release",
+async fn human_logs_render_populated_and_empty_shapes() {
+    let row = |severity| {
+        serde_json::json!({
+            "level": severity, "severity": severity, "message": "checkout failed",
+            "release": "checkout@1.2.3", "environment": "production", "trace_id": "trace_123"
+        })
+    };
+    for (body, release, expected, home) in [
+        (
+            serde_json::json!({"logs": [row("warning")]}),
             "checkout@1.2.3",
-            "--environment",
-            "production",
-        ],
-        "human-read-logs",
-    )
-    .await
-    .expect("read succeeds");
-    assert_eq!(
-        text,
-        "Logs (1)\n- warning checkout failed trace=trace_123 [checkout@1.2.3 / production]\n"
-    );
-}
-
-#[tokio::test]
-async fn human_read_logs_summarizes_level_only_array_shape_with_canonical_label() {
-    let server = MockServer::start().await;
-    Mock::route("GET", "/api/logs")
-        .and(query_param("release", "checkout@1.2.3"))
-        .and(query_param("environment", "production"))
-        .and(header("authorization", "Bearer test-token"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
-            {
-                "level": "critical",
-                "severity": "critical",
-                "message": "checkout failed",
-                "release": "checkout@1.2.3",
-                "environment": "production",
-                "trace_id": "trace_123"
-            }
-        ])))
-        .mount(&server)
-        .await;
-    let text = successful_human_output(
-        &server,
-        [
-            "logbrew",
-            "logs",
-            "--release",
+            "Logs (1)\n- warning checkout failed trace=trace_123 [checkout@1.2.3 / production]\n",
+            "human-read-logs",
+        ),
+        (
+            serde_json::json!([row("critical")]),
             "checkout@1.2.3",
-            "--env",
-            "production",
-        ],
-        "human-read-logs-array",
-    )
-    .await
-    .expect("read succeeds");
-    assert_eq!(
-        text,
-        "Logs (1)\n- critical checkout failed trace=trace_123 [checkout@1.2.3 / production]\n"
-    );
-}
-
-#[tokio::test]
-async fn human_empty_logs_prints_next_step() {
-    let server = MockServer::start().await;
-    Mock::route("GET", "/api/logs")
-        .and(query_param("release", "empty@0"))
-        .and(query_param("environment", "production"))
-        .and(header("authorization", "Bearer test-token"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "logs": []
-        })))
-        .mount(&server)
-        .await;
-    let text = successful_human_output(
-        &server,
-        [
-            "logbrew",
-            "logs",
-            "--release",
+            "Logs (1)\n- critical checkout failed trace=trace_123 [checkout@1.2.3 / production]\n",
+            "human-read-logs-array",
+        ),
+        (
+            serde_json::json!({"logs": []}),
             "empty@0",
-            "--environment",
-            "production",
-        ],
-        "human-empty-logs",
-    )
-    .await
-    .expect("read succeeds");
-    assert_eq!(
-        text,
-        "Logs (0)\nNo logs found.\nNext: widen filters or check --release/--environment.\n"
-    );
-}
-
-#[tokio::test]
-async fn human_empty_logs_summarizes_real_api_array_shape() {
-    let server = MockServer::start().await;
-    Mock::route("GET", "/api/logs")
-        .and(query_param("release", "empty@0"))
-        .and(query_param("environment", "production"))
-        .and(header("authorization", "Bearer test-token"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
-        .mount(&server)
-        .await;
-    let text = successful_human_output(
-        &server,
-        [
-            "logbrew",
-            "logs",
-            "--release",
+            "Logs (0)\nNo logs found.\nNext: widen filters or check --release/--environment.\n",
+            "human-empty-logs",
+        ),
+        (
+            serde_json::json!([]),
             "empty@0",
-            "--environment",
-            "production",
-        ],
-        "human-empty-logs-array",
-    )
-    .await
-    .expect("read succeeds");
-    assert_eq!(
-        text,
-        "Logs (0)\nNo logs found.\nNext: widen filters or check --release/--environment.\n"
-    );
+            "Logs (0)\nNo logs found.\nNext: widen filters or check --release/--environment.\n",
+            "human-empty-logs-array",
+        ),
+    ] {
+        let server = MockServer::start().await;
+        mount_authenticated_json(
+            &server,
+            "GET",
+            "/api/logs",
+            [("release", release), ("environment", "production")],
+            body,
+        )
+        .await;
+        let text = successful_human_output(
+            &server,
+            [
+                "logbrew",
+                "logs",
+                "--release",
+                release,
+                "--env",
+                "production",
+            ],
+            home,
+        )
+        .await
+        .expect("read succeeds");
+        assert_eq!(text, expected, "case {home}");
+    }
 }
 
 #[tokio::test]
@@ -504,8 +423,9 @@ async fn human_explain_trace_prints_scan_friendly_summary() {
         "/api/telemetry/traces/trace_123/investigation",
         "test-token",
     )
+    .and(query_param("response_version", "2"))
     .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-        "schema_version": 1,
+        "schema_version": 2,
         "subject": {
             "kind": "trace",
             "trace_id": "trace_123",
@@ -547,7 +467,27 @@ async fn human_explain_trace_prints_scan_friendly_summary() {
                 }],
                 "truncated": false
             },
-            "issues": {"status": "not_found", "items": [], "truncated": false},
+            "issues": {"status": "available", "items": [{
+                "id": "11111111-1111-4111-8111-111111111111",
+                "issue_id": "22222222-2222-4222-8222-222222222222",
+                "project_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+                "severity": "error",
+                "title": "PaymentError",
+                "message": "provider response could not be decoded",
+                "occurred_at": "2026-06-02T20:00:00.250Z",
+                "service_name": "checkout-api",
+                "environment": "production",
+                "release": "checkout@1.2.3",
+                "cause": {"status": "reported_hypothesis", "summary": "The provider returned a malformed response.",
+                    "provenance": "application_reported", "signals": ["reported_root_cause"]},
+                "fix": {
+                    "status": "reported_location",
+                    "location": {"component": "checkout-api", "module": null,
+                        "function": "decodeProviderResponse", "file": "src/provider.rs", "line": 87,
+                        "column": null, "in_app": true},
+                    "provenance": "application_reported"
+                }
+            }], "truncated": false},
             "logs": {"status": "not_found", "items": [], "truncated": false},
             "actions": {"status": "not_found", "items": [], "truncated": false},
             "metrics": {"status": "not_found", "items": [], "truncated": false}
@@ -586,7 +526,12 @@ async fn human_explain_trace_prints_scan_friendly_summary() {
          checkout@1.2.3\nEnvironments: production\nFirst error: charge card \
          service=checkout-api operation=payment.charge status=error duration_ms=420 \
          span=0123456789abcdef\nFirst error path: charge card\nRelated issues: \
-         status=not_found count=0 truncated=false\nRelated logs: status=not_found \
+         status=available count=1 truncated=false\nIssue: title=PaymentError severity=error \
+         issue=22222222-2222-4222-8222-222222222222 at=2026-06-02T20:00:00.250Z\nCause \
+         assessment: status=reported_hypothesis provenance=application_reported\nReported hypothesis \
+         (unverified): The provider returned a malformed response.\nCause signals: reported_root_cause\nFix area: \
+         status=reported_location provenance=application_reported component=checkout-api \
+         function=decodeProviderResponse file=src/provider.rs line=87 in_app=true\nRelated logs: status=not_found \
          count=0 truncated=false\nRelated actions: status=not_found count=0 \
          truncated=false\nRelated metrics: status=not_found count=0 truncated=false\nTimeline: \
          count=2 truncated=false\nTimeline item: at=2026-06-02T20:00:00Z kind=span\nTimeline item: \
@@ -659,57 +604,36 @@ async fn human_read_issue_summarizes_real_api_object_shape_with_next_action() {
 }
 
 #[tokio::test]
-async fn human_set_issue_status_prints_confirmation() {
-    let server = MockServer::start().await;
-    Mock::auth("PATCH", "/api/telemetry/issues/issue_123", "test-token")
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "issue": {
-                "id": "issue_123",
-                "status": "resolved",
-                "trace_id": "trace_123",
-                "release": "checkout@1.2.3",
-                "environment": "production"
-            }
-        })))
-        .mount(&server)
-        .await;
-    let text = successful_human_output(
-        &server,
-        ["logbrew", "set", "issue", "issue_123", "resolved"],
-        "human-set-issue",
-    )
-    .await
-    .expect("set succeeds");
-    assert_eq!(
-        text,
-        "Issue issue_123 marked resolved trace=trace_123 [checkout@1.2.3 / production].\n"
-    );
-}
-
-#[tokio::test]
-async fn human_set_issue_status_summarizes_real_api_object_shape() {
-    let server = MockServer::start().await;
-    Mock::auth("PATCH", "/api/telemetry/issues/issue_123", "test-token")
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "id": "issue_123",
-            "status": "resolved",
-            "trace_id": "trace_123",
-            "release": "checkout@1.2.3",
-            "environment": "production"
-        })))
-        .mount(&server)
-        .await;
-    let text = successful_human_output(
-        &server,
-        ["logbrew", "resolve", "issue_123"],
-        "human-set-issue-object",
-    )
-    .await
-    .expect("set succeeds");
-    assert_eq!(
-        text,
-        "Issue issue_123 marked resolved trace=trace_123 [checkout@1.2.3 / production].\n"
-    );
+async fn human_set_issue_status_renders_wrapped_and_object_shapes() {
+    let issue = serde_json::json!({
+        "id": "issue_123", "status": "resolved", "trace_id": "trace_123",
+        "release": "checkout@1.2.3", "environment": "production"
+    });
+    for (body, args, home) in [
+        (
+            serde_json::json!({"issue": issue}),
+            &["logbrew", "set", "issue", "issue_123", "resolved"][..],
+            "human-set-issue",
+        ),
+        (
+            issue,
+            &["logbrew", "resolve", "issue_123"][..],
+            "human-set-issue-object",
+        ),
+    ] {
+        let server = MockServer::start().await;
+        Mock::auth("PATCH", "/api/telemetry/issues/issue_123", "test-token")
+            .respond_with(ResponseTemplate::new(200).set_body_json(body))
+            .mount(&server)
+            .await;
+        let text = successful_human_output(&server, args.iter().copied(), home)
+            .await
+            .expect("set succeeds");
+        assert_eq!(
+            text,
+            "Issue issue_123 marked resolved trace=trace_123 [checkout@1.2.3 / production].\n"
+        );
+    }
 }
 
 #[tokio::test]
@@ -1038,71 +962,54 @@ async fn persisted_refresh_session_never_authenticates_to_a_different_api_origin
 }
 
 #[tokio::test]
-async fn api_auth_error_reports_token_file_source_without_leaking_token()
+async fn api_auth_errors_report_source_without_leaking_tokens()
 -> Result<(), Box<dyn std::error::Error>> {
-    let server = MockServer::start().await;
-    Mock::auth("GET", "/api/logs", "expired")
-        .respond_with(ResponseTemplate::new(401).set_body_json(serde_json::json!({
-            "ok": false,
-            "error": "not_logged_in"
-        })))
-        .mount(&server)
-        .await;
-    let command = parse_command(["logbrew", "logs", "--json"])?;
-    let home = api_rendering_home("api-auth-token-file")?;
-    let token_path = home.join(".logbrew").join("token");
-    std::fs::create_dir_all(token_path.parent().expect("token path has parent"))?;
-    std::fs::write(token_path.as_path(), "expired\n")?;
-    let env = super::test_env(&server, None, Some(home));
-    let mut output = Vec::new();
-
-    let error = execute_command(&command, &env, &mut output)
-        .await
-        .expect_err("401 fails");
-    write_runtime_error(&error, command.wants_json(), &mut output)?;
-
-    let text = String::from_utf8(output)?;
-    assert!(!text.contains("expired"));
-    let body: serde_json::Value = serde_json::from_str(text.as_str())?;
-    assert_eq!(body["ok"], false);
-    assert_eq!(body["error"], "api_error");
-    assert_eq!(body["status"], 401);
-    assert_eq!(body["auth_source"], "token_file");
-    assert_eq!(body["next"], "run logbrew login");
-    Ok(())
-}
-
-#[tokio::test]
-async fn human_api_auth_error_reports_env_source_without_leaking_token()
--> Result<(), Box<dyn std::error::Error>> {
-    let server = MockServer::start().await;
-    Mock::auth("GET", "/api/logs", "env-token")
-        .respond_with(ResponseTemplate::new(403).set_body_json(serde_json::json!({
-            "ok": false,
-            "error": "forbidden",
-            "detail": "env-token"
-        })))
-        .mount(&server)
-        .await;
-    let command = parse_command(["logbrew", "logs"])?;
-    let home = api_rendering_home("api-auth-env")?;
-    let token_path = home.join(".logbrew").join("token");
-    std::fs::create_dir_all(token_path.parent().expect("token path has parent"))?;
-    std::fs::write(token_path.as_path(), "file-token\n")?;
-    let env = super::test_env(&server, Some("env-token"), Some(home));
-    let mut output = Vec::new();
-
-    let error = execute_command(&command, &env, &mut output)
-        .await
-        .expect_err("403 fails");
-    write_runtime_error(&error, command.wants_json(), &mut output)?;
-
-    let text = String::from_utf8(output)?;
-    assert!(text.contains("api returned status 403"));
-    assert!(text.contains("Auth: logged in (env token)"));
-    assert!(text.contains("Next: run logbrew login"));
-    assert!(!text.contains("env-token"));
-    assert!(!text.contains("file-token"));
+    for (status, code, api_token, local_token, json) in [
+        (401, "not_logged_in", "expired", "expired", true),
+        (403, "forbidden", "env-token", "file-token", false),
+    ] {
+        let server = MockServer::start().await;
+        Mock::auth("GET", "/api/logs", api_token)
+            .respond_with(
+                ResponseTemplate::new(status).set_body_json(serde_json::json!({
+                    "ok": false, "error": code, "detail": api_token
+                })),
+            )
+            .mount(&server)
+            .await;
+        let args = ["logbrew", "logs", "--json"];
+        let command = parse_command(if json { &args[..] } else { &args[..2] })?;
+        let home = api_rendering_home(if json {
+            "api-auth-token-file"
+        } else {
+            "api-auth-env"
+        })?;
+        let token_path = home.join(".logbrew").join("token");
+        std::fs::create_dir_all(token_path.parent().expect("token path has parent"))?;
+        std::fs::write(token_path, format!("{local_token}\n"))?;
+        let env = super::test_env(&server, (status == 403).then_some(api_token), Some(home));
+        let mut output = Vec::new();
+        let error = execute_command(&command, &env, &mut output)
+            .await
+            .expect_err("auth fails");
+        write_runtime_error(&error, command.wants_json(), &mut output)?;
+        let text = String::from_utf8(output)?;
+        assert!(!text.contains(api_token) && !text.contains(local_token));
+        if json {
+            let body: serde_json::Value = serde_json::from_str(text.as_str())?;
+            assert_eq!(body["ok"], false);
+            assert_eq!(body["error"], "api_error");
+            assert_eq!(body["status"], 401);
+            assert_eq!(body["auth_source"], "token_file");
+            assert_eq!(body["next"], "run logbrew login");
+        } else {
+            assert!(
+                text.contains("api returned status 403")
+                    && text.contains("Auth: logged in (env token)")
+                    && text.contains("Next: run logbrew login")
+            );
+        }
+    }
     Ok(())
 }
 

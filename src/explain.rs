@@ -116,6 +116,16 @@ const SOURCE_LOCATOR_EVIDENCE_FIELDS: [&str; 10] = [
     "source.revision",
     "source.repository_relative_file",
 ];
+/// Exact application-reported code-location vocabulary.
+const REPORTED_LOCATION_FIELDS: [&str; 7] = [
+    "component",
+    "module",
+    "function",
+    "file",
+    "line",
+    "column",
+    "in_app",
+];
 
 /// Duplicate-aware JSON value.
 struct UniqueValue(Value);
@@ -1381,7 +1391,7 @@ fn validate_trace_response(value: &Value, expected_id: &str) -> Result<(), Runti
             "next_actions",
         ],
     )?;
-    validate_schema_version(response)?;
+    validate_schema_version_value(response, 2)?;
     let subject = required_object(response, "subject")?;
     require_string_equals(subject, "kind", "trace")?;
     require_string_equals(subject, "trace_id", expected_id)?;
@@ -2256,8 +2266,90 @@ fn validate_trace_correlations(value: &Map<String, Value>) -> Result<(), Runtime
         validate_strings(scope, &["environment", "release"])?;
     }
     let _truncated = require_bool(window, "truncated")?;
-    for name in ["issues", "logs", "actions", "metrics"] {
+    let _issues = validate_correlated_collection(
+        required_object(value, "issues")?,
+        RELATED_ISSUE_LIMIT,
+        true,
+        validate_trace_issue,
+    )?;
+    for name in ["logs", "actions", "metrics"] {
         validate_items_collection(required_object(value, name)?, true)?;
+    }
+    Ok(())
+}
+
+/// Validates one exact-trace issue and its application-reported assessment.
+fn validate_trace_issue(issue: &Map<String, Value>) -> Result<(), RuntimeError> {
+    let cause = required_object(issue, "cause")?;
+    let fix = required_object(issue, "fix")?;
+    let mut core = issue.clone();
+    core.retain(|field, _value| !matches!(field.as_str(), "cause" | "fix"));
+    let _id = validate_correlated_signal(
+        &core,
+        require_string(issue, "project_id")?,
+        require_string(issue, "environment")?,
+        require_string(issue, "release")?,
+        "issue",
+        None,
+    )?;
+    validate_reported_issue_assessment(cause, fix)
+}
+
+/// Validates the only two honest states emitted for a related issue preview.
+fn validate_reported_issue_assessment(
+    cause: &Map<String, Value>,
+    fix: &Map<String, Value>,
+) -> Result<(), RuntimeError> {
+    require_exact_fields(cause, &["status", "summary", "provenance", "signals"])?;
+    let signals = cause["signals"].as_array().ok_or_else(invalid_response)?;
+    let cause_valid = match (
+        require_string(cause, "status")?,
+        optional_string(cause, "summary")?,
+        optional_string(cause, "provenance")?,
+        signals.as_slice(),
+    ) {
+        ("reported_hypothesis", Some(_), Some("application_reported"), [Value::String(signal)]) => {
+            signal == "reported_root_cause"
+        }
+        ("unknown", None, None, []) => true,
+        _ => false,
+    };
+    require_exact_fields(fix, &["status", "location", "provenance"])?;
+    if !cause_valid {
+        return Err(invalid_response());
+    }
+    match (
+        require_string(fix, "status")?,
+        optional_string(fix, "provenance")?,
+        optional_object_value(fix.get("location"))?,
+    ) {
+        ("reported_location", Some("application_reported"), Some(location)) => {
+            validate_reported_location(location)
+        }
+        ("unknown", None, None) => Ok(()),
+        _ => Err(invalid_response()),
+    }
+}
+
+/// Validates one normalized application-reported code location without hidden fields.
+fn validate_reported_location(location: &Map<String, Value>) -> Result<(), RuntimeError> {
+    require_exact_fields(location, &REPORTED_LOCATION_FIELDS)?;
+    let identities = ["component", "module", "function", "file"]
+        .map(|name| optional_string(location, name))
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()?;
+    let positions = ["line", "column"]
+        .map(|name| optional_safe_u64(location, name))
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()?;
+    if positions
+        .iter()
+        .flatten()
+        .any(|value| *value == 0 || *value > u64::from(u32::MAX))
+        || !matches!(location.get("in_app"), Some(Value::Null | Value::Bool(_)))
+        || (!identities.iter().any(Option::is_some) && !positions.iter().any(Option::is_some))
+    {
+        return Err(invalid_response());
     }
     Ok(())
 }
@@ -3724,6 +3816,8 @@ fn append_issue_previews(output: &mut String, items: Option<&[Value]>) {
         append_labeled_text(output, "trace", issue, "trace_id", 80);
         append_labeled_text(output, "at", issue, "occurred_at", 64);
         output.push('\n');
+        append_issue_cause(output, issue.get("cause"));
+        append_issue_fix(output, issue.get("fix"));
     }
 }
 
@@ -3777,46 +3871,29 @@ fn append_release_action_previews(
         output.push_str("Action:");
         append_labeled_text(output, "name", action, "name", 180);
         append_labeled_integer(output, "events", action, "event_count");
-        append_labeled_approximate_integer(output, "known_users", action, "identified_user_count");
-        append_labeled_approximate_integer(
-            output,
-            "anonymous_subjects",
-            action,
-            "anonymous_subject_count",
-        );
-        append_labeled_approximate_integer(output, "sessions", action, "session_count");
+        for (label, name) in [
+            ("known_users", "identified_user_count"),
+            ("anonymous_subjects", "anonymous_subject_count"),
+            ("sessions", "session_count"),
+        ] {
+            append_labeled_approximate_integer(output, label, action, name);
+        }
         append_labeled_text(output, "first", action, "first_seen_at", 64);
         append_labeled_text(output, "last", action, "last_seen_at", 64);
         append_labeled_text(output, "trace", action, "trace_id", 80);
         output.push('\n');
         if let Some(coverage) = action.get("subject_coverage") {
             output.push_str("Action subject coverage:");
-            append_labeled_integer(output, "index_version", coverage, "index_version");
-            append_labeled_integer(
-                output,
-                "typed_user_events",
-                coverage,
-                "identified_user_events",
-            );
-            append_labeled_integer(
-                output,
-                "anonymous_events",
-                coverage,
-                "anonymous_subject_events",
-            );
-            append_labeled_integer(
-                output,
-                "legacy_unknown_events",
-                coverage,
-                "legacy_unknown_kind_events",
-            );
-            append_labeled_integer(output, "missing_events", coverage, "missing_subject_events");
-            append_labeled_integer(
-                output,
-                "historical_unindexed_events",
-                coverage,
-                "historical_unindexed_events",
-            );
+            for (label, name) in [
+                ("index_version", "index_version"),
+                ("typed_user_events", "identified_user_events"),
+                ("anonymous_events", "anonymous_subject_events"),
+                ("legacy_unknown_events", "legacy_unknown_kind_events"),
+                ("missing_events", "missing_subject_events"),
+                ("historical_unindexed_events", "historical_unindexed_events"),
+            ] {
+                append_labeled_integer(output, label, coverage, name);
+            }
             output.push('\n');
         }
     }
