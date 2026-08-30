@@ -41,12 +41,17 @@ pub(crate) fn write_api_success<W: std::io::Write>(
     if let Command::ProjectRepositories { target, json } = command {
         return crate::repositories::write_success(target, *json, body, output);
     }
+    let value = serde_json::from_str::<serde_json::Value>(body);
     if command.wants_json() {
+        let _validated = value.as_ref().map_err(|_| RuntimeError::Unavailable {
+            message: "API response was invalid",
+            next: "retry the command; if it repeats, report the public response contract",
+        })?;
         writeln!(output, "{body}")?;
         return Ok(());
     }
 
-    let Ok(value) = serde_json::from_str::<serde_json::Value>(body) else {
+    let Ok(value) = value else {
         if matches!(command, Command::Support { .. }) {
             write!(output, "{}", invalid_support_response())?;
         } else if let Some(title) = cursor_response_title(command) {
