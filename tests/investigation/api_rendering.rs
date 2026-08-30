@@ -2,52 +2,46 @@
 
 use crate::matchers::{body_json, header, query_param};
 use crate::{Mock, MockServer, ResponseTemplate};
-use logbrew_cli::{CliEnvironment, execute_command, parse_command, write_runtime_error};
+use logbrew_cli::{
+    CliEnvironment, RuntimeError, execute_command, parse_command, write_runtime_error,
+};
+
+const PROJECT_ID: &str = "123e4567-e89b-12d3-a456-426614174000";
 
 #[tokio::test]
-async fn authenticated_read_logs_sends_bearer_token_and_prints_api_body() {
+async fn authenticated_read_logs_rejects_multiple_json_documents() {
     let server = MockServer::start().await;
     Mock::route("GET", "/api/logs")
-        .and(query_param("release", "checkout@1.2.3"))
-        .and(query_param("environment", "production"))
+        .and(query_param("project_id", PROJECT_ID))
+        .and(query_param("search", "startup failure"))
+        .and(query_param("since", "1h"))
         .and(header("authorization", "Bearer test-token"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "logs": [
-                {
-                    "level": "warning",
-                    "severity": "warning",
-                    "message": "checkout failed",
-                    "release": "checkout@1.2.3",
-                    "environment": "production",
-                    "trace_id": "trace_123"
-                }
-            ]
-        })))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            "{\"project_id\":\"hostile-project\"}\n[]",
+            "application/json",
+        ))
         .mount(&server)
         .await;
     let command = parse_command([
         "logbrew",
+        "read",
         "logs",
-        "--release",
-        "checkout@1.2.3",
-        "--environment",
-        "production",
+        "--project",
+        PROJECT_ID,
+        "--search",
+        "startup failure",
+        "--since",
+        "1h",
         "--json",
     ])
     .expect("command parses");
     let env = super::authenticated_env(&server, "test-token", Some("authenticated-read-test"));
     let mut output = Vec::new();
 
-    execute_command(&command, &env, &mut output)
+    let error = execute_command(&command, &env, &mut output)
         .await
-        .expect("read succeeds");
-
-    let body: serde_json::Value = serde_json::from_slice(output.as_slice()).expect("valid json");
-    assert_eq!(body["logs"][0]["level"], "warning");
-    assert_eq!(body["logs"][0]["severity"], "warning");
-    assert_eq!(body["logs"][0]["message"], "checkout failed");
-    assert_eq!(body["logs"][0]["release"], "checkout@1.2.3");
-    assert_eq!(body["logs"][0]["environment"], "production");
+        .expect_err("multiple JSON documents fail closed");
+    assert!(output.is_empty() && matches!(error, RuntimeError::Unavailable { .. }));
 }
 
 #[tokio::test]
@@ -907,10 +901,7 @@ async fn env_auth_401_never_reads_or_rotates_local_refresh_credentials()
         .await
         .expect_err("env 401 remains an auth error");
 
-    assert!(matches!(
-        error,
-        logbrew_cli::RuntimeError::Api { status: 401, .. }
-    ));
+    assert!(matches!(error, RuntimeError::Api { status: 401, .. }));
     assert_eq!(
         std::fs::read_to_string(auth_dir.join("token"))?.trim(),
         "local-access"
@@ -953,10 +944,7 @@ async fn persisted_refresh_session_never_authenticates_to_a_different_api_origin
         .await
         .expect_err("origin mismatch fails before network access");
 
-    assert!(matches!(
-        error,
-        logbrew_cli::RuntimeError::Unavailable { .. }
-    ));
+    assert!(matches!(error, RuntimeError::Unavailable { .. }));
     assert!(output.is_empty());
     Ok(())
 }
