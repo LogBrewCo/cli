@@ -37,11 +37,6 @@ pub(super) struct PreparedUpload {
 }
 
 impl PreparedUpload {
-    /// Returns the byte-identical start body.
-    pub(super) const fn manifest(&self) -> &str {
-        self.manifest.as_str()
-    }
-
     /// Finds one exact server-requested chunk.
     pub(super) fn chunk(&self, digest: &str) -> Option<&PreparedChunk> {
         self.chunks.iter().find(|chunk| chunk.digest == digest)
@@ -135,7 +130,7 @@ pub(super) async fn start(
             .post(url.clone())
             .bearer_auth(credential.token())
             .header(reqwest::header::CONTENT_TYPE, "application/json")
-            .body(prepared.manifest().to_owned())
+            .body(prepared.manifest.clone())
     })
     .await
     .map_err(request_failure)?;
