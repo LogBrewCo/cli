@@ -96,13 +96,6 @@ pub(super) struct ArtifactChunk {
     pub(super) bytes: bytes::Bytes,
 }
 
-impl ArtifactChunk {
-    /// Returns the exact chunk byte count.
-    pub(super) fn byte_size(&self) -> u64 {
-        u64::try_from(self.bytes.len()).unwrap_or(u64::MAX)
-    }
-}
-
 impl Artifact {
     /// Returns the exact uploaded byte count.
     pub(super) fn byte_size(&self) -> u64 {

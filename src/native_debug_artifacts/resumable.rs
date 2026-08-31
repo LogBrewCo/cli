@@ -255,7 +255,7 @@ fn serialize_manifest(
                     .iter()
                     .map(|chunk| ManifestChunk {
                         sha256: chunk.sha256.as_str(),
-                        byte_size: chunk.byte_size(),
+                        byte_size: u64::try_from(chunk.bytes.len()).unwrap_or(u64::MAX),
                     })
                     .collect(),
             })
