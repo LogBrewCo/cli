@@ -104,6 +104,12 @@ pub enum CliError {
     /// Issue cursor fields are inconsistent.
     #[error("invalid issue cursor: {0}")]
     InvalidIssueCursor(String),
+    /// Metric cursor fields are inconsistent.
+    #[error("invalid metric cursor: {0}")]
+    InvalidMetricCursor(String),
+    /// Trace cursor fields are inconsistent.
+    #[error("invalid trace cursor: {0}")]
+    InvalidTraceCursor(String),
     /// Support-ticket cursor fields are inconsistent.
     #[error("invalid support cursor: {0}")]
     InvalidSupportCursor(String),
@@ -645,6 +651,8 @@ const fn cli_error_code(error: &CliError) -> &'static str {
         CliError::InvalidActionCursor(_) => "invalid_action_cursor",
         CliError::InvalidLogCursor(_) => "invalid_log_cursor",
         CliError::InvalidIssueCursor(_) => "invalid_issue_cursor",
+        CliError::InvalidMetricCursor(_) => "invalid_metric_cursor",
+        CliError::InvalidTraceCursor(_) => "invalid_trace_cursor",
         CliError::InvalidSupportCursor(_) => "invalid_support_cursor",
         CliError::UnknownSupportCategory => "unknown_support_category",
         CliError::InvalidSupportTicketId => "invalid_support_ticket_id",
@@ -680,6 +688,8 @@ const fn cli_error_next_step(error: &CliError) -> &'static str {
         | CliError::InvalidActionCursor(_)
         | CliError::InvalidLogCursor(_)
         | CliError::InvalidIssueCursor(_)
+        | CliError::InvalidMetricCursor(_)
+        | CliError::InvalidTraceCursor(_)
         | CliError::InvalidSupportCursor(_) => {
             "use --pagination cursor alone for the first page, then use --cursor-time and --cursor-id together from next_cursor"
         }

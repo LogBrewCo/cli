@@ -414,6 +414,8 @@ pub enum HelpTopic {
     ReadActions,
     /// Release reading command.
     ReadReleases,
+    /// Metric sample reading command.
+    ReadMetrics,
     /// Recent trace discovery command.
     ReadTraces,
     /// Trace reading command.
@@ -473,6 +475,7 @@ impl HelpTopic {
             Self::ReadIssues => "read_issues",
             Self::ReadActions => "read_actions",
             Self::ReadReleases => "read_releases",
+            Self::ReadMetrics => "read_metrics",
             Self::ReadTraces => "read_traces",
             Self::ReadTrace => "read_trace",
             Self::ReadIssue => "read_issue",
@@ -506,6 +509,8 @@ pub enum ReadTarget {
     Actions,
     /// Release summaries.
     Releases,
+    /// Metric samples.
+    Metrics,
     /// Recent trace summaries.
     Traces,
     /// One trace by ID.
@@ -518,10 +523,16 @@ impl ReadTarget {
     /// Returns whether this endpoint applies one canonical or aliased read filter.
     pub(crate) fn supports_filter(&self, flag: &str) -> bool {
         match flag {
-            "--name" | "--user" | "--distinct-id" => matches!(self, Self::Actions),
+            "--name" => matches!(self, Self::Actions | Self::Metrics),
+            "--user" | "--distinct-id" => matches!(self, Self::Actions),
             "--service" | "--service-name" | "--since" | "--limit" => matches!(
                 self,
-                Self::Logs | Self::Issues | Self::Actions | Self::Releases | Self::Traces
+                Self::Logs
+                    | Self::Issues
+                    | Self::Actions
+                    | Self::Releases
+                    | Self::Metrics
+                    | Self::Traces
             ),
             "--trace" | "--trace-id" | "--level" | "--severity" | "--search" => {
                 matches!(self, Self::Logs)
@@ -532,7 +543,10 @@ impl ReadTarget {
             "--status" => matches!(self, Self::Issues | Self::Traces),
             "--min-duration-ms" => matches!(self, Self::Traces),
             "--pagination" | "--cursor-time" | "--cursor-id" => {
-                matches!(self, Self::Logs | Self::Issues | Self::Actions)
+                matches!(
+                    self,
+                    Self::Logs | Self::Issues | Self::Actions | Self::Metrics | Self::Traces
+                )
             }
             _ => false,
         }
@@ -2438,19 +2452,22 @@ fn read_path(target: &ReadTarget, filters: &ReadPathFilters<'_>) -> String {
                 ("limit", filters.limit),
             ],
         ),
-        ReadTarget::Traces => path_with_query(
-            "/api/telemetry/traces",
+        ReadTarget::Metrics => path_with_query(
+            "/api/telemetry/metrics",
             &[
-                ("project_id", filters.project),
+                ("name", filters.name),
                 ("service_name", filters.service),
+                ("since", filters.since),
+                ("project_id", filters.project),
                 ("release", filters.release),
                 ("environment", filters.environment),
-                ("status", filters.status),
-                ("since", filters.since),
-                ("min_duration_ms", filters.min_duration_ms),
+                ("pagination", filters.pagination),
+                ("cursor_time", filters.cursor_time),
+                ("cursor_id", filters.cursor_id),
                 ("limit", filters.limit),
             ],
         ),
+        ReadTarget::Traces => trace_list_path(filters),
         ReadTarget::Trace(id) => path_with_query(
             &format!("/api/telemetry/traces/{}", encode_component(id)),
             &[
@@ -2461,6 +2478,26 @@ fn read_path(target: &ReadTarget, filters: &ReadPathFilters<'_>) -> String {
         ),
         ReadTarget::Issue(id) => format!("/api/telemetry/issues/{}", encode_component(id)),
     }
+}
+
+/// Builds the recent trace list path with its trace-specific cursor key.
+fn trace_list_path(filters: &ReadPathFilters<'_>) -> String {
+    path_with_query(
+        "/api/telemetry/traces",
+        &[
+            ("project_id", filters.project),
+            ("service_name", filters.service),
+            ("release", filters.release),
+            ("environment", filters.environment),
+            ("status", filters.status),
+            ("since", filters.since),
+            ("min_duration_ms", filters.min_duration_ms),
+            ("pagination", filters.pagination),
+            ("cursor_time", filters.cursor_time),
+            ("cursor_trace_id", filters.cursor_id),
+            ("limit", filters.limit),
+        ],
+    )
 }
 
 /// Builds an explain endpoint path.
