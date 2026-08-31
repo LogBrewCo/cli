@@ -48,7 +48,7 @@ pub(super) fn parse_literal_help(head: &str, args: &[String]) -> Result<Option<C
 pub(super) fn help_command(topic: HelpTopic, args: &[String]) -> Command {
     Command::Help {
         topic,
-        json: contains_json_flag(args),
+        json: args.iter().any(|arg| arg == "--json"),
     }
 }
 
@@ -819,9 +819,4 @@ fn read_resource_help_topic(resource: &str) -> Result<HelpTopic, CliError> {
         alias if is_read_filter_help_alias(alias) => Ok(HelpTopic::Read),
         other => Err(unknown_read_resource(other)),
     }
-}
-
-/// Returns whether args request JSON output.
-fn contains_json_flag(args: &[String]) -> bool {
-    args.iter().any(|arg| arg == "--json")
 }
