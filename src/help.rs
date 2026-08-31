@@ -22,6 +22,7 @@ pub const fn help_text(topic: HelpTopic) -> &'static str {
         HelpTopic::ReadIssues => READ_ISSUES_HELP,
         HelpTopic::ReadActions => READ_ACTIONS_HELP,
         HelpTopic::ReadReleases => READ_RELEASES_HELP,
+        HelpTopic::ReadMetrics => READ_METRICS_HELP,
         HelpTopic::ReadTraces => READ_TRACES_HELP,
         HelpTopic::ReadTrace => READ_TRACE_HELP,
         HelpTopic::ReadIssue => READ_ISSUE_HELP,
@@ -101,6 +102,7 @@ Usage:
                          [--json]
   logbrew events checkout_failed [--release <release>] [--environment production] [--json]
   logbrew read releases [--environment production] [--json]
+  logbrew read metrics [--name http.server.duration] [--since 24h] [--json]
   logbrew traces [--service <service_name>] [--status error] [--since 24h] [--json]
   logbrew read trace <trace_id> [--release <release>] [--environment production] [--json]
   logbrew trace <trace_id> [--release <release>] [--environment production] [--json]
@@ -400,6 +402,7 @@ Usage:
   logbrew read actions [filters] [--json]
   logbrew read releases [filters] [--json]
   logbrew read release [filters] [--json]
+  logbrew read metrics [filters] [--json]
   logbrew read traces [filters] [--json]
   logbrew read trace <trace_id> [--json]
   logbrew read issue <issue_id> [--json]
@@ -407,8 +410,8 @@ Usage:
 Reads historical observability data for agents and developers.
 Singular read aliases: logbrew read log, read release, show log, list issue, get release.
 Recency counts are limit shortcuts: logbrew last 10 logs or logbrew recent 5 issues.
-Use --environment <environment> with logs, issues, actions, releases, or traces.
-Use --service <service_name> with logs, issues, actions, or releases.
+Use --environment <environment> with logs, issues, actions, releases, metrics, or traces.
+Use --service <service_name> with logs, issues, actions, releases, metrics, or traces.
 Filter aliases: --service-name, --env, --project-id, --trace-id, and --distinct-id.";
 
 /// Read logs help text.
@@ -504,22 +507,53 @@ Since accepts positive compact durations such as 24h or 7d, or an RFC3339 timest
                                   2026-05-01T00:00:00Z.
 Limit must be a positive whole number.";
 
+/// Read metric samples help text.
+const READ_METRICS_HELP: &str = "\
+Usage:
+  logbrew read metrics [--name <metric_name>] [--project <project_id>] [--service \
+                                 <service_name>] [--release <release>] [--environment \
+                                 <environment>] [--since <24h|7d|RFC3339>] \
+                                 [--pagination cursor] [--limit 100] [--json]
+  logbrew read metrics [filters] --pagination cursor --cursor-time <RFC3339> --cursor-id <uuid> \
+                                 [--limit 100] [--json]
+
+Reads retained metric samples with their kind, value, unit, temporality, SDK, and exact trace/span \
+                                 links when captured.
+--service-name <service_name> is accepted as an alias for --service <service_name>.
+Since accepts positive compact durations such as 24h or 7d, or an RFC3339 timestamp such as \
+                                 2026-05-01T00:00:00Z.
+Cursor pagination preserves JSON as {metrics,next_cursor}; next_cursor is either {time,id} or null.
+Use --pagination cursor alone for the first page. Continue with --cursor-time and --cursor-id from \
+                                 next_cursor.
+Keep the same active filters and pagination limit on every continuation page.
+Use logbrew explain metric <name> --project <project_id> --since <window> for bounded semantics, \
+                                 prior-window comparison, coverage, and trace evidence.";
+
 /// Recent trace discovery help text.
 const READ_TRACES_HELP: &str = "\
 Usage:
   logbrew traces [--project <project_id>] [--service <service_name>] [--release <release>] \
                                [--environment <environment>] [--status <error|ok>] \
                                [--since <24h|7d|RFC3339>] \
-                               [--min-duration-ms <milliseconds>] [--limit 100] [--json]
+                               [--min-duration-ms <milliseconds>] [--pagination cursor] \
+                               [--limit 100] [--json]
+  logbrew traces [filters] --pagination cursor --cursor-time <RFC3339> --cursor-id <trace_id> \
+                               [--limit 100] [--json]
   logbrew spans [filters] [--json]
   logbrew latest traces [--limit 100] [--json]
 
-Lists recent distributed traces for incident investigation. JSON preserves the backend bare array.
+Lists recent distributed traces for incident investigation. JSON preserves the backend bare array \
+                               unless cursor mode returns {traces,next_cursor,naming_quality}.
 Status accepts error or ok, case-insensitively. Minimum duration is a non-negative whole number.
 Since accepts positive compact durations such as 24h or 7d, or an RFC3339 timestamp such as \
                                2026-05-01T00:00:00Z.
 The backend defaults limit to 100 and clamps it to 1..500.
 CLI aliases --project-id, --service-name, and --env still serialize only canonical API query keys.
+Use --pagination cursor alone for the first page. Continue with --cursor-time and --cursor-id from \
+                               next_cursor.
+Keep the same active filters and pagination limit on every continuation page.
+Cursor human output reports bounded page-level naming quality and stable SDK guidance without \
+                               exposing any extra trace names.
 Next: run logbrew trace <trace_id> or logbrew explain trace <trace_id>.";
 
 /// Read trace help text.

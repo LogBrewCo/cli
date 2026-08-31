@@ -1,6 +1,6 @@
 //! Human-readable API response rendering.
 
-use crate::ids::{is_support_context_id, is_support_ticket_id};
+use crate::ids::{is_support_context_id, is_support_ticket_id, is_uuid};
 use crate::{
     Command, ExplainTarget, ReadOptions, ReadTarget, RuntimeError, SetTarget, SupportTarget,
     SupportTicketListOptions,
@@ -12,9 +12,11 @@ const SPAN_SUMMARY_LIMIT: usize = 5;
 const SUPPORT_HUMAN_ROW_LIMIT: usize = 100;
 /// Maximum accepted support timestamp length, including a bounded fraction.
 const SUPPORT_TIMESTAMP_LIMIT: usize = 48;
+/// Optional validated note appended to one cursor page.
+type CursorPageNote = fn(&serde_json::Value, usize, bool) -> Option<String>;
 
-/// One validated optional support field.
-enum OptionalSupportField {
+/// One validated optional display field.
+enum OptionalDisplayField {
     /// Field is absent or null.
     Missing,
     /// Field contains bounded display text.
@@ -78,10 +80,9 @@ fn cursor_response_title(command: &Command) -> Option<&'static str> {
             ReadTarget::Logs => Some("Logs"),
             ReadTarget::Actions => Some("Actions"),
             ReadTarget::Issues => Some("Issues"),
-            ReadTarget::Releases
-            | ReadTarget::Traces
-            | ReadTarget::Trace(_)
-            | ReadTarget::Issue(_) => None,
+            ReadTarget::Metrics => Some("Metrics"),
+            ReadTarget::Traces => Some("Traces"),
+            ReadTarget::Releases | ReadTarget::Trace(_) | ReadTarget::Issue(_) => None,
         },
         Command::Support {
             target: SupportTarget::List(options),
@@ -356,20 +357,63 @@ fn read_summary(
     value: &serde_json::Value,
 ) -> Option<String> {
     match target {
-        ReadTarget::Logs if options.pagination.as_deref() == Some("cursor") => {
-            Some(cursor_list_summary("Logs", "log", "logs", value, log_line))
-        }
+        ReadTarget::Logs if options.pagination.as_deref() == Some("cursor") => Some(
+            cursor_list_summary("Logs", "log", "logs", "id", value, log_line, None),
+        ),
         ReadTarget::Logs => list_summary("Logs", list_items(value, "logs")?, log_line),
-        ReadTarget::Issues if options.pagination.as_deref() == Some("cursor") => Some(
-            cursor_list_summary("Issues", "issue", "issues", value, issue_cursor_line),
-        ),
+        ReadTarget::Issues if options.pagination.as_deref() == Some("cursor") => {
+            Some(cursor_list_summary(
+                "Issues",
+                "issue",
+                "issues",
+                "id",
+                value,
+                issue_cursor_line,
+                None,
+            ))
+        }
         ReadTarget::Issues => list_summary("Issues", list_items(value, "issues")?, issue_line),
-        ReadTarget::Actions if options.pagination.as_deref() == Some("cursor") => Some(
-            cursor_list_summary("Actions", "action", "actions", value, action_line),
-        ),
+        ReadTarget::Actions if options.pagination.as_deref() == Some("cursor") => {
+            Some(cursor_list_summary(
+                "Actions",
+                "action",
+                "actions",
+                "id",
+                value,
+                action_line,
+                None,
+            ))
+        }
         ReadTarget::Actions => list_summary("Actions", list_items(value, "actions")?, action_line),
         ReadTarget::Releases => {
             list_summary("Releases", list_items(value, "releases")?, release_line)
+        }
+        ReadTarget::Metrics if options.pagination.as_deref() == Some("cursor") => {
+            Some(cursor_list_summary(
+                "Metrics",
+                "metric",
+                "metrics",
+                "id",
+                value,
+                metric_line,
+                None,
+            ))
+        }
+        ReadTarget::Metrics => Some(
+            list_items(value, "metrics")
+                .and_then(|items| list_summary("Metrics", items, metric_line))
+                .unwrap_or_else(|| invalid_list_message("Metrics")),
+        ),
+        ReadTarget::Traces if options.pagination.as_deref() == Some("cursor") => {
+            Some(cursor_list_summary(
+                "Traces",
+                "trace",
+                "traces",
+                "trace_id",
+                value,
+                trace_cursor_line,
+                Some(trace_naming_quality_line),
+            ))
         }
         ReadTarget::Traces => trace_list_summary(list_items(value, "traces")?),
         ReadTarget::Trace(id) => trace_summary(value, id.as_str()),
@@ -538,14 +582,14 @@ fn support_detail_summary(value: &serde_json::Value) -> Option<String> {
     let mut output = format!(
         "Support ticket {ticket_id} {status}\nCategory: {category}\nTitle: {title}\nCreated: {created_at}\n"
     );
-    if let OptionalSupportField::Present(project_id) =
-        optional_support_field(value, "project_id", 64)?
+    if let OptionalDisplayField::Present(project_id) =
+        optional_display_field(value, "project_id", 64)?
     {
         output.push_str("Project: ");
         output.push_str(project_id.as_str());
         output.push('\n');
     }
-    if let OptionalSupportField::Present(scope) = support_scope_suffix(value)? {
+    if let OptionalDisplayField::Present(scope) = support_scope_suffix(value)? {
         output.push_str("Scope: ");
         output.push_str(scope.as_str());
         output.push('\n');
@@ -582,7 +626,7 @@ fn support_ticket_line(value: &serde_json::Value) -> Option<String> {
     let mut output = format!("{ticket_id} {status} {category} {title} created={created_at}");
     append_optional_support_field(&mut output, "project", value, "project_id", 64)?;
     append_optional_support_field(&mut output, "source", value, "source", 32)?;
-    if let OptionalSupportField::Present(scope) = support_scope_suffix(value)? {
+    if let OptionalDisplayField::Present(scope) = support_scope_suffix(value)? {
         output.push(' ');
         output.push_str(scope.as_str());
     }
@@ -590,14 +634,14 @@ fn support_ticket_line(value: &serde_json::Value) -> Option<String> {
 }
 
 /// Builds release/environment scope only when at least one field is present.
-fn support_scope_suffix(value: &serde_json::Value) -> Option<OptionalSupportField> {
-    let release = optional_support_field(value, "release", 120)?;
-    let environment = optional_support_field(value, "environment", 120)?;
+fn support_scope_suffix(value: &serde_json::Value) -> Option<OptionalDisplayField> {
+    let release = optional_display_field(value, "release", 120)?;
+    let environment = optional_display_field(value, "environment", 120)?;
     match (release, environment) {
-        (OptionalSupportField::Missing, OptionalSupportField::Missing) => {
-            Some(OptionalSupportField::Missing)
+        (OptionalDisplayField::Missing, OptionalDisplayField::Missing) => {
+            Some(OptionalDisplayField::Missing)
         }
-        (release, environment) => Some(OptionalSupportField::Present(format!(
+        (release, environment) => Some(OptionalDisplayField::Present(format!(
             "[{} / {}]",
             support_field_or(&release, "unknown release"),
             support_field_or(&environment, "unknown environment")
@@ -606,10 +650,10 @@ fn support_scope_suffix(value: &serde_json::Value) -> Option<OptionalSupportFiel
 }
 
 /// Returns the present support field or a fixed fallback.
-const fn support_field_or<'a>(field: &'a OptionalSupportField, fallback: &'a str) -> &'a str {
+const fn support_field_or<'a>(field: &'a OptionalDisplayField, fallback: &'a str) -> &'a str {
     match field {
-        OptionalSupportField::Missing => fallback,
-        OptionalSupportField::Present(value) => value.as_str(),
+        OptionalDisplayField::Missing => fallback,
+        OptionalDisplayField::Present(value) => value.as_str(),
     }
 }
 
@@ -628,15 +672,15 @@ fn bounded_support_timestamp(value: &str) -> Option<String> {
 }
 
 /// Returns one optional bounded, control-safe support field.
-fn optional_support_field(
+fn optional_display_field(
     value: &serde_json::Value,
     key: &str,
     limit: usize,
-) -> Option<OptionalSupportField> {
+) -> Option<OptionalDisplayField> {
     match value.get(key) {
-        None | Some(serde_json::Value::Null) => Some(OptionalSupportField::Missing),
+        None | Some(serde_json::Value::Null) => Some(OptionalDisplayField::Missing),
         Some(serde_json::Value::String(value)) => {
-            bounded_display_text(value.as_str(), limit).map(OptionalSupportField::Present)
+            bounded_display_text(value.as_str(), limit).map(OptionalDisplayField::Present)
         }
         Some(_) => None,
     }
@@ -650,7 +694,7 @@ fn append_optional_support_field(
     key: &str,
     limit: usize,
 ) -> Option<()> {
-    if let OptionalSupportField::Present(field) = optional_support_field(value, key, limit)? {
+    if let OptionalDisplayField::Present(field) = optional_display_field(value, key, limit)? {
         output.push(' ');
         output.push_str(label);
         output.push('=');
@@ -734,8 +778,10 @@ fn cursor_list_summary(
     title: &str,
     history_name: &str,
     wrapper_key: &str,
+    cursor_id_key: &str,
     value: &serde_json::Value,
     line_builder: fn(&serde_json::Value) -> Option<String>,
+    page_note: Option<CursorPageNote>,
 ) -> String {
     let Some(items) = value.get(wrapper_key).and_then(serde_json::Value::as_array) else {
         return invalid_cursor_message(title);
@@ -749,10 +795,10 @@ fn cursor_list_summary(
         let Some(time) = field(next_cursor, "time") else {
             return invalid_cursor_message(title);
         };
-        let Some(id) = field(next_cursor, "id") else {
+        let Some(id) = field(next_cursor, cursor_id_key) else {
             return invalid_cursor_message(title);
         };
-        if !is_rfc3339_utc(time) || !is_uuid(id) {
+        if !is_rfc3339_utc(time) || !is_cursor_id(cursor_id_key, id) {
             return invalid_cursor_message(title);
         }
         Some((time, id))
@@ -772,6 +818,12 @@ fn cursor_list_summary(
             output.push('\n');
         }
     }
+    if let Some(build_note) = page_note {
+        let Some(note) = build_note(value, items.len(), cursor.is_some()) else {
+            return invalid_cursor_message(title);
+        };
+        output.push_str(note.as_str());
+    }
 
     let Some((time, id)) = cursor else {
         output.push_str(format!("End of {history_name} history.\n").as_str());
@@ -788,10 +840,30 @@ fn cursor_list_summary(
     output
 }
 
+/// Validates the endpoint-specific cursor identifier.
+fn is_cursor_id(key: &str, value: &str) -> bool {
+    match key {
+        "id" => is_uuid(value),
+        "trace_id" => {
+            value.len() == 32
+                && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+                && value.bytes().any(|byte| byte != b'0')
+        }
+        _ => false,
+    }
+}
+
 /// Builds a value-safe recovery when a cursor response violates its public shape.
 fn invalid_cursor_message(title: &str) -> String {
     format!(
         "{title} response could not be rendered safely.\nNext: retry the same command with --json and inspect next_cursor.\n",
+    )
+}
+
+/// Builds a value-safe recovery for a malformed non-cursor list response.
+fn invalid_list_message(title: &str) -> String {
+    format!(
+        "{title} response could not be rendered safely.\nNext: retry the same command with --json and inspect the public response shape.\n",
     )
 }
 
@@ -877,16 +949,6 @@ const fn days_in_month(year: u32, month: u32) -> u32 {
 /// Reports whether a Gregorian year has a leap day.
 const fn is_leap_year(year: u32) -> bool {
     year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400))
-}
-
-/// Checks the canonical hyphenated UUID shape returned by cursor endpoints.
-fn is_uuid(value: &str) -> bool {
-    let bytes = value.as_bytes();
-    bytes.len() == 36
-        && bytes.iter().enumerate().all(|(index, byte)| match index {
-            8 | 13 | 18 | 23 => *byte == b'-',
-            _ => byte.is_ascii_hexdigit(),
-        })
 }
 
 /// Formats one log list item.
@@ -975,6 +1037,233 @@ fn release_line(value: &serde_json::Value) -> Option<String> {
     output
         .push_str(format!(" logs={logs} issues={issues} spans={spans} actions={actions}").as_str());
     Some(output)
+}
+
+/// Formats one metric without rendering attributes or caller payloads.
+fn metric_line(value: &serde_json::Value) -> Option<String> {
+    let id = field(value, "id")?;
+    let project_id = field(value, "project_id")?;
+    let name = bounded_display_text(field(value, "name")?, 160)?;
+    let kind = bounded_display_text(field(value, "kind")?, 32)?;
+    let number = value.get("value")?.as_number()?;
+    let occurred_at = field(value, "occurred_at")?;
+    let service = bounded_display_text(field(value, "service_name")?, 120)?;
+    let sdk_name = bounded_display_text(field(value, "sdk_name")?, 120)?;
+    let sdk_version = bounded_display_text(field(value, "sdk_version")?, 64)?;
+    let release = bounded_display_text(field(value, "release")?, 120)?;
+    let environment = bounded_display_text(field(value, "environment")?, 120)?;
+    if !is_uuid(id)
+        || !is_uuid(project_id)
+        || bounded_display_text(field(value, "event_id")?, 160).is_none()
+        || !is_rfc3339_utc(occurred_at)
+        || value.get("attributes").is_none()
+    {
+        return None;
+    }
+    let unit = optional_display_field(value, "unit", 64)?;
+    let temporality = optional_display_field(value, "temporality", 32)?;
+    let trace = optional_w3c_field(value, "trace_id", 32)?;
+    let span = optional_w3c_field(value, "span_id", 16)?;
+    let mut output = format!("{name} {kind} value={number}");
+    append_optional_value(&mut output, "unit", &unit);
+    append_optional_value(&mut output, "temporality", &temporality);
+    output.push_str(" service=");
+    output.push_str(service.as_str());
+    append_optional_value(&mut output, "trace", &trace);
+    append_optional_value(&mut output, "span", &span);
+    output.push_str(" occurred=");
+    output.push_str(occurred_at);
+    output.push_str(" sdk=");
+    output.push_str(sdk_name.as_str());
+    output.push('@');
+    output.push_str(sdk_version.as_str());
+    output.push_str(format!(" [{release} / {environment}]").as_str());
+    Some(output)
+}
+
+/// Returns one optional exact W3C identifier.
+fn optional_w3c_field(
+    value: &serde_json::Value,
+    key: &str,
+    width: usize,
+) -> Option<OptionalDisplayField> {
+    let field = optional_display_field(value, key, width)?;
+    match &field {
+        OptionalDisplayField::Missing => Some(field),
+        OptionalDisplayField::Present(id)
+            if id.len() == width
+                && id.bytes().all(|byte| byte.is_ascii_hexdigit())
+                && id.bytes().any(|byte| byte != b'0') =>
+        {
+            Some(field)
+        }
+        OptionalDisplayField::Present(_) => None,
+    }
+}
+
+/// Appends one validated optional display value.
+fn append_optional_value(output: &mut String, label: &str, field: &OptionalDisplayField) {
+    if let OptionalDisplayField::Present(value) = field {
+        output.push(' ');
+        output.push_str(label);
+        output.push('=');
+        output.push_str(value.as_str());
+    }
+}
+
+/// Formats one cursor trace only after validating its bounded public shape.
+fn trace_cursor_line(value: &serde_json::Value) -> Option<String> {
+    let trace_id = field(value, "trace_id")?;
+    let name = bounded_display_text(field(value, "root_span_name")?, 160)?;
+    let service = bounded_display_text(field(value, "root_service_name")?, 120)?;
+    let operation = bounded_display_text(field(value, "root_operation")?, 120)?;
+    let spans = value.get("span_count")?.as_u64()?;
+    let errors = value.get("error_span_count")?.as_u64()?;
+    let services = value.get("service_count")?.as_u64()?;
+    let duration = value.get("duration_ms")?.as_i64()?;
+    let started = field(value, "started_at")?;
+    let next_action = value.get("next_action")?;
+    if !is_cursor_id("trace_id", trace_id)
+        || errors > spans
+        || services > spans
+        || duration < 0
+        || !is_rfc3339_utc(started)
+        || !exact_next_action(next_action, "inspect_trace", "trace_summary")
+        || !valid_trace_arrays(value, services, service.as_str())
+    {
+        return None;
+    }
+    Some(format!(
+        "{trace_id} {} {name} service={service} operation={operation} spans={spans} errors={errors} services={services} duration={duration}ms started={started}",
+        if errors > 0 { "error" } else { "ok" }
+    ))
+}
+
+/// Validates trace scope arrays without rendering extra values.
+fn valid_trace_arrays(value: &serde_json::Value, service_count: u64, root_service: &str) -> bool {
+    let Some(projects) = value
+        .get("project_ids")
+        .and_then(serde_json::Value::as_array)
+    else {
+        return false;
+    };
+    let Some(services) = value.get("services").and_then(serde_json::Value::as_array) else {
+        return false;
+    };
+    !projects.is_empty()
+        && projects
+            .iter()
+            .all(|item| item.as_str().is_some_and(is_uuid))
+        && usize::try_from(service_count).ok() == Some(services.len())
+        && services
+            .iter()
+            .any(|item| item.as_str() == Some(root_service))
+        && ["services", "releases", "environments"]
+            .into_iter()
+            .all(|key| {
+                value
+                    .get(key)
+                    .and_then(serde_json::Value::as_array)
+                    .is_some_and(|items| {
+                        items.iter().enumerate().all(|(index, item)| {
+                            item.as_str().is_some_and(|text| {
+                                !text.is_empty()
+                                    && !text.chars().any(char::is_control)
+                                    && !items[..index]
+                                        .iter()
+                                        .any(|prior| prior.as_str() == Some(text))
+                            })
+                        })
+                    })
+            })
+}
+
+/// Renders a validated page-level trace naming receipt.
+fn trace_naming_quality_line(
+    value: &serde_json::Value,
+    item_count: usize,
+    has_next: bool,
+) -> Option<String> {
+    let quality = value.get("naming_quality")?;
+    if !has_exact_object_keys(
+        quality,
+        &[
+            "evaluated_traces",
+            "meaningful_name_traces",
+            "generic_name_traces",
+            "unmatched_route_traces",
+            "generic_operation_traces",
+            "truncated",
+            "next_action",
+        ],
+    ) {
+        return None;
+    }
+    let evaluated = quality.get("evaluated_traces")?.as_u64()?;
+    let meaningful = quality.get("meaningful_name_traces")?.as_u64()?;
+    let generic = quality.get("generic_name_traces")?.as_u64()?;
+    let unmatched = quality.get("unmatched_route_traces")?.as_u64()?;
+    let generic_operations = quality.get("generic_operation_traces")?.as_u64()?;
+    let truncated = quality.get("truncated")?.as_bool()?;
+    let (actual_generic, actual_unmatched, actual_generic_operations) = trace_name_quality(value)?;
+    let attention = generic > 0 || unmatched > 0 || generic_operations > 0;
+    let action = quality.get("next_action")?;
+    if usize::try_from(evaluated).ok()? != item_count
+        || meaningful.checked_add(generic)?.checked_add(unmatched)? != evaluated
+        || generic_operations > evaluated
+        || (generic, unmatched, generic_operations)
+            != (actual_generic, actual_unmatched, actual_generic_operations)
+        || truncated != has_next
+        || attention == action.is_null()
+        || attention && !exact_next_action(action, "improve_trace_naming", "sdk_configuration")
+    {
+        return None;
+    }
+    let mut output = format!(
+        "Naming quality: evaluated={evaluated} meaningful={meaningful} generic={generic} unmatched={unmatched} generic_operations={generic_operations} truncated={truncated}\n"
+    );
+    if attention {
+        output.push_str("Naming action: improve_trace_naming target=sdk_configuration\n");
+    }
+    Some(output)
+}
+
+/// Recomputes the public trace-name categories from exactly the returned rows.
+fn trace_name_quality(value: &serde_json::Value) -> Option<(u64, u64, u64)> {
+    let mut counts = (0_u64, 0_u64, 0_u64);
+    for trace in value.get("traces")?.as_array()? {
+        let name = field(trace, "root_span_name")?.trim();
+        let operation = field(trace, "root_operation")?.trim();
+        let capture_evidence = operation.starts_with("logbrew.");
+        if name
+            .split(|byte: char| !byte.is_ascii_alphanumeric())
+            .any(|token| token.eq_ignore_ascii_case("unmatched"))
+        {
+            counts.1 = counts.1.checked_add(1)?;
+        } else if capture_evidence
+            || name.eq_ignore_ascii_case(operation)
+            || ["span", "operation", "request", "task", "unknown", "unnamed"]
+                .iter()
+                .any(|value| name.eq_ignore_ascii_case(value))
+        {
+            counts.0 = counts.0.checked_add(1)?;
+        }
+        if capture_evidence
+            || ["sdk.span", "span", "custom", "unknown"]
+                .iter()
+                .any(|value| operation.eq_ignore_ascii_case(value))
+        {
+            counts.2 = counts.2.checked_add(1)?;
+        }
+    }
+    Some(counts)
+}
+
+/// Checks one exact stable next-action pair.
+fn exact_next_action(value: &serde_json::Value, code: &str, target: &str) -> bool {
+    has_exact_object_keys(value, &["code", "target"])
+        && field(value, "code") == Some(code)
+        && field(value, "target") == Some(target)
 }
 
 /// Builds a concise recent-trace list with a detail-read next step.

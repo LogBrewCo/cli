@@ -43,7 +43,7 @@ use crate::{
 const HELP_NEXT_STEP: &str = "run logbrew --help";
 /// Valid resources for historical reads.
 const READ_RESOURCE_NEXT_STEP: &str =
-    "choose one of logs, issues, actions, releases, traces, trace, issue";
+    "choose one of logs, issues, actions, releases, metrics, traces, trace, issue";
 /// Recovery hint for users who type plural trace resources.
 const READ_TRACE_ALIAS_NEXT_STEP: &str =
     "use singular trace with an id: logbrew read trace <trace_id>";
@@ -64,6 +64,8 @@ const READ_ISSUES_NEXT_STEP: &str = "run logbrew read issues --help";
 const READ_ACTIONS_NEXT_STEP: &str = "run logbrew read actions --help";
 /// Help for release list reads.
 const READ_RELEASES_NEXT_STEP: &str = "run logbrew read releases --help";
+/// Help for metric sample reads.
+const READ_METRICS_NEXT_STEP: &str = "run logbrew read metrics --help";
 /// Help for recent trace discovery.
 const READ_TRACES_NEXT_STEP: &str = "run logbrew read traces --help";
 /// Help for backend-owned project setup discovery.
@@ -189,7 +191,7 @@ fn parse_values(values: &[String]) -> Result<Command, CliError> {
         }
         "traces" | "spans" => parse_read_resource("traces", tail),
         "logs" | "issues" | "errors" | "error" | "exceptions" | "exception" | "actions"
-        | "events" | "event" | "action" | "releases" | "trace" | "issue" => {
+        | "events" | "event" | "action" | "releases" | "metrics" | "metric" | "trace" | "issue" => {
             parse_read_resource(head, tail)
         }
         "span" if has_position_candidate(tail) => parse_read_resource("trace", tail),
@@ -1479,6 +1481,8 @@ fn normalize_read_verb_resource<'a>(verb: &str, resource: &'a str) -> &'a str {
         ("list", "issue") => "issues",
         ("list" | "show" | "get", "release") => "releases",
         (alias, "release") if is_recency_read_verb(alias) => "releases",
+        ("list" | "show" | "get", "metric") => "metrics",
+        (alias, "metric") if is_recency_read_verb(alias) => "metrics",
         _ => resource,
     }
 }
@@ -1576,6 +1580,12 @@ fn parse_read_resource(resource: &str, rest: &[String]) -> Result<Command, CliEr
             rest,
             "read releases",
             READ_RELEASES_NEXT_STEP,
+        )?,
+        "metrics" | "metric" => parse_list_read(
+            ReadTarget::Metrics,
+            rest,
+            "read metrics",
+            READ_METRICS_NEXT_STEP,
         )?,
         "traces" | "spans" if has_trace_id_candidate(rest) => {
             return parse_trace_detail_or_explain(rest);
@@ -2005,6 +2015,7 @@ fn validate_read_filters(target: &ReadTarget, filters: &ReadOptions) -> Result<(
         ReadTarget::Issues => ("read issues", READ_ISSUES_NEXT_STEP),
         ReadTarget::Actions => ("read actions", READ_ACTIONS_NEXT_STEP),
         ReadTarget::Releases => ("read releases", READ_RELEASES_NEXT_STEP),
+        ReadTarget::Metrics => ("read metrics", READ_METRICS_NEXT_STEP),
         ReadTarget::Traces => ("read traces", READ_TRACES_NEXT_STEP),
         ReadTarget::Trace(_) => ("read trace", READ_TRACE_NEXT_STEP),
         ReadTarget::Issue(_) => ("read issue", READ_ISSUE_NEXT_STEP),
@@ -2020,8 +2031,9 @@ fn validate_read_filters(target: &ReadTarget, filters: &ReadOptions) -> Result<(
         ReadTarget::Logs => validate_read_cursor(filters, CliError::InvalidLogCursor)?,
         ReadTarget::Actions => validate_read_cursor(filters, CliError::InvalidActionCursor)?,
         ReadTarget::Issues => validate_read_cursor(filters, CliError::InvalidIssueCursor)?,
-        ReadTarget::Releases | ReadTarget::Traces | ReadTarget::Trace(_) | ReadTarget::Issue(_) => {
-        }
+        ReadTarget::Metrics => validate_read_cursor(filters, CliError::InvalidMetricCursor)?,
+        ReadTarget::Traces => validate_read_cursor(filters, CliError::InvalidTraceCursor)?,
+        ReadTarget::Releases | ReadTarget::Trace(_) | ReadTarget::Issue(_) => {}
     }
     Ok(())
 }

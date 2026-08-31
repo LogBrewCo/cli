@@ -116,6 +116,9 @@ pub(super) fn help_topic(head: &str, tail: &[String]) -> Result<HelpTopic, CliEr
         "releases" => {
             help_topic_without_positionals(HelpTopic::ReadReleases, positionals.as_slice())
         }
+        "metrics" | "metric" => {
+            help_topic_without_positionals(HelpTopic::ReadMetrics, positionals.as_slice())
+        }
         "trace" | "span" => trace_help_topic(positionals.as_slice()),
         "traces" | "spans" => trace_collection_help_topic(positionals.as_slice()),
         "issue" => singular_issue_help_topic(positionals.as_slice()),
@@ -582,6 +585,9 @@ fn explicit_help_topic(args: &[&str]) -> Result<HelpTopic, CliError> {
         }
         ["actions" | "action" | "events" | "event", tail @ ..] => action_alias_help_topic(tail),
         ["releases", tail @ ..] => help_topic_without_positionals(HelpTopic::ReadReleases, tail),
+        ["metrics" | "metric", tail @ ..] => {
+            help_topic_without_positionals(HelpTopic::ReadMetrics, tail)
+        }
         ["trace" | "span", tail @ ..] => trace_help_topic(tail),
         ["traces" | "spans", tail @ ..] => trace_collection_help_topic(tail),
         ["issue", tail @ ..] => singular_issue_help_topic(tail),
@@ -650,6 +656,7 @@ fn read_verb_help_topic(verb: &str, args: &[&str]) -> Result<HelpTopic, CliError
             ["log"] => return Ok(HelpTopic::ReadLogs),
             ["issue"] => return Ok(HelpTopic::ReadIssues),
             ["release"] => return Ok(HelpTopic::ReadReleases),
+            ["metric"] => return Ok(HelpTopic::ReadMetrics),
             _ => {}
         }
     }
@@ -804,6 +811,7 @@ fn read_resource_help_topic(resource: &str) -> Result<HelpTopic, CliError> {
         "issues" | "errors" | "error" | "exceptions" | "exception" => Ok(HelpTopic::ReadIssues),
         "actions" | "action" | "events" | "event" => Ok(HelpTopic::ReadActions),
         "releases" | "release" => Ok(HelpTopic::ReadReleases),
+        "metrics" | "metric" => Ok(HelpTopic::ReadMetrics),
         "trace" | "span" => Ok(HelpTopic::ReadTrace),
         "traces" | "spans" => Ok(HelpTopic::ReadTraces),
         "issue" => Ok(HelpTopic::ReadIssue),

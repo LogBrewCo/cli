@@ -254,9 +254,9 @@ fn rejects_common_human_parse_errors_with_exact_recovery() {
 fn rejects_unknown_resources_with_command_specific_next_steps() {
     for (args, message, next) in [
         (
-            &["logbrew", "read", "metrics", "--json"][..],
-            "unknown resource: metrics",
-            "choose one of logs, issues, actions, releases, traces, trace, issue",
+            &["logbrew", "read", "profiles", "--json"][..],
+            "unknown resource: profiles",
+            "choose one of logs, issues, actions, releases, metrics, traces, trace, issue",
         ),
         (
             &["logbrew", "watch", "traces", "--json"][..],
@@ -540,7 +540,7 @@ fn rejects_missing_resources_with_command_specific_next_steps() {
     for (args, next) in [
         (
             &["logbrew", "read", "--json"][..],
-            "choose one of logs, issues, actions, releases, traces, trace, issue",
+            "choose one of logs, issues, actions, releases, metrics, traces, trace, issue",
         ),
         (
             &["logbrew", "explain", "--json"][..],

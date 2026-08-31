@@ -403,7 +403,7 @@ fn parses_common_help_terms_as_real_user_topics() {
         assert_help(args, topic, json);
     }
     assert!(help::help_text(HelpTopic::Read).contains(
-        "Use --environment <environment> with logs, issues, actions, releases, or traces."
+        "Use --environment <environment> with logs, issues, actions, releases, metrics, or traces."
     ));
     assert!(help::help_text(HelpTopic::Read).contains(
         "Filter aliases: --service-name, --env, --project-id, --trace-id, and --distinct-id."
@@ -1041,6 +1041,7 @@ fn collection_help_documents_incident_scope_forms() {
         HelpTopic::ReadIssues,
         HelpTopic::ReadActions,
         HelpTopic::ReadReleases,
+        HelpTopic::ReadMetrics,
     ] {
         let text = help::help_text(topic);
 
@@ -1048,7 +1049,11 @@ fn collection_help_documents_incident_scope_forms() {
         assert!(text.contains("--service-name <service_name>"));
     }
 
-    for topic in [HelpTopic::ReadIssues, HelpTopic::ReadReleases] {
+    for topic in [
+        HelpTopic::ReadIssues,
+        HelpTopic::ReadReleases,
+        HelpTopic::ReadMetrics,
+    ] {
         let text = help::help_text(topic);
 
         assert!(text.contains("--since <24h|7d|RFC3339>"));

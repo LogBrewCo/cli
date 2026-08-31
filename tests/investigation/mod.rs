@@ -1,11 +1,9 @@
 //! Public CLI investigation contracts.
 
-mod action_cursor_pagination;
 mod api_rendering;
+mod cursor_pagination;
 mod explain_contracts;
-mod issue_cursor_pagination;
 mod issue_investigation;
-mod log_cursor_pagination;
 #[path = "../integration/mock_http.rs"]
 mod mock_http;
 mod project_create;
@@ -84,7 +82,7 @@ fn assert_cursor_flag_errors(resource: &str, time: &str, id: &str, code: &str) {
     );
 }
 
-fn assert_cursor_help(resource: &str) {
+fn assert_cursor_help(resource: &str, cursor_id: &str) {
     let command =
         logbrew_cli::parse_command(["logbrew", resource, "--help"]).expect("cursor help parses");
     let logbrew_cli::Command::Help { topic, .. } = command else {
@@ -94,7 +92,7 @@ fn assert_cursor_help(resource: &str) {
     for expected in [
         "--pagination cursor",
         "--cursor-time <RFC3339>",
-        "--cursor-id <uuid>",
+        cursor_id,
         "next_cursor",
         "Keep the same active filters",
     ] {
