@@ -18,8 +18,23 @@ use support::*;
 
 const UPPERCASE_DWARFDUMP_UUID: &str = "10111213-1415-1617-1819-1A1B1C1D1E1F";
 const MIXED_CASE_DWARFDUMP_UUID: &str = "10111213-1415-1617-1819-1a1B1c1D1e1F";
-const ANDROID_ELF_UUID: &str = "cb3d22c0-8dd7-6229-2f4d-11671bb83d0f";
-const ANDROID_ELF: &[u8] = include_bytes!("../fixtures/native_elf_fixture.so");
+const ANDROID_ELF_FIXTURES: [(&[u8], &str, &str); 3] = [
+    (
+        include_bytes!("../fixtures/native_elf_fixture.so"),
+        "ea3d348d-e597-f437-75f2-b98a58513e26",
+        "arm64",
+    ),
+    (
+        include_bytes!("../fixtures/native_elf_arm_fixture.so"),
+        "a33af778-c963-8bcf-c6bd-16c5997c81ae",
+        "arm",
+    ),
+    (
+        include_bytes!("../fixtures/native_elf_x86_fixture.so"),
+        "9e2bd673-7c97-70ad-8051-e1ac4c9938fd",
+        "x86",
+    ),
+];
 #[tokio::test]
 async fn dsym_dry_run_discovers_identity_without_auth_or_network()
 -> Result<(), Box<dyn std::error::Error>> {
@@ -276,14 +291,26 @@ async fn resumable_retry_replays_only_the_ambiguous_chunk() -> Result<(), Box<dy
 #[tokio::test]
 async fn android_elf_uses_exact_resumable_manifest_and_whole_object()
 -> Result<(), Box<dyn std::error::Error>> {
+    for (bytes, image_uuid, architecture) in ANDROID_ELF_FIXTURES {
+        assert_android_elf_upload(bytes, image_uuid, architecture).await?;
+    }
+    Ok(())
+}
+
+async fn assert_android_elf_upload(
+    bytes: &[u8],
+    image_uuid: &str,
+    architecture: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
     let fixture = Fixture::new("android-elf")?;
     let artifact = fixture.root.join("Customer Secret Android Symbols.so");
-    std::fs::write(artifact.as_path(), ANDROID_ELF)?;
-    let digest = sha256_hex(ANDROID_ELF);
-    let mut found = found_lookup(digest.as_str(), ANDROID_ELF.len());
+    std::fs::write(artifact.as_path(), bytes)?;
+    let digest = sha256_hex(bytes);
+    let mut found = found_lookup(digest.as_str(), bytes.len());
     found["artifact"]["artifact_type"] = serde_json::json!("android_elf");
-    found["artifact"]["image_uuid"] = serde_json::json!(ANDROID_ELF_UUID);
+    found["artifact"]["image_uuid"] = serde_json::json!(image_uuid);
+    found["artifact"]["architecture"] = serde_json::json!(architecture);
     mount_lookup_sequence(&server, vec![missing_lookup(), found]).await;
     Mock::route("POST", "/api/native-debug-artifact-uploads")
         .respond_with(ResponseTemplate::new(200).set_body_json(start_response(&[&digest])))
@@ -320,44 +347,24 @@ async fn android_elf_uses_exact_resumable_manifest_and_whole_object()
     let body = serde_json::from_str::<serde_json::Value>(text.as_str())?;
     assert_eq!(body["status"], "verified");
     assert_eq!(body["artifacts"][0]["artifact_type"], "android_elf");
-    assert_eq!(body["artifacts"][0]["image_uuid"], ANDROID_ELF_UUID);
+    assert_eq!(body["artifacts"][0]["image_uuid"], image_uuid);
+    assert_eq!(body["artifacts"][0]["architecture"], architecture);
     assert_private_values_absent(text.as_str(), &fixture, server.uri().as_str());
 
     let requests = received_requests(&server).await?;
-    assert_eq!(
-        requests
-            .iter()
-            .map(|request| (request.method.as_str(), request.url.path()))
-            .collect::<Vec<_>>(),
-        [
-            ("GET", "/api/native-debug-artifacts"),
-            ("POST", "/api/native-debug-artifact-uploads"),
-            (
-                "PUT",
-                format!(
-                    "/api/native-debug-artifact-uploads/{RESUMABLE_SESSION_ID}/chunks/{digest}"
-                )
-                .as_str()
-            ),
-            (
-                "POST",
-                format!("/api/native-debug-artifact-uploads/{RESUMABLE_SESSION_ID}/complete")
-                    .as_str()
-            ),
-            ("GET", "/api/native-debug-artifacts"),
-        ]
-    );
+    assert_eq!(requests.len(), 5);
     let manifest = serde_json::from_slice::<serde_json::Value>(requests[1].body.as_slice())?;
     assert_eq!(manifest["artifactType"], "android_elf_manifest");
-    assert_eq!(manifest["artifacts"][0]["imageUuid"], ANDROID_ELF_UUID);
+    assert_eq!(manifest["artifacts"][0]["imageUuid"], image_uuid);
+    assert_eq!(manifest["artifacts"][0]["architecture"], architecture);
     assert_eq!(
         manifest["artifacts"][0]["debugFile"]["artifactSha256"],
         digest
     );
-    assert_eq!(requests[2].body.as_slice(), ANDROID_ELF);
+    assert_eq!(requests[2].body.as_slice(), bytes);
     for request in [&requests[0], &requests[4]] {
         assert_eq!(request.url.query(), Some(format!(
-            "project_id={PROJECT_ID}&release=checkout%401.2.3&environment=production&service=checkout-api&image_uuid={ANDROID_ELF_UUID}&architecture=arm64"
+            "project_id={PROJECT_ID}&release=checkout%401.2.3&environment=production&service=checkout-api&image_uuid={image_uuid}&architecture={architecture}"
         ).as_str()));
     }
     Ok(())

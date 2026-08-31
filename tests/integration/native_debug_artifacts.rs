@@ -99,12 +99,10 @@ async fn lookup_grammar_rejects_noncanonical_identity_before_network()
         assert_eq!(body["error"], "invalid_native_debug_command");
         assert_eq!(
             body["next"],
-            "use a UUID in 8-4-4-4-12 form and architecture arm64, arm64e, or x86_64"
+            "use a UUID in 8-4-4-4-12 form and architecture arm, arm64, arm64e, x86, or x86_64"
         );
         assert!(!text.contains(image_uuid));
-        if !matches!(architecture, "arm64" | "arm64e" | "x86_64") {
-            assert!(!text.contains(architecture));
-        }
+        assert!(architecture == "arm64" || !text.contains(architecture));
         assert_private_values_absent(text.as_str(), &fixture, server.uri().as_str());
     }
 
@@ -220,41 +218,43 @@ async fn upload_fails_closed_when_lookup_hash_mismatches() -> Result<(), Box<dyn
 #[tokio::test]
 async fn lookup_uses_exact_canonical_query_and_redacts_malformed_success()
 -> Result<(), Box<dyn std::error::Error>> {
-    let server = MockServer::start().await;
-    Mock::route("GET", "/api/native-debug-artifacts")
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "unexpected": "hostile backend text"
-        })))
-        .expect(1)
-        .mount(&server)
-        .await;
-    let fixture = Fixture::new("lookup")?;
+    for architecture in ["arm", "arm64", "arm64e", "x86", "x86_64"] {
+        let server = MockServer::start().await;
+        Mock::route("GET", "/api/native-debug-artifacts")
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "unexpected": "hostile backend text"
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let fixture = Fixture::new("lookup")?;
 
-    let output = invoke(
-        &fixture,
-        server.uri().as_str(),
-        lookup_args(ARM64_UUID, "arm64"),
-    )
-    .await?;
-    assert_eq!(output.status.code(), Some(1));
-    assert_invalid_response_is_redacted(&output, &fixture, &server)?;
-
-    let requests = received_requests(&server).await?;
-    assert_eq!(requests.len(), 1);
-    let request = &requests[0];
-    assert_eq!(request.method.as_str(), "GET");
-    assert_eq!(request.url.path(), "/api/native-debug-artifacts");
-    assert_eq!(
-        request.url.query(),
-        Some(
-            "project_id=123e4567-e89b-12d3-a456-426614174000&release=checkout%401.2.3&environment=production&service=checkout-api&image_uuid=10111213-1415-1617-1819-1a1b1c1d1e1f&architecture=arm64"
+        let output = invoke(
+            &fixture,
+            server.uri().as_str(),
+            lookup_args(ARM64_UUID, architecture),
         )
+        .await?;
+        assert_eq!(output.status.code(), Some(1));
+        assert_invalid_response_is_redacted(&output, &fixture, &server)?;
+
+        let requests = received_requests(&server).await?;
+        assert_eq!(requests.len(), 1);
+        let request = &requests[0];
+        assert_eq!(request.method.as_str(), "GET");
+        assert_eq!(request.url.path(), "/api/native-debug-artifacts");
+        assert_eq!(
+        request.url.query(),
+        Some(format!(
+            "project_id=123e4567-e89b-12d3-a456-426614174000&release=checkout%401.2.3&environment=production&service=checkout-api&image_uuid=10111213-1415-1617-1819-1a1b1c1d1e1f&architecture={architecture}"
+        ).as_str())
     );
-    assert_eq!(
-        header_value(request, "authorization")?,
-        format!("Bearer {TOKEN}")
-    );
-    assert_request_has_no_local_identity(request, &fixture);
+        assert_eq!(
+            header_value(request, "authorization")?,
+            format!("Bearer {TOKEN}")
+        );
+        assert_request_has_no_local_identity(request, &fixture);
+    }
     Ok(())
 }
 

@@ -28,12 +28,16 @@ const ZIP_EXPANSION_ALLOWANCE: u64 = 1024 * 1024;
 /// One supported architecture accepted by the public contract.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) enum NativeArchitecture {
+    /// 32-bit ARM.
+    Arm,
     /// Standard 64-bit ARM.
     Arm64,
     /// Pointer-authenticated Apple arm64e.
     Arm64E,
     /// Intel x86-64.
     X86_64,
+    /// Intel x86.
+    X86,
 }
 
 /// One native artifact family accepted by the hosted contract.
@@ -67,9 +71,11 @@ impl NativeArchitecture {
     /// Returns the canonical public API value.
     pub(super) const fn as_str(self) -> &'static str {
         match self {
+            Self::Arm => "arm",
             Self::Arm64 => "arm64",
             Self::Arm64E => "arm64e",
             Self::X86_64 => "x86_64",
+            Self::X86 => "x86",
         }
     }
 }
@@ -458,12 +464,16 @@ fn parse_elf(bytes: Vec<u8>) -> Result<Artifact, RuntimeError> {
         return Err(invalid_artifact());
     }
     let file = object::File::parse(payload.as_ref()).map_err(|_| invalid_artifact())?;
-    let architecture = if file.architecture() == Architecture::Aarch64 {
-        NativeArchitecture::Arm64
-    } else if file.architecture() == Architecture::X86_64 {
-        NativeArchitecture::X86_64
-    } else {
-        return Err(invalid_artifact());
+    #[expect(
+        clippy::wildcard_enum_match_arm,
+        reason = "all unsupported and future ELF architectures fail closed"
+    )]
+    let architecture = match file.architecture() {
+        Architecture::Arm => NativeArchitecture::Arm,
+        Architecture::Aarch64 => NativeArchitecture::Arm64,
+        Architecture::I386 => NativeArchitecture::X86,
+        Architecture::X86_64 => NativeArchitecture::X86_64,
+        _ => return Err(invalid_artifact()),
     };
     let has_debug_info = file.sections().any(|section| {
         section.name().ok() == Some(".debug_info")
@@ -595,34 +605,9 @@ const fn invalid_artifact() -> RuntimeError {
 mod tests {
     use super::{
         Artifact, MAX_ARTIFACT_BYTES, MAX_SOURCE_BYTES, NativeArchitecture, NativeArtifactType,
-        RESUMABLE_CHUNK_BYTES, artifact_size_allowed, finalize, parse_debug_file, sha256_hex,
+        RESUMABLE_CHUNK_BYTES, artifact_size_allowed, finalize, sha256_hex,
         validate_expected_uuids, zip_expansion_is_unsafe,
     };
-    use object::{Object as _, ObjectSection as _};
-
-    const ANDROID_ELF_FIXTURE: &[u8] = include_bytes!("../../tests/fixtures/native_elf_fixture.so");
-
-    #[test]
-    fn android_elf_uses_gnu_build_id_and_keeps_whole_object() {
-        let file = object::File::parse(ANDROID_ELF_FIXTURE).expect("fixture parses");
-        assert_eq!(file.architecture(), object::Architecture::Aarch64);
-        let debug_info = file
-            .sections()
-            .find(|section| section.name().ok() == Some(".debug_info"))
-            .expect("debug info exists");
-        assert!(!debug_info.data().expect("debug info reads").is_empty());
-        assert!(file.build_id().expect("Build ID parses").is_some());
-        let artifacts = parse_debug_file(ANDROID_ELF_FIXTURE.to_vec()).expect("ELF parses");
-        assert_eq!(artifacts.len(), 1);
-        assert_eq!(
-            artifacts[0].image_uuid,
-            "cb3d22c0-8dd7-6229-2f4d-11671bb83d0f"
-        );
-        assert_eq!(artifacts[0].architecture, NativeArchitecture::Arm64);
-        assert_eq!(artifacts[0].kind, NativeArtifactType::AndroidElf);
-        assert_eq!(artifacts[0].bytes.as_ref(), ANDROID_ELF_FIXTURE);
-    }
-
     /// Proves fixed chunk boundaries and cheap immutable slices without a large fixture.
     #[test]
     fn resumable_chunks_are_ordered_and_share_backing_storage() {

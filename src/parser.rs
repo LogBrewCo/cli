@@ -248,7 +248,7 @@ fn parse_native_debug_lookup(args: &[String]) -> Result<Command, CliError> {
         .ok_or(CliError::InvalidNativeDebugIdentity)?;
     let architecture = parsed
         .architecture
-        .filter(|value| matches!(value.as_str(), "arm64" | "arm64e" | "x86_64"))
+        .filter(|value| ["arm", "arm64", "arm64e", "x86", "x86_64"].contains(&value.as_str()))
         .ok_or(CliError::InvalidNativeDebugIdentity)?;
     Ok(Command::NativeDebugArtifacts {
         target: crate::NativeDebugArtifactsTarget::Lookup(crate::NativeDebugLookupOptions {
