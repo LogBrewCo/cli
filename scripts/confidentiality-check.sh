@@ -33,7 +33,7 @@ scan_file_pattern() {
     local file="$2"
     local status=0
 
-    rg -n --hidden --ignore-case "$pattern" "$file" || status="$?"
+    rg -n --hidden --ignore-case --text "$pattern" "$file" || status="$?"
 
     if [[ "$status" -eq 0 ]]; then
         printf 'Confidentiality check failed. Remove private/backend-only details before committing.\n' >&2
@@ -50,6 +50,10 @@ public_secret_pattern='AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY|GOOGLE_APPLICATIO
 
 scan_pattern "$public_secret_pattern"
 scan_file_pattern '\bprivate\b' README.md
+
+for binary_fixture in tests/fixtures/native_elf*.so; do
+    scan_file_pattern '/Users/|/home/runner/|/private/var/' "$binary_fixture"
+done
 
 local_denylist="$ROOT_DIR/.logbrew-confidential-denylist.local"
 if [[ -f "$local_denylist" ]]; then

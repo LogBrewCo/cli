@@ -1,8 +1,3 @@
-__asm__(".section .note.gnu.build-id,\"a\",@note\n"
-        ".balign 4\n.long 4\n.long 20\n.long 3\n.asciz \"GNU\"\n.balign 4\n"
-        ".byte 0xcb,0x3d,0x22,0xc0,0x8d,0xd7,0x62,0x29,0x2f,0x4d\n"
-        ".byte 0x11,0x67,0x1b,0xb8,0x3d,0x0f,0x29,0x41,0xba,0x4d\n.balign 4\n.text\n");
-
 __attribute__((visibility("default"))) int logbrew_android_fixture(int value) {
     return value + 7;
 }

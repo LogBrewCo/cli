@@ -729,7 +729,7 @@ const fn cli_error_next_step(error: &CliError) -> &'static str {
             "use logbrew debug-artifacts upload <path> --project <project_id> --release <release> --environment <environment> --service <service> with optional --expect-image-uuid, --dry-run, and --json"
         }
         CliError::InvalidNativeDebugIdentity => {
-            "use a UUID in 8-4-4-4-12 form and architecture arm64, arm64e, or x86_64"
+            "use a UUID in 8-4-4-4-12 form and architecture arm, arm64, arm64e, x86, or x86_64"
         }
         CliError::InvalidSetupSource(_) => "use --source api, cli, or sdk",
         CliError::MissingArgument { next, .. }

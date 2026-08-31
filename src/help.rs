@@ -893,7 +893,7 @@ Usage:
                          [--expect-image-uuid <uuid>]... [--dry-run] [--json]
   logbrew debug-artifacts lookup --project <project_id> --release <release> \
                          --environment <environment> --service <service> --image-uuid <uuid> \
-                         --architecture <arm64|arm64e|x86_64> [--json]
+                         --architecture <arm|arm64|arm64e|x86|x86_64> [--json]
 
 Discovers and validates Apple dSYM, ZIP, Mach-O, or Android ELF debug objects locally, uploads every supported \
 exact identity, and verifies each identity with an authenticated lookup. Optional repeated \
