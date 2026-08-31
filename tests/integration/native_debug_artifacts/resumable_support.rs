@@ -5,8 +5,6 @@ use super::support::{Fixture, macho64, uuid_bytes};
 pub(crate) const RESUMABLE_CHUNK_SIZE: usize = 4 * 1024 * 1024;
 pub(crate) const RESUMABLE_SESSION_ID: &str =
     "nativeupload_1111111111111111111111111111111111111111111111111111111111111111";
-pub(crate) const START_METHOD_NEXT: &str = "use the supported native debug-artifact request method";
-
 pub(crate) fn start_response(missing_chunks: &[&str]) -> serde_json::Value {
     serde_json::json!({
         "session_id": RESUMABLE_SESSION_ID,

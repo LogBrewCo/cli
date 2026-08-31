@@ -139,6 +139,8 @@ fn native_debug_help_documents_large_artifact_boundaries() {
     assert!(text.contains("256 MiB per thin debug object"));
     assert!(text.contains("512 MiB per source file or resumable upload session"));
     assert!(text.contains("4 MiB resumable chunks"));
+    assert!(text.contains("Android ELF debug objects"));
+    assert!(text.contains("first 16 GNU Build ID bytes"));
 }
 
 #[test]

@@ -1,17 +1,11 @@
-//! Multipart and exact lookup wire contract.
+//! Upload receipt and exact lookup wire contract.
 
-use super::artifact::{Artifact, MAX_ARTIFACT_BYTES};
+use super::artifact::MAX_ARTIFACT_BYTES;
 use crate::auth::{AuthCredential, send_account_authenticated_with_refresh};
-use crate::{CliEnvironment, NativeDebugLookupOptions, NativeDebugUploadOptions, RuntimeError};
+use crate::{CliEnvironment, NativeDebugLookupOptions, RuntimeError};
 
-/// Maximum encoded multipart request size.
-const MAX_MULTIPART_BYTES: usize = 128 * 1024 * 1024;
-/// Maximum serialized manifest size.
-const MAX_MANIFEST_BYTES: usize = 256 * 1024;
 /// Maximum success response retained from the server.
 const MAX_RESPONSE_BYTES: usize = 256 * 1024;
-/// Conservative multipart framing allowance per form part.
-const MULTIPART_PART_OVERHEAD: usize = 512;
 /// Exact accepted upload guidance.
 const UPLOAD_NEXT: &str =
     "Native debug artifact upload accepted. Verify exact image UUID and architecture lookup.";
@@ -20,7 +14,7 @@ const LOOKUP_FOUND_NEXT: &str =
     "Native debug artifact lookup matched. Verify issue-detail native symbolication.";
 /// Exact missing lookup guidance.
 const LOOKUP_MISSING_NEXT: &str =
-    "No exact native debug artifact matched. Upload the release dSYM and retry lookup.";
+    "No exact native debug artifact matched. Upload the release debug file and retry lookup.";
 
 /// Validated upload receipt needed by orchestration and output.
 pub(super) struct UploadReceipt {
@@ -48,6 +42,8 @@ pub(super) struct LookupArtifact {
     pub(super) image_uuid: String,
     /// Canonical architecture.
     pub(super) architecture: String,
+    /// Exact native artifact family.
+    pub(super) artifact_type: String,
     /// Lowercase SHA-256.
     pub(super) debug_file_sha256: String,
     /// Positive bounded payload size.
@@ -56,33 +52,6 @@ pub(super) struct LookupArtifact {
     pub(super) upload_status: String,
     /// RFC3339 UTC creation time.
     pub(super) created_at: String,
-}
-
-/// Sends and validates one exact multipart upload.
-pub(super) async fn upload(
-    client: &reqwest::Client,
-    env: &CliEnvironment,
-    url: reqwest::Url,
-    options: &NativeDebugUploadOptions,
-    artifacts: &[Artifact],
-) -> Result<UploadReceipt, RuntimeError> {
-    let manifest = serialize_manifest(options, artifacts)?;
-    validate_multipart_size(manifest.len(), artifacts)?;
-    let response = send_account_authenticated_with_refresh(client, env, |client, credential| {
-        client
-            .post(url.clone())
-            .bearer_auth(credential.token())
-            .multipart(upload_form(manifest.as_str(), artifacts))
-    })
-    .await
-    .map_err(request_error)?;
-    let (response, credential) = response;
-    let status = response.status().as_u16();
-    if status != 200 {
-        return Err(safe_api_error(status, &credential));
-    }
-    let body = bounded_body(response).await?;
-    parse_upload_response(body.as_str(), artifacts.len())
 }
 
 /// Sends and validates one exact lookup.
@@ -147,136 +116,6 @@ fn is_loopback_host(host: &str) -> bool {
         || host
             .parse::<std::net::IpAddr>()
             .is_ok_and(|address| address.is_loopback())
-}
-
-/// Exact camelCase multipart manifest.
-#[derive(serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-struct UploadManifest<'a> {
-    /// Account-owned project UUID.
-    project_id: &'a str,
-    /// Exact release scope.
-    release: &'a str,
-    /// Exact environment scope.
-    environment: &'a str,
-    /// Exact service scope.
-    service: &'a str,
-    /// Fixed Apple dSYM manifest discriminator.
-    artifact_type: &'static str,
-    /// Fixed local validation result.
-    validation: ManifestValidation,
-    /// Exact ordered object identities.
-    artifacts: Vec<ManifestArtifact<'a>>,
-}
-
-/// Fixed manifest validation object.
-#[derive(serde::Serialize)]
-struct ManifestValidation {
-    /// Fixed ready state after local validation.
-    status: &'static str,
-}
-
-/// One manifest artifact identity.
-#[derive(serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-struct ManifestArtifact<'a> {
-    /// Canonical image UUID.
-    image_uuid: &'a str,
-    /// Canonical architecture.
-    architecture: &'static str,
-    /// Exact uploaded payload metadata.
-    debug_file: ManifestDebugFile<'a>,
-}
-
-/// Exact hash and size for one multipart byte part.
-#[derive(serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-struct ManifestDebugFile<'a> {
-    /// Lowercase SHA-256.
-    artifact_sha256: &'a str,
-    /// Exact payload byte count.
-    byte_size: u64,
-}
-
-/// Serializes and bounds the exact upload manifest.
-fn serialize_manifest(
-    options: &NativeDebugUploadOptions,
-    artifacts: &[Artifact],
-) -> Result<String, RuntimeError> {
-    let manifest = UploadManifest {
-        project_id: options.project_id.as_str(),
-        release: options.release.as_str(),
-        environment: options.environment.as_str(),
-        service: options.service.as_str(),
-        artifact_type: "apple_dsym_manifest",
-        validation: ManifestValidation { status: "ready" },
-        artifacts: artifacts
-            .iter()
-            .map(|artifact| ManifestArtifact {
-                image_uuid: artifact.image_uuid.as_str(),
-                architecture: artifact.architecture.as_str(),
-                debug_file: ManifestDebugFile {
-                    artifact_sha256: artifact.sha256.as_str(),
-                    byte_size: artifact.byte_size(),
-                },
-            })
-            .collect(),
-    };
-    let body = serde_json::to_string(&manifest).map_err(|_| invalid_artifact())?;
-    if body.len() > MAX_MANIFEST_BYTES {
-        return Err(invalid_artifact());
-    }
-    Ok(body)
-}
-
-/// Ensures multipart framing plus payload remains inside the public limit.
-fn validate_multipart_size(
-    manifest_size: usize,
-    artifacts: &[Artifact],
-) -> Result<(), RuntimeError> {
-    let sizes = artifacts
-        .iter()
-        .map(|artifact| artifact.bytes.len())
-        .collect::<Vec<_>>();
-    if !multipart_size_allowed(manifest_size, sizes.as_slice()) {
-        return Err(invalid_artifact());
-    }
-    Ok(())
-}
-
-/// Returns whether payload plus conservative framing fits the public aggregate bound.
-fn multipart_size_allowed(manifest_size: usize, artifact_sizes: &[usize]) -> bool {
-    let payload = artifact_sizes
-        .iter()
-        .try_fold(manifest_size, |total, size| total.checked_add(*size));
-    let overhead = artifact_sizes
-        .len()
-        .saturating_add(1)
-        .saturating_mul(MULTIPART_PART_OVERHEAD);
-    payload
-        .and_then(|payload| payload.checked_add(overhead))
-        .is_some_and(|total| total <= MAX_MULTIPART_BYTES)
-}
-
-/// Builds a filename-free multipart form in manifest order.
-fn upload_form(manifest: &str, artifacts: &[Artifact]) -> reqwest::multipart::Form {
-    let mut headers = reqwest::header::HeaderMap::new();
-    drop(headers.insert(
-        reqwest::header::CONTENT_TYPE,
-        reqwest::header::HeaderValue::from_static("application/json"),
-    ));
-    let manifest_part = reqwest::multipart::Part::text(manifest.to_owned()).headers(headers);
-    let mut form = reqwest::multipart::Form::new().part("manifest", manifest_part);
-    for (index, artifact) in artifacts.iter().enumerate() {
-        form = form.part(
-            format!("debug_file_{index}"),
-            reqwest::multipart::Part::stream_with_length(
-                artifact.bytes.clone(),
-                artifact.byte_size(),
-            ),
-        );
-    }
-    form
 }
 
 /// Exact upload success surface.
@@ -389,6 +228,7 @@ fn parse_lookup_response(
             upload_id: artifact.upload_id,
             image_uuid: artifact.image_uuid,
             architecture: artifact.architecture,
+            artifact_type: artifact.artifact_type,
             debug_file_sha256: artifact.debug_file_sha256,
             debug_file_byte_size: artifact.debug_file_byte_size,
             upload_status: artifact.upload_status,
@@ -413,7 +253,10 @@ fn valid_lookup_artifact(artifact: &LookupArtifactDto, options: &NativeDebugLook
         && artifact.release == options.release
         && artifact.environment == options.environment
         && artifact.service == options.service
-        && artifact.artifact_type == "apple_dsym"
+        && matches!(
+            artifact.artifact_type.as_str(),
+            "apple_dsym" | "android_elf"
+        )
         && artifact.image_uuid == options.image_uuid
         && artifact.architecture == options.architecture
         && is_lower_hex(artifact.debug_file_sha256.as_str(), 64)
@@ -491,7 +334,7 @@ fn safe_api_body(status: u16) -> String {
         422 => (
             "native debug-artifact request was rejected",
             "validation_failed",
-            "send manifest and debug_file_N multipart parts from LogBrew Apple release tooling",
+            "check the native debug-artifact request fields and retry",
             "fix_request",
             "request",
         ),
@@ -547,11 +390,6 @@ fn safe_api_body(status: u16) -> String {
     .to_string()
 }
 
-/// Returns the fixed path-free local artifact error.
-const fn invalid_artifact() -> RuntimeError {
-    RuntimeError::NativeDebugArtifactInvalid
-}
-
 /// Returns the fixed path-free response contract error.
 const fn invalid_response() -> RuntimeError {
     RuntimeError::NativeDebugResponseInvalid
@@ -562,29 +400,5 @@ const fn transport_error() -> RuntimeError {
     RuntimeError::Unavailable {
         message: "native debug-artifact request could not be completed",
         next: "check network connectivity and retry the native debug-artifact command",
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{MAX_MULTIPART_BYTES, MULTIPART_PART_OVERHEAD, multipart_size_allowed};
-
-    /// Proves artifact bytes plus multipart framing are bounded together.
-    #[test]
-    fn aggregate_bound_includes_multipart_framing() {
-        let manifest_size = 1024;
-        let framing = 4 * MULTIPART_PART_OVERHEAD;
-        let remaining = MAX_MULTIPART_BYTES - manifest_size - framing;
-        let first = 50 * 1024 * 1024;
-        let second = 50 * 1024 * 1024;
-        let third = remaining - first - second;
-        assert!(multipart_size_allowed(
-            manifest_size,
-            &[first, second, third]
-        ));
-        assert!(!multipart_size_allowed(
-            manifest_size,
-            &[first, second, third + 1]
-        ));
     }
 }

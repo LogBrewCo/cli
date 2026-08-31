@@ -395,7 +395,7 @@ const fn native_debug_api_recovery(status: u16) -> (&'static str, &'static str) 
         ),
         422 => (
             "validation_failed",
-            "send manifest and debug_file_N multipart parts from LogBrew Apple release tooling",
+            "check the native debug-artifact request fields and retry",
         ),
         429 => (
             "rate_limited",
@@ -457,12 +457,9 @@ fn allowed_native_debug_next(status: u16, value: &str) -> Option<&'static str> {
         ) => Some(
             "reduce the native debug-artifact upload below the documented size limits and retry",
         ),
-        (
-            422,
-            "send manifest and debug_file_N multipart parts from LogBrew Apple release tooling",
-        ) => Some(
-            "send manifest and debug_file_N multipart parts from LogBrew Apple release tooling",
-        ),
+        (422, "check the native debug-artifact request fields and retry") => {
+            Some("check the native debug-artifact request fields and retry")
+        }
         (422, "check the native debug-artifact manifest and retry") => {
             Some("check the native debug-artifact manifest and retry")
         }
@@ -902,7 +899,7 @@ const fn fallback_runtime_error_next_step(error: &RuntimeError) -> &'static str 
             "retry the same analytics segment comparison; if it repeats, report the public response contract"
         }
         RuntimeError::NativeDebugArtifactInvalid => {
-            "provide one validated Apple dSYM, ZIP, or Mach-O object matching every --expect-image-uuid value"
+            "provide one validated Apple dSYM, ZIP, Mach-O object, or Android ELF with debug information matching every --expect-image-uuid value"
         }
         RuntimeError::NativeDebugResponseInvalid => {
             "retry the native debug-artifact request; if it repeats, report the public response contract"
