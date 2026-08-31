@@ -1,4 +1,4 @@
-//! Apple native debug-artifact upload and exact lookup verification.
+//! Native debug-artifact upload and exact lookup verification.
 
 mod artifact;
 mod resumable;
@@ -13,8 +13,6 @@ use wire::{LookupResult, UploadReceipt};
 
 /// Connection establishment timeout shared by upload and lookup.
 const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
-/// Bounded compatibility upload window; resumable upload is the primary large-file path.
-const UPLOAD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 /// Bounded resumable start request window.
 const START_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
 /// Bounded 4 MiB chunk request window.
@@ -51,13 +49,11 @@ pub(super) async fn execute<W: std::io::Write>(
             }
             let url = wire::native_artifact_url(env.base_url.as_str())?;
             let session_url = resumable::upload_session_url(env.base_url.as_str())?;
-            let upload_client = build_client(UPLOAD_TIMEOUT)?;
             let start_client = build_client(START_TIMEOUT)?;
             let chunk_client = build_client(CHUNK_TIMEOUT)?;
             let complete_client = build_client(COMPLETE_TIMEOUT)?;
             let lookup_client = build_client(LOOKUP_TIMEOUT)?;
             let context = UploadContext {
-                upload_client: &upload_client,
                 start_client: &start_client,
                 chunk_client: &chunk_client,
                 complete_client: &complete_client,
@@ -85,8 +81,6 @@ pub(super) async fn execute<W: std::io::Write>(
 
 /// Immutable request and artifact state shared across bounded upload attempts.
 struct UploadContext<'a> {
-    /// Client with the longer one-shot compatibility window.
-    upload_client: &'a reqwest::Client,
     /// Client with the short session-start window.
     start_client: &'a reqwest::Client,
     /// Client with the bounded 4 MiB chunk window.
@@ -124,24 +118,15 @@ async fn execute_upload<W: std::io::Write>(
         write_progress(output, "Starting resumable native debug artifact upload.")?;
     }
     let prepared = resumable::prepare(context.options, context.artifacts)?;
-    match start_resumable(context, &prepared).await? {
-        resumable::StartOutcome::Session(session) => {
-            execute_resumable(context, &prepared, &session, json, output).await
-        }
-        resumable::StartOutcome::Unsupported => {
-            if !json {
-                write_progress(output, "Using bounded compatibility upload.")?;
-            }
-            execute_one_shot(context, json, output).await
-        }
-    }
+    let session = start_resumable(context, &prepared).await?;
+    execute_resumable(context, &prepared, &session, json, output).await
 }
 
 /// Starts one resumable session with bounded byte-identical manifest retries.
 async fn start_resumable(
     context: &UploadContext<'_>,
     prepared: &resumable::PreparedUpload,
-) -> Result<resumable::StartOutcome, RuntimeError> {
+) -> Result<resumable::Session, RuntimeError> {
     for attempt in 0..MAX_PHASE_ATTEMPTS {
         match resumable::start(
             context.start_client,
@@ -321,7 +306,8 @@ async fn lookup_recovered_upload(
             LookupResult::Missing => complete = false,
             LookupResult::Found(found)
                 if found.debug_file_sha256 == artifact.sha256
-                    && found.debug_file_byte_size == artifact.byte_size() =>
+                    && found.debug_file_byte_size == artifact.byte_size()
+                    && found.artifact_type == artifact.kind.artifact() =>
             {
                 if upload_id
                     .as_ref()
@@ -344,37 +330,6 @@ async fn lookup_recovered_upload(
     }))
 }
 
-/// Executes one compatibility upload without replaying the full payload.
-async fn execute_one_shot<W: std::io::Write>(
-    context: &UploadContext<'_>,
-    json: bool,
-    output: &mut W,
-) -> Result<(), RuntimeError> {
-    match wire::upload(
-        context.upload_client,
-        context.env,
-        context.url.clone(),
-        context.options,
-        context.artifacts,
-    )
-    .await
-    {
-        Ok(upload) => {
-            if !verify_present(context, Some(upload.upload_id.as_str())).await? {
-                return Err(RuntimeError::NativeDebugVerificationFailed);
-            }
-            write_upload(output, &upload, context.artifacts, json)
-        }
-        Err(error) if upload_error_is_retryable(&error) => {
-            lookup_recovered_upload(context).await?.map_or_else(
-                || Err(error),
-                |upload| write_upload(output, &upload, context.artifacts, json),
-            )
-        }
-        Err(error) => Err(error),
-    }
-}
-
 /// Returns whether every exact identity is present and bound to the local bytes.
 async fn verify_present(
     context: &UploadContext<'_>,
@@ -395,6 +350,7 @@ async fn verify_present(
             LookupResult::Found(found)
                 if found.debug_file_sha256 == artifact.sha256
                     && found.debug_file_byte_size == artifact.byte_size()
+                    && found.artifact_type == artifact.kind.artifact()
                     && expected_upload_id.is_none_or(|upload_id| found.upload_id == upload_id) => {}
             LookupResult::Found(_) => return Err(RuntimeError::NativeDebugVerificationFailed),
         }
@@ -414,33 +370,6 @@ fn lookup_options(
         service: options.service.clone(),
         image_uuid: artifact.image_uuid.clone(),
         architecture: artifact.architecture.as_str().to_owned(),
-    }
-}
-
-/// Restricts one-shot ambiguity recovery to transport and retryable server failures.
-const fn upload_error_is_retryable(error: &RuntimeError) -> bool {
-    match error {
-        RuntimeError::Unavailable { .. } => true,
-        RuntimeError::Api { status, .. } => {
-            matches!(*status, 408 | 429 | 500 | 502 | 503 | 504)
-        }
-        RuntimeError::Cli(_)
-        | RuntimeError::Io(_)
-        | RuntimeError::Http(_)
-        | RuntimeError::MissingToken
-        | RuntimeError::StatusUnavailable { .. }
-        | RuntimeError::InvestigationResponseInvalid
-        | RuntimeError::ExplainResponseInvalid
-        | RuntimeError::AnalyticsOverviewResponseInvalid
-        | RuntimeError::AnalyticsPropertiesResponseInvalid
-        | RuntimeError::AnalyticsResponseInvalid
-        | RuntimeError::AnalyticsFunnelResponseInvalid
-        | RuntimeError::AnalyticsRetentionResponseInvalid
-        | RuntimeError::AnalyticsLifecycleResponseInvalid
-        | RuntimeError::AnalyticsSegmentResponseInvalid
-        | RuntimeError::NativeDebugArtifactInvalid
-        | RuntimeError::NativeDebugResponseInvalid
-        | RuntimeError::NativeDebugVerificationFailed => false,
     }
 }
 
@@ -590,6 +519,7 @@ fn artifact_summaries(artifacts: &[Artifact], status: &'static str) -> Vec<serde
             serde_json::json!({
                 "image_uuid": artifact.image_uuid,
                 "architecture": artifact.architecture.as_str(),
+                "artifact_type": artifact.kind.artifact(),
                 "debug_file_sha256": artifact.sha256,
                 "debug_file_byte_size": artifact.byte_size(),
                 "status": status,
@@ -652,6 +582,7 @@ fn write_lookup<W: std::io::Write>(
                     "upload_id": artifact.upload_id,
                     "image_uuid": artifact.image_uuid,
                     "architecture": artifact.architecture,
+                    "artifact_type": artifact.artifact_type,
                     "debug_file_sha256": artifact.debug_file_sha256,
                     "debug_file_byte_size": artifact.debug_file_byte_size,
                     "upload_status": artifact.upload_status,
@@ -692,7 +623,10 @@ fn write_lookup<W: std::io::Write>(
         }
         LookupResult::Missing => {
             writeln!(output, "No exact native debug artifact matched.")?;
-            writeln!(output, "Next: upload the release dSYM and retry lookup.")?;
+            writeln!(
+                output,
+                "Next: upload the release debug file and retry lookup."
+            )?;
         }
     }
     Ok(())
@@ -702,7 +636,7 @@ fn write_lookup<W: std::io::Write>(
 mod tests {
     use super::{
         CHUNK_TIMEOUT, COMPLETE_TIMEOUT, CONNECT_TIMEOUT, LOOKUP_TIMEOUT, OVERALL_UPLOAD_TIMEOUT,
-        START_TIMEOUT, UPLOAD_TIMEOUT, build_client, with_upload_deadline,
+        START_TIMEOUT, build_client, with_upload_deadline,
     };
 
     /// Proves fixed bounded timeout selection without a slow network request.
@@ -713,12 +647,11 @@ mod tests {
         assert_eq!(CHUNK_TIMEOUT, std::time::Duration::from_secs(60));
         assert_eq!(COMPLETE_TIMEOUT, std::time::Duration::from_secs(60));
         assert_eq!(LOOKUP_TIMEOUT, std::time::Duration::from_secs(15));
-        assert_eq!(UPLOAD_TIMEOUT, std::time::Duration::from_secs(60));
         assert_eq!(
             OVERALL_UPLOAD_TIMEOUT,
             std::time::Duration::from_secs(30 * 60)
         );
-        let _upload = build_client(UPLOAD_TIMEOUT)?;
+        let _upload = build_client(CHUNK_TIMEOUT)?;
         let _lookup = build_client(LOOKUP_TIMEOUT)?;
         Ok(())
     }

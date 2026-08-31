@@ -111,14 +111,6 @@ pub(crate) async fn mount_lookup(server: &MockServer, body: serde_json::Value) {
         .await;
 }
 
-pub(crate) async fn mount_upload_success(server: &MockServer, artifact_count: usize) {
-    Mock::route("POST", "/api/native-debug-artifacts")
-        .respond_with(ResponseTemplate::new(200).set_body_json(upload_success_body(artifact_count)))
-        .expect(1)
-        .mount(server)
-        .await;
-}
-
 pub(crate) async fn mount_lookup_sequence(server: &MockServer, bodies: Vec<serde_json::Value>) {
     let bodies = Arc::new(bodies);
     let attempt = Arc::new(AtomicUsize::new(0));
@@ -167,7 +159,7 @@ pub(crate) fn found_lookup(digest: &str, byte_size: usize) -> serde_json::Value 
 pub(crate) fn missing_lookup() -> serde_json::Value {
     serde_json::json!({
         "artifact": null,
-        "next": "No exact native debug artifact matched. Upload the release dSYM and retry lookup.",
+        "next": "No exact native debug artifact matched. Upload the release debug file and retry lookup.",
         "next_action": {
             "code": "upload_native_debug_artifact",
             "target": "native_debug_artifact_upload"
@@ -262,15 +254,6 @@ pub(crate) fn assert_exact_lookup_query(request: &Request) {
     );
 }
 
-pub(crate) fn upload_request(requests: &[Request]) -> Result<&Request, Box<dyn std::error::Error>> {
-    requests
-        .iter()
-        .find(|request| {
-            request.method.as_str() == "POST" && request.url.path() == "/api/native-debug-artifacts"
-        })
-        .ok_or_else(|| "missing upload request".into())
-}
-
 pub(crate) fn header_value<'a>(
     request: &'a Request,
     name: &str,
@@ -281,59 +264,6 @@ pub(crate) fn header_value<'a>(
         .ok_or_else(|| -> Box<dyn std::error::Error> { format!("missing {name} header").into() })?
         .to_str()
         .map_err(Into::into)
-}
-
-pub(crate) struct MultipartPart {
-    pub(crate) name: String,
-    pub(crate) body: Vec<u8>,
-}
-
-pub(crate) fn multipart_parts(
-    request: &Request,
-) -> Result<Vec<MultipartPart>, Box<dyn std::error::Error>> {
-    let content_type = header_value(request, "content-type")?;
-    let boundary = content_type
-        .strip_prefix("multipart/form-data; boundary=")
-        .ok_or("unexpected multipart content type")?;
-    let marker = format!("--{boundary}").into_bytes();
-    let mut parts = Vec::new();
-
-    for segment in split_subslice(request.body.as_slice(), marker.as_slice()) {
-        let Some(segment) = segment.strip_prefix(b"\r\n") else {
-            continue;
-        };
-        if segment.starts_with(b"--") {
-            continue;
-        }
-        let segment = segment.strip_suffix(b"\r\n").unwrap_or(segment);
-        let header_end = find_subslice(segment, b"\r\n\r\n").ok_or("missing part headers")?;
-        let headers = std::str::from_utf8(&segment[..header_end])?;
-        assert!(!headers.to_ascii_lowercase().contains("filename="));
-        let disposition = headers
-            .lines()
-            .find(|line| line.starts_with("Content-Disposition: form-data;"))
-            .ok_or("missing content disposition")?;
-        let name = disposition
-            .split(';')
-            .find_map(|field| field.trim().strip_prefix("name=\"")?.strip_suffix('"'))
-            .ok_or("missing part name")?;
-        parts.push(MultipartPart {
-            name: name.to_owned(),
-            body: segment[header_end + 4..].to_vec(),
-        });
-    }
-    Ok(parts)
-}
-
-fn split_subslice<'a>(haystack: &'a [u8], needle: &[u8]) -> Vec<&'a [u8]> {
-    let mut parts = Vec::new();
-    let mut rest = haystack;
-    while let Some(index) = find_subslice(rest, needle) {
-        parts.push(&rest[..index]);
-        rest = &rest[index + needle.len()..];
-    }
-    parts.push(rest);
-    parts
 }
 
 pub(crate) fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {

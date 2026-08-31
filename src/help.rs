@@ -885,7 +885,7 @@ The verify form compares the exact failing occurrence with one successful candid
 returns schema-version-1 recurrence and candidate-trace evidence, never treats bounded absence as \
 proof, and gives a stable next action for recurrence, observation, traffic, or unavailable evidence.";
 
-/// Apple native debug-artifact command help text.
+/// Native debug-artifact command help text.
 const NATIVE_DEBUG_ARTIFACTS_HELP: &str = "\
 Usage:
   logbrew debug-artifacts upload <path> --project <project_id> --release <release> \
@@ -895,13 +895,13 @@ Usage:
                          --environment <environment> --service <service> --image-uuid <uuid> \
                          --architecture <arm64|arm64e|x86_64> [--json]
 
-Discovers and validates Apple dSYM, ZIP, or Mach-O debug objects locally, uploads every supported \
+Discovers and validates Apple dSYM, ZIP, Mach-O, or Android ELF debug objects locally, uploads every supported \
 exact identity, and verifies each identity with an authenticated lookup. Optional repeated \
 --expect-image-uuid values require an exact discovered UUID set for release automation. --dry-run \
 performs the same local validation without authentication or network access. Upload limits are \
 256 MiB per thin debug object and 512 MiB per source file or resumable upload session. Large \
 uploads use fixed 4 MiB resumable chunks. Local paths and filenames are never included in output \
-or API metadata.";
+or API metadata. Android ELF identity uses the first 16 GNU Build ID bytes in lowercase UUID form.";
 
 /// Set command help text.
 const SET_HELP: &str = "\

@@ -37,12 +37,6 @@ fn native_debug_transport_has_explicit_request_and_overall_bounds_without_hidden
         "native debug upload needs one fixed overall network deadline"
     );
     assert!(
-        IMPLEMENTATION.contains(
-            "const UPLOAD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);"
-        ),
-        "compatibility upload must not retain the multi-minute request timeout"
-    );
-    assert!(
         IMPLEMENTATION.contains("const MAX_PHASE_ATTEMPTS: usize = 2;"),
         "resumable phases may perform at most one explicit retry"
     );
@@ -205,7 +199,7 @@ async fn large_universal_object_uses_bounded_resumable_chunks_and_one_json_docum
             })
             .count(),
         0,
-        "a resumable session must never replay the large compatibility body"
+        "a resumable session must never send the retired one-shot body"
     );
     let start = requests
         .iter()

@@ -1,4 +1,4 @@
-//! Local Apple debug-object discovery and validation.
+//! Local native debug-object discovery and validation.
 
 use crate::RuntimeError;
 use object::read::macho::{MachOFatFile, MachOFatFile32, MachOFatFile64, MachOFile64};
@@ -28,12 +28,39 @@ const ZIP_EXPANSION_ALLOWANCE: u64 = 1024 * 1024;
 /// One supported architecture accepted by the public contract.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) enum NativeArchitecture {
-    /// Standard Apple arm64.
+    /// Standard 64-bit ARM.
     Arm64,
     /// Pointer-authenticated Apple arm64e.
     Arm64E,
     /// Intel x86-64.
     X86_64,
+}
+
+/// One native artifact family accepted by the hosted contract.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum NativeArtifactType {
+    /// Apple Mach-O debug object.
+    AppleDsym,
+    /// Android ELF debug object.
+    AndroidElf,
+}
+
+impl NativeArtifactType {
+    /// Returns the upload manifest discriminator.
+    pub(super) const fn manifest(self) -> &'static str {
+        match self {
+            Self::AppleDsym => "apple_dsym_manifest",
+            Self::AndroidElf => "android_elf_manifest",
+        }
+    }
+
+    /// Returns the lookup response discriminator.
+    pub(super) const fn artifact(self) -> &'static str {
+        match self {
+            Self::AppleDsym => "apple_dsym",
+            Self::AndroidElf => "android_elf",
+        }
+    }
 }
 
 impl NativeArchitecture {
@@ -47,15 +74,17 @@ impl NativeArchitecture {
     }
 }
 
-/// One validated thin Mach-O payload and its exact public identity.
+/// One validated native debug payload and its exact public identity.
 pub(super) struct Artifact {
     /// Canonical lowercase image UUID.
     pub(super) image_uuid: String,
     /// Canonical supported architecture.
     pub(super) architecture: NativeArchitecture,
+    /// Validated native artifact family.
+    pub(super) kind: NativeArtifactType,
     /// Lowercase SHA-256 of exactly the uploaded bytes.
     pub(super) sha256: String,
-    /// Exact thin Mach-O bytes uploaded for this identity.
+    /// Exact native debug bytes uploaded for this identity.
     pub(super) bytes: bytes::Bytes,
 }
 
@@ -98,7 +127,7 @@ impl Artifact {
     }
 }
 
-/// Enumerates one dSYM bundle, ZIP, or Mach-O object without retaining local names.
+/// Enumerates one dSYM bundle, symbol ZIP, Mach-O, or ELF object.
 pub(super) fn collect(path: &Path) -> Result<Vec<Artifact>, RuntimeError> {
     let metadata = std::fs::symlink_metadata(path).map_err(|_| invalid_artifact())?;
     if metadata.file_type().is_symlink() {
@@ -113,7 +142,7 @@ pub(super) fn collect(path: &Path) -> Result<Vec<Artifact>, RuntimeError> {
         if has_zip_extension(path) {
             collect_zip(path)?
         } else {
-            parse_macho(read_regular_file(path)?)?
+            parse_debug_file(read_regular_file(path)?)?
         }
     } else {
         return Err(invalid_artifact());
@@ -175,7 +204,7 @@ fn collect_zip(path: &Path) -> Result<Vec<Artifact>, RuntimeError> {
             continue;
         }
 
-        if is_dsym_debug_object(name.as_str()) {
+        if is_debug_object(name.as_str()) {
             let declared_size = usize::try_from(size).map_err(|_| invalid_artifact())?;
             if declared_size == 0 || declared_size > MAX_SOURCE_BYTES {
                 return Err(invalid_artifact());
@@ -189,7 +218,7 @@ fn collect_zip(path: &Path) -> Result<Vec<Artifact>, RuntimeError> {
             if read != declared_size || payload.len() != declared_size {
                 return Err(invalid_artifact());
             }
-            let mut parsed = parse_macho(payload)?;
+            let mut parsed = parse_debug_file(payload)?;
             if parsed.is_empty() {
                 return Err(invalid_artifact());
             }
@@ -227,7 +256,12 @@ fn finalize(mut artifacts: Vec<Artifact>) -> Result<Vec<Artifact>, RuntimeError>
             return Err(invalid_artifact());
         }
     }
-    if artifacts.is_empty() || artifacts.len() > MAX_ARTIFACTS {
+    if artifacts.is_empty()
+        || artifacts.len() > MAX_ARTIFACTS
+        || artifacts
+            .iter()
+            .any(|artifact| artifact.kind != artifacts[0].kind)
+    {
         return Err(invalid_artifact());
     }
     Ok(artifacts)
@@ -284,16 +318,19 @@ fn validated_zip_name<R: std::io::Read>(
     Ok(name.to_owned())
 }
 
-/// Detects exact regular files beneath a dSYM DWARF directory.
-fn is_dsym_debug_object(name: &str) -> bool {
+/// Detects exact dSYM objects or Android shared objects in one symbol ZIP.
+fn is_debug_object(name: &str) -> bool {
     let components = name.split('/').collect::<Vec<_>>();
-    components.windows(5).any(|window| {
-        window[0].ends_with(".dSYM")
-            && window[1] == "Contents"
-            && window[2] == "Resources"
-            && window[3] == "DWARF"
-            && !window[4].is_empty()
-    })
+    Path::new(name)
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("so"))
+        || components.windows(5).any(|window| {
+            window[0].ends_with(".dSYM")
+                && window[1] == "Contents"
+                && window[2] == "Resources"
+                && window[3] == "DWARF"
+                && !window[4].is_empty()
+        })
 }
 
 /// Rejects compressed entries with an excessive declared expansion ratio.
@@ -411,6 +448,52 @@ fn parse_macho(bytes: Vec<u8>) -> Result<Vec<Artifact>, RuntimeError> {
     }
 }
 
+/// Parses one locally validated Mach-O or Android ELF debug file.
+fn parse_debug_file(bytes: Vec<u8>) -> Result<Vec<Artifact>, RuntimeError> {
+    let kind = FileKind::parse(bytes.as_slice()).map_err(|_| invalid_artifact())?;
+    if matches!(kind, FileKind::Elf32 | FileKind::Elf64) {
+        parse_elf(bytes).map(|artifact| vec![artifact])
+    } else {
+        parse_macho(bytes)
+    }
+}
+
+/// Parses one complete ELF object and derives its UUID from GNU Build ID bytes.
+fn parse_elf(bytes: Vec<u8>) -> Result<Artifact, RuntimeError> {
+    let payload = bytes::Bytes::from(bytes);
+    if !artifact_size_allowed(payload.len()) {
+        return Err(invalid_artifact());
+    }
+    let file = object::File::parse(payload.as_ref()).map_err(|_| invalid_artifact())?;
+    let architecture = if file.architecture() == Architecture::Aarch64 {
+        NativeArchitecture::Arm64
+    } else if file.architecture() == Architecture::X86_64 {
+        NativeArchitecture::X86_64
+    } else {
+        return Err(invalid_artifact());
+    };
+    let has_debug_info = file.sections().any(|section| {
+        section.name().ok() == Some(".debug_info")
+            && section.data().is_ok_and(|data| !data.is_empty())
+    });
+    if !has_debug_info {
+        return Err(invalid_artifact());
+    }
+    let build_id = file
+        .build_id()
+        .map_err(|_| invalid_artifact())?
+        .filter(|value| (16..=32).contains(&value.len()) && value.iter().any(|byte| *byte != 0))
+        .ok_or_else(invalid_artifact)?;
+    let uuid = <[u8; 16]>::try_from(&build_id[..16]).map_err(|_| invalid_artifact())?;
+    Ok(Artifact {
+        image_uuid: format_uuid(uuid),
+        architecture,
+        kind: NativeArtifactType::AndroidElf,
+        sha256: sha256_hex(payload.as_ref()),
+        bytes: payload,
+    })
+}
+
 /// Parses every supported slice from one universal Mach-O.
 fn parse_fat<Fat: object::read::macho::FatArch>(
     fat: &MachOFatFile<'_, Fat>,
@@ -464,6 +547,7 @@ fn parse_supported_slice(payload: bytes::Bytes) -> Result<Option<Artifact>, Runt
     Ok(Some(Artifact {
         image_uuid: format_uuid(uuid),
         architecture,
+        kind: NativeArtifactType::AppleDsym,
         sha256: sha256_hex(bytes),
         bytes: payload,
     }))
@@ -517,10 +601,34 @@ const fn invalid_artifact() -> RuntimeError {
 #[cfg(test)]
 mod tests {
     use super::{
-        Artifact, MAX_ARTIFACT_BYTES, MAX_SOURCE_BYTES, NativeArchitecture, RESUMABLE_CHUNK_BYTES,
-        artifact_size_allowed, finalize, sha256_hex, validate_expected_uuids,
-        zip_expansion_is_unsafe,
+        Artifact, MAX_ARTIFACT_BYTES, MAX_SOURCE_BYTES, NativeArchitecture, NativeArtifactType,
+        RESUMABLE_CHUNK_BYTES, artifact_size_allowed, finalize, parse_debug_file, sha256_hex,
+        validate_expected_uuids, zip_expansion_is_unsafe,
     };
+    use object::{Object as _, ObjectSection as _};
+
+    const ANDROID_ELF_FIXTURE: &[u8] = include_bytes!("../../tests/fixtures/native_elf_fixture.so");
+
+    #[test]
+    fn android_elf_uses_gnu_build_id_and_keeps_whole_object() {
+        let file = object::File::parse(ANDROID_ELF_FIXTURE).expect("fixture parses");
+        assert_eq!(file.architecture(), object::Architecture::Aarch64);
+        let debug_info = file
+            .sections()
+            .find(|section| section.name().ok() == Some(".debug_info"))
+            .expect("debug info exists");
+        assert!(!debug_info.data().expect("debug info reads").is_empty());
+        assert!(file.build_id().expect("Build ID parses").is_some());
+        let artifacts = parse_debug_file(ANDROID_ELF_FIXTURE.to_vec()).expect("ELF parses");
+        assert_eq!(artifacts.len(), 1);
+        assert_eq!(
+            artifacts[0].image_uuid,
+            "cb3d22c0-8dd7-6229-2f4d-11671bb83d0f"
+        );
+        assert_eq!(artifacts[0].architecture, NativeArchitecture::Arm64);
+        assert_eq!(artifacts[0].kind, NativeArtifactType::AndroidElf);
+        assert_eq!(artifacts[0].bytes.as_ref(), ANDROID_ELF_FIXTURE);
+    }
 
     /// Proves fixed chunk boundaries and cheap immutable slices without a large fixture.
     #[test]
@@ -529,6 +637,7 @@ mod tests {
         let artifact = Artifact {
             image_uuid: String::from("10111213-1415-1617-1819-1a1b1c1d1e1f"),
             architecture: NativeArchitecture::Arm64,
+            kind: NativeArtifactType::AppleDsym,
             sha256: sha256_hex(bytes.as_ref()),
             bytes,
         };
@@ -605,6 +714,7 @@ mod tests {
         Artifact {
             image_uuid: format!("00000000-0000-0000-0000-{index:012x}"),
             architecture: NativeArchitecture::Arm64,
+            kind: NativeArtifactType::AppleDsym,
             sha256: String::from(
                 "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             ),

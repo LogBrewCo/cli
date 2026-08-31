@@ -3,9 +3,7 @@
 use std::process::Output;
 
 use super::support::*;
-use crate::{Mock, MockServer, Request, ResponseTemplate};
-
-pub(crate) const ARM64E_UUID: &str = "30313233-3435-3637-3839-3a3b3c3d3e3f";
+use crate::{MockServer, Request};
 
 pub(crate) fn lookup_args<'a>(image_uuid: &'a str, architecture: &'a str) -> Vec<&'a str> {
     vec![
@@ -25,34 +23,6 @@ pub(crate) fn lookup_args<'a>(image_uuid: &'a str, architecture: &'a str) -> Vec
         architecture,
         "--json",
     ]
-}
-
-pub(crate) async fn malformed_success_server() -> MockServer {
-    let server = MockServer::start().await;
-    Mock::route("GET", "/api/native-debug-artifacts")
-        .respond_with(ResponseTemplate::new(200).set_body_json(missing_lookup()))
-        .mount(&server)
-        .await;
-    Mock::route("POST", "/api/native-debug-artifacts")
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "unexpected": "hostile backend text"
-        })))
-        .expect(1)
-        .mount(&server)
-        .await;
-    server
-}
-
-pub(crate) fn manifest(artifacts: serde_json::Value) -> serde_json::Value {
-    serde_json::json!({
-        "projectId": PROJECT_ID,
-        "release": "checkout@1.2.3",
-        "environment": "production",
-        "service": "checkout-api",
-        "artifactType": "apple_dsym_manifest",
-        "validation": {"status": "ready"},
-        "artifacts": artifacts
-    })
 }
 
 pub(crate) fn universal_macho(

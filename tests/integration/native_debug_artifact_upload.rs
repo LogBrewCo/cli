@@ -1,9 +1,10 @@
-//! Apple dSYM archive, dry-run, auth, and retry contracts.
+//! Native debug archive, resumable upload, auth, and retry contracts.
 
 #[path = "native_debug_artifacts/archive_support.rs"]
 mod archive_support;
 #[path = "native_debug_artifacts/resumable_support.rs"]
 mod resumable_support;
+#[allow(dead_code)]
 #[path = "native_debug_artifacts/support.rs"]
 mod support;
 
@@ -17,6 +18,8 @@ use support::*;
 
 const UPPERCASE_DWARFDUMP_UUID: &str = "10111213-1415-1617-1819-1A1B1C1D1E1F";
 const MIXED_CASE_DWARFDUMP_UUID: &str = "10111213-1415-1617-1819-1a1B1c1D1e1F";
+const ANDROID_ELF_UUID: &str = "cb3d22c0-8dd7-6229-2f4d-11671bb83d0f";
+const ANDROID_ELF: &[u8] = include_bytes!("../fixtures/native_elf_fixture.so");
 #[tokio::test]
 async fn dsym_dry_run_discovers_identity_without_auth_or_network()
 -> Result<(), Box<dyn std::error::Error>> {
@@ -57,69 +60,27 @@ async fn dsym_dry_run_discovers_identity_without_auth_or_network()
 }
 
 #[tokio::test]
-async fn dsym_upload_normalizes_uppercase_dwarfdump_uuid_in_every_request()
--> Result<(), Box<dyn std::error::Error>> {
-    let server = MockServer::start().await;
-    let fixture = Fixture::new("uppercase-dwarfdump-uuid")?;
-    let object = macho64(0x0100_000c, uuid_bytes(0x10));
-    let digest = sha256_hex(object.as_slice());
-    mount_upload_success(&server, 1).await;
-    mount_lookup_sequence(
-        &server,
-        vec![
-            missing_lookup(),
-            found_lookup(digest.as_str(), object.len()),
-        ],
-    )
-    .await;
-    let artifact = fixture.root.join("Customer Secret Uppercase Symbols");
-    std::fs::write(artifact.as_path(), object.as_slice())?;
-
-    let output = invoke(
-        &fixture,
-        server.uri().as_str(),
-        dsym_upload_args(artifact.as_os_str(), &[UPPERCASE_DWARFDUMP_UUID], false),
-    )
-    .await?;
-    assert!(output.status.success());
-    assert!(output.stderr.is_empty());
-    let text = String::from_utf8(output.stdout)?;
-    let body: serde_json::Value = serde_json::from_str(text.as_str())?;
-    assert_eq!(body["artifacts"][0]["image_uuid"], ARM64_UUID);
-    assert!(!text.contains(UPPERCASE_DWARFDUMP_UUID));
-
-    let requests = received_requests(&server).await?;
-    assert_eq!(requests.len(), 4);
-    assert_exact_lookup_query(&requests[0]);
-    assert_exact_lookup_query(&requests[3]);
-    let parts = multipart_parts(upload_request(requests.as_slice())?)?;
-    let manifest = serde_json::from_slice::<serde_json::Value>(parts[0].body.as_slice())?;
-    assert_eq!(manifest["artifacts"][0]["imageUuid"], ARM64_UUID);
-    assert_private_values_absent(text.as_str(), &fixture, server.uri().as_str());
-    Ok(())
-}
-
-#[tokio::test]
-async fn dsym_dry_run_normalizes_mixed_case_expected_uuid() -> Result<(), Box<dyn std::error::Error>>
-{
+async fn dsym_dry_run_normalizes_apple_uuid_case() -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
     let fixture = Fixture::new("mixed-case-dwarfdump-uuid")?;
     let artifact = fixture.root.join("Customer Secret Mixed Case Symbols");
     std::fs::write(artifact.as_path(), macho64(0x0100_000c, uuid_bytes(0x10)))?;
 
-    let output = invoke(
-        &fixture,
-        server.uri().as_str(),
-        dsym_upload_args(artifact.as_os_str(), &[MIXED_CASE_DWARFDUMP_UUID], true),
-    )
-    .await?;
-    assert!(output.status.success());
-    assert!(output.stderr.is_empty());
-    let text = String::from_utf8(output.stdout)?;
-    let body: serde_json::Value = serde_json::from_str(text.as_str())?;
-    assert_eq!(body["artifacts"][0]["image_uuid"], ARM64_UUID);
-    assert!(!text.contains(MIXED_CASE_DWARFDUMP_UUID));
-    assert_private_values_absent(text.as_str(), &fixture, server.uri().as_str());
+    for supplied in [UPPERCASE_DWARFDUMP_UUID, MIXED_CASE_DWARFDUMP_UUID] {
+        let output = invoke(
+            &fixture,
+            server.uri().as_str(),
+            dsym_upload_args(artifact.as_os_str(), &[supplied], true),
+        )
+        .await?;
+        assert!(output.status.success());
+        assert!(output.stderr.is_empty());
+        let text = String::from_utf8(output.stdout)?;
+        let body: serde_json::Value = serde_json::from_str(text.as_str())?;
+        assert_eq!(body["artifacts"][0]["image_uuid"], ARM64_UUID);
+        assert!(!text.contains(supplied));
+        assert_private_values_absent(text.as_str(), &fixture, server.uri().as_str());
+    }
     assert!(received_requests(&server).await?.is_empty());
     Ok(())
 }
@@ -313,30 +274,38 @@ async fn resumable_retry_replays_only_the_ambiguous_chunk() -> Result<(), Box<dy
 }
 
 #[tokio::test]
-async fn resumable_fallback_is_initial_only_and_requires_exact_capability_absence()
+async fn android_elf_uses_exact_resumable_manifest_and_whole_object()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
-    let (fixture, artifact, object) = artifact("fallback-method", 257)?;
-    let digest = sha256_hex(object.as_slice());
-    mount_lookup_sequence(
-        &server,
-        vec![
-            missing_lookup(),
-            found_lookup(digest.as_str(), object.len()),
-        ],
-    )
-    .await;
+    let fixture = Fixture::new("android-elf")?;
+    let artifact = fixture.root.join("Customer Secret Android Symbols.so");
+    std::fs::write(artifact.as_path(), ANDROID_ELF)?;
+    let digest = sha256_hex(ANDROID_ELF);
+    let mut found = found_lookup(digest.as_str(), ANDROID_ELF.len());
+    found["artifact"]["artifact_type"] = serde_json::json!("android_elf");
+    found["artifact"]["image_uuid"] = serde_json::json!(ANDROID_ELF_UUID);
+    mount_lookup_sequence(&server, vec![missing_lookup(), found]).await;
     Mock::route("POST", "/api/native-debug-artifact-uploads")
-        .respond_with(ResponseTemplate::new(405).set_body_json(error_envelope(
-            "method_not_allowed",
-            START_METHOD_NEXT,
-            "use_supported_method",
-            "api_method",
-        )))
+        .respond_with(ResponseTemplate::new(200).set_body_json(start_response(&[&digest])))
         .expect(1)
         .mount(&server)
         .await;
-    mount_upload_success(&server, 1).await;
+    Mock::route(
+        "PUT",
+        format!("/api/native-debug-artifact-uploads/{RESUMABLE_SESSION_ID}/chunks/{digest}"),
+    )
+    .respond_with(ResponseTemplate::new(200).set_body_json(chunk_response(&digest)))
+    .expect(1)
+    .mount(&server)
+    .await;
+    Mock::route(
+        "POST",
+        format!("/api/native-debug-artifact-uploads/{RESUMABLE_SESSION_ID}/complete"),
+    )
+    .respond_with(ResponseTemplate::new(200).set_body_json(upload_success_body(1)))
+    .expect(1)
+    .mount(&server)
+    .await;
 
     let output = invoke(
         &fixture,
@@ -345,6 +314,15 @@ async fn resumable_fallback_is_initial_only_and_requires_exact_capability_absenc
     )
     .await?;
     assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let text = String::from_utf8(output.stdout)?;
+    assert_eq!(text.lines().count(), 1);
+    let body = serde_json::from_str::<serde_json::Value>(text.as_str())?;
+    assert_eq!(body["status"], "verified");
+    assert_eq!(body["artifacts"][0]["artifact_type"], "android_elf");
+    assert_eq!(body["artifacts"][0]["image_uuid"], ANDROID_ELF_UUID);
+    assert_private_values_absent(text.as_str(), &fixture, server.uri().as_str());
+
     let requests = received_requests(&server).await?;
     assert_eq!(
         requests
@@ -354,56 +332,34 @@ async fn resumable_fallback_is_initial_only_and_requires_exact_capability_absenc
         [
             ("GET", "/api/native-debug-artifacts"),
             ("POST", "/api/native-debug-artifact-uploads"),
-            ("POST", "/api/native-debug-artifacts"),
+            (
+                "PUT",
+                format!(
+                    "/api/native-debug-artifact-uploads/{RESUMABLE_SESSION_ID}/chunks/{digest}"
+                )
+                .as_str()
+            ),
+            (
+                "POST",
+                format!("/api/native-debug-artifact-uploads/{RESUMABLE_SESSION_ID}/complete")
+                    .as_str()
+            ),
             ("GET", "/api/native-debug-artifacts"),
         ]
     );
-
-    let server = MockServer::start().await;
-    mount_lookup(&server, missing_lookup()).await;
-    Mock::route("POST", "/api/native-debug-artifact-uploads")
-        .respond_with(ResponseTemplate::new(405).set_body_json(error_envelope(
-            "method_not_allowed",
-            "use another upload method",
-            "use_supported_method",
-            "api_method",
-        )))
-        .expect(1)
-        .mount(&server)
-        .await;
-    let output = invoke(
-        &fixture,
-        server.uri().as_str(),
-        upload_args(artifact.as_os_str()),
-    )
-    .await?;
-    let (text, body) = json_failure(&output)?;
-    assert_eq!(body["error"], "native_debug_response_invalid");
-    assert_private_values_absent(text.as_str(), &fixture, server.uri().as_str());
-    assert_eq!(received_requests(&server).await?.len(), 2);
-
-    let server = MockServer::start().await;
-    mount_lookup(&server, missing_lookup()).await;
-    Mock::route("POST", "/api/native-debug-artifact-uploads")
-        .respond_with(ResponseTemplate::new(404).set_body_json(error_envelope(
-            "not_found",
-            "check the project scope",
-            "check_resource",
-            "resource",
-        )))
-        .expect(1)
-        .mount(&server)
-        .await;
-    let output = invoke(
-        &fixture,
-        server.uri().as_str(),
-        upload_args(artifact.as_os_str()),
-    )
-    .await?;
-    let (text, body) = json_failure(&output)?;
-    assert_eq!(body["error"], "not_found");
-    assert_private_values_absent(text.as_str(), &fixture, server.uri().as_str());
-    assert_eq!(received_requests(&server).await?.len(), 2);
+    let manifest = serde_json::from_slice::<serde_json::Value>(requests[1].body.as_slice())?;
+    assert_eq!(manifest["artifactType"], "android_elf_manifest");
+    assert_eq!(manifest["artifacts"][0]["imageUuid"], ANDROID_ELF_UUID);
+    assert_eq!(
+        manifest["artifacts"][0]["debugFile"]["artifactSha256"],
+        digest
+    );
+    assert_eq!(requests[2].body.as_slice(), ANDROID_ELF);
+    for request in [&requests[0], &requests[4]] {
+        assert_eq!(request.url.query(), Some(format!(
+            "project_id={PROJECT_ID}&release=checkout%401.2.3&environment=production&service=checkout-api&image_uuid={ANDROID_ELF_UUID}&architecture=arm64"
+        ).as_str()));
+    }
     Ok(())
 }
 
@@ -749,76 +705,6 @@ async fn hosted_http_and_embedded_url_state_fail_closed_without_reflection()
 }
 
 #[tokio::test]
-async fn validation_error_uses_fixed_release_tooling_recovery_without_body()
--> Result<(), Box<dyn std::error::Error>> {
-    let server = MockServer::start().await;
-    let fixture = Fixture::new("validation-recovery")?;
-    mount_lookup(&server, missing_lookup()).await;
-    Mock::route("POST", "/api/native-debug-artifacts")
-        .respond_with(ResponseTemplate::new(422).set_body_string("hostile backend text"))
-        .expect(1)
-        .mount(&server)
-        .await;
-    let artifact = fixture.root.join("Customer Secret Symbols");
-    std::fs::write(artifact.as_path(), macho64(0x0100_000c, uuid_bytes(0x10)))?;
-
-    let output = invoke(
-        &fixture,
-        server.uri().as_str(),
-        upload_args(artifact.as_os_str()),
-    )
-    .await?;
-    assert_eq!(output.status.code(), Some(1));
-    let (text, body) = json_failure(&output)?;
-    assert_eq!(body["error"], "validation_failed");
-    assert_eq!(
-        body["next"],
-        "send manifest and debug_file_N multipart parts from LogBrew Apple release tooling"
-    );
-    assert!(!text.contains("hostile backend text"));
-    assert_private_values_absent(text.as_str(), &fixture, server.uri().as_str());
-    assert_eq!(received_requests(&server).await?.len(), 3);
-    Ok(())
-}
-
-#[tokio::test]
-async fn payload_too_large_uses_one_safe_json_failure_on_stdout()
--> Result<(), Box<dyn std::error::Error>> {
-    let server = MockServer::start().await;
-    let fixture = Fixture::new("payload-too-large")?;
-    mount_lookup(&server, missing_lookup()).await;
-    Mock::route("POST", "/api/native-debug-artifacts")
-        .respond_with(ResponseTemplate::new(413).set_body_string("hostile edge response text"))
-        .expect(1)
-        .mount(&server)
-        .await;
-    let artifact = fixture.root.join("Customer Secret Oversized Symbols");
-    std::fs::write(artifact.as_path(), macho64(0x0100_000c, uuid_bytes(0x10)))?;
-
-    let output = invoke(
-        &fixture,
-        server.uri().as_str(),
-        upload_args(artifact.as_os_str()),
-    )
-    .await?;
-    assert_eq!(output.status.code(), Some(1));
-    let (text, body) = json_failure(&output)?;
-    assert_eq!(
-        body,
-        serde_json::json!({
-            "ok": false,
-            "error": "payload_too_large",
-            "status": 413,
-            "next": "reduce the native debug-artifact upload below the documented size limits and retry"
-        })
-    );
-    assert!(!text.contains("hostile edge response text"));
-    assert_private_values_absent(text.as_str(), &fixture, server.uri().as_str());
-    assert_eq!(received_requests(&server).await?.len(), 3);
-    Ok(())
-}
-
-#[tokio::test]
 async fn exact_already_present_artifact_is_success_without_upload()
 -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
@@ -849,76 +735,5 @@ async fn exact_already_present_artifact_is_success_without_upload()
     let requests = received_requests(&server).await?;
     assert_eq!(requests.len(), 1);
     assert_exact_lookup_query(&requests[0]);
-    Ok(())
-}
-
-#[tokio::test]
-async fn retryable_one_shot_upload_recovers_without_replaying_full_payload()
--> Result<(), Box<dyn std::error::Error>> {
-    let server = MockServer::start().await;
-    let fixture = Fixture::new("retry")?;
-    let object = macho64(0x0100_000c, uuid_bytes(0x10));
-    let digest = sha256_hex(object.as_slice());
-    let lookup_attempt = Arc::new(AtomicUsize::new(0));
-    let lookup_attempt_for_response = Arc::clone(&lookup_attempt);
-    let found = found_lookup(digest.as_str(), object.len());
-    Mock::route("GET", "/api/native-debug-artifacts")
-        .respond_with(move |_request: &Request| {
-            if lookup_attempt_for_response.fetch_add(1, Ordering::SeqCst) == 0 {
-                ResponseTemplate::new(200).set_body_json(missing_lookup())
-            } else {
-                ResponseTemplate::new(200).set_body_json(found.clone())
-            }
-        })
-        .expect(2)
-        .mount(&server)
-        .await;
-    Mock::route("POST", "/api/native-debug-artifacts")
-        .respond_with(ResponseTemplate::new(503).set_body_string("hostile backend text"))
-        .expect(1)
-        .mount(&server)
-        .await;
-    let artifact = fixture.root.join("Customer Secret Retry Symbols");
-    std::fs::write(artifact.as_path(), object)?;
-
-    let output = invoke(
-        &fixture,
-        server.uri().as_str(),
-        upload_args(artifact.as_os_str()),
-    )
-    .await?;
-    assert!(output.status.success());
-    assert!(output.stderr.is_empty());
-    let text = String::from_utf8(output.stdout)?;
-    let body: serde_json::Value = serde_json::from_str(text.as_str())?;
-    assert_eq!(body["status"], "verified");
-    assert!(!text.contains("hostile backend text"));
-    assert_private_values_absent(text.as_str(), &fixture, server.uri().as_str());
-
-    let requests = received_requests(&server).await?;
-    assert_eq!(requests.len(), 4);
-    assert_eq!(
-        requests
-            .iter()
-            .map(|request| request.method.as_str())
-            .collect::<Vec<_>>(),
-        ["GET", "POST", "POST", "GET"]
-    );
-    let upload_parts = requests
-        .iter()
-        .filter(|request| {
-            request.method.as_str() == "POST" && request.url.path() == "/api/native-debug-artifacts"
-        })
-        .map(multipart_parts)
-        .collect::<Result<Vec<_>, _>>()?;
-    assert_eq!(upload_parts.len(), 1);
-    assert_eq!(
-        upload_parts[0]
-            .iter()
-            .map(|part| part.name.as_str())
-            .collect::<Vec<_>>(),
-        ["manifest", "debug_file_0"]
-    );
-    assert_eq!(lookup_attempt.load(Ordering::SeqCst), 2);
     Ok(())
 }

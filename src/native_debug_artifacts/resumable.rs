@@ -27,8 +27,6 @@ const COMPLETION_PENDING_NEXT: &str =
 /// Fixed correction for an unrecognized completion validation failure.
 const COMPLETION_INVALID_NEXT: &str =
     "check the native debug-artifact manifest and upload session, then retry";
-/// Exact stable initial method recovery required before compatibility fallback.
-const START_METHOD_NEXT: &str = "use the supported native debug-artifact request method";
 
 /// Fully validated immutable start body and unique chunks.
 pub(super) struct PreparedUpload {
@@ -68,14 +66,6 @@ impl PreparedChunk {
     fn matches_digest(&self, digest: &str) -> bool {
         self.digest == digest
     }
-}
-
-/// Initial capability negotiation result.
-pub(super) enum StartOutcome {
-    /// Resumable session was established.
-    Session(Session),
-    /// Exact initial capability absence permits one-shot fallback.
-    Unsupported,
 }
 
 /// Validated resumable session state.
@@ -139,7 +129,7 @@ pub(super) async fn start(
     env: &CliEnvironment,
     url: reqwest::Url,
     prepared: &PreparedUpload,
-) -> Result<StartOutcome, AttemptFailure> {
+) -> Result<Session, AttemptFailure> {
     let response = send_account_authenticated_with_refresh(client, env, |client, credential| {
         client
             .post(url.clone())
@@ -155,11 +145,9 @@ pub(super) async fn start(
         let body = wire::bounded_body(response)
             .await
             .map_err(terminal_failure)?;
-        return parse_start_response(body.as_str(), prepared)
-            .map(StartOutcome::Session)
-            .map_err(terminal_failure);
+        return parse_start_response(body.as_str(), prepared).map_err(terminal_failure);
     }
-    classify_start_error(response, &credential).await
+    Err(classify_phase_error(response, &credential, Phase::Start).await)
 }
 
 /// Sends one exact chunk PUT.
@@ -251,7 +239,7 @@ fn serialize_manifest(
         release: options.release.as_str(),
         environment: options.environment.as_str(),
         service: options.service.as_str(),
-        artifact_type: "apple_dsym_manifest",
+        artifact_type: artifacts[0].kind.manifest(),
         validation: ManifestValidation { status: "ready" },
         artifacts: artifacts
             .iter()
@@ -371,40 +359,6 @@ fn parse_chunk_response(
         return Err(invalid_response());
     }
     Ok(())
-}
-
-/// Classifies start capability negotiation without trusting response text.
-async fn classify_start_error(
-    response: reqwest::Response,
-    credential: &AuthCredential,
-) -> Result<StartOutcome, AttemptFailure> {
-    let status = response.status().as_u16();
-    if status == 404 {
-        let body = wire::bounded_body(response)
-            .await
-            .map_err(terminal_failure)?;
-        if parse_error_envelope(body.as_str()).is_none() {
-            return Ok(StartOutcome::Unsupported);
-        }
-        return Err(phase_failure(status, credential, Phase::Start, None));
-    }
-    if status == 405 {
-        let body = wire::bounded_body(response)
-            .await
-            .map_err(terminal_failure)?;
-        let exact_absence = parse_error_envelope(body.as_str()).is_some_and(|error| {
-            error.code == "method_not_allowed"
-                && error.next == START_METHOD_NEXT
-                && error.next_action.code == "use_supported_method"
-                && error.next_action.target == "api_method"
-                && error.retry_after_seconds.is_none()
-        });
-        if exact_absence {
-            return Ok(StartOutcome::Unsupported);
-        }
-        return Err(terminal_failure(invalid_response()));
-    }
-    Err(classify_phase_error(response, credential, Phase::Start).await)
 }
 
 /// Classifies one non-success phase response.
@@ -770,7 +724,7 @@ struct StartManifest<'a> {
     environment: &'a str,
     /// Exact service scope.
     service: &'a str,
-    /// Fixed Apple dSYM discriminator.
+    /// Exact native artifact family discriminator.
     artifact_type: &'static str,
     /// Fixed local validation state.
     validation: ManifestValidation,

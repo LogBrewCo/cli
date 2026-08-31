@@ -697,7 +697,7 @@ pub struct ProjectIngestKeyCreateOptions {
     pub abandon_retry: bool,
 }
 
-/// Apple native debug-artifact operation.
+/// Native debug-artifact operation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NativeDebugArtifactsTarget {
     /// Validate, upload, and verify every supported object identity.
@@ -717,16 +717,16 @@ pub struct NativeDebugLookupOptions {
     pub environment: String,
     /// Exact service identifier.
     pub service: String,
-    /// Canonical lowercase Mach-O image UUID.
+    /// Canonical lowercase native image UUID.
     pub image_uuid: String,
     /// Supported canonical architecture.
     pub architecture: String,
 }
 
-/// Apple native debug-artifact upload options.
+/// Native debug-artifact upload options.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NativeDebugUploadOptions {
-    /// User-selected dSYM bundle, ZIP archive, or Mach-O debug object.
+    /// User-selected dSYM bundle, ZIP archive, Mach-O object, or Android ELF.
     pub path: String,
     /// Account-owned project UUID.
     pub project_id: String,
