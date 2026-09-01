@@ -23,6 +23,9 @@ done
 
 cargo fmt --all -- --check
 cargo fetch --locked
+test_rustflags="${RUSTFLAGS:+$RUSTFLAGS }-C prefer-dynamic -C link-arg=-Wl,-rpath,$(rustc --print target-libdir)"
+LOGBREW_CLIPPY_WRAPPER=1 RUSTC_WORKSPACE_WRAPPER="$ROOT_DIR/scripts/check-all.sh" RUSTFLAGS="$test_rustflags" CARGO_INCREMENTAL=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_PROFILE_TEST_CODEGEN_UNITS=256 cargo test --quiet --lib --tests --all-features &
+test_pid=$!
 (
 bash scripts/confidentiality-check.sh
 python3 scripts/brand_assets.py --check
@@ -45,8 +48,6 @@ cargo audit "${audit_args[@]}" &
 audit_pid=$!
 CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$ROOT_DIR/target}" cargo package --locked --allow-dirty --offline --no-verify &
 package_pid=$!
-LOGBREW_CLIPPY_WRAPPER=1 RUSTC_WORKSPACE_WRAPPER="$ROOT_DIR/scripts/check-all.sh" CARGO_INCREMENTAL=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_PROFILE_TEST_CODEGEN_UNITS=512 cargo test --all-targets --all-features &
-test_pid=$!
 trap 'kill "$portable_checks_pid" "$audit_pid" "$package_pid" "$test_pid" 2>/dev/null || true' EXIT
 python3 scripts/test-real-user-public-install-smoke.py
 wait "$package_pid"

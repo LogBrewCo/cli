@@ -2,8 +2,8 @@
 
 use super::{assert_cursor_flag_errors, assert_cursor_help, authenticated_env, run_command};
 use crate::matchers::{header, query_param};
-use crate::{Mock, MockServer, ResponseTemplate};
-use logbrew_cli::{execute_command, parse_command, write_cli_error, write_runtime_error};
+use crate::{Mock, MockServer, ResponseTemplate, execute_command};
+use logbrew_cli::{parse_command, write_cli_error, write_runtime_error};
 use serde_json::{Map, Value, json};
 
 const PROJECT_ID: &str = "123e4567-e89b-12d3-a456-426614174000";
@@ -131,9 +131,7 @@ fn cursor_flags_and_help_are_resource_specific() {
     assert_eq!(body["next"], "run logbrew read releases --help");
 }
 
-#[tokio::test]
-async fn json_preserves_legacy_arrays_and_cursor_envelopes()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(json_preserves_legacy_arrays_and_cursor_envelopes -> Result<(), Box<dyn std::error::Error>>, {
     for spec in SPECS {
         let legacy_server = MockServer::start().await;
         let cursor_server = MockServer::start().await;
@@ -141,15 +139,13 @@ async fn json_preserves_legacy_arrays_and_cursor_envelopes()
         let envelope = page_value(spec, row.clone(), Some(cursor_value(spec)));
         Mock::auth("GET", spec.path, "test-token")
             .respond_with(ResponseTemplate::new(200).set_body_json(json!([row.clone()])))
-            .mount(&legacy_server)
-            .await;
+            .mount(&legacy_server);
         Mock::route("GET", spec.path)
             .and(query_param("pagination", "cursor"))
             .and(query_param("limit", "1"))
             .and(header("authorization", "Bearer test-token"))
             .respond_with(ResponseTemplate::new(200).set_body_json(envelope.clone()))
-            .mount(&cursor_server)
-            .await;
+            .mount(&cursor_server);
 
         let legacy = run_command(
             &legacy_server,
@@ -175,11 +171,9 @@ async fn json_preserves_legacy_arrays_and_cursor_envelopes()
         assert_eq!(serde_json::from_str::<Value>(&cursor)?, envelope);
     }
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn human_pages_keep_rows_receipts_and_retryable_continuations()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(human_pages_keep_rows_receipts_and_retryable_continuations -> Result<(), Box<dyn std::error::Error>>, {
     for spec in SPECS {
         let server = MockServer::start().await;
         Mock::route("GET", spec.path)
@@ -191,8 +185,7 @@ async fn human_pages_keep_rows_receipts_and_retryable_continuations()
                 row_value(spec),
                 Some(cursor_value(spec)),
             )))
-            .mount(&server)
-            .await;
+            .mount(&server);
         let human = run_command(
             &server,
             [
@@ -230,11 +223,9 @@ async fn human_pages_keep_rows_receipts_and_retryable_continuations()
         }
     }
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn terminal_pages_and_replaced_continuations_are_explicit()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(terminal_pages_and_replaced_continuations_are_explicit -> Result<(), Box<dyn std::error::Error>>, {
     for spec in SPECS {
         let terminal = MockServer::start().await;
         Mock::route("GET", spec.path)
@@ -254,8 +245,7 @@ async fn terminal_pages_and_replaced_continuations_are_explicit()
                 row_value(spec),
                 None,
             )))
-            .mount(&terminal)
-            .await;
+            .mount(&terminal);
         let human = run_command(
             &terminal,
             [
@@ -288,8 +278,7 @@ async fn terminal_pages_and_replaced_continuations_are_explicit()
             row_value(spec),
             Some(json!({"time": next_time, "id": next_id})),
         )))
-        .mount(&server)
-        .await;
+        .mount(&server);
     let human = run_command(
         &server,
         [
@@ -310,11 +299,9 @@ async fn terminal_pages_and_replaced_continuations_are_explicit()
     ));
     assert!(!human.contains("Next page: add"));
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn every_cursor_resource_hides_malformed_or_non_json_successes()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(every_cursor_resource_hides_malformed_or_non_json_successes -> Result<(), Box<dyn std::error::Error>>, {
     for spec in SPECS {
         for (suffix, body) in [("missing", Some(wrapper_only(spec))), ("text", None)] {
             let server = MockServer::start().await;
@@ -328,8 +315,7 @@ async fn every_cursor_resource_hides_malformed_or_non_json_successes()
             Mock::route("GET", spec.path)
                 .and(query_param("pagination", "cursor"))
                 .respond_with(response)
-                .mount(&server)
-                .await;
+                .mount(&server);
             let human = run_command(
                 &server,
                 ["logbrew", spec.resource, "--pagination", "cursor"],
@@ -341,11 +327,9 @@ async fn every_cursor_resource_hides_malformed_or_non_json_successes()
         }
     }
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn malformed_cursor_values_and_issue_rows_fail_closed()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(malformed_cursor_values_and_issue_rows_fail_closed -> Result<(), Box<dyn std::error::Error>>, {
     let spec = SPECS[0];
     for cursor in [
         json!({"time": 123, "id": CURSOR_ID}),
@@ -368,11 +352,9 @@ async fn malformed_cursor_values_and_issue_rows_fail_closed()
         assert_invalid_page(issue, page_value(issue, row, None)).await?;
     }
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn metric_human_output_never_falls_back_to_attributes()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(metric_human_output_never_falls_back_to_attributes -> Result<(), Box<dyn std::error::Error>>, {
     let spec = SPECS[3];
     let mut malformed = row_value(spec);
     malformed["occurred_at"] = json!("not-a-time");
@@ -383,8 +365,7 @@ async fn metric_human_output_never_falls_back_to_attributes()
         let server = MockServer::start().await;
         Mock::route("GET", spec.path)
             .respond_with(ResponseTemplate::new(200).set_body_json(body))
-            .mount(&server)
-            .await;
+            .mount(&server);
         let human = if cursor {
             run_command(
                 &server,
@@ -408,10 +389,9 @@ async fn metric_human_output_never_falls_back_to_attributes()
         assert!(!human.contains("attribute sentinel"));
     }
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn trace_naming_receipt_is_exact_and_actionable() -> Result<(), Box<dyn std::error::Error>> {
+async_test!(trace_naming_receipt_is_exact_and_actionable -> Result<(), Box<dyn std::error::Error>>, {
     let spec = SPECS[4];
     let server = MockServer::start().await;
     let mut weak_trace = row_value(spec);
@@ -421,8 +401,7 @@ async fn trace_naming_receipt_is_exact_and_actionable() -> Result<(), Box<dyn st
     page["naming_quality"] = trace_quality(1, 0, 0, 1, 1, false, true);
     Mock::route("GET", spec.path)
         .respond_with(ResponseTemplate::new(200).set_body_json(page))
-        .mount(&server)
-        .await;
+        .mount(&server);
     let human = run_command(
         &server,
         ["logbrew", "traces", "--pagination", "cursor"],
@@ -445,11 +424,9 @@ async fn trace_naming_receipt_is_exact_and_actionable() -> Result<(), Box<dyn st
         assert_invalid_page(spec, invalid).await?;
     }
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn backend_cursor_validation_is_preserved_without_echoing_values()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(backend_cursor_validation_is_preserved_without_echoing_values -> Result<(), Box<dyn std::error::Error>>, {
     let spec = SPECS[3];
     let server = MockServer::start().await;
     Mock::route("GET", spec.path)
@@ -462,8 +439,7 @@ async fn backend_cursor_validation_is_preserved_without_echoing_values()
             "next": CURSOR_RECOVERY,
             "next_action": {"code": "fix_request", "target": "request"}
         })))
-        .mount(&server)
-        .await;
+        .mount(&server);
     let command = parse_command([
         "logbrew",
         "metrics",
@@ -487,7 +463,7 @@ async fn backend_cursor_validation_is_preserved_without_echoing_values()
     assert_eq!(body["next"], CURSOR_RECOVERY);
     assert!(!String::from_utf8_lossy(&output).contains("not-a-time"));
     Ok(())
-}
+});
 
 fn command_args(spec: CursorSpec, continuation: bool) -> Vec<&'static str> {
     let mut args = vec!["logbrew", spec.resource];
@@ -636,8 +612,7 @@ async fn assert_invalid_page(
     Mock::route("GET", spec.path)
         .and(query_param("pagination", "cursor"))
         .respond_with(ResponseTemplate::new(200).set_body_json(body))
-        .mount(&server)
-        .await;
+        .mount(&server);
     let human = run_command(
         &server,
         ["logbrew", spec.resource, "--pagination", "cursor"],

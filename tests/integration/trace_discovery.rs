@@ -2,10 +2,8 @@
 
 use super::{authenticated_env, run_command};
 use crate::matchers::{header, query_param};
-use crate::{Mock, MockServer, ResponseTemplate};
-use logbrew_cli::{
-    Command, execute_command, help, parse_command, write_cli_error, write_runtime_error,
-};
+use crate::{Mock, MockServer, ResponseTemplate, execute_command};
+use logbrew_cli::{Command, help, parse_command, write_cli_error, write_runtime_error};
 
 const PROJECT_ID: &str = "123e4567-e89b-12d3-a456-426614174000";
 
@@ -134,9 +132,7 @@ fn plural_trace_help_routes_non_ids_to_discovery_guidance() {
     );
 }
 
-#[tokio::test]
-async fn trace_discovery_preserves_bare_json_and_renders_human_triage()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(trace_discovery_preserves_bare_json_and_renders_human_triage -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     let response = serde_json::json!([{
         "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
@@ -164,8 +160,7 @@ async fn trace_discovery_preserves_bare_json_and_renders_human_triage()
         .and(query_param("min_duration_ms", "500"))
         .and(header("authorization", "Bearer test-token"))
         .respond_with(ResponseTemplate::new(200).set_body_json(response.clone()))
-        .mount(&server)
-        .await;
+        .mount(&server);
     let args = [
         "logbrew",
         "traces",
@@ -212,18 +207,15 @@ async fn trace_discovery_preserves_bare_json_and_renders_human_triage()
     assert_eq!(body[0]["next_action"]["code"], "inspect_trace");
     assert_eq!(body[0]["next_action"]["target"], "trace_summary");
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn empty_trace_discovery_has_a_concrete_human_next_step()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(empty_trace_discovery_has_a_concrete_human_next_step -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     Mock::route("GET", "/api/telemetry/traces")
         .and(query_param("min_duration_ms", "999999"))
         .and(header("authorization", "Bearer test-token"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
-        .mount(&server)
-        .await;
+        .mount(&server);
 
     let human = run_command(
         &server,
@@ -237,7 +229,7 @@ async fn empty_trace_discovery_has_a_concrete_human_next_step()
         "Traces (0)\nNo traces found.\nNext: widen --project/--service/--release/--environment/--status/--since/--min-duration-ms filters.\n"
     );
     Ok(())
-}
+});
 
 #[test]
 fn trace_discovery_validation_is_agent_actionable() {
@@ -357,9 +349,7 @@ fn watch_traces_recovers_to_historical_discovery() {
     );
 }
 
-#[tokio::test]
-async fn trace_discovery_preserves_backend_validation_recovery()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(trace_discovery_preserves_backend_validation_recovery -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     Mock::route("GET", "/api/telemetry/traces")
         .and(query_param("since", "0h"))
@@ -373,8 +363,7 @@ async fn trace_discovery_preserves_backend_validation_recovery()
                 "target": "request"
             }
         })))
-        .mount(&server)
-        .await;
+        .mount(&server);
     let command = parse_command(["logbrew", "traces", "--since", "0h", "--json"])?;
     let env = authenticated_env(&server, "test-token", Some("trace-since-recovery"));
     let mut output = Vec::new();
@@ -400,4 +389,4 @@ async fn trace_discovery_preserves_backend_validation_recovery()
     assert_eq!(backend_body["next_action"]["code"], "fix_request");
     assert_eq!(backend_body["next_action"]["target"], "request");
     Ok(())
-}
+});

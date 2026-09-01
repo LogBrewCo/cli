@@ -71,9 +71,7 @@ fn property_predicates_are_bounded_canonical_and_part_of_segment_identity()
     Ok(())
 }
 
-#[tokio::test]
-async fn built_binary_posts_exact_segments_and_preserves_validated_json()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(built_binary_posts_exact_segments_and_preserves_validated_json -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     let response = comparison_response("Old release");
     Mock::auth(
@@ -106,8 +104,7 @@ async fn built_binary_posts_exact_segments_and_preserves_validated_json()
     })))
     .respond_with(ResponseTemplate::new(200).set_body_json(response.clone()))
     .expect(1)
-    .mount(&server)
-    .await;
+    .mount(&server);
 
     let process = run_binary(&server, true, "old=Old release").await?;
 
@@ -115,17 +112,14 @@ async fn built_binary_posts_exact_segments_and_preserves_validated_json()
     let actual: serde_json::Value = serde_json::from_slice(process.stdout.as_slice())?;
     assert_eq!(actual, response);
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn built_binary_human_output_explains_reach_differences_coverage_and_limits()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(built_binary_human_output_explains_reach_differences_coverage_and_limits -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     Mock::route("POST", "/api/telemetry/analytics/segments/compare")
         .respond_with(ResponseTemplate::new(200).set_body_json(comparison_response("Old release")))
         .expect(1)
-        .mount(&server)
-        .await;
+        .mount(&server);
 
     let process = run_binary(&server, false, "old=Old release").await?;
 
@@ -149,11 +143,9 @@ async fn built_binary_human_output_explains_reach_differences_coverage_and_limit
     }
     assert!(!text.contains("Repeat this server-authored reason verbatim."));
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn built_binary_accepts_typed_user_identity_coverage_target()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(built_binary_accepts_typed_user_identity_coverage_target -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     let mut response = comparison_response("Old release");
     response["query"]["analysis_unit"] = "identified_user".into();
@@ -165,8 +157,7 @@ async fn built_binary_accepts_typed_user_identity_coverage_target()
     Mock::route("POST", "/api/telemetry/analytics/segments/compare")
         .respond_with(ResponseTemplate::new(200).set_body_json(response.clone()))
         .expect(1)
-        .mount(&server)
-        .await;
+        .mount(&server);
 
     let mut args = compare_args(false, "old=Old release");
     args.extend([
@@ -180,11 +171,9 @@ async fn built_binary_accepts_typed_user_identity_coverage_target()
     let actual: serde_json::Value = serde_json::from_slice(process.stdout.as_slice())?;
     assert_eq!(actual, response);
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn built_binary_separates_missing_properties_from_nonmatching_values()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(built_binary_separates_missing_properties_from_nonmatching_values -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     let response = property_comparison_response();
     Mock::route("POST", "/api/telemetry/analytics/segments/compare")
@@ -195,8 +184,7 @@ async fn built_binary_separates_missing_properties_from_nonmatching_values()
         ))
         .respond_with(ResponseTemplate::new(200).set_body_json(response))
         .expect(1)
-        .mount(&server)
-        .await;
+        .mount(&server);
 
     let process = run_binary_args(&server, property_compare_args(false)).await?;
 
@@ -216,11 +204,9 @@ async fn built_binary_separates_missing_properties_from_nonmatching_values()
     assert!(!text.contains("tag.plan=free"));
     assert!(!text.contains("tag.plan=pro"));
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn built_binary_fails_closed_on_contradictory_property_populations()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(built_binary_fails_closed_on_contradictory_property_populations -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     let mut response = property_comparison_response();
     response["segments"][0]["coverage"]["property_filters"]["missing_property_events"] = 9.into();
@@ -228,8 +214,7 @@ async fn built_binary_fails_closed_on_contradictory_property_populations()
     Mock::route("POST", "/api/telemetry/analytics/segments/compare")
         .respond_with(ResponseTemplate::new(200).set_body_json(response))
         .expect(1)
-        .mount(&server)
-        .await;
+        .mount(&server);
 
     let process = run_binary_args(&server, property_compare_args(true)).await?;
 
@@ -240,11 +225,9 @@ async fn built_binary_fails_closed_on_contradictory_property_populations()
     assert_eq!(error["error"], "analytics_segment_response_invalid");
     assert!(!text.contains("property-contradiction-marker"));
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn built_binary_fails_closed_on_unknown_identity_and_contradictory_difference_fields()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(built_binary_fails_closed_on_unknown_identity_and_contradictory_difference_fields -> Result<(), Box<dyn std::error::Error>>, {
     for response in [
         {
             let mut response = comparison_response("Old release");
@@ -262,8 +245,7 @@ async fn built_binary_fails_closed_on_unknown_identity_and_contradictory_differe
         Mock::route("POST", "/api/telemetry/analytics/segments/compare")
             .respond_with(ResponseTemplate::new(200).set_body_json(response))
             .expect(1)
-            .mount(&server)
-            .await;
+            .mount(&server);
 
         let process = run_binary(&server, true, "old=Old release").await?;
 
@@ -275,18 +257,15 @@ async fn built_binary_fails_closed_on_unknown_identity_and_contradictory_differe
         assert!(!text.contains("hostile-subject-marker"));
     }
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn built_binary_escapes_bidirectional_segment_labels_in_human_output()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(built_binary_escapes_bidirectional_segment_labels_in_human_output -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     let label = "Old \u{202e}release";
     Mock::route("POST", "/api/telemetry/analytics/segments/compare")
         .respond_with(ResponseTemplate::new(200).set_body_json(comparison_response(label)))
         .expect(1)
-        .mount(&server)
-        .await;
+        .mount(&server);
 
     let argument = format!("old={label}");
     let process = run_binary(&server, false, argument.as_str()).await?;
@@ -296,7 +275,7 @@ async fn built_binary_escapes_bidirectional_segment_labels_in_human_output()
     assert!(text.contains(r"Old \u{202e}release"));
     assert!(!text.contains(label));
     Ok(())
-}
+});
 
 /// Runs the actual CLI process while the async loopback server remains responsive.
 async fn run_binary(

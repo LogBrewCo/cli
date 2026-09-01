@@ -1,16 +1,14 @@
 //! CLI status command output tests.
 
 use crate::matchers::body_json;
-use crate::{Mock, MockServer, ResponseTemplate};
-use logbrew_cli::{CliEnvironment, execute_command, parse_command, write_runtime_error};
+use crate::{Mock, MockServer, ResponseTemplate, execute_command};
+use logbrew_cli::{CliEnvironment, parse_command, write_runtime_error};
 
-#[tokio::test]
-async fn status_json_reports_api_and_missing_auth_for_agents() {
+async_test!(status_json_reports_api_and_missing_auth_for_agents, {
     let server = MockServer::start().await;
     Mock::route("GET", "/health")
         .respond_with(ResponseTemplate::new(200).set_body_string("ok"))
-        .mount(&server)
-        .await;
+        .mount(&server);
     let command = parse_command(["logbrew", "status", "--json"]).expect("command parses");
     let env = environment(&server, None, "json-test");
     let mut output = Vec::new();
@@ -29,21 +27,18 @@ async fn status_json_reports_api_and_missing_auth_for_agents() {
     assert_eq!(body["auth_source"], "missing");
     assert_eq!(body["next"], "run logbrew login");
     assert!(body.get("agent_use").is_none());
-}
+});
 
-#[tokio::test]
-async fn status_json_reports_env_auth_without_exposing_token() {
+async_test!(status_json_reports_env_auth_without_exposing_token, {
     let server = MockServer::start().await;
     Mock::route("GET", "/health")
         .respond_with(ResponseTemplate::new(200).set_body_string("ok"))
-        .mount(&server)
-        .await;
+        .mount(&server);
     Mock::route("GET", "/api/auth/account")
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "id": "00000000-0000-4000-8000-000000000001"
         })))
-        .mount(&server)
-        .await;
+        .mount(&server);
     let command = parse_command(["logbrew", "status", "--json"]).expect("command parses");
     let env = environment(&server, Some("fixture-token"), "env-auth-test");
     let mut output = Vec::new();
@@ -97,15 +92,13 @@ async fn status_json_reports_env_auth_without_exposing_token() {
         "logbrew watch --severity error,critical --json"
     );
     assert!(!body.to_string().contains("fixture-token"));
-}
+});
 
-#[tokio::test]
-async fn status_json_reports_expired_token_as_unauthenticated() {
+async_test!(status_json_reports_expired_token_as_unauthenticated, {
     let server = MockServer::start().await;
     Mock::route("GET", "/health")
         .respond_with(ResponseTemplate::new(200).set_body_string("ok"))
-        .mount(&server)
-        .await;
+        .mount(&server);
     Mock::route("GET", "/api/auth/account")
         .respond_with(ResponseTemplate::new(401).set_body_json(serde_json::json!({
             "code": "unauthorized",
@@ -115,8 +108,7 @@ async fn status_json_reports_expired_token_as_unauthenticated() {
                 "target": "auth"
             }
         })))
-        .mount(&server)
-        .await;
+        .mount(&server);
     let command = parse_command(["logbrew", "status", "--json"]).expect("command parses");
     let env = environment(&server, Some("expired-token"), "expired-auth-test");
     let mut output = Vec::new();
@@ -133,21 +125,17 @@ async fn status_json_reports_expired_token_as_unauthenticated() {
     assert_eq!(body["next"], "run logbrew login");
     assert!(body.get("agent_use").is_none());
     assert!(!body.to_string().contains("expired-token"));
-}
+});
 
-#[tokio::test]
-async fn status_refreshes_expired_local_auth_before_reporting_authenticated()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(status_refreshes_expired_local_auth_before_reporting_authenticated -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     Mock::route("GET", "/health")
         .respond_with(ResponseTemplate::new(200).set_body_string("ok"))
-        .mount(&server)
-        .await;
+        .mount(&server);
     Mock::auth("GET", "/api/auth/account", "expired-local")
         .respond_with(ResponseTemplate::new(401))
         .expect(1)
-        .mount(&server)
-        .await;
+        .mount(&server);
     Mock::route("POST", "/api/auth/refresh")
         .and(body_json(serde_json::json!({
             "refresh_token": "old-local-refresh"
@@ -157,15 +145,13 @@ async fn status_refreshes_expired_local_auth_before_reporting_authenticated()
             "refresh_token": "fresh-local-refresh"
         })))
         .expect(1)
-        .mount(&server)
-        .await;
+        .mount(&server);
     Mock::auth("GET", "/api/auth/account", "fresh-local")
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "id": "00000000-0000-4000-8000-000000000001"
         })))
         .expect(1)
-        .mount(&server)
-        .await;
+        .mount(&server);
     let home = status_home("refresh-local")?;
     let auth_dir = home.join(".logbrew");
     std::fs::create_dir_all(auth_dir.as_path())?;
@@ -197,15 +183,13 @@ async fn status_refreshes_expired_local_auth_before_reporting_authenticated()
         assert!(!text.contains(secret));
     }
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn status_human_output_includes_api_and_auth_next_step() {
+async_test!(status_human_output_includes_api_and_auth_next_step, {
     let server = MockServer::start().await;
     Mock::route("GET", "/health")
         .respond_with(ResponseTemplate::new(200).set_body_string("ok"))
-        .mount(&server)
-        .await;
+        .mount(&server);
     let command = parse_command(["logbrew", "status"]).expect("command parses");
     let env = environment(&server, None, "human-test");
     let mut output = Vec::new();
@@ -222,7 +206,7 @@ async fn status_human_output_includes_api_and_auth_next_step() {
             server.uri()
         )
     );
-}
+});
 
 fn status_home(name: &str) -> Result<std::path::PathBuf, std::io::Error> {
     let home =
@@ -236,81 +220,81 @@ fn status_home(name: &str) -> Result<std::path::PathBuf, std::io::Error> {
     Ok(home)
 }
 
-#[tokio::test]
-async fn status_human_authenticated_output_points_to_first_read_without_leaking_token() {
-    let server = MockServer::start().await;
-    Mock::route("GET", "/health")
-        .respond_with(ResponseTemplate::new(200).set_body_string("ok"))
-        .mount(&server)
-        .await;
-    Mock::route("GET", "/api/auth/account")
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "id": "00000000-0000-4000-8000-000000000001"
-        })))
-        .mount(&server)
-        .await;
-    let command = parse_command(["logbrew", "status"]).expect("command parses");
-    let env = environment(&server, Some("fixture-token"), "human-auth-test");
-    let mut output = Vec::new();
+async_test!(
+    status_human_authenticated_output_points_to_first_read_without_leaking_token,
+    {
+        let server = MockServer::start().await;
+        Mock::route("GET", "/health")
+            .respond_with(ResponseTemplate::new(200).set_body_string("ok"))
+            .mount(&server);
+        Mock::route("GET", "/api/auth/account")
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": "00000000-0000-4000-8000-000000000001"
+            })))
+            .mount(&server);
+        let command = parse_command(["logbrew", "status"]).expect("command parses");
+        let env = environment(&server, Some("fixture-token"), "human-auth-test");
+        let mut output = Vec::new();
 
-    execute_command(&command, &env, &mut output)
-        .await
-        .expect("status succeeds");
+        execute_command(&command, &env, &mut output)
+            .await
+            .expect("status succeeds");
 
-    let text = String::from_utf8(output).expect("utf8 output");
-    assert_eq!(
-        text,
-        format!(
-            "LogBrew API reachable.\nAPI: {}\nAuth: logged in (env token)\nLogBrew is \
-             connected. How should your AI use it?\n\n1. Check only when requested\n   Lower \
-             token use. Your AI runs LogBrew commands when you ask.\n\n2. Keep watching this \
-             session\n   Higher token use. Your AI watches new events/logs until stopped.\n   \
-             Command: logbrew watch --json\n\n3. Watch only errors and critical issues\n   \
-             Moderate token use. Your AI ignores lower-severity logs/events.\n   Command: \
-             logbrew watch --severity error,critical --json\n\nNext: run logbrew releases or \
-             logbrew logs --release <release> --environment <environment>\n",
-            server.uri()
-        )
-    );
-    assert!(!text.contains("fixture-token"));
-}
+        let text = String::from_utf8(output).expect("utf8 output");
+        assert_eq!(
+            text,
+            format!(
+                "LogBrew API reachable.\nAPI: {}\nAuth: logged in (env token)\nLogBrew is \
+                 connected. How should your AI use it?\n\n1. Check only when requested\n   Lower \
+                 token use. Your AI runs LogBrew commands when you ask.\n\n2. Keep watching this \
+                 session\n   Higher token use. Your AI watches new events/logs until stopped.\n   \
+                 Command: logbrew watch --json\n\n3. Watch only errors and critical issues\n   \
+                 Moderate token use. Your AI ignores lower-severity logs/events.\n   Command: \
+                 logbrew watch --severity error,critical --json\n\nNext: run logbrew releases or \
+                 logbrew logs --release <release> --environment <environment>\n",
+                server.uri()
+            )
+        );
+        assert!(!text.contains("fixture-token"));
+    }
+);
 
-#[tokio::test]
-async fn status_json_reports_unreachable_api_without_exposing_token() {
+async_test!(
+    status_json_reports_unreachable_api_without_exposing_token,
+    {
+        let server = MockServer::start().await;
+        Mock::route("GET", "/health")
+            .respond_with(ResponseTemplate::new(503).set_body_string("maintenance"))
+            .mount(&server);
+        let command = parse_command(["logbrew", "status", "--json"]).expect("command parses");
+        let env = environment(&server, Some("fixture-token"), "json-down-test");
+        let mut output = Vec::new();
+
+        let error = execute_command(&command, &env, &mut output)
+            .await
+            .expect_err("status fails");
+        write_runtime_error(&error, command.wants_json(), &mut output).expect("error writes");
+
+        let body: serde_json::Value =
+            serde_json::from_slice(output.as_slice()).expect("valid json");
+        assert_eq!(body["ok"], false);
+        assert_eq!(body["error"], "status_unreachable");
+        assert_eq!(body["status"], "unreachable");
+        assert_eq!(body["status_code"], 503);
+        assert_eq!(body["body"], "maintenance");
+        assert_eq!(body["api_url"], server.uri());
+        assert_eq!(body["authenticated"], true);
+        assert_eq!(body["auth_source"], "env");
+        assert_eq!(body["next"], "check LOGBREW_API_URL or network");
+        assert!(!body.to_string().contains("fixture-token"));
+    }
+);
+
+async_test!(status_human_reports_unreachable_api_with_next_step, {
     let server = MockServer::start().await;
     Mock::route("GET", "/health")
         .respond_with(ResponseTemplate::new(503).set_body_string("maintenance"))
-        .mount(&server)
-        .await;
-    let command = parse_command(["logbrew", "status", "--json"]).expect("command parses");
-    let env = environment(&server, Some("fixture-token"), "json-down-test");
-    let mut output = Vec::new();
-
-    let error = execute_command(&command, &env, &mut output)
-        .await
-        .expect_err("status fails");
-    write_runtime_error(&error, command.wants_json(), &mut output).expect("error writes");
-
-    let body: serde_json::Value = serde_json::from_slice(output.as_slice()).expect("valid json");
-    assert_eq!(body["ok"], false);
-    assert_eq!(body["error"], "status_unreachable");
-    assert_eq!(body["status"], "unreachable");
-    assert_eq!(body["status_code"], 503);
-    assert_eq!(body["body"], "maintenance");
-    assert_eq!(body["api_url"], server.uri());
-    assert_eq!(body["authenticated"], true);
-    assert_eq!(body["auth_source"], "env");
-    assert_eq!(body["next"], "check LOGBREW_API_URL or network");
-    assert!(!body.to_string().contains("fixture-token"));
-}
-
-#[tokio::test]
-async fn status_human_reports_unreachable_api_with_next_step() {
-    let server = MockServer::start().await;
-    Mock::route("GET", "/health")
-        .respond_with(ResponseTemplate::new(503).set_body_string("maintenance"))
-        .mount(&server)
-        .await;
+        .mount(&server);
     let command = parse_command(["logbrew", "status"]).expect("command parses");
     let env = environment(&server, None, "human-down-test");
     let mut output = Vec::new();
@@ -325,11 +309,11 @@ async fn status_human_reports_unreachable_api_with_next_step() {
         text,
         format!(
             "LogBrew API unreachable.\nAPI: {}\nAuth: not logged in\nStatus: 503\nBody: \
-             maintenance\nNext: check LOGBREW_API_URL or network\n",
+                 maintenance\nNext: check LOGBREW_API_URL or network\n",
             server.uri()
         )
     );
-}
+});
 
 fn environment(server: &MockServer, token: Option<&str>, name: &str) -> CliEnvironment {
     super::test_env(

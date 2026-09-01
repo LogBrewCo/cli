@@ -14,8 +14,7 @@ fn javascript_surfaces(browser: &str, server: &str) -> serde_json::Value {
     ])
 }
 
-#[tokio::test]
-async fn swiftpm_emits_exact_non_mutating_install_plan() -> TestResult {
+async_test!(swiftpm_emits_exact_non_mutating_install_plan -> TestResult, {
     let root = fixture("swift-ready", &[("Package.swift", "// public fixture\n")])?;
     let body = setup_json(root.as_path()).await?;
     assert_eq!(
@@ -59,10 +58,9 @@ async fn swiftpm_emits_exact_non_mutating_install_plan() -> TestResult {
         ],
     );
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn cmake_emits_exact_pinned_cpp_install_plan() -> TestResult {
+async_test!(cmake_emits_exact_pinned_cpp_install_plan -> TestResult, {
     let root = fixture(
         "cmake-ready",
         &[("CMakeLists.txt", "project(Fixture LANGUAGES CXX)\n")],
@@ -120,10 +118,9 @@ async fn cmake_emits_exact_pinned_cpp_install_plan() -> TestResult {
         ],
     );
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn xcodegen_prefers_the_objective_c_app_plan() -> TestResult {
+async_test!(xcodegen_prefers_the_objective_c_app_plan -> TestResult, {
     let root = fixture(
         "xcodegen-objective-c",
         &[
@@ -170,10 +167,9 @@ async fn xcodegen_prefers_the_objective_c_app_plan() -> TestResult {
     );
     assert!(!human.contains(root.to_string_lossy().as_ref()));
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn released_python_frameworks_use_the_detected_package_manager() -> TestResult {
+async_test!(released_python_frameworks_use_the_detected_package_manager -> TestResult, {
     for (
         dependency,
         lockfile,
@@ -258,10 +254,9 @@ async fn released_python_frameworks_use_the_detected_package_manager() -> TestRe
         assert_eq!(body["detected"][0]["runtime"], "python");
     }
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn java_builds_emit_exact_released_dependency_plans() -> TestResult {
+async_test!(java_builds_emit_exact_released_dependency_plans -> TestResult, {
     for (manifest, manager, contents, integration, declaration) in [
         (
             "pom.xml",
@@ -322,10 +317,9 @@ async fn java_builds_emit_exact_released_dependency_plans() -> TestResult {
         }
     }
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn go_module_emits_the_current_non_mutating_install_plan() -> TestResult {
+async_test!(go_module_emits_the_current_non_mutating_install_plan -> TestResult, {
     let root = fixture(
         "go-module",
         &[("go.mod", "module example.com/service\n\ngo 1.24\n")],
@@ -353,10 +347,9 @@ async fn go_module_emits_the_current_non_mutating_install_plan() -> TestResult {
         ],
     );
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn javascript_executables_and_frameworks_emit_scoped_plans() -> TestResult {
+async_test!(javascript_executables_and_frameworks_emit_scoped_plans -> TestResult, {
     let server = serde_json::json!([{
         "surface": "server", "integration": "node", "credential_kind": "server",
         "service_name_required": true, "deployment_context_required": ["environment", "release"],
@@ -450,10 +443,9 @@ async fn javascript_executables_and_frameworks_emit_scoped_plans() -> TestResult
         assert_contains_all(&setup_text(&root, &["logbrew", "setup"]).await?, human);
     }
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn aspnetcore_wins_a_mixed_repo_without_claiming_plain_dotnet() -> TestResult {
+async_test!(aspnetcore_wins_a_mixed_repo_without_claiming_plain_dotnet -> TestResult, {
     let root = fixture(
         "aspnetcore-react",
         &[
@@ -524,10 +516,9 @@ async fn aspnetcore_wins_a_mixed_repo_without_claiming_plain_dotnet() -> TestRes
     assert_eq!(body["detected"][0]["runtime"], "dotnet");
     assert_eq!(body["install_plan"], serde_json::Value::Null);
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn scanner_prefers_nearby_manifests_and_package_managers() -> TestResult {
+async_test!(scanner_prefers_nearby_manifests_and_package_managers -> TestResult, {
     let root = fixture(
         "scanner-nearest",
         &[
@@ -566,10 +557,9 @@ async fn scanner_prefers_nearby_manifests_and_package_managers() -> TestResult {
         assert_eq!(body["detected"][0]["package_manager"], manager);
     }
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn framework_detection_is_bounded_and_exact() -> TestResult {
+async_test!(framework_detection_is_bounded_and_exact -> TestResult, {
     let django = fixture(
         "django-requirements",
         &[
@@ -614,11 +604,10 @@ async fn framework_detection_is_bounded_and_exact() -> TestResult {
         assert_eq!(body["install_plan"], serde_json::Value::Null);
     }
     Ok(())
-}
+});
 
 #[cfg(unix)]
-#[tokio::test]
-async fn scanner_does_not_follow_manifest_or_metadata_symlinks() -> TestResult {
+async_test!(scanner_does_not_follow_manifest_or_metadata_symlinks -> TestResult, {
     let root = fixture(
         "metadata-symlink",
         &[("pyproject.toml", "[project]\nname = \"fixture\"\n")],
@@ -646,10 +635,9 @@ async fn scanner_does_not_follow_manifest_or_metadata_symlinks() -> TestResult {
     std::fs::remove_file(outside)?;
     std::fs::remove_file(outside_manifest)?;
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn scanner_classifies_and_prioritizes_apple_projects() -> TestResult {
+async_test!(scanner_classifies_and_prioritizes_apple_projects -> TestResult, {
     for (label, sources, runtime) in [
         ("swift", &["Sources/App.swift"][..], "swift-ios"),
         (
@@ -684,10 +672,9 @@ async fn scanner_classifies_and_prioritizes_apple_projects() -> TestResult {
     let body = setup_json(&root).await?;
     assert_eq!(body["detected"][0]["package_manager"], "xcodegen");
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn runtimes_without_structured_plans_get_truthful_recovery() -> TestResult {
+async_test!(runtimes_without_structured_plans_get_truthful_recovery -> TestResult, {
     let root = fixture(
         "rust-not-ready",
         &[("Cargo.toml", "[package]\nname = \"fixture\"\n")],
@@ -719,7 +706,7 @@ async fn runtimes_without_structured_plans_get_truthful_recovery() -> TestResult
          go.mod, composer.json, or Gemfile.\n"
     );
     Ok(())
-}
+});
 
 fn environment(root: &std::path::Path) -> CliEnvironment {
     CliEnvironment {

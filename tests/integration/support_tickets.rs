@@ -2,10 +2,8 @@
 
 use super::{authenticated_env, run_command};
 use crate::matchers::{body_json, header, query_param};
-use crate::{Mock, MockServer, ResponseTemplate};
-use logbrew_cli::{
-    Command, HttpMethod, execute_command, help, parse_command, write_cli_error, write_runtime_error,
-};
+use crate::{Mock, MockServer, ResponseTemplate, execute_command};
+use logbrew_cli::{Command, HttpMethod, help, parse_command, write_cli_error, write_runtime_error};
 use std::collections::BTreeMap;
 
 const PROJECT_ID: &str = "123e4567-e89b-12d3-a456-426614174000";
@@ -415,9 +413,7 @@ fn support_detail_and_cursor_reject_non_public_ids() {
     }
 }
 
-#[tokio::test]
-async fn support_lifecycle_preserves_json_and_exact_retry_is_stable()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(support_lifecycle_preserves_json_and_exact_retry_is_stable -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     let mut closed = ticket_value();
     closed["status"] = serde_json::Value::String(String::from("closed"));
@@ -430,8 +426,7 @@ async fn support_lifecycle_preserves_json_and_exact_retry_is_stable()
     .and(body_json(serde_json::json!({"status": "closed"})))
     .respond_with(ResponseTemplate::new(200).set_body_json(closed.clone()))
     .expect(2)
-    .mount(&server)
-    .await;
+    .mount(&server);
     Mock::auth(
         "PATCH",
         format!("/api/support/tickets/{TICKET_ID}"),
@@ -440,8 +435,7 @@ async fn support_lifecycle_preserves_json_and_exact_retry_is_stable()
     .and(body_json(serde_json::json!({"status": "open"})))
     .respond_with(ResponseTemplate::new(200).set_body_json(reopened.clone()))
     .expect(1)
-    .mount(&server)
-    .await;
+    .mount(&server);
 
     let first = run_command(
         &server,
@@ -468,11 +462,9 @@ async fn support_lifecycle_preserves_json_and_exact_retry_is_stable()
     .await?;
     assert_eq!(serde_json::from_str::<serde_json::Value>(&json)?, reopened);
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn support_lifecycle_uses_local_safe_404_and_422_recovery()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(support_lifecycle_uses_local_safe_404_and_422_recovery -> Result<(), Box<dyn std::error::Error>>, {
     for (status, action, api_code, api_error, next) in [
         (
             404,
@@ -499,8 +491,7 @@ async fn support_lifecycle_uses_local_safe_404_and_422_recovery()
                     "internal": {"body": "private body proof"}
                 })),
             )
-            .mount(&server)
-            .await;
+            .mount(&server);
         let command = parse_command(["logbrew", "support", action, TICKET_ID, "--json"])?;
         let env = authenticated_env(&server, "test-token", Some("support-lifecycle-error"));
         let mut output = Vec::new();
@@ -524,11 +515,9 @@ async fn support_lifecycle_uses_local_safe_404_and_422_recovery()
         }
     }
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn support_create_preserves_json_and_renders_concise_human_output()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(support_create_preserves_json_and_renders_concise_human_output -> Result<(), Box<dyn std::error::Error>>, {
     let response = serde_json::json!({
         "ticket_id": TICKET_ID,
         "status": "open",
@@ -546,8 +535,7 @@ async fn support_create_preserves_json_and_renders_concise_human_output()
         })))
         .respond_with(ResponseTemplate::new(200).set_body_json(response.clone()))
         .expect(2)
-        .mount(&server)
-        .await;
+        .mount(&server);
 
     let args = [
         "logbrew",
@@ -586,11 +574,9 @@ async fn support_create_preserves_json_and_renders_concise_human_output()
     .await?;
     assert_eq!(serde_json::from_str::<serde_json::Value>(&json)?, response);
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn support_list_preserves_legacy_and_cursor_envelopes()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(support_list_preserves_legacy_and_cursor_envelopes -> Result<(), Box<dyn std::error::Error>>, {
     let legacy_server = MockServer::start().await;
     let cursor_server = MockServer::start().await;
     let ticket = ticket_value();
@@ -607,14 +593,12 @@ async fn support_list_preserves_legacy_and_cursor_envelopes()
     });
     Mock::auth("GET", "/api/support/tickets", "test-token")
         .respond_with(ResponseTemplate::new(200).set_body_json(legacy.clone()))
-        .mount(&legacy_server)
-        .await;
+        .mount(&legacy_server);
     Mock::route("GET", "/api/support/tickets")
         .and(query_param("pagination", "cursor"))
         .and(header("authorization", "Bearer test-token"))
         .respond_with(ResponseTemplate::new(200).set_body_json(cursor.clone()))
-        .mount(&cursor_server)
-        .await;
+        .mount(&cursor_server);
 
     let legacy_output = run_command(
         &legacy_server,
@@ -644,11 +628,9 @@ async fn support_list_preserves_legacy_and_cursor_envelopes()
         cursor
     );
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn support_list_human_output_is_bounded_and_cursor_recovery_keeps_rows()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(support_list_human_output_is_bounded_and_cursor_recovery_keeps_rows -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     Mock::route("GET", "/api/support/tickets")
         .and(query_param("pagination", "cursor"))
@@ -659,8 +641,7 @@ async fn support_list_human_output_is_bounded_and_cursor_recovery_keeps_rows()
             "next": "continue support ticket history",
             "next_action": {"code": "continue_support_tickets", "target": "support_tickets"}
         })))
-        .mount(&server)
-        .await;
+        .mount(&server);
 
     let human = run_command(
         &server,
@@ -687,11 +668,9 @@ async fn support_list_human_output_is_bounded_and_cursor_recovery_keeps_rows()
         assert!(!human.contains(hidden));
     }
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn support_human_output_rejects_controls_and_caps_visible_rows()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(support_human_output_rejects_controls_and_caps_visible_rows -> Result<(), Box<dyn std::error::Error>>, {
     let unsafe_server = MockServer::start().await;
     let mut unsafe_ticket = ticket_value();
     unsafe_ticket["status"] = serde_json::Value::String(String::from("open\u{1b}[31m"));
@@ -701,8 +680,7 @@ async fn support_human_output_rejects_controls_and_caps_visible_rows()
             "next": "inspect a ticket by id",
             "next_action": {"code": "inspect_support_ticket", "target": "support_ticket"}
         })))
-        .mount(&unsafe_server)
-        .await;
+        .mount(&unsafe_server);
     let unsafe_output = run_command(
         &unsafe_server,
         ["logbrew", "support", "list"],
@@ -724,8 +702,7 @@ async fn support_human_output_rejects_controls_and_caps_visible_rows()
             "next": "track this ticket with logbrew support show",
             "next_action": {"code": "inspect_support_ticket", "target": "support_ticket"}
         })))
-        .mount(&unsafe_create_server)
-        .await;
+        .mount(&unsafe_create_server);
     let unsafe_create = run_command(
         &unsafe_create_server,
         [
@@ -757,8 +734,7 @@ async fn support_human_output_rejects_controls_and_caps_visible_rows()
             "next": "inspect a ticket by id",
             "next_action": {"code": "inspect_support_ticket", "target": "support_ticket"}
         })))
-        .mount(&long_time_server)
-        .await;
+        .mount(&long_time_server);
     let long_time_output = run_command(
         &long_time_server,
         ["logbrew", "support", "list"],
@@ -778,8 +754,7 @@ async fn support_human_output_rejects_controls_and_caps_visible_rows()
             "next": "inspect a ticket by id",
             "next_action": {"code": "inspect_support_ticket", "target": "support_ticket"}
         })))
-        .mount(&bounded_server)
-        .await;
+        .mount(&bounded_server);
     let bounded_output = run_command(
         &bounded_server,
         ["logbrew", "support", "list"],
@@ -789,11 +764,9 @@ async fn support_human_output_rejects_controls_and_caps_visible_rows()
     assert_eq!(bounded_output.matches("\n- ").count(), 100);
     assert!(bounded_output.contains("Showing first 100 of 101 tickets."));
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn support_terminal_cursor_and_detail_are_explicit_and_json_exact()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(support_terminal_cursor_and_detail_are_explicit_and_json_exact -> Result<(), Box<dyn std::error::Error>>, {
     let list_server = MockServer::start().await;
     let detail_server = MockServer::start().await;
     let detail = ticket_value();
@@ -807,13 +780,11 @@ async fn support_terminal_cursor_and_detail_are_explicit_and_json_exact()
             "next": "inspect a ticket by id",
             "next_action": {"code": "inspect_support_ticket", "target": "support_ticket"}
         })))
-        .mount(&list_server)
-        .await;
+        .mount(&list_server);
     Mock::route("GET", format!("/api/support/tickets/{TICKET_ID}"))
         .respond_with(ResponseTemplate::new(200).set_body_json(detail.clone()))
         .expect(2)
-        .mount(&detail_server)
-        .await;
+        .mount(&detail_server);
 
     let terminal = run_command(
         &list_server,
@@ -853,11 +824,9 @@ async fn support_terminal_cursor_and_detail_are_explicit_and_json_exact()
     .await?;
     assert_eq!(serde_json::from_str::<serde_json::Value>(&json)?, detail);
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn support_errors_never_print_raw_backend_bodies_or_sensitive_fields()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(support_errors_never_print_raw_backend_bodies_or_sensitive_fields -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     let auth_key = ["author", "ization"].concat();
     let auth_value = ["Bear", "er auth-proof-sentinel"].concat();
@@ -875,8 +844,7 @@ async fn support_errors_never_print_raw_backend_bodies_or_sensitive_fields()
     drop(response_object.insert(cookie_key.clone(), cookie_value.into()));
     Mock::route("GET", "/api/support/tickets")
         .respond_with(ResponseTemplate::new(422).set_body_json(response))
-        .mount(&server)
-        .await;
+        .mount(&server);
     let command = parse_command(["logbrew", "support", "list", "--json"])?;
     let env = authenticated_env(&server, "test-token", Some("support-error"));
     let mut output = Vec::new();
@@ -903,11 +871,9 @@ async fn support_errors_never_print_raw_backend_bodies_or_sensitive_fields()
         assert!(!text.contains(hidden));
     }
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn malformed_support_success_responses_use_value_safe_human_recovery()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(malformed_support_success_responses_use_value_safe_human_recovery -> Result<(), Box<dyn std::error::Error>>, {
     for body in [
         serde_json::json!({
             "tickets": [ticket_value()],
@@ -925,8 +891,7 @@ async fn malformed_support_success_responses_use_value_safe_human_recovery()
         Mock::route("GET", "/api/support/tickets")
             .and(query_param("pagination", "cursor"))
             .respond_with(ResponseTemplate::new(200).set_body_json(body))
-            .mount(&server)
-            .await;
+            .mount(&server);
         let human = run_command(
             &server,
             ["logbrew", "support", "list", "--pagination", "cursor"],
@@ -940,19 +905,16 @@ async fn malformed_support_success_responses_use_value_safe_human_recovery()
         assert!(!human.contains("private-cursor-sentinel"));
     }
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn non_json_support_errors_are_replaced_instead_of_printed()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(non_json_support_errors_are_replaced_instead_of_printed -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     Mock::route("GET", "/api/support/tickets")
         .respond_with(ResponseTemplate::new(500).set_body_raw(
             "private-backend-body-sentinel\nauthorization: Bearer private-value",
             "text/plain",
         ))
-        .mount(&server)
-        .await;
+        .mount(&server);
     let command = parse_command(["logbrew", "support", "list", "--json"])?;
     let env = authenticated_env(&server, "test-token", Some("support-non-json-error"));
     let mut output = Vec::new();
@@ -969,7 +931,7 @@ async fn non_json_support_errors_are_replaced_instead_of_printed()
     assert!(!text.contains("private-value"));
     assert!(!text.contains("authorization"));
     Ok(())
-}
+});
 
 fn assert_support_query(command: &Command, expected: &[(&str, &str)]) {
     let path = command.http_path().expect("support list has endpoint");

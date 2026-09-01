@@ -1,10 +1,9 @@
 //! Account-owned project lifecycle contract tests.
 
 use crate::matchers::{body_json, header};
-use crate::{Mock, MockServer, ResponseTemplate};
+use crate::{Mock, MockServer, ResponseTemplate, execute_command};
 use logbrew_cli::{
-    Command, HttpMethod, RuntimeError, execute_command, parse_command, write_cli_error,
-    write_runtime_error,
+    Command, HttpMethod, RuntimeError, parse_command, write_cli_error, write_runtime_error,
 };
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
@@ -142,8 +141,7 @@ fn lifecycle_grammar_is_closed_explicit_and_introspectable() -> TestResult {
     Ok(())
 }
 
-#[tokio::test]
-async fn lifecycle_revalidates_public_values_and_rejects_ingest_keys() -> TestResult {
+async_test!(lifecycle_revalidates_public_values_and_rejects_ingest_keys -> TestResult, {
     let server = MockServer::start().await;
     for command in [
         Command::ProjectArchive {
@@ -182,24 +180,21 @@ async fn lifecycle_revalidates_public_values_and_rejects_ingest_keys() -> TestRe
         }));
         assert!(!text.contains("private-secret"));
     }
-    assert!(requests(&server).await?.is_empty());
+    assert!(server.received_requests().is_empty());
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn archive_and_delete_send_exact_requests_and_local_receipts() -> TestResult {
+async_test!(archive_and_delete_send_exact_requests_and_local_receipts -> TestResult, {
     let server = MockServer::start().await;
     Mock::auth("DELETE", format!("/api/projects/{ID}"), "account-token")
         .respond_with(ResponseTemplate::new(204))
         .expect(2)
-        .mount(&server)
-        .await;
+        .mount(&server);
     mount_delete(
         &server,
         ResponseTemplate::new(200).set_body_raw(RECEIPT, "application/json"),
         2,
-    )
-    .await;
+    );
 
     for (line, expected) in [
         (
@@ -230,7 +225,7 @@ async fn archive_and_delete_send_exact_requests_and_local_receipts() -> TestResu
         assert_eq!(run(&server, line).await?, expected);
     }
 
-    for request in requests(&server).await? {
+    for request in server.received_requests() {
         assert!(request.url.query().is_none());
         if request.url.path() == "/api/support/tickets" {
             assert_eq!(
@@ -249,17 +244,15 @@ async fn archive_and_delete_send_exact_requests_and_local_receipts() -> TestResu
         }
     }
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn built_binary_deletes_over_loopback_with_a_local_receipt() -> TestResult {
+async_test!(built_binary_deletes_over_loopback_with_a_local_receipt -> TestResult, {
     let server = MockServer::start().await;
     mount_delete(
         &server,
         ResponseTemplate::new(200).set_body_raw(RECEIPT, "application/json"),
         1,
-    )
-    .await;
+    );
     let home = super::isolated_home("logbrew-project-delete", "binary")?;
     let mut command = super::cli_command(&server);
     let _command =
@@ -276,10 +269,9 @@ async fn built_binary_deletes_over_loopback_with_a_local_receipt() -> TestResult
     );
     assert!(!text.contains("sup_") && !text.contains(server.uri().as_str()));
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn success_contracts_reject_wrong_status_redirects_and_hostile_bodies() -> TestResult {
+async_test!(success_contracts_reject_wrong_status_redirects_and_hostile_bodies -> TestResult, {
     for response in [
         ResponseTemplate::new(200),
         ResponseTemplate::new(201),
@@ -293,14 +285,13 @@ async fn success_contracts_reject_wrong_status_redirects_and_hostile_bodies() ->
         Mock::route("DELETE", format!("/api/projects/{ID}"))
             .respond_with(response)
             .expect(1)
-            .mount(&server)
-            .await;
+            .mount(&server);
         let error = run_error(&server, ARCHIVE).await;
         assert!(matches!(error, RuntimeError::Unavailable { .. }));
         let text = runtime_error(&error)?;
         assert!(text.contains("project archive response was invalid"));
         assert_private_text_absent(&text, &server);
-        assert_eq!(requests(&server).await?.len(), 1);
+        assert_eq!(server.received_requests().len(), 1);
     }
 
     for response in [
@@ -311,7 +302,7 @@ async fn success_contracts_reject_wrong_status_redirects_and_hostile_bodies() ->
         ResponseTemplate::new(200).set_body_string("x".repeat(70_000)),
     ] {
         let server = MockServer::start().await;
-        mount_delete(&server, response, 1).await;
+        mount_delete(&server, response, 1);
         let error = run_error(&server, DELETE_JSON).await;
         let text = runtime_error(&error)?;
         assert!(matches!(
@@ -319,13 +310,12 @@ async fn success_contracts_reject_wrong_status_redirects_and_hostile_bodies() ->
             RuntimeError::Unavailable { .. } | RuntimeError::Api { .. }
         ));
         assert!(text.contains("project deletion") && !text.contains("hostile-secret"));
-        assert_eq!(requests(&server).await?.len(), 1);
+        assert_eq!(server.received_requests().len(), 1);
     }
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn errors_are_typed_local_and_never_echo_backend_text() -> TestResult {
+async_test!(errors_are_typed_local_and_never_echo_backend_text -> TestResult, {
     for (status, code, action, target, expected) in [
         (401, "unauthorized", "sign_in", "auth", "unauthorized"),
         (403, "forbidden", "request_access", "auth", "forbidden"),
@@ -350,8 +340,7 @@ async fn errors_are_typed_local_and_never_echo_backend_text() -> TestResult {
             .respond_with(
                 ResponseTemplate::new(status).set_body_json(archive_error(code, action, target)),
             )
-            .mount(&server)
-            .await;
+            .mount(&server);
         let text = runtime_error(&run_error(&server, ARCHIVE).await)?;
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&text)?["api_code"],
@@ -365,17 +354,15 @@ async fn errors_are_typed_local_and_never_echo_backend_text() -> TestResult {
             &server,
             ResponseTemplate::new(status).set_body_string("hostile-secret https://private.example"),
             1,
-        )
-        .await;
+        );
         let text = runtime_error(&run_error(&server, DELETE_JSON).await)?;
         assert!(serde_json::from_str::<serde_json::Value>(&text)?["api_code"].is_string());
         assert_private_text_absent(&text, &server);
     }
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn lifecycle_mutations_refresh_account_auth_once() -> TestResult {
+async_test!(lifecycle_mutations_refresh_account_auth_once -> TestResult, {
     for (line, verb, endpoint, success, marker) in [
         (
             ARCHIVE,
@@ -400,8 +387,7 @@ async fn lifecycle_mutations_refresh_account_auth_once() -> TestResult {
             Mock::auth(verb, endpoint.as_str(), token)
                 .respond_with(response)
                 .expect(1)
-                .mount(&server)
-                .await;
+                .mount(&server);
         }
         Mock::route("POST", "/api/auth/refresh")
             .and(body_json(
@@ -411,8 +397,7 @@ async fn lifecycle_mutations_refresh_account_auth_once() -> TestResult {
                 serde_json::json!({"access_token":"fresh-access","refresh_token":"fresh-refresh"}),
             ))
             .expect(1)
-            .mount(&server)
-            .await;
+            .mount(&server);
         let home = super::isolated_home(
             "logbrew-project-delete",
             if verb == "DELETE" {
@@ -440,7 +425,7 @@ async fn lifecycle_mutations_refresh_account_auth_once() -> TestResult {
         assert_eq!(session["refresh_token"], "fresh-refresh");
     }
     Ok(())
-}
+});
 
 fn parse(line: &str) -> Result<Command, logbrew_cli::CliError> {
     parse_command(line.split_whitespace())
@@ -481,18 +466,13 @@ async fn run_error(server: &MockServer, line: &str) -> RuntimeError {
     .expect_err("request fails")
 }
 
-async fn mount_delete(server: &MockServer, response: ResponseTemplate, expected: u64) {
+fn mount_delete(server: &MockServer, response: ResponseTemplate, expected: u64) {
     Mock::auth("POST", "/api/support/tickets", "account-token")
         .and(header("idempotency-key", ID))
         .and(body_json(deletion_body()))
         .respond_with(response)
         .expect(expected)
-        .mount(server)
-        .await;
-}
-
-async fn requests(server: &MockServer) -> Result<Vec<crate::Request>, &'static str> {
-    Ok(server.received_requests().await)
+        .mount(server);
 }
 
 fn cli_error(error: &logbrew_cli::CliError) -> TestResult<serde_json::Value> {

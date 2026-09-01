@@ -56,9 +56,7 @@ fn public_grammar_help_and_request_model_stay_aligned() -> Result<(), Box<dyn st
     Ok(())
 }
 
-#[tokio::test]
-async fn built_binary_posts_exact_scope_and_preserves_validated_json()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(built_binary_posts_exact_scope_and_preserves_validated_json -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     let response = lifecycle_response();
     Mock::auth(
@@ -76,8 +74,7 @@ async fn built_binary_posts_exact_scope_and_preserves_validated_json()
     })))
     .respond_with(ResponseTemplate::new(200).set_body_json(response.clone()))
     .expect(1)
-    .mount(&server)
-    .await;
+    .mount(&server);
 
     let process = run_binary(&server, true).await?;
 
@@ -85,17 +82,14 @@ async fn built_binary_posts_exact_scope_and_preserves_validated_json()
     let actual: serde_json::Value = serde_json::from_slice(process.stdout.as_slice())?;
     assert_eq!(actual, response);
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn built_binary_human_output_explains_states_coverage_and_provisional_data()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(built_binary_human_output_explains_states_coverage_and_provisional_data -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     Mock::route("POST", "/api/telemetry/analytics/lifecycle")
         .respond_with(ResponseTemplate::new(200).set_body_json(lifecycle_response()))
         .expect(1)
-        .mount(&server)
-        .await;
+        .mount(&server);
 
     let process = run_binary(&server, false).await?;
 
@@ -115,19 +109,16 @@ async fn built_binary_human_output_explains_states_coverage_and_provisional_data
     }
     assert!(!text.contains("Repeat this server-authored reason verbatim."));
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn built_binary_fails_closed_on_unknown_identity_fields_without_reflection()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(built_binary_fails_closed_on_unknown_identity_fields_without_reflection -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     let mut response = lifecycle_response();
     response["buckets"][0]["distinct_id"] = "hostile-subject-marker".into();
     Mock::route("POST", "/api/telemetry/analytics/lifecycle")
         .respond_with(ResponseTemplate::new(200).set_body_json(response))
         .expect(1)
-        .mount(&server)
-        .await;
+        .mount(&server);
 
     let process = run_binary(&server, true).await?;
 
@@ -138,7 +129,7 @@ async fn built_binary_fails_closed_on_unknown_identity_fields_without_reflection
     assert_eq!(error["error"], "analytics_lifecycle_response_invalid");
     assert!(!text.contains("hostile-subject-marker"));
     Ok(())
-}
+});
 
 /// Runs the actual CLI process while the async loopback server remains responsive.
 async fn run_binary(

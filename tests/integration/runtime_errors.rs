@@ -1,8 +1,7 @@
 //! CLI runtime error rendering tests.
 
-use logbrew_cli::{
-    CliEnvironment, RuntimeError, execute_command, parse_command, write_runtime_error,
-};
+use crate::execute_command;
+use logbrew_cli::{CliEnvironment, RuntimeError, parse_command, write_runtime_error};
 
 #[test]
 fn writes_runtime_errors_as_json_for_agents() {
@@ -30,8 +29,7 @@ fn writes_io_errors_as_json_with_local_next_step() {
     assert_eq!(body["next"], "check local files and permissions");
 }
 
-#[tokio::test]
-async fn writes_http_errors_as_json_with_network_next_step() {
+async_test!(writes_http_errors_as_json_with_network_next_step, {
     let command = parse_command(["logbrew", "logs", "--json"]).expect("command parses");
     let env = CliEnvironment {
         base_url: "http://127.0.0.1:1".to_owned(),
@@ -52,7 +50,7 @@ async fn writes_http_errors_as_json_with_network_next_step() {
     assert_eq!(body["ok"], false);
     assert_eq!(body["error"], "http_error");
     assert_eq!(body["next"], "check LOGBREW_API_URL or network");
-}
+});
 
 #[test]
 fn writes_missing_token_errors_with_human_next_step() {

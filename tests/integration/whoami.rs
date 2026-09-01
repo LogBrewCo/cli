@@ -1,21 +1,18 @@
 //! Strict authenticated account-identity command tests.
 
 use crate::matchers::body_json;
-use crate::{Mock, MockServer, ResponseTemplate};
-use logbrew_cli::{RuntimeError, execute_command, parse_command, write_runtime_error};
+use crate::{Mock, MockServer, ResponseTemplate, execute_command};
+use logbrew_cli::{RuntimeError, parse_command, write_runtime_error};
 
 const ACCOUNT_ID: &str = "123e4567-e89b-42d3-a456-426614174000";
 
-#[tokio::test]
-async fn whoami_json_preserves_the_exact_validated_account_object()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(whoami_json_preserves_the_exact_validated_account_object -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     let response = serde_json::to_string_pretty(&account())?;
     Mock::auth("GET", "/api/auth/account", "account-token")
         .respond_with(ResponseTemplate::new(200).set_body_raw(response.clone(), "application/json"))
         .expect(2)
-        .mount(&server)
-        .await;
+        .mount(&server);
 
     for command_name in ["whoami", "me"] {
         let command = parse_command(["logbrew", command_name, "--json"])?;
@@ -30,23 +27,20 @@ async fn whoami_json_preserves_the_exact_validated_account_object()
 
         assert_eq!(String::from_utf8(output)?, format!("{response}\n"));
     }
-    let requests = server.received_requests().await;
+    let requests = server.received_requests();
     assert!(
         requests
             .iter()
             .all(|request| request.url.query().is_none() && request.body.is_empty())
     );
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn whoami_human_output_is_bounded_and_identity_oriented()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(whoami_human_output_is_bounded_and_identity_oriented -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     Mock::route("GET", "/api/auth/account")
         .respond_with(ResponseTemplate::new(200).set_body_json(account()))
-        .mount(&server)
-        .await;
+        .mount(&server);
     let command = parse_command(["logbrew", "auth", "whoami"])?;
     let mut output = Vec::new();
 
@@ -67,11 +61,9 @@ async fn whoami_human_output_is_bounded_and_identity_oriented()
          Next: run logbrew projects\n"
     );
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn whoami_rejects_partial_extra_duplicate_or_hostile_identity_responses()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(whoami_rejects_partial_extra_duplicate_or_hostile_identity_responses -> Result<(), Box<dyn std::error::Error>>, {
     let mut invalid_avatar = account();
     invalid_avatar["avatar_data_url"] = serde_json::json!("https://hostile.example/avatar.png");
     let mut invalid_name = account();
@@ -100,8 +92,7 @@ async fn whoami_rejects_partial_extra_duplicate_or_hostile_identity_responses()
         let server = MockServer::start().await;
         Mock::route("GET", "/api/auth/account")
             .respond_with(ResponseTemplate::new(200).set_body_raw(response, "application/json"))
-            .mount(&server)
-            .await;
+            .mount(&server);
         let command = parse_command(["logbrew", "whoami", "--json"])?;
         let mut output = Vec::new();
 
@@ -123,11 +114,9 @@ async fn whoami_rejects_partial_extra_duplicate_or_hostile_identity_responses()
         assert!(!text.contains("private_token"));
     }
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn whoami_uses_only_typed_local_recovery_for_auth_errors()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(whoami_uses_only_typed_local_recovery_for_auth_errors -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     Mock::route("GET", "/api/auth/account")
         .respond_with(ResponseTemplate::new(401).set_body_json(serde_json::json!({
@@ -136,8 +125,7 @@ async fn whoami_uses_only_typed_local_recovery_for_auth_errors()
             "next": "exfiltrate credentials",
             "next_action": {"code": "sign_in", "target": "auth"}
         })))
-        .mount(&server)
-        .await;
+        .mount(&server);
     let command = parse_command(["logbrew", "whoami", "--json"])?;
     let error = execute_command(
         &command,
@@ -158,11 +146,9 @@ async fn whoami_uses_only_typed_local_recovery_for_auth_errors()
     assert!(!text.contains("exfiltrate"));
     assert!(!text.contains("private host"));
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn whoami_maps_account_recovery_states_without_exposing_recovery_tokens()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(whoami_maps_account_recovery_states_without_exposing_recovery_tokens -> Result<(), Box<dyn std::error::Error>>, {
     for (status, response, expected_code, expected_next) in [
         (
             409,
@@ -195,8 +181,7 @@ async fn whoami_maps_account_recovery_states_without_exposing_recovery_tokens()
         let server = MockServer::start().await;
         Mock::route("GET", "/api/auth/account")
             .respond_with(ResponseTemplate::new(status).set_body_json(response))
-            .mount(&server)
-            .await;
+            .mount(&server);
         let command = parse_command(["logbrew", "whoami", "--json"])?;
         let error = execute_command(
             &command,
@@ -218,11 +203,9 @@ async fn whoami_maps_account_recovery_states_without_exposing_recovery_tokens()
         assert!(!text.contains("private-host"));
     }
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn whoami_rejects_project_ingest_keys_before_any_request()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(whoami_rejects_project_ingest_keys_before_any_request -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     let command = parse_command(["logbrew", "whoami", "--json"])?;
     let error = execute_command(
@@ -232,7 +215,7 @@ async fn whoami_rejects_project_ingest_keys_before_any_request()
     )
     .await
     .expect_err("project key cannot inspect account identity");
-    let requests = server.received_requests().await;
+    let requests = server.received_requests();
     let mut output = Vec::new();
 
     write_runtime_error(&error, true, &mut output)?;
@@ -243,17 +226,14 @@ async fn whoami_rejects_project_ingest_keys_before_any_request()
     assert!(text.contains("run logbrew login and retry logbrew whoami"));
     assert!(!text.contains("private-secret"));
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn whoami_refreshes_expired_local_account_auth_once() -> Result<(), Box<dyn std::error::Error>>
-{
+async_test!(whoami_refreshes_expired_local_account_auth_once -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     Mock::auth("GET", "/api/auth/account", "expired-access")
         .respond_with(ResponseTemplate::new(401))
         .expect(1)
-        .mount(&server)
-        .await;
+        .mount(&server);
     Mock::route("POST", "/api/auth/refresh")
         .and(body_json(
             serde_json::json!({"refresh_token": "old-refresh"}),
@@ -263,13 +243,11 @@ async fn whoami_refreshes_expired_local_account_auth_once() -> Result<(), Box<dy
             "refresh_token": "fresh-refresh"
         })))
         .expect(1)
-        .mount(&server)
-        .await;
+        .mount(&server);
     Mock::auth("GET", "/api/auth/account", "fresh-access")
         .respond_with(ResponseTemplate::new(200).set_body_json(account()))
         .expect(1)
-        .mount(&server)
-        .await;
+        .mount(&server);
     let home = super::isolated_home("logbrew-whoami", "refresh")?;
     let _session_path = super::write_test_session(
         home.as_path(),
@@ -293,7 +271,7 @@ async fn whoami_refreshes_expired_local_account_auth_once() -> Result<(), Box<dy
     assert_eq!(session["access_token"], "fresh-access");
     assert_eq!(session["refresh_token"], "fresh-refresh");
     Ok(())
-}
+});
 
 fn account() -> serde_json::Value {
     serde_json::json!({

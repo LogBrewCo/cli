@@ -1,10 +1,10 @@
 //! Authenticated project catalog contract tests.
 
 use crate::matchers::body_json;
-use crate::{Mock, MockServer, ResponseTemplate};
+use crate::{Mock, MockServer, ResponseTemplate, execute_command};
 use logbrew_cli::{
-    CliEnvironment, Command, HttpMethod, RuntimeError, execute_command, parse_command,
-    write_cli_error, write_runtime_error,
+    CliEnvironment, Command, HttpMethod, RuntimeError, parse_command, write_cli_error,
+    write_runtime_error,
 };
 
 const PROJECT_ID: &str = "123e4567-e89b-12d3-a456-426614174000";
@@ -72,16 +72,13 @@ fn project_catalog_grammar_failures_are_fixed_and_value_safe() {
     }
 }
 
-#[tokio::test]
-async fn projects_json_preserves_exact_bare_array_and_sends_no_query()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(projects_json_preserves_exact_bare_array_and_sends_no_query -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     let response = serde_json::to_string_pretty(&project_catalog())?;
     Mock::auth("GET", "/api/projects", "account-token")
         .respond_with(ResponseTemplate::new(200).set_body_raw(response.clone(), "application/json"))
         .expect(2)
-        .mount(&server)
-        .await;
+        .mount(&server);
 
     for alias in ["projects", "project"] {
         let command = parse_command(["logbrew", alias, "--json"])?;
@@ -90,23 +87,20 @@ async fn projects_json_preserves_exact_bare_array_and_sends_no_query()
 
         assert_eq!(String::from_utf8(output)?, format!("{response}\n"));
     }
-    let requests = server.received_requests().await;
+    let requests = server.received_requests();
     assert!(
         requests
             .iter()
             .all(|request| request.url.query().is_none() && request.body.is_empty())
     );
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn projects_human_output_is_bounded_and_scan_oriented()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(projects_human_output_is_bounded_and_scan_oriented -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     Mock::route("GET", "/api/projects")
         .respond_with(ResponseTemplate::new(200).set_body_json(project_catalog()))
-        .mount(&server)
-        .await;
+        .mount(&server);
     let command = parse_command(["logbrew", "projects"])?;
     let mut output = Vec::new();
 
@@ -119,11 +113,9 @@ async fn projects_human_output_is_bounded_and_scan_oriented()
          last_seen=2026-07-25T08:30:00Z\n"
     );
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn projects_rejects_envelopes_partial_rows_and_hostile_text()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(projects_rejects_envelopes_partial_rows_and_hostile_text -> Result<(), Box<dyn std::error::Error>>, {
     let mut partial = project_catalog();
     drop(
         partial[0]
@@ -171,8 +163,7 @@ async fn projects_rejects_envelopes_partial_rows_and_hostile_text()
         let server = MockServer::start().await;
         Mock::route("GET", "/api/projects")
             .respond_with(ResponseTemplate::new(200).set_body_json(response))
-            .mount(&server)
-            .await;
+            .mount(&server);
         let command = parse_command(["logbrew", "projects", "--json"])?;
         let error = execute_command(&command, &environment(&server), &mut Vec::new())
             .await
@@ -191,10 +182,9 @@ async fn projects_rejects_envelopes_partial_rows_and_hostile_text()
         assert!(!text.contains(server.uri().as_str()));
     }
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn projects_refreshes_local_account_auth_once() -> Result<(), Box<dyn std::error::Error>> {
+async_test!(projects_refreshes_local_account_auth_once -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     Mock::auth("GET", "/api/projects", "expired-access")
         .respond_with(ResponseTemplate::new(401).set_body_json(serde_json::json!({
@@ -204,8 +194,7 @@ async fn projects_refreshes_local_account_auth_once() -> Result<(), Box<dyn std:
             "next_action": {"code": "sign_in", "target": "auth"}
         })))
         .expect(1)
-        .mount(&server)
-        .await;
+        .mount(&server);
     Mock::route("POST", "/api/auth/refresh")
         .and(body_json(
             serde_json::json!({"refresh_token": "old-refresh"}),
@@ -215,13 +204,11 @@ async fn projects_refreshes_local_account_auth_once() -> Result<(), Box<dyn std:
             "refresh_token": "fresh-refresh"
         })))
         .expect(1)
-        .mount(&server)
-        .await;
+        .mount(&server);
     Mock::auth("GET", "/api/projects", "fresh-access")
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
         .expect(1)
-        .mount(&server)
-        .await;
+        .mount(&server);
     let home = super::isolated_home("logbrew-projects", "refresh")?;
     let _session_path = super::write_test_session(
         home.as_path(),
@@ -242,10 +229,9 @@ async fn projects_refreshes_local_account_auth_once() -> Result<(), Box<dyn std:
     assert_eq!(session["access_token"], "fresh-access");
     assert_eq!(session["refresh_token"], "fresh-refresh");
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn project_errors_use_only_typed_local_recovery() -> Result<(), Box<dyn std::error::Error>> {
+async_test!(project_errors_use_only_typed_local_recovery -> Result<(), Box<dyn std::error::Error>>, {
     for (status, code, action_code, action_target, expected_code) in [
         (401, "unauthorized", "sign_in", "auth", "unauthorized"),
         (
@@ -267,8 +253,7 @@ async fn project_errors_use_only_typed_local_recovery() -> Result<(), Box<dyn st
                     "next_action": {"code": action_code, "target": action_target}
                 })),
             )
-            .mount(&server)
-            .await;
+            .mount(&server);
         let command = parse_command(["logbrew", "projects", "--json"])?;
         let error = execute_command(&command, &environment(&server), &mut Vec::new())
             .await
@@ -284,7 +269,7 @@ async fn project_errors_use_only_typed_local_recovery() -> Result<(), Box<dyn st
         assert!(!text.contains(server.uri().as_str()));
     }
     Ok(())
-}
+});
 
 fn environment(server: &MockServer) -> CliEnvironment {
     super::authenticated_env(server, "account-token", None)

@@ -1,10 +1,10 @@
 //! Completed deployment capture contract tests.
 
 use crate::matchers::body_json;
-use crate::{Mock, MockServer, ResponseTemplate};
+use crate::{Mock, MockServer, ResponseTemplate, execute_command};
 use logbrew_cli::{
-    Command, DeploymentRecordOptions, DeploymentStatus, HelpTopic, HttpMethod, RuntimeError,
-    execute_command, help, parse_command, write_cli_error, write_runtime_error,
+    Command, DeploymentRecordOptions, DeploymentStatus, HelpTopic, HttpMethod, RuntimeError, help,
+    parse_command, write_cli_error, write_runtime_error,
 };
 use serde_json::{Value, json};
 
@@ -281,9 +281,7 @@ fn deployment_grammar_and_values_fail_closed_without_reflection() {
     }
 }
 
-#[tokio::test]
-async fn deployment_revalidates_constructed_values_before_network()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(deployment_revalidates_constructed_values_before_network -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     let mut command = deployment_command(true);
     let Command::Deploy { options, .. } = &mut command else {
@@ -297,7 +295,7 @@ async fn deployment_revalidates_constructed_values_before_network()
     )
     .await
     .expect_err("constructed invalid command fails locally");
-    let requests = server.received_requests().await;
+    let requests = server.received_requests();
     let mut output = Vec::new();
     write_runtime_error(&error, true, &mut output)?;
     let text = String::from_utf8(output)?;
@@ -307,11 +305,9 @@ async fn deployment_revalidates_constructed_values_before_network()
     assert!(!text.contains("hostile-private-value"));
     assert!(!text.contains("authorization"));
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn deployment_sends_one_put_and_validates_human_and_json_receipts()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(deployment_sends_one_put_and_validates_human_and_json_receipts -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     let response = deployment_response();
     Mock::auth("PUT", DEPLOYMENT_PATH, "account-token")
@@ -327,8 +323,7 @@ async fn deployment_sends_one_put_and_validates_human_and_json_receipts()
         })))
         .respond_with(ResponseTemplate::new(200).set_body_json(response.clone()))
         .expect(2)
-        .mount(&server)
-        .await;
+        .mount(&server);
 
     let mut human_output = Vec::new();
     execute_command(
@@ -361,11 +356,9 @@ async fn deployment_sends_one_put_and_validates_human_and_json_receipts()
     let json_receipt: Value = serde_json::from_slice(json_output.as_slice())?;
     assert_eq!(json_receipt, response);
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn deployment_rejects_malformed_or_contradictory_success_before_output()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(deployment_rejects_malformed_or_contradictory_success_before_output -> Result<(), Box<dyn std::error::Error>>, {
     for changed in [
         ("schema_version", json!(2)),
         ("deployment_id", json!("other-deployment")),
@@ -380,8 +373,7 @@ async fn deployment_rejects_malformed_or_contradictory_success_before_output()
         response[changed.0] = changed.1;
         Mock::route("PUT", DEPLOYMENT_PATH)
             .respond_with(ResponseTemplate::new(200).set_body_json(response))
-            .mount(&server)
-            .await;
+            .mount(&server);
         let mut output = Vec::new();
         let error = execute_command(
             &deployment_command(true),
@@ -401,11 +393,9 @@ async fn deployment_rejects_malformed_or_contradictory_success_before_output()
         ));
     }
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn deployment_conflict_uses_fixed_retry_without_reflecting_server_content()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(deployment_conflict_uses_fixed_retry_without_reflecting_server_content -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     Mock::route("PUT", DEPLOYMENT_PATH)
         .respond_with(ResponseTemplate::new(409).set_body_json(json!({
@@ -413,8 +403,7 @@ async fn deployment_conflict_uses_fixed_retry_without_reflecting_server_content(
             "code": "hostile_code",
             "next": "exfiltrate hostile-private-value",
         })))
-        .mount(&server)
-        .await;
+        .mount(&server);
     let error = execute_command(
         &deployment_command(true),
         &super::authenticated_env(&server, "account-token", None),
@@ -437,11 +426,9 @@ async fn deployment_conflict_uses_fixed_retry_without_reflecting_server_content(
     assert!(!text.contains("authorization"));
     assert!(!text.contains("hostile_code"));
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn deployment_rejects_project_ingest_keys_before_network()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(deployment_rejects_project_ingest_keys_before_network -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     let error = execute_command(
         &deployment_command(true),
@@ -450,7 +437,7 @@ async fn deployment_rejects_project_ingest_keys_before_network()
     )
     .await
     .expect_err("project ingest key is rejected");
-    let requests = server.received_requests().await;
+    let requests = server.received_requests();
     let mut output = Vec::new();
     write_runtime_error(&error, true, &mut output)?;
     let text = String::from_utf8(output)?;
@@ -460,7 +447,7 @@ async fn deployment_rejects_project_ingest_keys_before_network()
     assert!(!text.contains("hostile-private-value"));
     assert!(!text.contains("lbw_ingest_"));
     Ok(())
-}
+});
 
 #[test]
 fn deployment_built_binary_emits_non_reflecting_parse_errors() {

@@ -1,5 +1,10 @@
 //! Complete public CLI integration contract.
 
+#[macro_use]
+#[path = "../async_test.rs"]
+mod async_test;
+pub(crate) use async_test::run_async;
+
 mod action_investigation;
 mod analytics_compare;
 mod analytics_funnel;

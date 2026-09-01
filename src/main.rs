@@ -3,7 +3,12 @@
 #![forbid(unsafe_code)]
 
 /// Runs the CLI process.
-#[tokio::main(flavor = "current_thread")]
-async fn main() -> std::process::ExitCode {
-    logbrew_cli::run_process().await
+fn main() -> std::process::ExitCode {
+    let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    else {
+        return std::process::ExitCode::FAILURE;
+    };
+    runtime.block_on(logbrew_cli::run_process())
 }
