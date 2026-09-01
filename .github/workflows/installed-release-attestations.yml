@@ -1,9 +1,9 @@
 name: Installed release attestations
 
 on:
-  workflow_run:
-    workflows: [Release]
-    types: [completed]
+  push:
+    tags:
+      - "**[0-9]+.[0-9]+.[0-9]+*"
   workflow_dispatch:
     inputs:
       tag:
@@ -20,15 +20,14 @@ on:
         type: string
 
 permissions:
+  actions: read
   contents: read
 
 jobs:
   attest:
     if: >-
       github.event_name == 'workflow_dispatch' ||
-      (github.event.workflow_run.event == 'push' &&
-      github.event.workflow_run.conclusion == 'success' &&
-      startsWith(github.event.workflow_run.head_branch, 'v'))
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))
     name: ${{ matrix.receipt }}
     strategy:
       fail-fast: false
@@ -79,17 +78,43 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     steps:
-      - name: Checkout attestation workflow
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          persist-credentials: false
-
       - name: Checkout released source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: ${{ inputs.source_commit || github.event.workflow_run.head_sha }}
-          path: released-source
+          ref: ${{ inputs.source_commit || github.sha }}
           persist-credentials: false
+
+      - name: Resolve matching release
+        id: release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_RELEASE_RUN: ${{ inputs.release_run }}
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+          SOURCE_COMMIT: ${{ inputs.source_commit || github.sha }}
+        run: |
+          set -euo pipefail
+          run_id="$INPUT_RELEASE_RUN"
+          for _ in {1..100}; do
+            if [[ -z "$run_id" ]]; then
+              run_id="$(gh run list \
+                --repo "$GITHUB_REPOSITORY" \
+                --workflow release.yml \
+                --event push \
+                --branch "$RELEASE_TAG" \
+                --commit "$SOURCE_COMMIT" \
+                --limit 1 \
+                --json databaseId \
+                --jq '.[0].databaseId // empty')"
+            fi
+            if [[ "$run_id" =~ ^[1-9][0-9]{0,19}$ ]] &&
+              gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              printf 'run-id=%s\n' "$run_id" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            sleep 0.5
+          done
+          exit 1
 
       - name: Execute installed release receipt
         shell: bash
@@ -97,14 +122,14 @@ jobs:
           ATTESTATION_PYTHON: ${{ matrix.python }}
           GITHUB_TOKEN: ${{ github.token }}
           ATTESTATION_RECEIPT: ${{ matrix.receipt }}
-          ATTESTATION_TAG: ${{ inputs.tag || github.event.workflow_run.head_branch }}
-          ATTESTATION_SOURCE_COMMIT: ${{ inputs.source_commit || github.event.workflow_run.head_sha }}
-          ATTESTATION_RELEASE_RUN: ${{ inputs.release_run || github.event.workflow_run.id }}
+          ATTESTATION_TAG: ${{ inputs.tag || github.ref_name }}
+          ATTESTATION_SOURCE_COMMIT: ${{ inputs.source_commit || github.sha }}
+          ATTESTATION_RELEASE_RUN: ${{ steps.release.outputs.run-id }}
           ATTESTATION_MODE: ${{ matrix.mode }}
           ATTESTATION_ARTIFACT_ID: ${{ matrix.artifact_id }}
           ATTESTATION_ASSET: ${{ matrix.asset }}
           ATTESTATION_PLATFORM: ${{ matrix.platform }}
-          ATTESTATION_RELEASED_SOURCE: ${{ github.workspace }}/released-source
+          ATTESTATION_RELEASED_SOURCE: ${{ github.workspace }}
           ATTESTATION_OUTPUT: ${{ runner.temp }}/attestation.json
         run: >-
           "$ATTESTATION_PYTHON" scripts/installed_release_attestation.py
@@ -118,6 +143,23 @@ jobs:
           --execution-platform "$ATTESTATION_PLATFORM"
           --released-source "$ATTESTATION_RELEASED_SOURCE"
           --output "$ATTESTATION_OUTPUT"
+
+      - name: Require successful release
+        if: ${{ github.event_name == 'push' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_RUN: ${{ steps.release.outputs.run-id }}
+        run: |
+          set -euo pipefail
+          for _ in {1..40}; do
+            state="$(gh run view "$RELEASE_RUN" --repo "$GITHUB_REPOSITORY" \
+              --json status,conclusion --jq '[.status,.conclusion] | join("|")')"
+            [[ "$state" == "completed|success" ]] && exit 0
+            [[ "$state" != queued\| && "$state" != in_progress\| ]] && exit 1
+            sleep 0.5
+          done
+          exit 1
 
       - name: Upload installed attestation
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a

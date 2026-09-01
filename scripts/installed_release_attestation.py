@@ -17,6 +17,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Callable, Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
 
@@ -182,21 +183,30 @@ def validate_release_run_identity(
     source_commit: str,
     release_run_id: int,
     run: Mapping[str, object],
+    *,
+    allow_active: bool = False,
 ) -> None:
-    """Require the exact successful authoritative release workflow run."""
+    """Require the exact authoritative release workflow run."""
     expected = {
         "id": release_run_id,
         "name": "Release",
         "path": RELEASE_WORKFLOW_PATH,
         "event": "push",
-        "status": "completed",
-        "conclusion": "success",
         "head_branch": tag,
         "head_sha": source_commit,
         "workflow_id": RELEASE_WORKFLOW_ID,
     }
     attempt = run.get("run_attempt")
-    if type(attempt) is not int or attempt < 1 or not (expected.items() <= run.items()):
+    state = run.get("status"), run.get("conclusion")
+    valid_state = state == ("completed", "success") or (
+        allow_active and state in {("queued", None), ("in_progress", None)}
+    )
+    if (
+        type(attempt) is not int
+        or attempt < 1
+        or not valid_state
+        or not (expected.items() <= run.items())
+    ):
         raise AttestationError
 
 
@@ -317,20 +327,24 @@ def validate_workflow_context(
     *,
     system: str,
     machine: str,
+    tag: str | None = None,
+    source_commit: str | None = None,
 ) -> str:
     """Bind execution to the protected workflow and physical runner platform."""
     workflow_head = environment.get("GITHUB_SHA", "")
-    expected_workflow_ref = f"{REPOSITORY}/{WORKFLOW_PATH}@refs/heads/main"
+    event = environment.get("GITHUB_EVENT_NAME")
+    ref = "refs/heads/main" if event == "workflow_dispatch" else f"refs/tags/{tag}"
+    expected_workflow_ref = f"{REPOSITORY}/{WORKFLOW_PATH}@{ref}"
     actual_platform, runner_os, runner_arch = platform_identity(system, machine)
     if (
         environment.get("GITHUB_ACTIONS") != "true"
-        or environment.get("GITHUB_EVENT_NAME")
-        not in {"workflow_dispatch", "workflow_run"}
-        or environment.get("GITHUB_REF") != "refs/heads/main"
+        or event not in {"workflow_dispatch", "push"}
+        or environment.get("GITHUB_REF") != ref
         or environment.get("GITHUB_REPOSITORY") != REPOSITORY
         or environment.get("GITHUB_WORKFLOW_REF") != expected_workflow_ref
         or COMMIT_PATTERN.fullmatch(workflow_head) is None
         or environment.get("GITHUB_WORKFLOW_SHA") != workflow_head
+        or (event == "push" and workflow_head != source_commit)
         or environment.get("RUNNER_OS") != runner_os
         or environment.get("RUNNER_ARCH") != runner_arch
         or actual_platform != receipt.platform
@@ -617,11 +631,17 @@ def discover_release_policy(
     source_commit: str,
     release_run: str,
     metadata_reader: Callable[[str], Mapping[str, object]],
+    *,
+    allow_active_release: bool = False,
 ) -> tuple[ReleasePolicy, Mapping[str, object]]:
     """Bind one successful tag release to its immutable public asset metadata."""
     version, release_run_id = release_identity(tag, source_commit, release_run)
     urls = metadata_urls(tag, release_run_id)
-    reference = metadata_reader(urls["tag_ref"])
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        reference, release_run_metadata, release = executor.map(
+            metadata_reader,
+            (urls["tag_ref"], urls["release_run"], urls["release"]),
+        )
     reference_object = reference.get("object")
     if not isinstance(reference_object, dict):
         raise AttestationError
@@ -637,9 +657,9 @@ def discover_release_policy(
         tag,
         source_commit,
         release_run_id,
-        metadata_reader(urls["release_run"]),
+        release_run_metadata,
+        allow_active=allow_active_release,
     )
-    release = metadata_reader(urls["release"])
     release_id = release.get("id")
     published_at = release.get("published_at")
     assets = release.get("assets")
@@ -922,6 +942,8 @@ def run_attestation(
         receipt_spec,
         system=host_platform.system(),
         machine=host_platform.machine(),
+        tag=tag,
+        source_commit=source_commit,
     )
     metadata_reader = (
         json_reader
@@ -933,6 +955,7 @@ def run_attestation(
         source_commit,
         release_run,
         metadata_reader,
+        allow_active_release=environment.get("GITHUB_EVENT_NAME") == "push",
     )
     receipt = policy.receipts[receipt_name]
     verifier_bytes = validate_released_source(released_source, source_commit)
@@ -943,16 +966,18 @@ def run_attestation(
         if receipt.mode == "native"
         else None
     )
-    artifact_bytes = asset_reader(
-        str(artifact_metadata["browser_download_url"]),
-        receipt.asset_size,
+    artifact_request = str(artifact_metadata["browser_download_url"]), receipt.asset_size
+    checksum_request = (
+        (str(checksum_metadata["browser_download_url"]), policy.checksum_asset_size)
+        if checksum_metadata is not None
+        else None
     )
-    checksum_bytes = None
-    if checksum_metadata is not None:
-        checksum_bytes = asset_reader(
-            str(checksum_metadata["browser_download_url"]),
-            policy.checksum_asset_size,
-        )
+    requests = [artifact_request] + ([checksum_request] if checksum_request else [])
+    with ThreadPoolExecutor(max_workers=len(requests)) as executor:
+        contents = list(executor.map(lambda request: asset_reader(*request), requests))
+    artifact_bytes = contents[0]
+    checksum_bytes = contents[1] if checksum_request else None
+    if checksum_bytes is not None:
         if (
             len(checksum_bytes) != policy.checksum_asset_size
             or hashlib.sha256(checksum_bytes).hexdigest()

@@ -43,19 +43,25 @@ def load_subject():
 
 
 def workflow_environment(
-    *, runner_os: str = "Linux", runner_arch: str = "X64"
+    *,
+    runner_os: str = "Linux",
+    runner_arch: str = "X64",
+    event: str = "workflow_dispatch",
+    tag: str = "v1.2.3",
+    source_commit: str = WORKFLOW_HEAD,
 ) -> dict[str, str]:
+    ref = "refs/heads/main" if event == "workflow_dispatch" else f"refs/tags/{tag}"
     return {
         "GITHUB_ACTIONS": "true",
-        "GITHUB_EVENT_NAME": "workflow_dispatch",
-        "GITHUB_REF": "refs/heads/main",
+        "GITHUB_EVENT_NAME": event,
+        "GITHUB_REF": ref,
         "GITHUB_REPOSITORY": "LogBrewCo/cli",
-        "GITHUB_SHA": WORKFLOW_HEAD,
+        "GITHUB_SHA": source_commit,
         "GITHUB_WORKFLOW_REF": (
             "LogBrewCo/cli/.github/workflows/"
-            "installed-release-attestations.yml@refs/heads/main"
+            f"installed-release-attestations.yml@{ref}"
         ),
-        "GITHUB_WORKFLOW_SHA": WORKFLOW_HEAD,
+        "GITHUB_WORKFLOW_SHA": source_commit,
         "RUNNER_ARCH": runner_arch,
         "RUNNER_OS": runner_os,
     }
@@ -300,6 +306,22 @@ class InstalledReleaseAttestationTests(unittest.TestCase):
             policy.release_run_id,
             release_run_fixture(policy),
         )
+        active_run = release_run_fixture(policy)
+        active_run.update(status="in_progress", conclusion=None)
+        module.validate_release_run_identity(
+            policy.tag,
+            policy.source_commit,
+            policy.release_run_id,
+            active_run,
+            allow_active=True,
+        )
+        with self.assertRaises(module.AttestationError):
+            module.validate_release_run_identity(
+                policy.tag,
+                policy.source_commit,
+                policy.release_run_id,
+                active_run,
+            )
 
         bad_tag = tag_object_fixture(policy)
         bad_tag["object"]["sha"] = "3" * 40
@@ -349,7 +371,7 @@ class InstalledReleaseAttestationTests(unittest.TestCase):
         )
         self.assertEqual(discovered, policy)
         self.assertIs(discovered_release, release)
-        self.assertEqual(requests, list(urls.values()))
+        self.assertCountEqual(requests, urls.values())
 
     def test_release_assets_bind_exact_public_digest_and_checksum(self) -> None:
         module = load_subject()
@@ -466,6 +488,21 @@ class InstalledReleaseAttestationTests(unittest.TestCase):
                 receipt,
                 system="Linux",
                 machine="x86_64",
+            ),
+            WORKFLOW_HEAD,
+        )
+        self.assertEqual(
+            module.validate_workflow_context(
+                workflow_environment(
+                    event="push",
+                    tag="v1.2.3",
+                    source_commit=WORKFLOW_HEAD,
+                ),
+                receipt,
+                system="Linux",
+                machine="x86_64",
+                tag="v1.2.3",
+                source_commit=WORKFLOW_HEAD,
             ),
             WORKFLOW_HEAD,
         )
@@ -909,8 +946,8 @@ class InstalledReleaseAttestationTests(unittest.TestCase):
             attestation = json.loads(output.read_text(encoding="utf-8"))
             module.validate_attestation(attestation, policy)
 
-        self.assertEqual(metadata_requests, list(urls.values()))
-        self.assertEqual(
+        self.assertCountEqual(metadata_requests, urls.values())
+        self.assertCountEqual(
             asset_requests,
             [(artifact_url, len(payload)), (checksum_url, len(checksum))],
         )

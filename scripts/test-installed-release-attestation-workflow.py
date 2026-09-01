@@ -7,6 +7,7 @@ import json
 import os
 import pathlib
 import re
+import runpy
 import subprocess
 import sys
 import tempfile
@@ -31,27 +32,21 @@ class InstalledReleaseAttestationWorkflowTests(unittest.TestCase):
 
     def test_workflow_is_unattended_with_read_only_recovery(self) -> None:
         workflow = self.workflow()
-        self.assertIn("workflow_run:", workflow)
-        self.assertIn("workflows: [Release]", workflow)
-        self.assertIn("types: [completed]", workflow)
+        self.assertIn("push:", workflow)
+        self.assertIn('      - "**[0-9]+.[0-9]+.[0-9]+*"', workflow)
         self.assertIn("workflow_dispatch:", workflow)
-        self.assertIn("github.event.workflow_run.conclusion == 'success'", workflow)
-        self.assertIn("startsWith(github.event.workflow_run.head_branch, 'v')", workflow)
+        self.assertIn("startsWith(github.ref, 'refs/tags/v')", workflow)
+        self.assertNotIn("workflow_run", workflow)
         self.assertNotIn("pull_request_target", workflow)
-        self.assertRegex(workflow, r"(?m)^permissions:\n  contents: read$")
-        for forbidden in [
-            "contents: write",
-            "packages: write",
-            "id-token: write",
-            "secrets.",
-            "qemu",
-            "emulat",
-        ]:
+        self.assertRegex(workflow, r"(?m)^permissions:\n  actions: read\n  contents: read$")
+        for forbidden in (
+            "contents: write", "packages: write", "id-token: write",
+            "secrets.", "qemu", "emulat",
+        ):
             with self.subTest(forbidden=forbidden):
                 self.assertNotIn(forbidden, workflow)
-        token_binding = "GITHUB_TOKEN: ${{ github.token }}"
-        self.assertEqual(workflow.count(token_binding), 1)
-        self.assertEqual(workflow.count("${{ github.token }}"), 1)
+        self.assertEqual(workflow.count("GH_TOKEN: ${{ github.token }}"), 2)
+        self.assertEqual(workflow.count("GITHUB_TOKEN: ${{ github.token }}"), 1)
 
     def test_dispatch_inputs_are_required_without_stale_defaults(self) -> None:
         inputs = self.workflow().split("permissions:", 1)[0]
@@ -68,55 +63,12 @@ class InstalledReleaseAttestationWorkflowTests(unittest.TestCase):
         workflow = self.workflow()
         self.assertNotIn("receipt_scope", workflow)
         self.assertNotIn("matrix.scopes", workflow)
+        receipts = runpy.run_path(str(ROOT / "scripts/installed_release_attestation.py"))[
+            "RECEIPTS"
+        ]
         expected = {
-            (
-                "shell-linux-x64",
-                "ubuntu-24.04",
-                "linux-x64",
-                "shell",
-                "installer:shell",
-                "logbrew-cli-installer.sh",
-            ),
-            (
-                "native-linux-arm64",
-                "ubuntu-24.04-arm",
-                "linux-arm64",
-                "native",
-                "native:linux-arm64",
-                "logbrew-cli-aarch64-unknown-linux-gnu.tar.xz",
-            ),
-            (
-                "native-linux-x64",
-                "ubuntu-24.04",
-                "linux-x64",
-                "native",
-                "native:linux-x64",
-                "logbrew-cli-x86_64-unknown-linux-gnu.tar.xz",
-            ),
-            (
-                "powershell-windows-x64",
-                "windows-2025",
-                "windows-x64",
-                "powershell",
-                "installer:powershell",
-                "logbrew-cli-installer.ps1",
-            ),
-            (
-                "native-windows-x64",
-                "windows-2025",
-                "windows-x64",
-                "native",
-                "native:windows-x64",
-                "logbrew-cli-x86_64-pc-windows-msvc.zip",
-            ),
-            (
-                "native-macos-x64",
-                "macos-15-intel",
-                "macos-x64",
-                "native",
-                "native:macos-x64",
-                "logbrew-cli-x86_64-apple-darwin.tar.xz",
-            ),
+            (name, spec.runner, spec.platform, spec.mode, spec.artifact_id, spec.asset_name)
+            for name, spec in receipts.items()
         }
         rows = set(
             re.findall(
@@ -130,25 +82,22 @@ class InstalledReleaseAttestationWorkflowTests(unittest.TestCase):
             )
         )
         self.assertEqual(rows, expected)
-        self.assertEqual(workflow.count("          - receipt:"), 6)
+        self.assertEqual(workflow.count("          - receipt:"), len(expected))
         self.assertIn("runs-on: ${{ matrix.runner }}", workflow)
 
         runner_policy = RUNNER_POLICY.read_text(encoding="utf-8")
         for runner in {row[1] for row in expected}:
             self.assertIn(f'"{runner}"', runner_policy)
 
-    def test_workflow_checks_out_released_source_and_uploads_one_fixed_receipt(self) -> None:
+    def test_workflow_reuses_one_exact_source_checkout_and_uploads_one_receipt(self) -> None:
         workflow = self.workflow()
         self.assertEqual(
             workflow.count("actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"),
-            2,
+            1,
         )
-        self.assertIn(
-            "ref: ${{ inputs.source_commit || github.event.workflow_run.head_sha }}",
-            workflow,
-        )
-        self.assertIn("path: released-source", workflow)
-        self.assertEqual(workflow.count("persist-credentials: false"), 2)
+        self.assertIn("ref: ${{ inputs.source_commit || github.sha }}", workflow)
+        self.assertNotIn("path: released-source", workflow)
+        self.assertEqual(workflow.count("persist-credentials: false"), 1)
         self.assertIn(
             "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
             workflow,
@@ -158,6 +107,26 @@ class InstalledReleaseAttestationWorkflowTests(unittest.TestCase):
         self.assertIn('--receipt "$ATTESTATION_RECEIPT"', workflow)
         self.assertIn('--released-source "$ATTESTATION_RELEASED_SOURCE"', workflow)
         self.assertIn('--output "$ATTESTATION_OUTPUT"', workflow)
+
+    def test_tag_run_and_public_release_are_resolved_before_receipts(self) -> None:
+        workflow = self.workflow()
+        step = workflow
+        for required in [
+            "--workflow release.yml",
+            "--event push",
+            '--branch "$RELEASE_TAG"',
+            '--commit "$SOURCE_COMMIT"',
+            'gh release view "$RELEASE_TAG"',
+            "for _ in {1..100}",
+            "sleep 0.5",
+            "run-id=%s",
+            "for _ in {1..40}",
+            '[[ "$state" == "completed|success" ]]',
+        ]:
+            with self.subTest(required=required):
+                self.assertIn(required, step)
+        self.assertIn('>> "$GITHUB_OUTPUT"', step)
+        self.assertLess(step.index("Require successful release"), step.index("Upload installed attestation"))
 
     def test_dispatch_values_cross_the_shell_only_through_quoted_environment_variables(
         self,
@@ -170,35 +139,22 @@ class InstalledReleaseAttestationWorkflowTests(unittest.TestCase):
             (
                 "--tag",
                 "ATTESTATION_TAG",
-                "${{ inputs.tag || github.event.workflow_run.head_branch }}",
+                "${{ inputs.tag || github.ref_name }}",
             ),
             (
                 "--source-commit",
                 "ATTESTATION_SOURCE_COMMIT",
-                "${{ inputs.source_commit || github.event.workflow_run.head_sha }}",
-            ),
-            (
-                "--release-run",
-                "ATTESTATION_RELEASE_RUN",
-                "${{ inputs.release_run || github.event.workflow_run.id }}",
+                "${{ inputs.source_commit || github.sha }}",
             ),
         ]:
             with self.subTest(option=option):
                 self.assertIn(f"          {variable}: {expression}", workflow)
                 self.assertIn(f'{option} "${variable}"', command)
                 self.assertNotIn(expression, command)
-                self.assertEqual(
-                    workflow.count(expression), 2 if option == "--source-commit" else 1
-                )
+        self.assertIn("ATTESTATION_RELEASE_RUN: ${{ steps.release.outputs.run-id }}", workflow)
+        self.assertIn('--release-run "$ATTESTATION_RELEASE_RUN"', command)
 
-        for forbidden in [
-            "GITHUB_OUTPUT",
-            "GITHUB_ENV",
-            "set -x",
-            "echo ",
-            "printf ",
-            "::debug",
-        ]:
+        for forbidden in ("GITHUB_ENV", "set -x", "echo ", "::debug"):
             with self.subTest(forbidden=forbidden):
                 self.assertNotIn(forbidden, workflow)
 
@@ -213,12 +169,9 @@ class InstalledReleaseAttestationWorkflowTests(unittest.TestCase):
             capture = tmp / "captured.json"
             marker_one = tmp / "command-substitution-ran"
             marker_two = tmp / "backtick-ran"
-            recorder = scripts / "installed_release_attestation.py"
-            recorder.write_text(
-                "import json, os, pathlib, sys\n"
-                "pathlib.Path(os.environ['CAPTURE_PATH']).write_text(\n"
-                "    json.dumps(sys.argv[1:]), encoding='utf-8'\n"
-                ")\n",
+            (scripts / "installed_release_attestation.py").write_text(
+                "import json,os,pathlib,sys\n"
+                "pathlib.Path(os.environ['CAPTURE_PATH']).write_text(json.dumps(sys.argv[1:]))\n",
                 encoding="utf-8",
             )
 
@@ -230,39 +183,22 @@ class InstalledReleaseAttestationWorkflowTests(unittest.TestCase):
                 ),
                 "release_run": "31109523405\r\n$(exit 91)",
             }
-            replacements = {
-                "${{ matrix.python }}": sys.executable,
-                "${{ matrix.receipt }}": "shell-linux-x64",
-                "${{ matrix.mode }}": "shell",
-                "${{ matrix.artifact_id }}": "installer:shell",
-                "${{ matrix.asset }}": "logbrew-cli-installer.sh",
-                "${{ matrix.platform }}": "linux-x64",
-                "${{ github.workspace }}": str(tmp),
-                "${{ runner.temp }}": str(tmp),
-            }
-            resolved = command
-            for expression, value in replacements.items():
-                resolved = resolved.replace(expression, value)
-
-            env = os.environ.copy()
-            env.update(
-                {
-                    "CAPTURE_PATH": str(capture),
-                    "ATTESTATION_PYTHON": sys.executable,
-                    "ATTESTATION_RECEIPT": "shell-linux-x64",
-                    "ATTESTATION_TAG": hostile["tag"],
-                    "ATTESTATION_SOURCE_COMMIT": hostile["source_commit"],
-                    "ATTESTATION_RELEASE_RUN": hostile["release_run"],
-                    "ATTESTATION_MODE": "shell",
-                    "ATTESTATION_ARTIFACT_ID": "installer:shell",
-                    "ATTESTATION_ASSET": "logbrew-cli-installer.sh",
-                    "ATTESTATION_PLATFORM": "linux-x64",
-                    "ATTESTATION_RELEASED_SOURCE": str(tmp / "released-source"),
-                    "ATTESTATION_OUTPUT": str(tmp / "attestation.json"),
-                }
-            )
+            fields = [
+                ("--receipt", "ATTESTATION_RECEIPT", "shell-linux-x64"),
+                ("--tag", "ATTESTATION_TAG", hostile["tag"]),
+                ("--source-commit", "ATTESTATION_SOURCE_COMMIT", hostile["source_commit"]),
+                ("--release-run", "ATTESTATION_RELEASE_RUN", hostile["release_run"]),
+                ("--mode", "ATTESTATION_MODE", "shell"),
+                ("--artifact-id", "ATTESTATION_ARTIFACT_ID", "installer:shell"),
+                ("--asset", "ATTESTATION_ASSET", "logbrew-cli-installer.sh"),
+                ("--execution-platform", "ATTESTATION_PLATFORM", "linux-x64"),
+                ("--released-source", "ATTESTATION_RELEASED_SOURCE", str(tmp / "released-source")),
+                ("--output", "ATTESTATION_OUTPUT", str(tmp / "attestation.json")),
+            ]
+            env = os.environ | {name: value for _, name, value in fields}
+            env.update(CAPTURE_PATH=str(capture), ATTESTATION_PYTHON=sys.executable)
             completed = subprocess.run(
-                ["bash", "-c", resolved],
+                ["bash", "-c", command],
                 cwd=tmp,
                 env=env,
                 capture_output=True,
@@ -274,28 +210,7 @@ class InstalledReleaseAttestationWorkflowTests(unittest.TestCase):
             self.assertFalse(marker_two.exists())
             self.assertEqual(
                 json.loads(capture.read_text(encoding="utf-8")),
-                [
-                    "--receipt",
-                    "shell-linux-x64",
-                    "--tag",
-                    hostile["tag"],
-                    "--source-commit",
-                    hostile["source_commit"],
-                    "--release-run",
-                    hostile["release_run"],
-                    "--mode",
-                    "shell",
-                    "--artifact-id",
-                    "installer:shell",
-                    "--asset",
-                    "logbrew-cli-installer.sh",
-                    "--execution-platform",
-                    "linux-x64",
-                    "--released-source",
-                    str(tmp / "released-source"),
-                    "--output",
-                    str(tmp / "attestation.json"),
-                ],
+                [item for flag, _, value in fields for item in (flag, value)],
             )
 
 
