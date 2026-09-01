@@ -1,5 +1,10 @@
 //! Public CLI investigation contracts.
 
+#[macro_use]
+#[path = "../async_test.rs"]
+mod async_test;
+pub(crate) use async_test::run_async;
+
 mod api_rendering;
 mod cursor_pagination;
 mod explain_contracts;

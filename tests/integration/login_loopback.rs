@@ -7,8 +7,7 @@ use crate::{Mock, MockServer, ResponseTemplate};
 use std::os::unix::fs::PermissionsExt as _;
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
-#[tokio::test]
-async fn built_binary_completes_loopback_login_without_exposing_credentials() -> TestResult {
+async_test!(built_binary_completes_loopback_login_without_exposing_credentials -> TestResult, {
     drop(rustls::crypto::ring::default_provider().install_default());
     let server = MockServer::start().await;
     Mock::route("POST", "/api/auth/gitlab")
@@ -20,8 +19,7 @@ async fn built_binary_completes_loopback_login_without_exposing_credentials() ->
             "refresh_token": "binary-refresh"
         })))
         .expect(1)
-        .mount(&server)
-        .await;
+        .mount(&server);
     let (result, home, state) =
         run_binary_login(&server, "binary-provider-code", "success").await?;
     assert!(result.status.success());
@@ -52,10 +50,9 @@ async fn built_binary_completes_loopback_login_without_exposing_credentials() ->
         );
     }
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn browser_login_does_not_forward_exchange_codes_across_redirects() -> TestResult {
+async_test!(browser_login_does_not_forward_exchange_codes_across_redirects -> TestResult, {
     drop(rustls::crypto::ring::default_provider().install_default());
     let server = MockServer::start().await;
     let redirected = MockServer::start().await;
@@ -68,20 +65,18 @@ async fn browser_login_does_not_forward_exchange_codes_across_redirects() -> Tes
                 .insert_header("location", format!("{}/capture", redirected.uri())),
         )
         .expect(1)
-        .mount(&server)
-        .await;
+        .mount(&server);
     Mock::route("POST", "/capture")
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "access_token": "redirect-access",
             "refresh_token": "redirect-refresh"
         })))
-        .mount(&redirected)
-        .await;
+        .mount(&redirected);
 
     let (result, home, _) = run_binary_login(&server, "redirect-provider-code", "redirect").await?;
 
     assert!(!result.status.success());
-    assert!(redirected.received_requests().await.is_empty());
+    assert!(redirected.received_requests().is_empty());
     assert!(!home.join(".logbrew/session.json").exists());
     assert_output_safe(
         &result,
@@ -92,7 +87,7 @@ async fn browser_login_does_not_forward_exchange_codes_across_redirects() -> Tes
         ],
     );
     Ok(())
-}
+});
 
 async fn run_binary_login(
     server: &MockServer,

@@ -46,9 +46,7 @@ fn native_debug_transport_has_explicit_request_and_overall_bounds_without_hidden
     );
 }
 
-#[tokio::test]
-async fn human_upload_reports_a_fixed_phase_before_waiting_for_the_server()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(human_upload_reports_a_fixed_phase_before_waiting_for_the_server -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     Mock::route("GET", "/api/native-debug-artifacts")
         .respond_with(
@@ -56,8 +54,7 @@ async fn human_upload_reports_a_fixed_phase_before_waiting_for_the_server()
                 .set_delay(Duration::from_secs(5))
                 .set_body_json(missing_lookup()),
         )
-        .mount(&server)
-        .await;
+        .mount(&server);
 
     let fixture = Fixture::new("bounded-progress")?;
     let artifact = fixture.root.join("Customer Secret Waiting Symbols");
@@ -95,11 +92,9 @@ async fn human_upload_reports_a_fixed_phase_before_waiting_for_the_server()
         "progress must be fixed and free of scope, identity, and path values"
     );
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn large_universal_object_uses_bounded_resumable_chunks_and_one_json_document()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(large_universal_object_uses_bounded_resumable_chunks_and_one_json_document -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     let fixture = Fixture::new("bounded-large-universal")?;
     let mut arm64 = macho64(0x0100_000c, uuid_bytes(0x10));
@@ -150,8 +145,7 @@ async fn large_universal_object_uses_bounded_resumable_chunks_and_one_json_docum
     Mock::route("POST", "/api/native-debug-artifact-uploads")
         .respond_with(ResponseTemplate::new(200).set_body_json(start_response(&missing)))
         .expect(1)
-        .mount(&server)
-        .await;
+        .mount(&server);
     for (digest, _) in &chunks {
         Mock::route(
             "PUT",
@@ -159,8 +153,7 @@ async fn large_universal_object_uses_bounded_resumable_chunks_and_one_json_docum
         )
         .respond_with(ResponseTemplate::new(200).set_body_json(chunk_response(digest)))
         .expect(1)
-        .mount(&server)
-        .await;
+        .mount(&server);
     }
     Mock::route(
         "POST",
@@ -168,8 +161,7 @@ async fn large_universal_object_uses_bounded_resumable_chunks_and_one_json_docum
     )
     .respond_with(ResponseTemplate::new(200).set_body_json(upload_success_body(2)))
     .expect(1)
-    .mount(&server)
-    .await;
+    .mount(&server);
 
     let output = invoke(
         &fixture,
@@ -223,7 +215,7 @@ async fn large_universal_object_uses_bounded_resumable_chunks_and_one_json_docum
         assert_eq!(request.body.as_slice(), *bytes);
     }
     Ok(())
-}
+});
 
 fn found_lookup_for(
     image_uuid: &str,

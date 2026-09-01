@@ -2,6 +2,15 @@
 
 use super::MockServer;
 
+/// Erases the command future so each test compiles one shared async state machine.
+pub(crate) fn execute_command<'a>(
+    command: &'a logbrew_cli::Command,
+    environment: &'a logbrew_cli::CliEnvironment,
+    output: &'a mut Vec<u8>,
+) -> futures_util::future::BoxFuture<'a, Result<(), logbrew_cli::RuntimeError>> {
+    Box::pin(logbrew_cli::execute_command(command, environment, output))
+}
+
 pub(crate) async fn run_cli(
     server: &MockServer,
     args: &[&str],

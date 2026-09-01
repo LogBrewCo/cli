@@ -35,9 +35,7 @@ const ANDROID_ELF_FIXTURES: [(&[u8], &str, &str); 3] = [
         "x86",
     ),
 ];
-#[tokio::test]
-async fn dsym_dry_run_discovers_identity_without_auth_or_network()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(dsym_dry_run_discovers_identity_without_auth_or_network -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     let fixture = Fixture::new("dry-run")?;
     let dwarf = fixture
@@ -72,10 +70,9 @@ async fn dsym_dry_run_discovers_identity_without_auth_or_network()
     assert_private_values_absent(text.as_str(), &fixture, server.uri().as_str());
     assert!(received_requests(&server).await?.is_empty());
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn dsym_dry_run_normalizes_apple_uuid_case() -> Result<(), Box<dyn std::error::Error>> {
+async_test!(dsym_dry_run_normalizes_apple_uuid_case -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     let fixture = Fixture::new("mixed-case-dwarfdump-uuid")?;
     let artifact = fixture.root.join("Customer Secret Mixed Case Symbols");
@@ -98,11 +95,9 @@ async fn dsym_dry_run_normalizes_apple_uuid_case() -> Result<(), Box<dyn std::er
     }
     assert!(received_requests(&server).await?.is_empty());
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn resumable_upload_sends_only_missing_chunks_then_completes_and_verifies()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(resumable_upload_sends_only_missing_chunks_then_completes_and_verifies -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     let fixture = Fixture::new("resumable-success")?;
     let mut object = macho64(0x0100_000c, uuid_bytes(0x10));
@@ -124,24 +119,21 @@ async fn resumable_upload_sends_only_missing_chunks_then_completes_and_verifies(
     Mock::route("POST", "/api/native-debug-artifact-uploads")
         .respond_with(ResponseTemplate::new(200).set_body_json(start_response(&[&final_digest])))
         .expect(1)
-        .mount(&server)
-        .await;
+        .mount(&server);
     Mock::route(
         "PUT",
         format!("/api/native-debug-artifact-uploads/{RESUMABLE_SESSION_ID}/chunks/{final_digest}"),
     )
     .respond_with(ResponseTemplate::new(200).set_body_json(chunk_response(&final_digest)))
     .expect(1)
-    .mount(&server)
-    .await;
+    .mount(&server);
     Mock::route(
         "POST",
         format!("/api/native-debug-artifact-uploads/{RESUMABLE_SESSION_ID}/complete"),
     )
     .respond_with(ResponseTemplate::new(200).set_body_json(upload_success_body(1)))
     .expect(1)
-    .mount(&server)
-    .await;
+    .mount(&server);
 
     let output = invoke(
         &fixture,
@@ -217,11 +209,9 @@ async fn resumable_upload_sends_only_missing_chunks_then_completes_and_verifies(
             || request.method.as_str() == "GET"
     ));
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn resumable_retry_replays_only_the_ambiguous_chunk() -> Result<(), Box<dyn std::error::Error>>
-{
+async_test!(resumable_retry_replays_only_the_ambiguous_chunk -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     let (fixture, artifact, object) = artifact("chunk-retry", 257)?;
     let object_digest = sha256_hex(object.as_slice());
@@ -236,8 +226,7 @@ async fn resumable_retry_replays_only_the_ambiguous_chunk() -> Result<(), Box<dy
     Mock::route("POST", "/api/native-debug-artifact-uploads")
         .respond_with(ResponseTemplate::new(200).set_body_json(start_response(&[&object_digest])))
         .expect(1)
-        .mount(&server)
-        .await;
+        .mount(&server);
     let attempt = Arc::new(AtomicUsize::new(0));
     let response_attempt = Arc::clone(&attempt);
     let response_digest = object_digest.clone();
@@ -253,16 +242,14 @@ async fn resumable_retry_replays_only_the_ambiguous_chunk() -> Result<(), Box<dy
         }
     })
     .expect(2)
-    .mount(&server)
-    .await;
+    .mount(&server);
     Mock::route(
         "POST",
         format!("/api/native-debug-artifact-uploads/{RESUMABLE_SESSION_ID}/complete"),
     )
     .respond_with(ResponseTemplate::new(200).set_body_json(upload_success_body(1)))
     .expect(1)
-    .mount(&server)
-    .await;
+    .mount(&server);
 
     let output = invoke(
         &fixture,
@@ -286,16 +273,14 @@ async fn resumable_retry_replays_only_the_ambiguous_chunk() -> Result<(), Box<dy
     assert_eq!(requests[3].body, requests[2].body);
     assert_eq!(attempt.load(Ordering::SeqCst), 2);
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn android_elf_uses_exact_resumable_manifest_and_whole_object()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(android_elf_uses_exact_resumable_manifest_and_whole_object -> Result<(), Box<dyn std::error::Error>>, {
     for (bytes, image_uuid, architecture) in ANDROID_ELF_FIXTURES {
         assert_android_elf_upload(bytes, image_uuid, architecture).await?;
     }
     Ok(())
-}
+});
 
 async fn assert_android_elf_upload(
     bytes: &[u8],
@@ -315,24 +300,21 @@ async fn assert_android_elf_upload(
     Mock::route("POST", "/api/native-debug-artifact-uploads")
         .respond_with(ResponseTemplate::new(200).set_body_json(start_response(&[&digest])))
         .expect(1)
-        .mount(&server)
-        .await;
+        .mount(&server);
     Mock::route(
         "PUT",
         format!("/api/native-debug-artifact-uploads/{RESUMABLE_SESSION_ID}/chunks/{digest}"),
     )
     .respond_with(ResponseTemplate::new(200).set_body_json(chunk_response(&digest)))
     .expect(1)
-    .mount(&server)
-    .await;
+    .mount(&server);
     Mock::route(
         "POST",
         format!("/api/native-debug-artifact-uploads/{RESUMABLE_SESSION_ID}/complete"),
     )
     .respond_with(ResponseTemplate::new(200).set_body_json(upload_success_body(1)))
     .expect(1)
-    .mount(&server)
-    .await;
+    .mount(&server);
 
     let output = invoke(
         &fixture,
@@ -370,9 +352,7 @@ async fn assert_android_elf_upload(
     Ok(())
 }
 
-#[tokio::test]
-async fn ambiguous_completion_recovers_through_exact_lookup_without_file_replay()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(ambiguous_completion_recovers_through_exact_lookup_without_file_replay -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     let (fixture, artifact, object) = artifact("complete-recovery", 257)?;
     let digest = sha256_hex(object.as_slice());
@@ -387,24 +367,21 @@ async fn ambiguous_completion_recovers_through_exact_lookup_without_file_replay(
     Mock::route("POST", "/api/native-debug-artifact-uploads")
         .respond_with(ResponseTemplate::new(200).set_body_json(start_response(&[&digest])))
         .expect(1)
-        .mount(&server)
-        .await;
+        .mount(&server);
     Mock::route(
         "PUT",
         format!("/api/native-debug-artifact-uploads/{RESUMABLE_SESSION_ID}/chunks/{digest}"),
     )
     .respond_with(ResponseTemplate::new(200).set_body_json(chunk_response(&digest)))
     .expect(1)
-    .mount(&server)
-    .await;
+    .mount(&server);
     Mock::route(
         "POST",
         format!("/api/native-debug-artifact-uploads/{RESUMABLE_SESSION_ID}/complete"),
     )
     .respond_with(ResponseTemplate::new(503).set_body_string("hostile completion text"))
     .expect(1)
-    .mount(&server)
-    .await;
+    .mount(&server);
 
     let output = invoke(
         &fixture,
@@ -432,11 +409,9 @@ async fn ambiguous_completion_recovers_through_exact_lookup_without_file_replay(
             || request.method.as_str() == "GET"
     ));
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn non_pending_completion_422_preserves_missing_chunk_recovery()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(non_pending_completion_422_preserves_missing_chunk_recovery -> Result<(), Box<dyn std::error::Error>>, {
     const MISSING_CHUNK_NEXT: &str =
         "retry only the missing native debug artifact chunk with its exact digest";
     let server = MockServer::start().await;
@@ -446,16 +421,14 @@ async fn non_pending_completion_422_preserves_missing_chunk_recovery()
     Mock::route("POST", "/api/native-debug-artifact-uploads")
         .respond_with(ResponseTemplate::new(200).set_body_json(start_response(&[&digest])))
         .expect(1)
-        .mount(&server)
-        .await;
+        .mount(&server);
     Mock::route(
         "PUT",
         format!("/api/native-debug-artifact-uploads/{RESUMABLE_SESSION_ID}/chunks/{digest}"),
     )
     .respond_with(ResponseTemplate::new(200).set_body_json(chunk_response(&digest)))
     .expect(1)
-    .mount(&server)
-    .await;
+    .mount(&server);
     Mock::route(
         "POST",
         format!("/api/native-debug-artifact-uploads/{RESUMABLE_SESSION_ID}/complete"),
@@ -467,8 +440,7 @@ async fn non_pending_completion_422_preserves_missing_chunk_recovery()
         "native_debug_artifact_upload",
     )))
     .expect(1)
-    .mount(&server)
-    .await;
+    .mount(&server);
 
     let output = invoke(
         &fixture,
@@ -482,11 +454,9 @@ async fn non_pending_completion_422_preserves_missing_chunk_recovery()
     assert!(!text.contains("wait briefly"));
     assert_private_values_absent(text.as_str(), &fixture, server.uri().as_str());
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn dsym_dry_run_rejects_an_exact_uuid_mismatch_without_reflection()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(dsym_dry_run_rejects_an_exact_uuid_mismatch_without_reflection -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     let fixture = Fixture::new("uuid-mismatch")?;
     let dwarf = fixture
@@ -515,11 +485,9 @@ async fn dsym_dry_run_rejects_an_exact_uuid_mismatch_without_reflection()
     assert_private_values_absent(text.as_str(), &fixture, server.uri().as_str());
     assert!(received_requests(&server).await?.is_empty());
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn dsym_dry_run_human_output_is_bounded_and_path_free()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(dsym_dry_run_human_output_is_bounded_and_path_free -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     let fixture = Fixture::new("dry-run-human")?;
     let dwarf = fixture
@@ -547,10 +515,9 @@ async fn dsym_dry_run_human_output_is_bounded_and_path_free()
     assert_private_values_absent(text.as_str(), &fixture, server.uri().as_str());
     assert!(received_requests(&server).await?.is_empty());
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn zip_dry_run_reads_only_dsym_debug_objects() -> Result<(), Box<dyn std::error::Error>> {
+async_test!(zip_dry_run_reads_only_dsym_debug_objects -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     let fixture = Fixture::new("zip-dry-run")?;
     let archive = fixture.root.join("Customer Secret Symbols.zip");
@@ -582,11 +549,9 @@ async fn zip_dry_run_reads_only_dsym_debug_objects() -> Result<(), Box<dyn std::
     assert_private_values_absent(text.as_str(), &fixture, server.uri().as_str());
     assert!(received_requests(&server).await?.is_empty());
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn zip_rejects_unsafe_paths_and_symlinks_before_network()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(zip_rejects_unsafe_paths_and_symlinks_before_network -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     let fixture = Fixture::new("unsafe-zip")?;
     let object = macho64(0x0100_000c, uuid_bytes(0x10));
@@ -621,10 +586,9 @@ async fn zip_rejects_unsafe_paths_and_symlinks_before_network()
     }
     assert!(received_requests(&server).await?.is_empty());
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn zip_crc_tampering_fails_before_network() -> Result<(), Box<dyn std::error::Error>> {
+async_test!(zip_crc_tampering_fails_before_network -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     let fixture = Fixture::new("tampered-zip")?;
     let object = macho64(0x0100_000c, uuid_bytes(0x10));
@@ -651,11 +615,9 @@ async fn zip_crc_tampering_fails_before_network() -> Result<(), Box<dyn std::err
     assert_private_values_absent(text.as_str(), &fixture, server.uri().as_str());
     assert!(received_requests(&server).await?.is_empty());
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn native_upload_rejects_ingest_key_auth_before_network()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(native_upload_rejects_ingest_key_auth_before_network -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     let fixture = Fixture::new("ingest-auth")?;
     let artifact = fixture.root.join("Customer Secret Symbols");
@@ -684,11 +646,9 @@ async fn native_upload_rejects_ingest_key_auth_before_network()
     }
     assert!(received_requests(&server).await?.is_empty());
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn hosted_http_and_embedded_url_state_fail_closed_without_reflection()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(hosted_http_and_embedded_url_state_fail_closed_without_reflection -> Result<(), Box<dyn std::error::Error>>, {
     let fixture = Fixture::new("unsafe-url")?;
     let artifact = fixture.root.join("Customer Secret Symbols");
     std::fs::write(artifact.as_path(), macho64(0x0100_000c, uuid_bytes(0x10)))?;
@@ -709,11 +669,9 @@ async fn hosted_http_and_embedded_url_state_fail_closed_without_reflection()
         assert!(!text.contains("private-fragment"));
     }
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn exact_already_present_artifact_is_success_without_upload()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(exact_already_present_artifact_is_success_without_upload -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     let fixture = Fixture::new("already-present")?;
     let object = macho64(0x0100_000c, uuid_bytes(0x10));
@@ -743,4 +701,4 @@ async fn exact_already_present_artifact_is_success_without_upload()
     assert_eq!(requests.len(), 1);
     assert_exact_lookup_query(&requests[0]);
     Ok(())
-}
+});

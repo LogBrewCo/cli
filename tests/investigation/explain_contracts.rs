@@ -1,8 +1,8 @@
 //! Versioned issue, log, action, trace, release, and metric explanation contracts.
 
 use crate::matchers::{header, query_param};
-use crate::{Mock, MockServer, ResponseTemplate};
-use logbrew_cli::{CliEnvironment, execute_command, parse_command, write_runtime_error};
+use crate::{Mock, MockServer, ResponseTemplate, execute_command};
+use logbrew_cli::{CliEnvironment, parse_command, write_runtime_error};
 
 const PROJECT_ID: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const ISSUE_ID: &str = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
@@ -10,9 +10,7 @@ const LOG_ID: &str = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const TRACE_ID: &str = "4bf92f3577b34da6a3ce929d0e0e4736";
 const SPAN_ID: &str = "00f067aa0ba902b7";
 
-#[tokio::test]
-async fn human_release_explanation_connects_health_sdk_and_every_signal()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(human_release_explanation_connects_health_sdk_and_every_signal -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     Mock::route("GET", "/api/telemetry/releases/investigation")
         .and(query_param("project_id", PROJECT_ID))
@@ -21,8 +19,7 @@ async fn human_release_explanation_connects_health_sdk_and_every_signal()
         .and(query_param("service_name", "checkout-api"))
         .and(query_param("response_version", "4"))
         .respond_with(ResponseTemplate::new(200).set_body_json(release_response()))
-        .mount(&server)
-        .await;
+        .mount(&server);
     let command = release_command(false)?;
     let mut output = Vec::new();
 
@@ -61,11 +58,9 @@ async fn human_release_explanation_connects_health_sdk_and_every_signal()
         );
     }
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn built_binary_release_preserves_validated_version_4_json()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(built_binary_release_preserves_validated_version_4_json -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     let response = release_response();
     Mock::route("GET", "/api/telemetry/releases/investigation")
@@ -73,8 +68,7 @@ async fn built_binary_release_preserves_validated_version_4_json()
         .and(header("authorization", "Bearer account-token"))
         .respond_with(ResponseTemplate::new(200).set_body_json(response.clone()))
         .expect(1)
-        .mount(&server)
-        .await;
+        .mount(&server);
     let process = super::run_cli(
         &server,
         &[
@@ -96,11 +90,9 @@ async fn built_binary_release_preserves_validated_version_4_json()
     let actual: serde_json::Value = serde_json::from_slice(process.stdout.as_slice())?;
     assert_eq!(actual, response);
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn release_explanation_rejects_contradictory_or_unversioned_subject_receipts()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(release_explanation_rejects_contradictory_or_unversioned_subject_receipts -> Result<(), Box<dyn std::error::Error>>, {
     for response in [
         mutated_release(|value| {
             value["signals"]["actions"]["items"][0]["subject_coverage"]["missing_subject_events"] =
@@ -196,8 +188,7 @@ async fn release_explanation_rejects_contradictory_or_unversioned_subject_receip
         let server = MockServer::start().await;
         Mock::route("GET", "/api/telemetry/releases/investigation")
             .respond_with(ResponseTemplate::new(200).set_body_json(response))
-            .mount(&server)
-            .await;
+            .mount(&server);
         let command = release_command(true)?;
         let mut output = Vec::new();
 
@@ -212,11 +203,9 @@ async fn release_explanation_rejects_contradictory_or_unversioned_subject_receip
         assert!(output.is_empty());
     }
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn release_v4_accepts_exact_capture_retry_and_partial_recovery_states()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(release_v4_accepts_exact_capture_retry_and_partial_recovery_states -> Result<(), Box<dyn std::error::Error>>, {
     for response in [
         release_without_subject_deployment(),
         release_with_deployment_read_unavailable(),
@@ -228,8 +217,7 @@ async fn release_v4_accepts_exact_capture_retry_and_partial_recovery_states()
         Mock::route("GET", "/api/telemetry/releases/investigation")
             .and(query_param("response_version", "4"))
             .respond_with(ResponseTemplate::new(200).set_body_json(response.clone()))
-            .mount(&server)
-            .await;
+            .mount(&server);
         let command = release_command(true)?;
         let mut output = Vec::new();
 
@@ -239,11 +227,9 @@ async fn release_v4_accepts_exact_capture_retry_and_partial_recovery_states()
         assert_eq!(actual, response);
     }
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn metric_explanation_preserves_validated_json_and_exact_scope()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(metric_explanation_preserves_validated_json_and_exact_scope -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     let response = metric_response();
     Mock::route("GET", "/api/telemetry/metrics/investigation")
@@ -258,8 +244,7 @@ async fn metric_explanation_preserves_validated_json_and_exact_scope()
         .and(header("authorization", "Bearer test-token"))
         .respond_with(ResponseTemplate::new(200).set_body_json(response.clone()))
         .expect(1)
-        .mount(&server)
-        .await;
+        .mount(&server);
     let command = metric_command(true)?;
     let mut output = Vec::new();
 
@@ -268,11 +253,9 @@ async fn metric_explanation_preserves_validated_json_and_exact_scope()
     let actual: serde_json::Value = serde_json::from_slice(output.as_slice())?;
     assert_eq!(actual, response);
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn built_binary_metric_preserves_validated_version_2_description_json()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(built_binary_metric_preserves_validated_version_2_description_json -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     let response = metric_response();
     Mock::route("GET", "/api/telemetry/metrics/investigation")
@@ -280,8 +263,7 @@ async fn built_binary_metric_preserves_validated_version_2_description_json()
         .and(header("authorization", "Bearer account-token"))
         .respond_with(ResponseTemplate::new(200).set_body_json(response.clone()))
         .expect(1)
-        .mount(&server)
-        .await;
+        .mount(&server);
     let process = super::run_cli(
         &server,
         &[
@@ -309,16 +291,13 @@ async fn built_binary_metric_preserves_validated_version_2_description_json()
     let actual: serde_json::Value = serde_json::from_slice(process.stdout.as_slice())?;
     assert_eq!(actual, response);
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn human_metric_explanation_exposes_semantics_coverage_and_trace_follow_up()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(human_metric_explanation_exposes_semantics_coverage_and_trace_follow_up -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     Mock::route("GET", "/api/telemetry/metrics/investigation")
         .respond_with(ResponseTemplate::new(200).set_body_json(metric_response()))
-        .mount(&server)
-        .await;
+        .mount(&server);
     let command = metric_command(false)?;
     let mut output = Vec::new();
 
@@ -353,11 +332,9 @@ async fn human_metric_explanation_exposes_semantics_coverage_and_trace_follow_up
     assert!(!text.contains("Missing: metric.description"));
     assert!(text.contains("Next 1: code=inspect_exact_span target=span_investigation"));
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn metric_latest_sample_preserves_rich_context_and_redaction_receipts()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(metric_latest_sample_preserves_rich_context_and_redaction_receipts -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     let mut response = metric_response();
     response["latest_sample"]["sample"]["context"] = serde_json::json!({
@@ -419,8 +396,7 @@ async fn metric_latest_sample_preserves_rich_context_and_redaction_receipts()
         serde_json::json!(["metric.latest_sample.metadata.authorization"]);
     Mock::route("GET", "/api/telemetry/metrics/investigation")
         .respond_with(ResponseTemplate::new(200).set_body_json(response))
-        .mount(&server)
-        .await;
+        .mount(&server);
     let command = metric_command(false)?;
     let mut output = Vec::new();
 
@@ -434,16 +410,13 @@ async fn metric_latest_sample_preserves_rich_context_and_redaction_receipts()
     assert!(text.contains("Raw sample field: result=accepted"));
     assert!(!text.contains("authorization="));
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn empty_metric_investigation_stays_truthful_and_actionable()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(empty_metric_investigation_stays_truthful_and_actionable -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     Mock::route("GET", "/api/telemetry/metrics/investigation")
         .respond_with(ResponseTemplate::new(200).set_body_json(empty_metric_response()))
-        .mount(&server)
-        .await;
+        .mount(&server);
     let command = metric_command(false)?;
     let mut output = Vec::new();
 
@@ -457,11 +430,9 @@ async fn empty_metric_investigation_stays_truthful_and_actionable()
     assert!(text.contains("Deployment overlays: status=not_found count=0"));
     assert!(text.contains("Next 1: code=verify_metric_capture target=metric_capture"));
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn unavailable_metric_description_stays_explicit_and_valid()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(unavailable_metric_description_stays_explicit_and_valid -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     let mut response = metric_response();
     response["subject"]["description_status"] = serde_json::json!("unavailable");
@@ -477,8 +448,7 @@ async fn unavailable_metric_description_stays_explicit_and_valid()
     missing.sort_by(|left, right| left.as_str().cmp(&right.as_str()));
     Mock::route("GET", "/api/telemetry/metrics/investigation")
         .respond_with(ResponseTemplate::new(200).set_body_json(response))
-        .mount(&server)
-        .await;
+        .mount(&server);
     let command = metric_command(false)?;
     let mut output = Vec::new();
 
@@ -488,11 +458,9 @@ async fn unavailable_metric_description_stays_explicit_and_valid()
     assert!(text.contains("Metric definition: status=unavailable"));
     assert!(text.contains("Missing: metric.description"));
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn unknown_or_duplicate_versions_fail_closed_without_reflection()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(unknown_or_duplicate_versions_fail_closed_without_reflection -> Result<(), Box<dyn std::error::Error>>, {
     for (body, marker) in [
         (
             serde_json::json!({
@@ -522,8 +490,7 @@ async fn unknown_or_duplicate_versions_fail_closed_without_reflection()
         let server = MockServer::start().await;
         Mock::route("GET", "/api/telemetry/metrics/investigation")
             .respond_with(ResponseTemplate::new(200).set_body_string(body))
-            .mount(&server)
-            .await;
+            .mount(&server);
         let command = metric_command(true)?;
         let mut output = Vec::new();
 
@@ -538,18 +505,15 @@ async fn unknown_or_duplicate_versions_fail_closed_without_reflection()
         assert!(!text.contains(marker));
     }
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn explanation_rejects_identity_mismatch_and_hostile_api_errors()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(explanation_rejects_identity_mismatch_and_hostile_api_errors -> Result<(), Box<dyn std::error::Error>>, {
     let mismatch = MockServer::start().await;
     let mut response = metric_response();
     response["query"]["project_id"] = serde_json::json!("cccccccc-cccc-4ccc-8ccc-cccccccccccc");
     Mock::route("GET", "/api/telemetry/metrics/investigation")
         .respond_with(ResponseTemplate::new(200).set_body_json(response))
-        .mount(&mismatch)
-        .await;
+        .mount(&mismatch);
     let command = metric_command(true)?;
     let mut output = Vec::new();
     let error = execute_command(&command, &authenticated_env(&mismatch), &mut output)
@@ -566,8 +530,7 @@ async fn explanation_rejects_identity_mismatch_and_hostile_api_errors()
             ResponseTemplate::new(422)
                 .set_body_string("hostile-api-marker test-token private upstream detail"),
         )
-        .mount(&rejected)
-        .await;
+        .mount(&rejected);
     let mut output = Vec::new();
     let error = execute_command(&command, &authenticated_env(&rejected), &mut output)
         .await
@@ -580,11 +543,9 @@ async fn explanation_rejects_identity_mismatch_and_hostile_api_errors()
     assert!(!text.contains("test-token"));
     assert!(!text.contains("private upstream detail"));
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn metric_explanation_rejects_contradictory_semantics_and_group_identity()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(metric_explanation_rejects_contradictory_semantics_and_group_identity -> Result<(), Box<dyn std::error::Error>>, {
     let mut contradictory_semantics = metric_response();
     contradictory_semantics["series"][0]["identity"]["kind"] = serde_json::json!("counter");
     let mut contradictory_group = metric_response();
@@ -667,8 +628,7 @@ async fn metric_explanation_rejects_contradictory_semantics_and_group_identity()
         let server = MockServer::start().await;
         Mock::route("GET", "/api/telemetry/metrics/investigation")
             .respond_with(ResponseTemplate::new(200).set_body_json(response))
-            .mount(&server)
-            .await;
+            .mount(&server);
         let command = metric_command(true)?;
         let mut output = Vec::new();
 
@@ -683,11 +643,9 @@ async fn metric_explanation_rejects_contradictory_semantics_and_group_identity()
         assert!(output.is_empty());
     }
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn redirects_are_not_followed_with_authentication() -> Result<(), Box<dyn std::error::Error>>
-{
+async_test!(redirects_are_not_followed_with_authentication -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     Mock::route("GET", "/api/telemetry/metrics/investigation")
         .respond_with(
@@ -695,13 +653,11 @@ async fn redirects_are_not_followed_with_authentication() -> Result<(), Box<dyn 
                 .insert_header("location", format!("{}/redirected", server.uri())),
         )
         .expect(1)
-        .mount(&server)
-        .await;
+        .mount(&server);
     Mock::route("GET", "/redirected")
         .respond_with(ResponseTemplate::new(200).set_body_json(metric_response()))
         .expect(0)
-        .mount(&server)
-        .await;
+        .mount(&server);
     let command = metric_command(true)?;
     let mut output = Vec::new();
 
@@ -715,16 +671,13 @@ async fn redirects_are_not_followed_with_authentication() -> Result<(), Box<dyn 
     assert_eq!(response["api_code"], "request_failed");
     assert_eq!(response["status"], 302);
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn human_log_output_marks_and_escapes_untrusted_telemetry()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(human_log_output_marks_and_escapes_untrusted_telemetry -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     Mock::route("GET", format!("/api/logs/{LOG_ID}/investigation"))
         .respond_with(ResponseTemplate::new(200).set_body_json(log_response()))
-        .mount(&server)
-        .await;
+        .mount(&server);
     let command = parse_command(["logbrew", "explain", "log", LOG_ID])?;
     let mut output = Vec::new();
 
@@ -737,7 +690,7 @@ async fn human_log_output_marks_and_escapes_untrusted_telemetry()
     assert!(text.contains("Attribute: request.method=POST"));
     assert!(text.contains("Next 1: code=inspect_trace target=trace_investigation"));
     Ok(())
-}
+});
 
 fn metric_command(json: bool) -> Result<logbrew_cli::Command, logbrew_cli::CliError> {
     let mut args = vec![

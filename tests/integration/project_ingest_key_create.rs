@@ -2,10 +2,10 @@
 
 use super::{assert_private_file, secure_directory, set_private_file_mode};
 use crate::matchers::{body_json, header};
-use crate::{Mock, MockServer, Request, ResponseTemplate, retry_then};
+use crate::{Mock, MockServer, Request, ResponseTemplate, execute_command, retry_then};
 use logbrew_cli::{
-    CliEnvironment, HelpTopic, HttpMethod, RuntimeError, execute_command, help, parse_command,
-    write_cli_error, write_runtime_error,
+    CliEnvironment, HelpTopic, HttpMethod, RuntimeError, help, parse_command, write_cli_error,
+    write_runtime_error,
 };
 
 const PROJECT_ID: &str = "123e4567-e89b-12d3-a456-426614174000";
@@ -150,9 +150,7 @@ fn projects_help_documents_existing_project_key_creation_and_safe_retry() {
 }
 
 #[cfg(unix)]
-#[tokio::test]
-async fn existing_project_key_create_posts_exact_request_then_persists_before_safe_json()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(existing_project_key_create_posts_exact_request_then_persists_before_safe_json -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     Mock::auth(
         "POST",
@@ -166,8 +164,7 @@ async fn existing_project_key_create_posts_exact_request_then_persists_before_sa
         "expires_at": null,
     })))
     .respond_with(ResponseTemplate::new(200).set_body_json(success_response(DEFAULT_LABEL, "sdk")))
-    .mount(&server)
-    .await;
+    .mount(&server);
     let fixture = Fixture::new("success")?;
     let command = parse_command(fixture.args(DEFAULT_LABEL, "sdk", false, true))?;
     let mut output = Vec::new();
@@ -197,17 +194,15 @@ async fn existing_project_key_create_posts_exact_request_then_persists_before_sa
     assert_private_file(fixture.key_file.as_path())?;
     assert!(!fixture.retry_state().exists());
 
-    let requests = received_requests(&server).await?;
+    let requests = server.received_requests();
     let retry_key = request_retry_key(&requests[0])?;
     assert!((1..=128).contains(&retry_key.len()));
     assert!(retry_key.bytes().all(|byte| (0x21..=0x7e).contains(&byte)));
     Ok(())
-}
+});
 
 #[cfg(unix)]
-#[tokio::test]
-async fn built_binary_creates_existing_project_key_over_loopback_without_secret_output()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(built_binary_creates_existing_project_key_over_loopback_without_secret_output -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     Mock::auth(
         "POST",
@@ -220,8 +215,7 @@ async fn built_binary_creates_existing_project_key_over_loopback_without_secret_
         "expires_at": null,
     })))
     .respond_with(ResponseTemplate::new(200).set_body_json(success_response(DEFAULT_LABEL, "sdk")))
-    .mount(&server)
-    .await;
+    .mount(&server);
     let fixture = Fixture::new("built-binary")?;
     let mut command = super::cli_command(&server);
     let _command = command
@@ -252,17 +246,14 @@ async fn built_binary_creates_existing_project_key_over_loopback_without_secret_
     );
     assert_private_file(fixture.key_file.as_path())?;
     Ok(())
-}
+});
 
 #[cfg(unix)]
-#[tokio::test]
-async fn existing_project_key_exact_retry_reuses_body_and_idempotency_key()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(existing_project_key_exact_retry_reuses_body_and_idempotency_key -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     Mock::route("POST", format!("/api/projects/{PROJECT_ID}/ingest-keys"))
         .respond_with(retry_then(success_response(DEFAULT_LABEL, "sdk")))
-        .mount(&server)
-        .await;
+        .mount(&server);
     let fixture = Fixture::new("exact-retry")?;
     let args = fixture.args(DEFAULT_LABEL, "sdk", false, true);
     let command = parse_command(args.clone())?;
@@ -280,7 +271,7 @@ async fn existing_project_key_exact_retry_reuses_body_and_idempotency_key()
     let retry = parse_command(args)?;
     execute_command(&retry, &fixture.env(&server), &mut Vec::new()).await?;
 
-    let requests = received_requests(&server).await?;
+    let requests = server.received_requests();
     assert_eq!(requests.len(), 2);
     assert_eq!(requests[0].body, requests[1].body);
     assert_eq!(
@@ -289,19 +280,16 @@ async fn existing_project_key_exact_retry_reuses_body_and_idempotency_key()
     );
     assert!(!fixture.retry_state().exists());
     Ok(())
-}
+});
 
 #[cfg(unix)]
-#[tokio::test]
-async fn existing_project_key_retry_state_is_isolated_from_project_creation()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(existing_project_key_retry_state_is_isolated_from_project_creation -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     Mock::route("POST", format!("/api/projects/{PROJECT_ID}/ingest-keys"))
         .respond_with(
             ResponseTemplate::new(200).set_body_json(success_response(DEFAULT_LABEL, "sdk")),
         )
-        .mount(&server)
-        .await;
+        .mount(&server);
     let fixture = Fixture::new("isolated-retry")?;
     let private_dir = fixture.home.join(".logbrew");
     std::fs::create_dir(private_dir.as_path())?;
@@ -331,17 +319,14 @@ async fn existing_project_key_retry_state_is_isolated_from_project_creation()
         ONE_TIME_TOKEN
     );
     Ok(())
-}
+});
 
 #[cfg(unix)]
-#[tokio::test]
-async fn changed_existing_project_key_retry_requires_explicit_abandonment()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(changed_existing_project_key_retry_requires_explicit_abandonment -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     Mock::route("POST", format!("/api/projects/{PROJECT_ID}/ingest-keys"))
         .respond_with(retry_then(success_response("Replacement SDK key", "sdk")))
-        .mount(&server)
-        .await;
+        .mount(&server);
     let fixture = Fixture::new("changed-retry")?;
     let original = parse_command(fixture.args(DEFAULT_LABEL, "sdk", false, true))?;
     let _first_error = execute_command(&original, &fixture.env(&server), &mut Vec::new())
@@ -358,12 +343,12 @@ async fn changed_existing_project_key_retry_requires_explicit_abandonment()
             .contains("pending ingest key creation does not match"),
         "unexpected changed-request error: {changed_error:?}"
     );
-    assert_eq!(received_requests(&server).await?.len(), 1);
+    assert_eq!(server.received_requests().len(), 1);
 
     let abandoned = parse_command(fixture.args("Replacement SDK key", "sdk", true, true))?;
     execute_command(&abandoned, &fixture.env(&server), &mut Vec::new()).await?;
 
-    let requests = received_requests(&server).await?;
+    let requests = server.received_requests();
     assert_eq!(requests.len(), 2);
     assert_ne!(
         request_retry_key(&requests[0])?,
@@ -372,12 +357,10 @@ async fn changed_existing_project_key_retry_requires_explicit_abandonment()
     assert_ne!(requests[0].body, requests[1].body);
     assert!(!fixture.retry_state().exists());
     Ok(())
-}
+});
 
 #[cfg(unix)]
-#[tokio::test]
-async fn existing_project_key_errors_use_only_allowlisted_local_recovery()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(existing_project_key_errors_use_only_allowlisted_local_recovery -> Result<(), Box<dyn std::error::Error>>, {
     let cases = [
         (401, "unauthorized", "unauthorized", "run logbrew login"),
         (
@@ -423,8 +406,7 @@ async fn existing_project_key_errors_use_only_allowlisted_local_recovery()
                     "next_action": {"code": "hostile_action", "target": "private_target"}
                 })),
             )
-            .mount(&server)
-            .await;
+            .mount(&server);
         let fixture = Fixture::new(format!("error-{status}-{server_code}").as_str())?;
         let command = parse_command(fixture.args(DEFAULT_LABEL, "sdk", false, true))?;
         let error = execute_command(&command, &fixture.env(&server), &mut Vec::new())
@@ -447,12 +429,10 @@ async fn existing_project_key_errors_use_only_allowlisted_local_recovery()
         assert!(fixture.retry_state().exists());
     }
     Ok(())
-}
+});
 
 #[cfg(unix)]
-#[tokio::test]
-async fn malformed_existing_project_key_error_fails_closed_without_reflection()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(malformed_existing_project_key_error_fails_closed_without_reflection -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     Mock::route("POST", format!("/api/projects/{PROJECT_ID}/ingest-keys"))
         .respond_with(ResponseTemplate::new(422).set_body_json(serde_json::json!({
@@ -462,8 +442,7 @@ async fn malformed_existing_project_key_error_fails_closed_without_reflection()
             "next_action": {"code": "fix_request", "target": "request"},
             "private_token": "do-not-echo"
         })))
-        .mount(&server)
-        .await;
+        .mount(&server);
     let fixture = Fixture::new("malformed-error")?;
     let command = parse_command(fixture.args(DEFAULT_LABEL, "sdk", false, true))?;
     let error = execute_command(&command, &fixture.env(&server), &mut Vec::new())
@@ -480,12 +459,10 @@ async fn malformed_existing_project_key_error_fails_closed_without_reflection()
     assert!(!fixture.key_file.exists());
     assert!(fixture.retry_state().exists());
     Ok(())
-}
+});
 
 #[cfg(unix)]
-#[tokio::test]
-async fn malformed_existing_project_key_success_never_writes_or_echoes_token()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(malformed_existing_project_key_success_never_writes_or_echoes_token -> Result<(), Box<dyn std::error::Error>>, {
     let mut extra = success_response(DEFAULT_LABEL, "sdk");
     extra["private_detail"] = serde_json::json!("do-not-echo");
     let mut token = success_response(DEFAULT_LABEL, "sdk");
@@ -522,8 +499,7 @@ async fn malformed_existing_project_key_success_never_writes_or_echoes_token()
         let server = MockServer::start().await;
         Mock::route("POST", format!("/api/projects/{PROJECT_ID}/ingest-keys"))
             .respond_with(ResponseTemplate::new(200).set_body_json(response))
-            .mount(&server)
-            .await;
+            .mount(&server);
         let fixture = Fixture::new(format!("malformed-success-{case}").as_str())?;
         let command = parse_command(fixture.args(DEFAULT_LABEL, "sdk", false, true))?;
 
@@ -546,17 +522,14 @@ async fn malformed_existing_project_key_success_never_writes_or_echoes_token()
         assert!(!retry_state.contains("do-not-echo"));
     }
     Ok(())
-}
+});
 
 #[cfg(unix)]
-#[tokio::test]
-async fn oversized_existing_project_key_response_fails_closed_before_persistence()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(oversized_existing_project_key_response_fails_closed_before_persistence -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     Mock::route("POST", format!("/api/projects/{PROJECT_ID}/ingest-keys"))
         .respond_with(ResponseTemplate::new(200).set_body_string("x".repeat(64 * 1024 + 1)))
-        .mount(&server)
-        .await;
+        .mount(&server);
     let fixture = Fixture::new("oversized-success")?;
     let command = parse_command(fixture.args(DEFAULT_LABEL, "sdk", false, true))?;
 
@@ -571,20 +544,17 @@ async fn oversized_existing_project_key_response_fails_closed_before_persistence
     assert!(!fixture.key_file.exists());
     assert!(fixture.retry_state().exists());
     Ok(())
-}
+});
 
 #[cfg(unix)]
-#[tokio::test]
-async fn existing_project_key_create_never_follows_redirects()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(existing_project_key_create_never_follows_redirects -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     let redirected = MockServer::start().await;
     Mock::route("POST", format!("/api/projects/{PROJECT_ID}/ingest-keys"))
         .respond_with(
             ResponseTemplate::new(307).insert_header("location", redirected.uri().as_str()),
         )
-        .mount(&server)
-        .await;
+        .mount(&server);
     let fixture = Fixture::new("redirect")?;
     let command = parse_command(fixture.args(DEFAULT_LABEL, "sdk", false, true))?;
 
@@ -597,16 +567,14 @@ async fn existing_project_key_create_never_follows_redirects()
 
     assert!(text.contains("ingest key creation returned an invalid error response"));
     assert!(!text.contains(redirected.uri().as_str()));
-    assert!(received_requests(&redirected).await?.is_empty());
+    assert!(redirected.received_requests().is_empty());
     assert!(!fixture.key_file.exists());
     assert!(fixture.retry_state().exists());
     Ok(())
-}
+});
 
 #[cfg(unix)]
-#[tokio::test]
-async fn existing_or_unsafe_key_destination_fails_before_network()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(existing_or_unsafe_key_destination_fails_before_network -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     let existing = Fixture::new("existing-target")?;
     std::fs::write(existing.key_file.as_path(), "existing-private-value")?;
@@ -629,14 +597,12 @@ async fn existing_or_unsafe_key_destination_fails_before_network()
         .expect_err("weak parent fails");
     assert!(error.to_string().contains("destination is not private"));
 
-    assert!(received_requests(&server).await?.is_empty());
+    assert!(server.received_requests().is_empty());
     Ok(())
-}
+});
 
 #[cfg(unix)]
-#[tokio::test]
-async fn existing_project_key_missing_auth_points_to_login_without_network()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(existing_project_key_missing_auth_points_to_login_without_network -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     let fixture = Fixture::new("missing-auth")?;
     let command = parse_command(fixture.args(DEFAULT_LABEL, "sdk", false, true))?;
@@ -654,22 +620,19 @@ async fn existing_project_key_missing_auth_points_to_login_without_network()
     assert!(text.contains("run logbrew login"));
     assert!(!text.contains(server.uri().as_str()));
     assert!(!text.contains(fixture.key_file.to_string_lossy().as_ref()));
-    assert!(received_requests(&server).await?.is_empty());
+    assert!(server.received_requests().is_empty());
     assert!(fixture.retry_state().exists());
     Ok(())
-}
+});
 
 #[cfg(unix)]
-#[tokio::test]
-async fn human_existing_project_key_success_is_bounded_and_path_free()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(human_existing_project_key_success_is_bounded_and_path_free -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     Mock::route("POST", format!("/api/projects/{PROJECT_ID}/ingest-keys"))
         .respond_with(
             ResponseTemplate::new(200).set_body_json(success_response(DEFAULT_LABEL, "sdk")),
         )
-        .mount(&server)
-        .await;
+        .mount(&server);
     let fixture = Fixture::new("human")?;
     let command = parse_command(fixture.args(DEFAULT_LABEL, "sdk", false, false))?;
     let mut output = Vec::new();
@@ -687,7 +650,7 @@ async fn human_existing_project_key_success_is_bounded_and_path_free()
     assert!(!text.contains(fixture.key_file.to_string_lossy().as_ref()));
     assert!(!text.contains(server.uri().as_str()));
     Ok(())
-}
+});
 
 struct Fixture {
     root: std::path::PathBuf,
@@ -775,10 +738,4 @@ fn request_retry_key(request: &Request) -> Result<&str, Box<dyn std::error::Erro
         .ok_or_else(|| -> Box<dyn std::error::Error> { "missing idempotency key".into() })?
         .to_str()
         .map_err(Into::into)
-}
-
-async fn received_requests(
-    server: &MockServer,
-) -> Result<Vec<Request>, Box<dyn std::error::Error>> {
-    Ok(server.received_requests().await)
 }

@@ -11,8 +11,7 @@ use crate::{Mock, MockServer, ResponseTemplate};
 use contract_support::*;
 use support::*;
 
-#[tokio::test]
-async fn upload_grammar_is_closed_and_value_safe() -> Result<(), Box<dyn std::error::Error>> {
+async_test!(upload_grammar_is_closed_and_value_safe -> Result<(), Box<dyn std::error::Error>>, {
     let fixture = Fixture::new("upload-grammar")?;
 
     for args in [
@@ -67,11 +66,9 @@ async fn upload_grammar_is_closed_and_value_safe() -> Result<(), Box<dyn std::er
         assert_private_values_absent(text.as_str(), &fixture, "http://127.0.0.1:9");
     }
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn lookup_grammar_rejects_noncanonical_identity_before_network()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(lookup_grammar_rejects_noncanonical_identity_before_network -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     let fixture = Fixture::new("lookup-grammar")?;
 
@@ -108,11 +105,9 @@ async fn lookup_grammar_rejects_noncanonical_identity_before_network()
 
     assert!(received_requests(&server).await?.is_empty());
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn malformed_artifact_fails_before_network_without_path_reflection()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(malformed_artifact_fails_before_network_without_path_reflection -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     let fixture = Fixture::new("malformed-object")?;
     let artifact = fixture.root.join("Customer Secret Object.dwarf");
@@ -135,10 +130,9 @@ async fn malformed_artifact_fails_before_network_without_path_reflection()
     assert_private_values_absent(text.as_str(), &fixture, server.uri().as_str());
     assert!(received_requests(&server).await?.is_empty());
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn unreadable_debug_info_fails_before_network() -> Result<(), Box<dyn std::error::Error>> {
+async_test!(unreadable_debug_info_fails_before_network -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     let fixture = Fixture::new("unreadable-debug-info")?;
     let mut object = macho64(0x0100_000c, uuid_bytes(0x10));
@@ -158,11 +152,9 @@ async fn unreadable_debug_info_fails_before_network() -> Result<(), Box<dyn std:
     assert_private_values_absent(text.as_str(), &fixture, server.uri().as_str());
     assert!(received_requests(&server).await?.is_empty());
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn duplicate_bundle_identity_fails_before_network() -> Result<(), Box<dyn std::error::Error>>
-{
+async_test!(duplicate_bundle_identity_fails_before_network -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     let fixture = Fixture::new("duplicate")?;
     let dwarf = fixture.root.join("Duplicate.dSYM/Contents/Resources/DWARF");
@@ -183,11 +175,9 @@ async fn duplicate_bundle_identity_fails_before_network() -> Result<(), Box<dyn 
     assert_private_values_absent(text.as_str(), &fixture, server.uri().as_str());
     assert!(received_requests(&server).await?.is_empty());
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn upload_fails_closed_when_lookup_hash_mismatches() -> Result<(), Box<dyn std::error::Error>>
-{
+async_test!(upload_fails_closed_when_lookup_hash_mismatches -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     let fixture = Fixture::new("mismatch-verification")?;
     let object = macho64(0x0100_000c, uuid_bytes(0x10));
@@ -213,11 +203,9 @@ async fn upload_fails_closed_when_lookup_hash_mismatches() -> Result<(), Box<dyn
     assert_eq!(body["error"], "native_debug_verification_failed");
     assert_private_values_absent(text.as_str(), &fixture, server.uri().as_str());
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn lookup_uses_exact_canonical_query_and_redacts_malformed_success()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(lookup_uses_exact_canonical_query_and_redacts_malformed_success -> Result<(), Box<dyn std::error::Error>>, {
     for architecture in ["arm", "arm64", "arm64e", "x86", "x86_64"] {
         let server = MockServer::start().await;
         Mock::route("GET", "/api/native-debug-artifacts")
@@ -225,8 +213,7 @@ async fn lookup_uses_exact_canonical_query_and_redacts_malformed_success()
                 "unexpected": "hostile backend text"
             })))
             .expect(1)
-            .mount(&server)
-            .await;
+            .mount(&server);
         let fixture = Fixture::new("lookup")?;
 
         let output = invoke(
@@ -256,11 +243,9 @@ async fn lookup_uses_exact_canonical_query_and_redacts_malformed_success()
         assert_request_has_no_local_identity(request, &fixture);
     }
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn standalone_lookup_distinguishes_found_and_missing_json()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(standalone_lookup_distinguishes_found_and_missing_json -> Result<(), Box<dyn std::error::Error>>, {
     let fixture = Fixture::new("lookup-states")?;
     let found_server = MockServer::start().await;
     mount_lookup(
@@ -305,4 +290,4 @@ async fn standalone_lookup_distinguishes_found_and_missing_json()
         missing_server.uri().as_str(),
     );
     Ok(())
-}
+});

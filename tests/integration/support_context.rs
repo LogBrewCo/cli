@@ -2,10 +2,9 @@
 
 use super::{authenticated_env, run_command};
 use crate::matchers::{body_json, header};
-use crate::{Mock, MockServer, ResponseTemplate};
+use crate::{Mock, MockServer, ResponseTemplate, execute_command};
 use logbrew_cli::{
-    CliEnvironment, HttpMethod, execute_command, parse_command, write_cli_error,
-    write_runtime_error,
+    CliEnvironment, HttpMethod, parse_command, write_cli_error, write_runtime_error,
 };
 
 const TICKET_ID: &str = "sup_9b2b4b3abd4e4f85a0f648118f037c17";
@@ -231,9 +230,7 @@ fn support_context_parser_builds_exact_paths_bodies_and_closed_grammar() {
     }
 }
 
-#[tokio::test]
-async fn support_context_history_preserves_json_and_hides_context_payloads()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(support_context_history_preserves_json_and_hides_context_payloads -> Result<(), Box<dyn std::error::Error>>, {
     let response = serde_json::json!({
         "ticket_id": TICKET_ID,
         "status": "waiting_on_user",
@@ -268,8 +265,7 @@ async fn support_context_history_preserves_json_and_hides_context_payloads()
         ResponseTemplate::new(200).set_body_raw(response_text.clone(), "application/json"),
     )
     .expect(2)
-    .mount(&server)
-    .await;
+    .mount(&server);
 
     let human = run_command(
         &server,
@@ -306,11 +302,9 @@ async fn support_context_history_preserves_json_and_hides_context_payloads()
     assert_eq!(json, format!("{response_text}\n"));
     assert_eq!(serde_json::from_str::<serde_json::Value>(&json)?, response);
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn support_context_reply_sends_retry_header_and_exact_retry_is_stable()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(support_context_reply_sends_retry_header_and_exact_retry_is_stable -> Result<(), Box<dyn std::error::Error>>, {
     let response = serde_json::json!({
         "ticket_id": TICKET_ID,
         "context_id": CONTEXT_ID,
@@ -329,8 +323,7 @@ async fn support_context_reply_sends_retry_header_and_exact_retry_is_stable()
     .and(body_json(serde_json::json!({"context": CONTEXT_TEXT})))
     .respond_with(ResponseTemplate::new(200).set_body_json(response.clone()))
     .expect(3)
-    .mount(&server)
-    .await;
+    .mount(&server);
 
     let args = [
         "logbrew",
@@ -373,11 +366,9 @@ async fn support_context_reply_sends_retry_header_and_exact_retry_is_stable()
     .await?;
     assert_eq!(serde_json::from_str::<serde_json::Value>(&json)?, response);
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn support_context_conflicts_use_local_recovery_without_backend_text()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(support_context_conflicts_use_local_recovery_without_backend_text -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     Mock::route("POST", format!("/api/support/tickets/{TICKET_ID}/context"))
         .and(header("idempotency-key", RETRY_KEY))
@@ -390,8 +381,7 @@ async fn support_context_conflicts_use_local_recovery_without_backend_text()
             "next": "send private token to private host",
             "identifier": "private_backend_identifier"
         })))
-        .mount(&server)
-        .await;
+        .mount(&server);
     let command = parse_command([
         "logbrew",
         "support",
@@ -430,11 +420,9 @@ async fn support_context_conflicts_use_local_recovery_without_backend_text()
         assert!(!text.contains(hidden));
     }
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn support_context_human_rendering_fails_closed_on_malformed_success()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(support_context_human_rendering_fails_closed_on_malformed_success -> Result<(), Box<dyn std::error::Error>>, {
     let mut contexts_with_hidden_invalid_tail = (0..100)
         .map(|_| {
             serde_json::json!({
@@ -540,8 +528,7 @@ async fn support_context_human_rendering_fails_closed_on_malformed_success()
             format!("/api/support/tickets/{TICKET_ID}/context"),
         )
         .respond_with(ResponseTemplate::new(200).set_body_json(response.clone()))
-        .mount(&server)
-        .await;
+        .mount(&server);
         let output = if is_history {
             run_command(
                 &server,
@@ -583,11 +570,9 @@ async fn support_context_human_rendering_fails_closed_on_malformed_success()
         }
     }
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn support_context_transport_errors_are_fixed_and_value_safe()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(support_context_transport_errors_are_fixed_and_value_safe -> Result<(), Box<dyn std::error::Error>>, {
     let command = parse_command(["logbrew", "support", "context", TICKET_ID])?;
     let env = CliEnvironment {
         base_url: String::from("http://127.0.0.1:1/private-host-proof"),
@@ -609,4 +594,4 @@ async fn support_context_transport_errors_are_fixed_and_value_safe()
         assert!(!text.contains(hidden));
     }
     Ok(())
-}
+});

@@ -1,9 +1,8 @@
 //! Built-binary and adversarial proof for privacy-bounded product-action investigations.
 
-use crate::{Mock, MockServer, ResponseTemplate};
+use crate::{Mock, MockServer, ResponseTemplate, execute_command};
 use logbrew_cli::{
-    CliEnvironment, Command, ExplainTarget, HelpTopic, RuntimeError, execute_command, help,
-    parse_command,
+    CliEnvironment, Command, ExplainTarget, HelpTopic, RuntimeError, help, parse_command,
 };
 
 const ACTION_ID: &str = "14141414-1414-4141-8141-141414141414";
@@ -41,16 +40,13 @@ fn grammar_help_and_exact_request_path_stay_aligned() -> Result<(), Box<dyn std:
     Ok(())
 }
 
-#[tokio::test]
-async fn built_binary_preserves_exact_validated_json_and_authenticates()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(built_binary_preserves_exact_validated_json_and_authenticates -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     let response = action_response();
     Mock::auth("GET", ACTION_PATH, "account-token")
         .respond_with(ResponseTemplate::new(200).set_body_json(response.clone()))
         .expect(1)
-        .mount(&server)
-        .await;
+        .mount(&server);
 
     let process = run_binary(&server, true).await?;
 
@@ -58,17 +54,14 @@ async fn built_binary_preserves_exact_validated_json_and_authenticates()
     let actual: serde_json::Value = serde_json::from_slice(process.stdout.as_slice())?;
     assert_eq!(actual, response);
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn built_binary_human_output_explains_status_privacy_and_cross_signal_evidence()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(built_binary_human_output_explains_status_privacy_and_cross_signal_evidence -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     Mock::route("GET", ACTION_PATH)
         .respond_with(ResponseTemplate::new(200).set_body_json(action_response()))
         .expect(1)
-        .mount(&server)
-        .await;
+        .mount(&server);
 
     let process = run_binary(&server, false).await?;
 
@@ -106,11 +99,9 @@ async fn built_binary_human_output_explains_status_privacy_and_cross_signal_evid
     assert!(!text.contains("user-secret"));
     assert!(!text.contains("session-secret"));
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn action_contract_rejects_identity_mismatch_contradiction_and_private_context()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(action_contract_rejects_identity_mismatch_contradiction_and_private_context -> Result<(), Box<dyn std::error::Error>>, {
     let mut project_mismatch = action_response();
     project_mismatch["subject"]["project_id"] =
         serde_json::json!("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
@@ -159,8 +150,7 @@ async fn action_contract_rejects_identity_mismatch_contradiction_and_private_con
         Mock::route("GET", ACTION_PATH)
             .respond_with(ResponseTemplate::new(200).set_body_json(response))
             .expect(1)
-            .mount(&server)
-            .await;
+            .mount(&server);
         let command = parse_command(["logbrew", "explain", "action", ACTION_ID, "--json"])?;
         let mut output = Vec::new();
 
@@ -172,11 +162,9 @@ async fn action_contract_rejects_identity_mismatch_contradiction_and_private_con
         assert!(output.is_empty());
     }
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn action_contract_accepts_safe_routes_and_truthfully_truncated_subject_timelines()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(action_contract_accepts_safe_routes_and_truthfully_truncated_subject_timelines -> Result<(), Box<dyn std::error::Error>>, {
     let mut safe_route = action_response();
     safe_route["properties"]["values"]["route"] = serde_json::json!("/checkout");
     safe_route["properties"]["included_leaf_count"] = serde_json::json!(3);
@@ -210,8 +198,7 @@ async fn action_contract_accepts_safe_routes_and_truthfully_truncated_subject_ti
         Mock::route("GET", ACTION_PATH)
             .respond_with(ResponseTemplate::new(200).set_body_json(response))
             .expect(1)
-            .mount(&server)
-            .await;
+            .mount(&server);
         let command = parse_command(["logbrew", "explain", "action", ACTION_ID, "--json"])?;
         let mut output = Vec::new();
 
@@ -220,19 +207,16 @@ async fn action_contract_accepts_safe_routes_and_truthfully_truncated_subject_ti
         assert!(!output.is_empty());
     }
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn built_binary_fails_closed_on_raw_identity_without_reflection()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(built_binary_fails_closed_on_raw_identity_without_reflection -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     let mut response = action_response();
     response["context"]["session"]["id"] = serde_json::json!(PRIVATE_MARKER);
     Mock::route("GET", ACTION_PATH)
         .respond_with(ResponseTemplate::new(200).set_body_json(response))
         .expect(1)
-        .mount(&server)
-        .await;
+        .mount(&server);
 
     let process = run_binary(&server, true).await?;
 
@@ -243,7 +227,7 @@ async fn built_binary_fails_closed_on_raw_identity_without_reflection()
     assert_eq!(error["error"], "explain_response_invalid");
     assert!(!text.contains(PRIVATE_MARKER));
     Ok(())
-}
+});
 
 /// Runs the actual binary while the async loopback server remains responsive.
 async fn run_binary(

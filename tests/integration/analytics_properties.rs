@@ -52,9 +52,7 @@ fn public_grammar_help_and_get_model_stay_aligned() -> Result<(), Box<dyn std::e
     Ok(())
 }
 
-#[tokio::test]
-async fn built_binary_gets_exact_scope_and_preserves_validated_json()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(built_binary_gets_exact_scope_and_preserves_validated_json -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     let response = property_response();
     let response_body = serde_json::to_string(&response)?;
@@ -71,25 +69,21 @@ async fn built_binary_gets_exact_scope_and_preserves_validated_json()
         ResponseTemplate::new(200).set_body_raw(response_body.clone(), "application/json"),
     )
     .expect(1)
-    .mount(&server)
-    .await;
+    .mount(&server);
 
     let process = run_binary(&server, true).await?;
 
     super::assert_cli_success(&process);
     assert_eq!(String::from_utf8(process.stdout)?.trim_end(), response_body);
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn built_binary_human_output_separates_capture_privacy_and_truncation()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(built_binary_human_output_separates_capture_privacy_and_truncation -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     Mock::route("GET", "/api/telemetry/analytics/properties")
         .respond_with(ResponseTemplate::new(200).set_body_json(property_response()))
         .expect(1)
-        .mount(&server)
-        .await;
+        .mount(&server);
 
     let process = run_binary(&server, false).await?;
 
@@ -109,11 +103,9 @@ async fn built_binary_human_output_separates_capture_privacy_and_truncation()
     }
     assert!(!text.contains("Server-authored reason marker"));
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn built_binary_fails_closed_on_values_sensitive_keys_and_contradictory_counts()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(built_binary_fails_closed_on_values_sensitive_keys_and_contradictory_counts -> Result<(), Box<dyn std::error::Error>>, {
     let mutations: [fn(&mut serde_json::Value); 3] = [
         |response: &mut serde_json::Value| {
             response["properties"][0]["values"] = serde_json::json!(["secret-marker"]);
@@ -132,8 +124,7 @@ async fn built_binary_fails_closed_on_values_sensitive_keys_and_contradictory_co
         Mock::route("GET", "/api/telemetry/analytics/properties")
             .respond_with(ResponseTemplate::new(200).set_body_json(response))
             .expect(1)
-            .mount(&server)
-            .await;
+            .mount(&server);
 
         let process = run_binary(&server, true).await?;
 
@@ -145,7 +136,7 @@ async fn built_binary_fails_closed_on_values_sensitive_keys_and_contradictory_co
         assert!(!text.contains("secret-marker"));
     }
     Ok(())
-}
+});
 
 /// Parses the representative public command shape.
 fn properties_command(json: bool) -> Result<Command, logbrew_cli::CliError> {

@@ -1,15 +1,12 @@
 //! CLI API response rendering tests.
 
 use crate::matchers::{body_json, header, query_param};
-use crate::{Mock, MockServer, ResponseTemplate};
-use logbrew_cli::{
-    CliEnvironment, RuntimeError, execute_command, parse_command, write_runtime_error,
-};
+use crate::{Mock, MockServer, ResponseTemplate, execute_command};
+use logbrew_cli::{CliEnvironment, RuntimeError, parse_command, write_runtime_error};
 
 const PROJECT_ID: &str = "123e4567-e89b-12d3-a456-426614174000";
 
-#[tokio::test]
-async fn authenticated_read_logs_rejects_multiple_json_documents() {
+async_test!(authenticated_read_logs_rejects_multiple_json_documents, {
     let server = MockServer::start().await;
     Mock::route("GET", "/api/logs")
         .and(query_param("project_id", PROJECT_ID))
@@ -20,8 +17,7 @@ async fn authenticated_read_logs_rejects_multiple_json_documents() {
             "{\"project_id\":\"hostile-project\"}\n[]",
             "application/json",
         ))
-        .mount(&server)
-        .await;
+        .mount(&server);
     let command = parse_command([
         "logbrew",
         "read",
@@ -42,10 +38,9 @@ async fn authenticated_read_logs_rejects_multiple_json_documents() {
         .await
         .expect_err("multiple JSON documents fail closed");
     assert!(output.is_empty() && matches!(error, RuntimeError::Unavailable { .. }));
-}
+});
 
-#[tokio::test]
-async fn human_logs_render_populated_and_empty_shapes() {
+async_test!(human_logs_render_populated_and_empty_shapes, {
     let row = |severity| {
         serde_json::json!({
             "level": severity, "severity": severity, "message": "checkout failed",
@@ -85,8 +80,7 @@ async fn human_logs_render_populated_and_empty_shapes() {
             "/api/logs",
             [("release", release), ("environment", "production")],
             body,
-        )
-        .await;
+        );
         let text = successful_human_output(
             &server,
             [
@@ -103,10 +97,9 @@ async fn human_logs_render_populated_and_empty_shapes() {
         .expect("read succeeds");
         assert_eq!(text, expected, "case {home}");
     }
-}
+});
 
-#[tokio::test]
-async fn human_read_actions_and_issues_summarize_pivot_context() {
+async_test!(human_read_actions_and_issues_summarize_pivot_context, {
     struct ContextCase {
         route: &'static str,
         query: &'static [(&'static str, &'static str)],
@@ -146,7 +139,7 @@ async fn human_read_actions_and_issues_summarize_pivot_context() {
             ],
             home: "human-read-actions-context",
             expected: "Actions (1)\n- checkout_failed warning user=user_123 trace=trace_123 \
-                       [checkout@1.2.3 / production]\n",
+                           [checkout@1.2.3 / production]\n",
         },
         ContextCase {
             route: "/api/telemetry/issues",
@@ -179,7 +172,7 @@ async fn human_read_actions_and_issues_summarize_pivot_context() {
             ],
             home: "human-read-issues-context",
             expected: "Issues (1)\n- issue_123 unresolved error PaymentError occurrences=2 \
-                       trace=trace_123 [checkout@1.2.3 / production]\n",
+                           trace=trace_123 [checkout@1.2.3 / production]\n",
         },
     ];
 
@@ -191,149 +184,147 @@ async fn human_read_actions_and_issues_summarize_pivot_context() {
             case.route,
             case.query.iter().copied(),
             case.body,
-        )
-        .await;
+        );
         let text = successful_human_output(&server, case.args.iter().copied(), case.home)
             .await
             .expect("read succeeds");
 
         assert_eq!(text, case.expected);
     }
-}
+});
 
-#[tokio::test]
-async fn collection_reads_preserve_json_shape_and_render_service_name() {
-    struct ServiceCase {
-        route: &'static str,
-        body: serde_json::Value,
-        args: &'static [&'static str],
-        home: &'static str,
-        expected: &'static str,
+async_test!(
+    collection_reads_preserve_json_shape_and_render_service_name,
+    {
+        struct ServiceCase {
+            route: &'static str,
+            body: serde_json::Value,
+            args: &'static [&'static str],
+            home: &'static str,
+            expected: &'static str,
+        }
+
+        let cases = [
+            ServiceCase {
+                route: "/api/logs",
+                body: serde_json::json!([{
+                    "level": "warning",
+                    "message": "checkout failed",
+                    "service_name": "checkout-api",
+                    "trace_id": "trace_123"
+                }]),
+                args: &[
+                    "logbrew",
+                    "logs",
+                    "--service",
+                    "checkout-api",
+                    "--since",
+                    "24h",
+                ],
+                home: "human-service-logs",
+                expected: "Logs (1)\n- warning checkout failed service=checkout-api trace=trace_123\n",
+            },
+            ServiceCase {
+                route: "/api/telemetry/issues",
+                body: serde_json::json!([{
+                    "id": "issue_123",
+                    "status": "unresolved",
+                    "severity": "error",
+                    "title": "PaymentError",
+                    "occurrence_count": 2,
+                    "service_name": "checkout-api",
+                    "trace_id": "trace_123"
+                }]),
+                args: &[
+                    "logbrew",
+                    "issues",
+                    "--service",
+                    "checkout-api",
+                    "--since",
+                    "24h",
+                ],
+                home: "human-service-issues",
+                expected: "Issues (1)\n- issue_123 unresolved error PaymentError occurrences=2 \
+                           service=checkout-api trace=trace_123\n",
+            },
+            ServiceCase {
+                route: "/api/telemetry/actions",
+                body: serde_json::json!([{
+                    "name": "checkout_failed",
+                    "severity": "warning",
+                    "service_name": "checkout-api",
+                    "distinct_id": "user_123"
+                }]),
+                args: &[
+                    "logbrew",
+                    "actions",
+                    "--service",
+                    "checkout-api",
+                    "--since",
+                    "24h",
+                ],
+                home: "human-service-actions",
+                expected: "Actions (1)\n- checkout_failed warning service=checkout-api user=user_123\n",
+            },
+            ServiceCase {
+                route: "/api/telemetry/releases",
+                body: serde_json::json!([{
+                    "release": "checkout@1.2.3",
+                    "environment": "production",
+                    "service_name": "checkout-api",
+                    "log_count": 1,
+                    "issue_count": 1,
+                    "trace_span_count": 1,
+                    "action_count": 1
+                }]),
+                args: &[
+                    "logbrew",
+                    "releases",
+                    "--service",
+                    "checkout-api",
+                    "--since",
+                    "24h",
+                ],
+                home: "human-service-releases",
+                expected: "Releases (1)\n- checkout@1.2.3 production service=checkout-api logs=1 issues=1 \
+                           spans=1 actions=1\n",
+            },
+        ];
+
+        for case in cases {
+            let server = MockServer::start().await;
+            mount_authenticated_json(
+                &server,
+                "GET",
+                case.route,
+                [("service_name", "checkout-api"), ("since", "24h")],
+                case.body,
+            );
+
+            let text = successful_human_output(&server, case.args.iter().copied(), case.home)
+                .await
+                .expect("service-scoped read succeeds");
+            assert_eq!(text, case.expected);
+
+            let mut json_args = case.args.to_vec();
+            json_args.push("--json");
+            let command = parse_command(json_args.iter().copied()).expect("JSON read parses");
+            let env = authenticated_env(&server, case.home);
+            let mut output = Vec::new();
+
+            execute_command(&command, &env, &mut output)
+                .await
+                .expect("JSON read succeeds");
+
+            let body: serde_json::Value =
+                serde_json::from_slice(output.as_slice()).expect("valid JSON response");
+            let rows = body.as_array().expect("backend list shape stays bare");
+            assert_eq!(rows[0]["service_name"], "checkout-api");
+        }
     }
+);
 
-    let cases = [
-        ServiceCase {
-            route: "/api/logs",
-            body: serde_json::json!([{
-                "level": "warning",
-                "message": "checkout failed",
-                "service_name": "checkout-api",
-                "trace_id": "trace_123"
-            }]),
-            args: &[
-                "logbrew",
-                "logs",
-                "--service",
-                "checkout-api",
-                "--since",
-                "24h",
-            ],
-            home: "human-service-logs",
-            expected: "Logs (1)\n- warning checkout failed service=checkout-api trace=trace_123\n",
-        },
-        ServiceCase {
-            route: "/api/telemetry/issues",
-            body: serde_json::json!([{
-                "id": "issue_123",
-                "status": "unresolved",
-                "severity": "error",
-                "title": "PaymentError",
-                "occurrence_count": 2,
-                "service_name": "checkout-api",
-                "trace_id": "trace_123"
-            }]),
-            args: &[
-                "logbrew",
-                "issues",
-                "--service",
-                "checkout-api",
-                "--since",
-                "24h",
-            ],
-            home: "human-service-issues",
-            expected: "Issues (1)\n- issue_123 unresolved error PaymentError occurrences=2 \
-                       service=checkout-api trace=trace_123\n",
-        },
-        ServiceCase {
-            route: "/api/telemetry/actions",
-            body: serde_json::json!([{
-                "name": "checkout_failed",
-                "severity": "warning",
-                "service_name": "checkout-api",
-                "distinct_id": "user_123"
-            }]),
-            args: &[
-                "logbrew",
-                "actions",
-                "--service",
-                "checkout-api",
-                "--since",
-                "24h",
-            ],
-            home: "human-service-actions",
-            expected: "Actions (1)\n- checkout_failed warning service=checkout-api user=user_123\n",
-        },
-        ServiceCase {
-            route: "/api/telemetry/releases",
-            body: serde_json::json!([{
-                "release": "checkout@1.2.3",
-                "environment": "production",
-                "service_name": "checkout-api",
-                "log_count": 1,
-                "issue_count": 1,
-                "trace_span_count": 1,
-                "action_count": 1
-            }]),
-            args: &[
-                "logbrew",
-                "releases",
-                "--service",
-                "checkout-api",
-                "--since",
-                "24h",
-            ],
-            home: "human-service-releases",
-            expected: "Releases (1)\n- checkout@1.2.3 production service=checkout-api logs=1 issues=1 \
-                       spans=1 actions=1\n",
-        },
-    ];
-
-    for case in cases {
-        let server = MockServer::start().await;
-        mount_authenticated_json(
-            &server,
-            "GET",
-            case.route,
-            [("service_name", "checkout-api"), ("since", "24h")],
-            case.body,
-        )
-        .await;
-
-        let text = successful_human_output(&server, case.args.iter().copied(), case.home)
-            .await
-            .expect("service-scoped read succeeds");
-        assert_eq!(text, case.expected);
-
-        let mut json_args = case.args.to_vec();
-        json_args.push("--json");
-        let command = parse_command(json_args.iter().copied()).expect("JSON read parses");
-        let env = authenticated_env(&server, case.home);
-        let mut output = Vec::new();
-
-        execute_command(&command, &env, &mut output)
-            .await
-            .expect("JSON read succeeds");
-
-        let body: serde_json::Value =
-            serde_json::from_slice(output.as_slice()).expect("valid JSON response");
-        let rows = body.as_array().expect("backend list shape stays bare");
-        assert_eq!(rows[0]["service_name"], "checkout-api");
-    }
-}
-
-#[tokio::test]
-async fn invalid_since_preserves_backend_validation_recovery_for_agents()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(invalid_since_preserves_backend_validation_recovery_for_agents -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     Mock::route("GET", "/api/telemetry/issues")
         .and(query_param("service_name", "checkout-api"))
@@ -344,8 +335,7 @@ async fn invalid_since_preserves_backend_validation_recovery_for_agents()
             "error": "invalid since value",
             "next": "use since=24h, since=7d, or an RFC3339 timestamp"
         })))
-        .mount(&server)
-        .await;
+        .mount(&server);
     let command = parse_command([
         "logbrew",
         "issues",
@@ -374,10 +364,9 @@ async fn invalid_since_preserves_backend_validation_recovery_for_agents()
         "use since=24h, since=7d, or an RFC3339 timestamp"
     );
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn human_read_releases_prints_all_telemetry_counts() {
+async_test!(human_read_releases_prints_all_telemetry_counts, {
     let server = MockServer::start().await;
     Mock::route("GET", "/api/telemetry/releases")
         .and(query_param("environment", "production"))
@@ -394,8 +383,7 @@ async fn human_read_releases_prints_all_telemetry_counts() {
                 }
             ]
         })))
-        .mount(&server)
-        .await;
+        .mount(&server);
     let text = successful_human_output(
         &server,
         ["logbrew", "releases", "--environment", "production"],
@@ -407,105 +395,103 @@ async fn human_read_releases_prints_all_telemetry_counts() {
         text,
         "Releases (1)\n- checkout@1.2.3 production logs=1 issues=1 spans=1 actions=1\n"
     );
-}
+});
 
-#[tokio::test]
-async fn human_explain_trace_prints_scan_friendly_summary() {
+async_test!(human_explain_trace_prints_scan_friendly_summary, {
     let server = MockServer::start().await;
     Mock::auth(
-        "GET",
-        "/api/telemetry/traces/trace_123/investigation",
-        "test-token",
-    )
-    .and(query_param("response_version", "2"))
-    .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-        "schema_version": 2,
-        "subject": {
-            "kind": "trace",
-            "trace_id": "trace_123",
-            "analyzed_span_count": 2,
-            "error_span_count": 1,
-            "service_count": 1,
-            "project_count": 1,
-            "started_at": "2026-06-02T20:00:00Z",
-            "duration_ms": 845,
-            "releases": ["checkout@1.2.3"],
-            "environments": ["production"]
-        },
-        "analysis": {
-            "status": "errors_observed",
-            "causality": "evidence_only",
-            "root_span": null,
-            "first_error_span": {
-                "name": "charge card",
-                "service_name": "checkout-api",
-                "operation": "payment.charge",
-                "status": "error",
-                "duration_ms": 420,
-                "span_id": "0123456789abcdef",
-                "parent_span_id": null
+            "GET",
+            "/api/telemetry/traces/trace_123/investigation",
+            "test-token",
+        )
+        .and(query_param("response_version", "2"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "schema_version": 2,
+            "subject": {
+                "kind": "trace",
+                "trace_id": "trace_123",
+                "analyzed_span_count": 2,
+                "error_span_count": 1,
+                "service_count": 1,
+                "project_count": 1,
+                "started_at": "2026-06-02T20:00:00Z",
+                "duration_ms": 845,
+                "releases": ["checkout@1.2.3"],
+                "environments": ["production"]
             },
-            "first_error_path": [{"name": "charge card"}],
-            "bottleneck_span": null,
-            "bottleneck_path": []
-        },
-        "spans": {"items": [], "truncated": false},
-        "correlations": {
-            "window": {
-                "since": "2026-06-02T20:00:00Z",
-                "until": "2026-06-02T20:00:01Z",
-                "scopes": [{
+            "analysis": {
+                "status": "errors_observed",
+                "causality": "evidence_only",
+                "root_span": null,
+                "first_error_span": {
+                    "name": "charge card",
+                    "service_name": "checkout-api",
+                    "operation": "payment.charge",
+                    "status": "error",
+                    "duration_ms": 420,
+                    "span_id": "0123456789abcdef",
+                    "parent_span_id": null
+                },
+                "first_error_path": [{"name": "charge card"}],
+                "bottleneck_span": null,
+                "bottleneck_path": []
+            },
+            "spans": {"items": [], "truncated": false},
+            "correlations": {
+                "window": {
+                    "since": "2026-06-02T20:00:00Z",
+                    "until": "2026-06-02T20:00:01Z",
+                    "scopes": [{
+                        "project_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+                        "environment": "production",
+                        "release": "checkout@1.2.3"
+                    }],
+                    "truncated": false
+                },
+                "issues": {"status": "available", "items": [{
+                    "id": "11111111-1111-4111-8111-111111111111",
+                    "issue_id": "22222222-2222-4222-8222-222222222222",
                     "project_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+                    "severity": "error",
+                    "title": "PaymentError",
+                    "message": "provider response could not be decoded",
+                    "occurred_at": "2026-06-02T20:00:00.250Z",
+                    "service_name": "checkout-api",
                     "environment": "production",
-                    "release": "checkout@1.2.3"
-                }],
-                "truncated": false
+                    "release": "checkout@1.2.3",
+                    "cause": {"status": "reported_hypothesis", "summary": "The provider returned a malformed response.",
+                        "provenance": "application_reported", "signals": ["reported_root_cause"]},
+                    "fix": {
+                        "status": "reported_location",
+                        "location": {"component": "checkout-api", "module": null,
+                            "function": "decodeProviderResponse", "file": "src/provider.rs", "line": 87,
+                            "column": null, "in_app": true},
+                        "provenance": "application_reported"
+                    }
+                }], "truncated": false},
+                "logs": {"status": "not_found", "items": [], "truncated": false},
+                "actions": {"status": "not_found", "items": [], "truncated": false},
+                "metrics": {"status": "not_found", "items": [], "truncated": false}
             },
-            "issues": {"status": "available", "items": [{
-                "id": "11111111-1111-4111-8111-111111111111",
-                "issue_id": "22222222-2222-4222-8222-222222222222",
-                "project_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
-                "severity": "error",
-                "title": "PaymentError",
-                "message": "provider response could not be decoded",
-                "occurred_at": "2026-06-02T20:00:00.250Z",
-                "service_name": "checkout-api",
-                "environment": "production",
-                "release": "checkout@1.2.3",
-                "cause": {"status": "reported_hypothesis", "summary": "The provider returned a malformed response.",
-                    "provenance": "application_reported", "signals": ["reported_root_cause"]},
-                "fix": {
-                    "status": "reported_location",
-                    "location": {"component": "checkout-api", "module": null,
-                        "function": "decodeProviderResponse", "file": "src/provider.rs", "line": 87,
-                        "column": null, "in_app": true},
-                    "provenance": "application_reported"
-                }
-            }], "truncated": false},
-            "logs": {"status": "not_found", "items": [], "truncated": false},
-            "actions": {"status": "not_found", "items": [], "truncated": false},
-            "metrics": {"status": "not_found", "items": [], "truncated": false}
-        },
-        "timeline": {"items": [
-            {"kind": "span", "occurred_at": "2026-06-02T20:00:00Z"},
-            {"kind": "span", "occurred_at": "2026-06-02T20:00:00.500Z"}
-        ], "truncated": false},
-        "evidence": {
-            "status": "partial",
-            "captured_fields": ["trace.spans"],
-            "missing_fields": ["span.attributes"],
-            "redacted_fields": [],
-            "truncated_fields": []
-        },
-        "next_actions": [{
-            "priority": 1,
-            "code": "inspect_error_span",
-            "target": "trace_span",
-            "reason": "inspect the first retained error span"
-        }]
-    })))
-    .mount(&server)
-    .await;
+            "timeline": {"items": [
+                {"kind": "span", "occurred_at": "2026-06-02T20:00:00Z"},
+                {"kind": "span", "occurred_at": "2026-06-02T20:00:00.500Z"}
+            ], "truncated": false},
+            "evidence": {
+                "status": "partial",
+                "captured_fields": ["trace.spans"],
+                "missing_fields": ["span.attributes"],
+                "redacted_fields": [],
+                "truncated_fields": []
+            },
+            "next_actions": [{
+                "priority": 1,
+                "code": "inspect_error_span",
+                "target": "trace_span",
+                "reason": "inspect the first retained error span"
+            }]
+        })))
+        .mount(&server);
     let text = successful_human_output(
         &server,
         ["logbrew", "explain", "trace", "trace_123"],
@@ -516,27 +502,26 @@ async fn human_explain_trace_prints_scan_friendly_summary() {
     assert_eq!(
         text,
         "Trace trace_123 status=errors_observed causality=evidence_only spans=2 errors=1 services=1 \
-         projects=1 duration_ms=845\nStarted: 2026-06-02T20:00:00Z\nReleases: \
-         checkout@1.2.3\nEnvironments: production\nFirst error: charge card \
-         service=checkout-api operation=payment.charge status=error duration_ms=420 \
-         span=0123456789abcdef\nFirst error path: charge card\nRelated issues: \
-         status=available count=1 truncated=false\nIssue: title=PaymentError severity=error \
-         issue=22222222-2222-4222-8222-222222222222 at=2026-06-02T20:00:00.250Z\nCause \
-         assessment: status=reported_hypothesis provenance=application_reported\nReported hypothesis \
-         (unverified): The provider returned a malformed response.\nCause signals: reported_root_cause\nFix area: \
-         status=reported_location provenance=application_reported component=checkout-api \
-         function=decodeProviderResponse file=src/provider.rs line=87 in_app=true\nRelated logs: status=not_found \
-         count=0 truncated=false\nRelated actions: status=not_found count=0 \
-         truncated=false\nRelated metrics: status=not_found count=0 truncated=false\nTimeline: \
-         count=2 truncated=false\nTimeline item: at=2026-06-02T20:00:00Z kind=span\nTimeline item: \
-         at=2026-06-02T20:00:00.500Z kind=span\nEvidence: status=partial captured=1 missing=1 redacted=0 \
-         truncated=0\nMissing: span.attributes\nNext 1: code=inspect_error_span target=trace_span \
-         reason=inspect the first retained error span\n"
+             projects=1 duration_ms=845\nStarted: 2026-06-02T20:00:00Z\nReleases: \
+             checkout@1.2.3\nEnvironments: production\nFirst error: charge card \
+             service=checkout-api operation=payment.charge status=error duration_ms=420 \
+             span=0123456789abcdef\nFirst error path: charge card\nRelated issues: \
+             status=available count=1 truncated=false\nIssue: title=PaymentError severity=error \
+             issue=22222222-2222-4222-8222-222222222222 at=2026-06-02T20:00:00.250Z\nCause \
+             assessment: status=reported_hypothesis provenance=application_reported\nReported hypothesis \
+             (unverified): The provider returned a malformed response.\nCause signals: reported_root_cause\nFix area: \
+             status=reported_location provenance=application_reported component=checkout-api \
+             function=decodeProviderResponse file=src/provider.rs line=87 in_app=true\nRelated logs: status=not_found \
+             count=0 truncated=false\nRelated actions: status=not_found count=0 \
+             truncated=false\nRelated metrics: status=not_found count=0 truncated=false\nTimeline: \
+             count=2 truncated=false\nTimeline item: at=2026-06-02T20:00:00Z kind=span\nTimeline item: \
+             at=2026-06-02T20:00:00.500Z kind=span\nEvidence: status=partial captured=1 missing=1 redacted=0 \
+             truncated=0\nMissing: span.attributes\nNext 1: code=inspect_error_span target=trace_span \
+             reason=inspect the first retained error span\n"
     );
-}
+});
 
-#[tokio::test]
-async fn human_read_trace_summarizes_real_api_array_shape() {
+async_test!(human_read_trace_summarizes_real_api_array_shape, {
     let server = MockServer::start().await;
     Mock::auth("GET", "/api/telemetry/traces/trace_123", "test-token")
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
@@ -547,8 +532,7 @@ async fn human_read_trace_summarizes_real_api_array_shape() {
                 "environment": "production"
             }
         ])))
-        .mount(&server)
-        .await;
+        .mount(&server);
     let text = successful_human_output(
         &server,
         ["logbrew", "trace", "trace_123"],
@@ -560,45 +544,45 @@ async fn human_read_trace_summarizes_real_api_array_shape() {
         text,
         "Trace trace_123 spans=1 [checkout@1.2.3 / production]\n- checkout\n"
     );
-}
+});
 
-#[tokio::test]
-async fn human_read_issue_summarizes_real_api_object_shape_with_next_action() {
-    let server = MockServer::start().await;
-    Mock::auth("GET", "/api/telemetry/issues/issue_123", "test-token")
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "id": "issue_123",
-            "status": "unresolved",
-            "severity": "error",
-            "title": "PaymentError",
-            "message": "card declined",
-            "occurrence_count": 2,
-            "first_seen_at": "2026-06-02T19:00:00Z",
-            "last_seen_at": "2026-06-02T20:00:00Z",
-            "trace_id": "trace_123",
-            "release": "checkout@1.2.3",
-            "environment": "production"
-        })))
-        .mount(&server)
-        .await;
-    let text = successful_human_output(
-        &server,
-        ["logbrew", "issue", "issue_123"],
-        "human-issue-object",
-    )
-    .await
-    .expect("issue succeeds");
-    assert_eq!(
-        text,
-        "Issue issue_123 unresolved error trace=trace_123 [checkout@1.2.3 / production]\nTitle: \
-         PaymentError\nMessage: card declined\nOccurrences: 2\nFirst seen: \
-         2026-06-02T19:00:00Z\nLast seen: 2026-06-02T20:00:00Z\nNext: logbrew resolve issue_123 \
-         or logbrew ignore issue_123\n"
-    );
-}
+async_test!(
+    human_read_issue_summarizes_real_api_object_shape_with_next_action,
+    {
+        let server = MockServer::start().await;
+        Mock::auth("GET", "/api/telemetry/issues/issue_123", "test-token")
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": "issue_123",
+                "status": "unresolved",
+                "severity": "error",
+                "title": "PaymentError",
+                "message": "card declined",
+                "occurrence_count": 2,
+                "first_seen_at": "2026-06-02T19:00:00Z",
+                "last_seen_at": "2026-06-02T20:00:00Z",
+                "trace_id": "trace_123",
+                "release": "checkout@1.2.3",
+                "environment": "production"
+            })))
+            .mount(&server);
+        let text = successful_human_output(
+            &server,
+            ["logbrew", "issue", "issue_123"],
+            "human-issue-object",
+        )
+        .await
+        .expect("issue succeeds");
+        assert_eq!(
+            text,
+            "Issue issue_123 unresolved error trace=trace_123 [checkout@1.2.3 / production]\nTitle: \
+             PaymentError\nMessage: card declined\nOccurrences: 2\nFirst seen: \
+             2026-06-02T19:00:00Z\nLast seen: 2026-06-02T20:00:00Z\nNext: logbrew resolve issue_123 \
+             or logbrew ignore issue_123\n"
+        );
+    }
+);
 
-#[tokio::test]
-async fn human_set_issue_status_renders_wrapped_and_object_shapes() {
+async_test!(human_set_issue_status_renders_wrapped_and_object_shapes, {
     let issue = serde_json::json!({
         "id": "issue_123", "status": "resolved", "trace_id": "trace_123",
         "release": "checkout@1.2.3", "environment": "production"
@@ -618,8 +602,7 @@ async fn human_set_issue_status_renders_wrapped_and_object_shapes() {
         let server = MockServer::start().await;
         Mock::auth("PATCH", "/api/telemetry/issues/issue_123", "test-token")
             .respond_with(ResponseTemplate::new(200).set_body_json(body))
-            .mount(&server)
-            .await;
+            .mount(&server);
         let text = successful_human_output(&server, args.iter().copied(), home)
             .await
             .expect("set succeeds");
@@ -628,11 +611,9 @@ async fn human_set_issue_status_renders_wrapped_and_object_shapes() {
             "Issue issue_123 marked resolved trace=trace_123 [checkout@1.2.3 / production].\n"
         );
     }
-}
+});
 
-#[tokio::test]
-async fn project_setup_seen_posts_backend_owned_setup_state()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(project_setup_seen_posts_backend_owned_setup_state -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     Mock::auth("POST", "/api/projects/proj_123/setup/seen", "test-token")
         .and(body_json(serde_json::json!({
@@ -648,8 +629,7 @@ async fn project_setup_seen_posts_backend_owned_setup_state()
             "last_seen_at": "2026-06-15T20:00:00Z",
             "next": "send telemetry for this project"
         })))
-        .mount(&server)
-        .await;
+        .mount(&server);
     let command = parse_command([
         "logbrew",
         "projects",
@@ -675,11 +655,9 @@ async fn project_setup_seen_posts_backend_owned_setup_state()
     assert_eq!(body["environment"], "production");
     assert_eq!(body["next"], "send telemetry for this project");
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn project_setup_seen_omits_source_for_ingest_key_auth()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(project_setup_seen_omits_source_for_ingest_key_auth -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     Mock::auth(
         "POST",
@@ -693,8 +671,7 @@ async fn project_setup_seen_omits_source_for_ingest_key_auth()
         "source": "sdk",
         "next": "send telemetry for this project"
     })))
-    .mount(&server)
-    .await;
+    .mount(&server);
     let command = parse_command([
         "logbrew",
         "projects",
@@ -713,10 +690,9 @@ async fn project_setup_seen_omits_source_for_ingest_key_auth()
     let body: serde_json::Value = serde_json::from_slice(output.as_slice())?;
     assert_eq!(body["source"], "sdk");
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn human_project_setup_seen_prints_status_and_next() {
+async_test!(human_project_setup_seen_prints_status_and_next, {
     let server = MockServer::start().await;
     Mock::auth("POST", "/api/projects/proj_123/setup/seen", "test-token")
         .and(body_json(serde_json::json!({ "source": "cli" })))
@@ -726,8 +702,7 @@ async fn human_project_setup_seen_prints_status_and_next() {
             "last_seen_at": "2026-06-15T20:00:00Z",
             "next": "send telemetry for this project"
         })))
-        .mount(&server)
-        .await;
+        .mount(&server);
     let text = successful_human_output(
         &server,
         ["logbrew", "projects", "setup", "proj_123"],
@@ -740,19 +715,16 @@ async fn human_project_setup_seen_prints_status_and_next() {
         text,
         "Project setup seen: sdk_seen\nLast seen: 2026-06-15T20:00:00Z\nNext: send telemetry for this project\n"
     );
-}
+});
 
-#[tokio::test]
-async fn local_auth_refreshes_once_and_persists_replacement_credentials()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(local_auth_refreshes_once_and_persists_replacement_credentials -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     Mock::auth("GET", "/api/logs", "expired-access")
         .respond_with(ResponseTemplate::new(401).set_body_json(serde_json::json!({
             "error": "not_logged_in"
         })))
         .expect(1)
-        .mount(&server)
-        .await;
+        .mount(&server);
     Mock::route("POST", "/api/auth/refresh")
         .and(body_json(serde_json::json!({
             "refresh_token": "old-refresh"
@@ -762,15 +734,13 @@ async fn local_auth_refreshes_once_and_persists_replacement_credentials()
             "refresh_token": "fresh-refresh"
         })))
         .expect(1)
-        .mount(&server)
-        .await;
+        .mount(&server);
     Mock::auth("GET", "/api/logs", "fresh-access")
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "logs": []
         })))
         .expect(1)
-        .mount(&server)
-        .await;
+        .mount(&server);
 
     let command = parse_command(["logbrew", "logs", "--json"])?;
     let home = api_rendering_home("refresh-local-auth")?;
@@ -802,17 +772,14 @@ async fn local_auth_refreshes_once_and_persists_replacement_credentials()
         assert!(!text.contains(secret));
     }
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn concurrent_local_401s_share_one_refresh_rotation() -> Result<(), Box<dyn std::error::Error>>
-{
+async_test!(concurrent_local_401s_share_one_refresh_rotation -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     Mock::auth("GET", "/api/logs", "shared-expired")
         .respond_with(ResponseTemplate::new(401))
         .expect(2)
-        .mount(&server)
-        .await;
+        .mount(&server);
     Mock::route("POST", "/api/auth/refresh")
         .and(body_json(serde_json::json!({
             "refresh_token": "shared-refresh"
@@ -826,15 +793,13 @@ async fn concurrent_local_401s_share_one_refresh_rotation() -> Result<(), Box<dy
                 })),
         )
         .expect(1)
-        .mount(&server)
-        .await;
+        .mount(&server);
     Mock::auth("GET", "/api/logs", "shared-fresh")
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "logs": []
         })))
         .expect(2)
-        .mount(&server)
-        .await;
+        .mount(&server);
     let home = api_rendering_home("refresh-concurrent")?;
     let auth_dir = home.join(".logbrew");
     std::fs::create_dir_all(auth_dir.as_path())?;
@@ -849,10 +814,11 @@ async fn concurrent_local_401s_share_one_refresh_rotation() -> Result<(), Box<dy
     let mut first_output = Vec::new();
     let mut second_output = Vec::new();
 
-    let (first, second) = tokio::join!(
+    let (first, second) = futures_util::future::join(
         execute_command(&command, &env, &mut first_output),
-        execute_command(&command, &env, &mut second_output)
-    );
+        execute_command(&command, &env, &mut second_output),
+    )
+    .await;
     first?;
     second?;
 
@@ -872,22 +838,18 @@ async fn concurrent_local_401s_share_one_refresh_rotation() -> Result<(), Box<dy
         }
     }
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn env_auth_401_never_reads_or_rotates_local_refresh_credentials()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(env_auth_401_never_reads_or_rotates_local_refresh_credentials -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     Mock::auth("GET", "/api/logs", "env-expired")
         .respond_with(ResponseTemplate::new(401))
         .expect(1)
-        .mount(&server)
-        .await;
+        .mount(&server);
     Mock::route("POST", "/api/auth/refresh")
         .respond_with(ResponseTemplate::new(500))
         .expect(0)
-        .mount(&server)
-        .await;
+        .mount(&server);
     let home = api_rendering_home("refresh-env-isolated")?;
     let auth_dir = home.join(".logbrew");
     std::fs::create_dir_all(auth_dir.as_path())?;
@@ -911,22 +873,18 @@ async fn env_auth_401_never_reads_or_rotates_local_refresh_credentials()
         "local-refresh"
     );
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn persisted_refresh_session_never_authenticates_to_a_different_api_origin()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(persisted_refresh_session_never_authenticates_to_a_different_api_origin -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     Mock::route("GET", "/api/logs")
         .respond_with(ResponseTemplate::new(500))
         .expect(0)
-        .mount(&server)
-        .await;
+        .mount(&server);
     Mock::route("POST", "/api/auth/refresh")
         .respond_with(ResponseTemplate::new(500))
         .expect(0)
-        .mount(&server)
-        .await;
+        .mount(&server);
     let home = api_rendering_home("refresh-origin-mismatch")?;
     let auth_dir = home.join(".logbrew");
     std::fs::create_dir_all(auth_dir.as_path())?;
@@ -947,11 +905,9 @@ async fn persisted_refresh_session_never_authenticates_to_a_different_api_origin
     assert!(matches!(error, RuntimeError::Unavailable { .. }));
     assert!(output.is_empty());
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn api_auth_errors_report_source_without_leaking_tokens()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(api_auth_errors_report_source_without_leaking_tokens -> Result<(), Box<dyn std::error::Error>>, {
     for (status, code, api_token, local_token, json) in [
         (401, "not_logged_in", "expired", "expired", true),
         (403, "forbidden", "env-token", "file-token", false),
@@ -963,8 +919,7 @@ async fn api_auth_errors_report_source_without_leaking_tokens()
                     "ok": false, "error": code, "detail": api_token
                 })),
             )
-            .mount(&server)
-            .await;
+            .mount(&server);
         let args = ["logbrew", "logs", "--json"];
         let command = parse_command(if json { &args[..] } else { &args[..2] })?;
         let home = api_rendering_home(if json {
@@ -999,7 +954,7 @@ async fn api_auth_errors_report_source_without_leaking_tokens()
         }
     }
     Ok(())
-}
+});
 
 async fn successful_human_output<I>(
     server: &MockServer,
@@ -1018,7 +973,7 @@ where
     Ok(String::from_utf8(output)?)
 }
 
-async fn mount_authenticated_json<I>(
+fn mount_authenticated_json<I>(
     server: &MockServer,
     http_method: &str,
     route: &str,
@@ -1034,8 +989,7 @@ async fn mount_authenticated_json<I>(
     }
     builder
         .respond_with(ResponseTemplate::new(200).set_body_json(body))
-        .mount(server)
-        .await;
+        .mount(server);
 }
 
 fn authenticated_env(server: &MockServer, home_name: &str) -> CliEnvironment {

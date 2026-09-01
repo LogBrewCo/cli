@@ -19,6 +19,7 @@ import textwrap
 import time
 import tomllib
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from unittest import mock
 
 
@@ -409,32 +410,47 @@ class PublicInstallVerifierTests(unittest.TestCase):
         )
 
     def test_each_mode_executes_installed_cli_and_emits_exact_attestation(self) -> None:
-        for mode in ("crates", "homebrew", "powershell", "shell", "native", "npm"):
-            with self.subTest(mode=mode):
-                artifact_id, artifact = self.artifact_for(mode)
-                result = self.run_verifier(mode, artifact_override=(artifact_id, artifact))
+        modes = ("crates", "homebrew", "powershell", "shell", "native", "npm")
 
-                self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertEqual(result.stderr, "")
-                self.assertEqual(
-                    json.loads(result.stdout),
-                    {
-                        "schema_version": 1,
-                        "status": "passed",
-                        "artifacts": [
-                            {
-                                "id": artifact_id,
-                                "digest": "sha256:"
-                                + hashlib.sha256(artifact.read_bytes()).hexdigest(),
-                            }
-                        ],
-                    },
-                )
+        def verify(mode: str):
+            artifact_id, artifact = self.artifact_for(mode)
+            command_log = self.temp_dir / f"{mode}-commands.jsonl"
+            environment = self.environment(artifact_id, artifact)
+            environment["FAKE_COMMAND_LOG"] = str(command_log)
+            result = self.run_verifier(
+                mode,
+                artifact_override=(artifact_id, artifact),
+                environment=environment,
+            )
+            records = [
+                json.loads(line)
+                for line in command_log.read_text(encoding="utf-8").splitlines()
+            ]
+            return artifact_id, artifact, result, records
 
-        records = [
-            json.loads(line)
-            for line in self.command_log.read_text(encoding="utf-8").splitlines()
-        ]
+        records = []
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            for mode, (artifact_id, artifact, result, mode_records) in zip(
+                modes, executor.map(verify, modes), strict=True
+            ):
+                with self.subTest(mode=mode):
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(result.stderr, "")
+                    self.assertEqual(
+                        json.loads(result.stdout),
+                        {
+                            "schema_version": 1,
+                            "status": "passed",
+                            "artifacts": [
+                                {
+                                    "id": artifact_id,
+                                    "digest": "sha256:"
+                                    + hashlib.sha256(artifact.read_bytes()).hexdigest(),
+                                }
+                            ],
+                        },
+                    )
+                    records.extend(mode_records)
         self.assertTrue(records)
         self.assertTrue(
             all(record["home"] != os.environ.get("HOME") for record in records)

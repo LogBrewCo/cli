@@ -107,8 +107,7 @@ pub(crate) async fn mount_lookup(server: &MockServer, body: serde_json::Value) {
     Mock::route("GET", "/api/native-debug-artifacts")
         .respond_with(ResponseTemplate::new(200).set_body_json(body))
         .expect(1)
-        .mount(server)
-        .await;
+        .mount(server);
 }
 
 pub(crate) async fn mount_lookup_sequence(server: &MockServer, bodies: Vec<serde_json::Value>) {
@@ -127,8 +126,7 @@ pub(crate) async fn mount_lookup_sequence(server: &MockServer, bodies: Vec<serde
             ResponseTemplate::new(200).set_body_json(body)
         })
         .expect(expected)
-        .mount(server)
-        .await;
+        .mount(server);
 }
 
 pub(crate) fn found_lookup(digest: &str, byte_size: usize) -> serde_json::Value {
@@ -275,7 +273,7 @@ pub(crate) fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 pub(crate) async fn received_requests(
     server: &MockServer,
 ) -> Result<Vec<Request>, Box<dyn std::error::Error>> {
-    Ok(server.received_requests().await)
+    Ok(server.received_requests())
 }
 
 pub(crate) struct Fixture {

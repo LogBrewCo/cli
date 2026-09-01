@@ -218,8 +218,7 @@ fn setup_aliases_are_non_mutating_setup() {
     }
 }
 
-#[tokio::test]
-async fn version_human_output_is_short() -> TestResult {
+async_test!(version_human_output_is_short -> TestResult, {
     let command = parse_command(["logbrew", "version"])?;
     let env = environment(None, None);
     let mut output = Vec::new();
@@ -229,10 +228,9 @@ async fn version_human_output_is_short() -> TestResult {
     let text = String::from_utf8(output)?;
     assert_eq!(text, format!("logbrew {}\n", env!("CARGO_PKG_VERSION")));
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn version_json_output_is_stable() -> TestResult {
+async_test!(version_json_output_is_stable -> TestResult, {
     let command = parse_command(["logbrew", "version", "--json"])?;
     let env = environment(None, None);
     let mut output = Vec::new();
@@ -247,10 +245,9 @@ async fn version_json_output_is_stable() -> TestResult {
     assert_eq!(body["os"], std::env::consts::OS);
     assert_eq!(body["arch"], std::env::consts::ARCH);
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn logout_json_removes_legacy_local_credentials_without_leaking_them() -> TestResult {
+async_test!(logout_json_removes_legacy_local_credentials_without_leaking_them -> TestResult, {
     for (args, home_name) in [
         (&["logbrew", "logout", "--json"][..], "logout-json"),
         (&["logbrew", "--json", "logout"][..], "logout-global-json"),
@@ -288,10 +285,9 @@ async fn logout_json_removes_legacy_local_credentials_without_leaking_them() -> 
         assert!(!origin_path.exists());
     }
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn logout_human_is_idempotent_without_local_token() -> TestResult {
+async_test!(logout_human_is_idempotent_without_local_token -> TestResult, {
     let home = local_command_home("logout-empty")?;
     let command = parse_command(["logbrew", "logout"])?;
     let env = environment(None, Some(home));
@@ -305,10 +301,9 @@ async fn logout_human_is_idempotent_without_local_token() -> TestResult {
         "No local LogBrew token found.\nNext: run logbrew login to authenticate\n"
     );
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn logout_warns_when_env_token_still_authenticates() -> TestResult {
+async_test!(logout_warns_when_env_token_still_authenticates -> TestResult, {
     let home = local_command_home("logout-env")?;
     let token_path = home.join(".logbrew").join("token");
     std::fs::create_dir_all(token_path.parent().expect("token path has parent"))?;
@@ -329,7 +324,7 @@ async fn logout_warns_when_env_token_still_authenticates() -> TestResult {
     assert!(!text.contains("env-token"));
     assert!(!token_path.exists());
     Ok(())
-}
+});
 
 fn local_command_home(name: &str) -> Result<std::path::PathBuf, std::io::Error> {
     let dir = std::env::temp_dir().join(format!("logbrew-cli-{name}-{}", std::process::id()));

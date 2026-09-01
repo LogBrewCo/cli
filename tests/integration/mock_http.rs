@@ -189,7 +189,7 @@ impl Mock {
         self
     }
 
-    pub(crate) async fn mount(self, server: &MockServer) {
+    pub(crate) fn mount(self, server: &MockServer) {
         lock(&server.state).mocks.push(MountedMock {
             matchers: self.matchers,
             response: self
@@ -246,11 +246,11 @@ impl MockServer {
         self.uri.clone()
     }
 
-    pub(crate) async fn received_requests(&self) -> Vec<Request> {
+    pub(crate) fn received_requests(&self) -> Vec<Request> {
         lock(&self.state).requests.clone()
     }
 
-    pub(crate) async fn reset(&self) {
+    pub(crate) fn reset(&self) {
         *lock(&self.state) = State::default();
     }
 }

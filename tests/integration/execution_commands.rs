@@ -2,18 +2,18 @@
 
 use std::fs;
 
+use crate::execute_command;
 use futures_util::SinkExt;
 use logbrew_cli::{
-    CliEnvironment, Command, RuntimeError, WatchOptions, WatchTarget, execute_command,
-    parse_command, write_runtime_error,
+    CliEnvironment, Command, RuntimeError, WatchOptions, WatchTarget, parse_command,
+    write_runtime_error,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_tungstenite::accept_hdr_async;
 use tokio_tungstenite::tungstenite::Message;
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
-#[tokio::test]
-async fn authenticated_reads_without_token_explain_login_step() {
+async_test!(authenticated_reads_without_token_explain_login_step, {
     let command = parse_command(["logbrew", "read", "logs", "--release", "api@1", "--json"])
         .expect("command parses");
     let env = test_env("http://127.0.0.1:1", None, "missing-token");
@@ -24,50 +24,51 @@ async fn authenticated_reads_without_token_explain_login_step() {
         .expect_err("missing token fails");
 
     assert!(matches!(error, RuntimeError::MissingToken));
-}
+});
 
-#[tokio::test]
-async fn login_no_open_json_prints_auth_url_without_browser_side_effect() {
-    let env = test_env("https://example.test", None, "login-no-open");
-    for args in [
-        &["logbrew", "login", "--no-open", "--json"][..],
-        &["logbrew", "--json", "login"][..],
-        &[
-            "logbrew",
-            "login",
-            "--provider",
-            "gitlab",
-            "--no-open",
-            "--json",
-        ][..],
-    ] {
-        let command = parse_command(args.iter().copied()).expect("command");
-        let mut output = Vec::new();
+async_test!(
+    login_no_open_json_prints_auth_url_without_browser_side_effect,
+    {
+        let env = test_env("https://example.test", None, "login-no-open");
+        for args in [
+            &["logbrew", "login", "--no-open", "--json"][..],
+            &["logbrew", "--json", "login"][..],
+            &[
+                "logbrew",
+                "login",
+                "--provider",
+                "gitlab",
+                "--no-open",
+                "--json",
+            ][..],
+        ] {
+            let command = parse_command(args.iter().copied()).expect("command");
+            let mut output = Vec::new();
 
-        execute_command(&command, &env, &mut output)
-            .await
-            .expect("login succeeds");
+            execute_command(&command, &env, &mut output)
+                .await
+                .expect("login succeeds");
 
-        let body: serde_json::Value =
-            serde_json::from_slice(output.as_slice()).expect("valid json");
-        let provider = if args.contains(&"gitlab") {
-            "gitlab"
-        } else {
-            "github"
-        };
-        assert_eq!(body["ok"], true);
-        assert_eq!(
-            body["auth_url"],
-            format!("https://example.test/api/auth/cli/login?provider={provider}")
-        );
-        assert_eq!(body["provider"], provider);
-        assert_eq!(body["browser_opened"], false);
-        assert_eq!(body["next"], "open auth_url in a browser");
+            let body: serde_json::Value =
+                serde_json::from_slice(output.as_slice()).expect("valid json");
+            let provider = if args.contains(&"gitlab") {
+                "gitlab"
+            } else {
+                "github"
+            };
+            assert_eq!(body["ok"], true);
+            assert_eq!(
+                body["auth_url"],
+                format!("https://example.test/api/auth/cli/login?provider={provider}")
+            );
+            assert_eq!(body["provider"], provider);
+            assert_eq!(body["browser_opened"], false);
+            assert_eq!(body["next"], "open auth_url in a browser");
+        }
     }
-}
+);
 
-#[tokio::test]
-async fn login_no_open_human_prints_browser_state_and_next_step() {
+async_test!(login_no_open_human_prints_browser_state_and_next_step, {
     let command = parse_command(["logbrew", "login", "--provider", "bitbucket", "--no-open"])
         .expect("command");
     let env = test_env("https://example.test", None, "login-no-open-human");
@@ -81,67 +82,68 @@ async fn login_no_open_human_prints_browser_state_and_next_step() {
     assert_eq!(
         text,
         "Open this URL to log in: \
-         https://example.test/api/auth/cli/login?provider=bitbucket\nProvider: bitbucket\nBrowser: \
-         not opened\nNext: open the URL in a browser\n"
+             https://example.test/api/auth/cli/login?provider=bitbucket\nProvider: bitbucket\nBrowser: \
+             not opened\nNext: open the URL in a browser\n"
     );
-}
+});
 
-#[tokio::test]
-async fn watch_json_streams_websocket_events_without_leaking_ticket() {
-    let messages = vec![
-        serde_json::json!({
-            "type": "native_log",
-            "data": {
-                "id": "log_1",
-                "level": "warning",
-                "severity": "warning",
-                "message": "checkout failed"
+async_test!(
+    watch_json_streams_websocket_events_without_leaking_ticket,
+    {
+        let messages = vec![
+            serde_json::json!({
+                "type": "native_log",
+                "data": {
+                    "id": "log_1",
+                    "level": "warning",
+                    "severity": "warning",
+                    "message": "checkout failed"
+                }
+            })
+            .to_string(),
+            serde_json::json!({
+                "type": "native_action",
+                "data": {
+                    "id": "action_1",
+                    "name": "checkout_failed"
+                }
+            })
+            .to_string(),
+        ];
+        let (base_url, server) = spawn_feed_server("ticket value", messages).await;
+        let command = parse_command(["logbrew", "watch", "--json"]).expect("command parses");
+        assert_eq!(
+            command,
+            Command::Watch {
+                target: WatchTarget::All,
+                options: WatchOptions::default(),
+                json: true
             }
-        })
-        .to_string(),
-        serde_json::json!({
-            "type": "native_action",
-            "data": {
-                "id": "action_1",
-                "name": "checkout_failed"
-            }
-        })
-        .to_string(),
-    ];
-    let (base_url, server) = spawn_feed_server("ticket value", messages).await;
-    let command = parse_command(["logbrew", "watch", "--json"]).expect("command parses");
-    assert_eq!(
-        command,
-        Command::Watch {
-            target: WatchTarget::All,
-            options: WatchOptions::default(),
-            json: true
-        }
-    );
-    let env = test_env(base_url, Some("fixture-token"), "watch-stream");
-    let mut output = Vec::new();
+        );
+        let env = test_env(base_url, Some("fixture-token"), "watch-stream");
+        let mut output = Vec::new();
 
-    execute_command(&command, &env, &mut output)
-        .await
-        .expect("watch succeeds");
-    server.await.expect("feed server task succeeds");
+        execute_command(&command, &env, &mut output)
+            .await
+            .expect("watch succeeds");
+        server.await.expect("feed server task succeeds");
 
-    let text = String::from_utf8(output).expect("utf8 output");
-    let lines = text.lines().collect::<Vec<_>>();
-    assert_eq!(lines.len(), 2);
-    assert_eq!(
-        serde_json::from_str::<serde_json::Value>(lines[0]).expect("valid event")["type"],
-        "native_log"
-    );
-    assert_eq!(
-        serde_json::from_str::<serde_json::Value>(lines[1]).expect("valid event")["type"],
-        "native_action"
-    );
-    assert!(!text.contains("ticket value"));
-}
+        let text = String::from_utf8(output).expect("utf8 output");
+        let lines = text.lines().collect::<Vec<_>>();
+        assert_eq!(lines.len(), 2);
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(lines[0]).expect("valid event")["type"],
+            "native_log"
+        );
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(lines[1]).expect("valid event")["type"],
+            "native_action"
+        );
+        assert!(!text.contains("ticket value"));
+    }
+);
 
-#[tokio::test]
-async fn watch_json_refreshes_local_auth_before_requesting_a_ticket() -> TestResult {
+async_test!(watch_json_refreshes_local_auth_before_requesting_a_ticket -> TestResult, {
     let (base_url, server) = spawn_refreshing_feed_server().await;
     let home = setup_fixture("watch-refresh")?;
     let auth_dir = home.join(".logbrew");
@@ -179,10 +181,9 @@ async fn watch_json_refreshes_local_auth_before_requesting_a_ticket() -> TestRes
         assert!(!text.contains(secret));
     }
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn watch_json_filters_error_and_critical_events_client_side() {
+async_test!(watch_json_filters_error_and_critical_events_client_side, {
     let messages = vec![
         serde_json::json!({
             "type": "native_log",
@@ -251,65 +252,80 @@ async fn watch_json_filters_error_and_critical_events_client_side() {
     assert!(!text.contains("log_warn"));
     assert!(!text.contains("action_1"));
     assert!(!text.contains("ticket/with spaces"));
-}
+});
 
-#[tokio::test]
-async fn watch_json_reconnects_with_fresh_ticket_after_transient_disconnect() {
-    let sessions = vec![
-        FeedSession {
-            ticket: "first ticket",
-            messages: vec![
-                serde_json::json!({
-                    "type": "native_log",
-                    "data": {
-                        "id": "log_before_disconnect",
-                        "level": "error",
-                        "severity": "error",
-                        "message": "first connection"
-                    }
-                })
-                .to_string(),
-            ],
-            close: FeedClose::Drop,
-        },
-        FeedSession {
-            ticket: "second ticket",
-            messages: vec![
-                serde_json::json!({
-                    "type": "native_log",
-                    "data": {
-                        "id": "log_after_reconnect",
-                        "level": "critical",
-                        "severity": "critical",
-                        "message": "second connection"
-                    }
-                })
-                .to_string(),
-            ],
-            close: FeedClose::Clean,
-        },
-    ];
-    let (base_url, server) = spawn_feed_server_sessions(sessions).await;
-    let command = parse_command(["logbrew", "watch", "logs", "--json"]).expect("command parses");
-    let env = test_env(base_url, Some("fixture-token"), "watch-reconnect");
-    let mut output = Vec::new();
+async_test!(
+    watch_json_reconnects_with_fresh_ticket_after_transient_disconnect,
+    {
+        tokio::time::pause();
+        let sessions = vec![
+            FeedSession {
+                ticket: "first ticket",
+                messages: vec![
+                    serde_json::json!({
+                        "type": "native_log",
+                        "data": {
+                            "id": "log_before_disconnect",
+                            "level": "error",
+                            "severity": "error",
+                            "message": "first connection"
+                        }
+                    })
+                    .to_string(),
+                ],
+                close: FeedClose::Drop,
+            },
+            FeedSession {
+                ticket: "second ticket",
+                messages: vec![
+                    serde_json::json!({
+                        "type": "native_log",
+                        "data": {
+                            "id": "log_after_reconnect",
+                            "level": "critical",
+                            "severity": "critical",
+                            "message": "second connection"
+                        }
+                    })
+                    .to_string(),
+                ],
+                close: FeedClose::Clean,
+            },
+        ];
+        let (base_url, server, completed_sessions) = spawn_feed_server_sessions(sessions).await;
+        let command =
+            parse_command(["logbrew", "watch", "logs", "--json"]).expect("command parses");
+        let env = test_env(base_url, Some("fixture-token"), "watch-reconnect");
+        let mut output = Vec::new();
 
-    execute_command(&command, &env, &mut output)
-        .await
-        .expect("watch reconnect succeeds");
-    server.await.expect("feed server task succeeds");
+        let advance_reconnect = async {
+            while completed_sessions.load(std::sync::atomic::Ordering::Acquire) == 0 {
+                tokio::task::yield_now().await;
+            }
+            while completed_sessions.load(std::sync::atomic::Ordering::Acquire) < 2 {
+                tokio::time::advance(std::time::Duration::from_millis(100)).await;
+                tokio::task::yield_now().await;
+            }
+        };
+        let (result, ()) = futures_util::future::join(
+            execute_command(&command, &env, &mut output),
+            advance_reconnect,
+        )
+        .await;
+        result.expect("watch reconnect succeeds");
+        server.await.expect("feed server task succeeds");
 
-    let text = String::from_utf8(output).expect("utf8 output");
-    let lines = text.lines().collect::<Vec<_>>();
-    assert_eq!(lines.len(), 2);
-    assert!(lines[0].contains("log_before_disconnect"));
-    assert!(lines[1].contains("log_after_reconnect"));
-    assert!(!text.contains("first ticket"));
-    assert!(!text.contains("second ticket"));
-}
+        let text = String::from_utf8(output).expect("utf8 output");
+        let lines = text.lines().collect::<Vec<_>>();
+        assert_eq!(lines.len(), 2);
+        assert!(lines[0].contains("log_before_disconnect"));
+        assert!(lines[1].contains("log_after_reconnect"));
+        assert!(!text.contains("first ticket"));
+        assert!(!text.contains("second ticket"));
+    }
+);
 
-#[tokio::test]
-async fn watch_human_requires_json_for_live_stream() {
+async_test!(watch_human_requires_json_for_live_stream, {
     let command = parse_command(["logbrew", "follow", "events"]).expect("command parses");
     assert_eq!(
         command,
@@ -332,7 +348,7 @@ async fn watch_human_requires_json_for_live_stream() {
         text,
         "watch streams JSON for agents\nNext: run logbrew watch --json\n"
     );
-}
+});
 
 async fn spawn_feed_server(
     ticket: &str,
@@ -450,11 +466,17 @@ enum FeedClose {
 
 async fn spawn_feed_server_sessions(
     sessions: Vec<FeedSession>,
-) -> (String, tokio::task::JoinHandle<()>) {
+) -> (
+    String,
+    tokio::task::JoinHandle<()>,
+    std::sync::Arc<std::sync::atomic::AtomicUsize>,
+) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("bind feed server");
     let address = listener.local_addr().expect("local feed server address");
+    let completed_sessions = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let server_counter = std::sync::Arc::clone(&completed_sessions);
     let server = tokio::spawn(async move {
         for session in sessions {
             let (mut ticket_stream, _) = listener.accept().await.expect("ticket connection");
@@ -481,9 +503,10 @@ async fn spawn_feed_server_sessions(
                 FeedClose::Clean => websocket.close(None).await.expect("close websocket"),
                 FeedClose::Drop => drop(websocket),
             }
+            let _previous = server_counter.fetch_add(1, std::sync::atomic::Ordering::Release);
         }
     });
-    (format!("http://{address}"), server)
+    (format!("http://{address}"), server, completed_sessions)
 }
 
 async fn read_http_request(stream: &mut tokio::net::TcpStream) -> String {

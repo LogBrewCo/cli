@@ -1,10 +1,9 @@
 //! Built-binary, strict-contract, and recovery proof for exact-span investigation.
 
 use crate::matchers::{header, query_param};
-use crate::{Mock, MockServer, ResponseTemplate};
+use crate::{Mock, MockServer, ResponseTemplate, execute_command};
 use logbrew_cli::{
-    CliEnvironment, Command, ExplainSpanTarget, ExplainTarget, RuntimeError, execute_command, help,
-    parse_command,
+    CliEnvironment, Command, ExplainSpanTarget, ExplainTarget, RuntimeError, help, parse_command,
 };
 
 const TRACE_ID: &str = "4bf92f3577b34da6a3ce929d0e0e4736";
@@ -105,12 +104,10 @@ fn parses_only_the_explicit_exact_span_scope() -> Result<(), Box<dyn std::error:
     Ok(())
 }
 
-#[tokio::test]
-async fn built_binary_preserves_exact_validated_json_and_authenticates()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(built_binary_preserves_exact_validated_json_and_authenticates -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     let response = span_response();
-    mount_response(&server, response.clone()).await;
+    mount_response(&server, response.clone());
 
     let process = run_binary(&server, true, None).await?;
 
@@ -118,17 +115,15 @@ async fn built_binary_preserves_exact_validated_json_and_authenticates()
     let actual: serde_json::Value = serde_json::from_slice(process.stdout.as_slice())?;
     assert_eq!(actual, response);
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn baseline_arithmetic_accepts_the_full_safe_integer_range()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(baseline_arithmetic_accepts_the_full_safe_integer_range -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     let mut response = span_response();
     response["baseline"]["retained_peer_count"] = serde_json::json!(9_000_000_000_000_000_u64);
     response["baseline"]["error_peer_count"] = serde_json::json!(4_500_000_000_000_000_u64);
     response["baseline"]["error_rate_basis_points"] = serde_json::json!(5_000);
-    mount_response(&server, response.clone()).await;
+    mount_response(&server, response.clone());
 
     let command = span_command(true)?;
     let mut output = Vec::new();
@@ -137,11 +132,9 @@ async fn baseline_arithmetic_accepts_the_full_safe_integer_range()
     let actual: serde_json::Value = serde_json::from_slice(output.as_slice())?;
     assert_eq!(actual, response);
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn available_topology_accepts_an_unretained_immediate_parent()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(available_topology_accepts_an_unretained_immediate_parent -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     let mut response = span_response();
     response["topology"]["root"] = serde_json::Value::Null;
@@ -163,7 +156,7 @@ async fn available_topology_accepts_an_unretained_immediate_parent()
     for (index, action) in actions.iter_mut().enumerate() {
         action["priority"] = serde_json::json!(index + 1);
     }
-    mount_response(&server, response.clone()).await;
+    mount_response(&server, response.clone());
 
     let command = span_command(true)?;
     let mut output = Vec::new();
@@ -172,13 +165,11 @@ async fn available_topology_accepts_an_unretained_immediate_parent()
     let actual: serde_json::Value = serde_json::from_slice(output.as_slice())?;
     assert_eq!(actual, response);
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn human_output_explains_topology_baseline_correlations_and_evidence()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(human_output_explains_topology_baseline_correlations_and_evidence -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
-    mount_response(&server, span_response()).await;
+    mount_response(&server, span_response());
 
     let process = run_binary(&server, false, None).await?;
 
@@ -223,11 +214,9 @@ async fn human_output_explains_topology_baseline_correlations_and_evidence()
     }
     assert!(!text.contains("root cause"));
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn contract_rejects_identity_arithmetic_topology_payload_and_routing_contradictions()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(contract_rejects_identity_arithmetic_topology_payload_and_routing_contradictions -> Result<(), Box<dyn std::error::Error>>, {
     let mut project_mismatch = span_response();
     project_mismatch["subject"]["project_id"] =
         serde_json::json!("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
@@ -284,7 +273,7 @@ async fn contract_rejects_identity_arithmetic_topology_payload_and_routing_contr
         wrong_next_action,
     ] {
         let server = MockServer::start().await;
-        mount_response(&server, response).await;
+        mount_response(&server, response);
         let command = span_command(true)?;
         let mut output = Vec::new();
 
@@ -296,11 +285,9 @@ async fn contract_rejects_identity_arithmetic_topology_payload_and_routing_contr
         assert!(output.is_empty());
     }
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn unavailable_optional_evidence_keeps_the_subject_and_adds_retry_guidance()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(unavailable_optional_evidence_keeps_the_subject_and_adds_retry_guidance -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     let mut response = span_response();
     response["analysis"]["observations"] = serde_json::json!(["subject_error"]);
@@ -386,7 +373,7 @@ async fn unavailable_optional_evidence_keeps_the_subject_and_adds_retry_guidance
             "issue_id": null
         }
     ]);
-    mount_response(&server, response).await;
+    mount_response(&server, response);
 
     let process = run_binary(&server, false, Some("span-unavailable-proof")).await?;
 
@@ -403,11 +390,9 @@ async fn unavailable_optional_evidence_keeps_the_subject_and_adds_retry_guidance
         "Next 2: code=retry_unavailable_evidence target=exact_span_investigation reason=optional_evidence_unavailable span=00f067aa0ba902b7"
     ));
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn missing_sdk_and_context_are_explicit_without_rendering_empty_identity()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(missing_sdk_and_context_are_explicit_without_rendering_empty_identity -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     let mut response = span_response();
     response["subject"]["sdk"] = serde_json::json!({"name": "", "version": ""});
@@ -428,7 +413,7 @@ async fn missing_sdk_and_context_are_explicit_without_rendering_empty_identity()
             "span_id": SPAN_ID,
             "issue_id": null
         }));
-    mount_response(&server, response).await;
+    mount_response(&server, response);
 
     let process = run_binary(&server, false, Some("span-missing-capture-proof")).await?;
 
@@ -443,18 +428,16 @@ async fn missing_sdk_and_context_are_explicit_without_rendering_empty_identity()
         "Next 8: code=improve_capture target=sdk_capture reason=capture_incomplete span=00f067aa0ba902b7"
     ));
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn human_output_escapes_terminal_controls_in_untrusted_subject_text()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(human_output_escapes_terminal_controls_in_untrusted_subject_text -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     let mut response = span_response();
     response["subject"]["name"] = serde_json::json!("SELECT\u{001b}[31m checkout");
     response["baseline"]["dimensions"]["name"] = response["subject"]["name"].clone();
     response["timeline"]["items"][1]["name"] = response["subject"]["name"].clone();
     response["timeline"]["items"][6]["name"] = response["subject"]["name"].clone();
-    mount_response(&server, response).await;
+    mount_response(&server, response);
 
     let process = run_binary(&server, false, Some("terminal-control-proof")).await?;
 
@@ -463,9 +446,9 @@ async fn human_output_escapes_terminal_controls_in_untrusted_subject_text()
     assert!(text.contains("SELECT\\u{1b}[31m checkout"));
     assert!(!text.contains('\u{001b}'));
     Ok(())
-}
+});
 
-async fn mount_response(server: &MockServer, response: serde_json::Value) {
+fn mount_response(server: &MockServer, response: serde_json::Value) {
     Mock::route("GET", SPAN_PATH)
         .and(query_param("project_id", PROJECT_ID))
         .and(query_param("environment", "production"))
@@ -473,8 +456,7 @@ async fn mount_response(server: &MockServer, response: serde_json::Value) {
         .and(header("authorization", "Bearer account-token"))
         .respond_with(ResponseTemplate::new(200).set_body_json(response))
         .expect(1)
-        .mount(server)
-        .await;
+        .mount(server);
 }
 
 async fn run_binary(

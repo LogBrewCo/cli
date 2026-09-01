@@ -1,20 +1,18 @@
 //! Read-only project doctor contract tests.
 
 use crate::matchers::{header, query_param};
-use crate::{Mock, MockServer, ResponseTemplate};
-use logbrew_cli::{CliEnvironment, execute_command, parse_command};
+use crate::{Mock, MockServer, ResponseTemplate, execute_command};
+use logbrew_cli::{CliEnvironment, parse_command};
 
 const PROJECT_ID: &str = "123e4567-e89b-12d3-a456-426614174000";
 const UPPER_PROJECT_ID: &str = "123E4567-E89B-12D3-A456-426614174000";
 const OTHER_PROJECT_ID: &str = "223e4567-e89b-12d3-a456-426614174000";
 const TOKEN: &str = "hostile-secret-token";
 
-#[tokio::test]
-async fn ready_json_uses_the_canonical_doctor_read_then_a_log_visibility_probe()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(ready_json_uses_the_canonical_doctor_read_then_a_log_visibility_probe -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
-    mount_doctor(&server, 200, doctor_body("ready", "active")).await;
-    mount_logs(&server, 200, serde_json::json!([])).await;
+    mount_doctor(&server, 200, doctor_body("ready", "active"));
+    mount_logs(&server, 200, serde_json::json!([]));
 
     let text = run(&server, true).await?;
     let body: serde_json::Value = serde_json::from_str(text.as_str())?;
@@ -37,7 +35,7 @@ async fn ready_json_uses_the_canonical_doctor_read_then_a_log_visibility_probe()
     );
     assert_private_values_absent(text.as_str(), &server);
 
-    let requests = requests(&server).await?;
+    let requests = server.received_requests();
     assert_eq!(requests.len(), 2);
     assert_eq!(
         requests[0].url.path(),
@@ -64,10 +62,9 @@ async fn ready_json_uses_the_canonical_doctor_read_then_a_log_visibility_probe()
             .all(|request| request.method.as_str() == "GET")
     );
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn ready_human_output_is_bounded_and_value_safe() -> Result<(), Box<dyn std::error::Error>> {
+async_test!(ready_human_output_is_bounded_and_value_safe -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     let mut response = doctor_body("ready", "active");
     response["next"] = serde_json::json!("hostile-secret-next");
@@ -77,7 +74,7 @@ async fn ready_human_output_is_bounded_and_value_safe() -> Result<(), Box<dyn st
         "message":"hostile-secret-message",
         "occurred_at":"2026-07-16T08:00:00Z"
     });
-    mount_doctor(&server, 200, response).await;
+    mount_doctor(&server, 200, response);
     mount_logs(
         &server,
         200,
@@ -85,8 +82,7 @@ async fn ready_human_output_is_bounded_and_value_safe() -> Result<(), Box<dyn st
             "message":"hostile-secret-log",
             "service_name":"hostile-secret-service"
         }]),
-    )
-    .await;
+    );
 
     let text = run(&server, false).await?;
 
@@ -105,11 +101,9 @@ async fn ready_human_output_is_bounded_and_value_safe() -> Result<(), Box<dyn st
     );
     assert_private_values_absent(text.as_str(), &server);
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn canonical_states_drive_readiness_while_logs_only_report_visibility()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(canonical_states_drive_readiness_while_logs_only_report_visibility -> Result<(), Box<dyn std::error::Error>>, {
     let cases = [
         (
             "needs_ingest_key",
@@ -165,7 +159,7 @@ async fn canonical_states_drive_readiness_while_logs_only_report_visibility()
 
     for (state, setup_status, logs_visible, ingest, setup, telemetry, logs, next) in cases {
         let server = MockServer::start().await;
-        mount_doctor(&server, 200, doctor_body(state, setup_status)).await;
+        mount_doctor(&server, 200, doctor_body(state, setup_status));
         mount_logs(
             &server,
             200,
@@ -177,8 +171,7 @@ async fn canonical_states_drive_readiness_while_logs_only_report_visibility()
             } else {
                 serde_json::json!([])
             },
-        )
-        .await;
+        );
 
         let text = run(&server, true).await?;
         let body: serde_json::Value = serde_json::from_str(text.as_str())?;
@@ -190,16 +183,14 @@ async fn canonical_states_drive_readiness_while_logs_only_report_visibility()
         assert_eq!(body["checks"][6]["status"], logs, "state case {state}");
         assert_eq!(body["next"], next, "state case {state}");
         assert_private_values_absent(text.as_str(), &server);
-        assert_eq!(request_count(&server).await?, 2);
+        assert_eq!(server.received_requests().len(), 2);
     }
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn auth_rejection_is_typed_and_stops_before_the_log_probe()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(auth_rejection_is_typed_and_stops_before_the_log_probe -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
-    mount_doctor(&server, 401, unauthorized_error()).await;
+    mount_doctor(&server, 401, unauthorized_error());
 
     let text = run(&server, true).await?;
     let body: serde_json::Value = serde_json::from_str(text.as_str())?;
@@ -210,13 +201,11 @@ async fn auth_rejection_is_typed_and_stops_before_the_log_probe()
     assert_eq!(body["checks"][2]["status"], "not_checked");
     assert_eq!(body["next"], "run logbrew login");
     assert_private_values_absent(text.as_str(), &server);
-    assert_eq!(request_count(&server).await?, 1);
+    assert_eq!(server.received_requests().len(), 1);
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn missing_local_auth_is_typed_without_a_network_request()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(missing_local_auth_is_typed_without_a_network_request -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     let home = unique_home(&server, "missing-auth");
 
@@ -228,13 +217,11 @@ async fn missing_local_auth_is_typed_without_a_network_request()
     assert_eq!(body["checks"][1]["status"], "missing");
     assert_eq!(body["next"], "run logbrew login");
     assert_private_values_absent(text.as_str(), &server);
-    assert_eq!(request_count(&server).await?, 0);
+    assert_eq!(server.received_requests().len(), 0);
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn rejected_persisted_auth_does_not_refresh_or_rewrite_the_session()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(rejected_persisted_auth_does_not_refresh_or_rewrite_the_session -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     Mock::auth(
         "GET",
@@ -243,8 +230,7 @@ async fn rejected_persisted_auth_does_not_refresh_or_rewrite_the_session()
     )
     .respond_with(ResponseTemplate::new(401).set_body_json(unauthorized_error()))
     .expect(1)
-    .mount(&server)
-    .await;
+    .mount(&server);
     let home = local_auth_home(&server)?;
     let session_path = home.join(".logbrew/session.json");
     let original_session = std::fs::read(session_path.as_path())?;
@@ -254,7 +240,7 @@ async fn rejected_persisted_auth_does_not_refresh_or_rewrite_the_session()
 
     assert_eq!(body["status"], "auth_invalid");
     assert_private_values_absent(text.as_str(), &server);
-    let requests = requests(&server).await?;
+    let requests = server.received_requests();
     assert_eq!(requests.len(), 1);
     assert!(
         requests
@@ -263,13 +249,11 @@ async fn rejected_persisted_auth_does_not_refresh_or_rewrite_the_session()
     );
     assert_eq!(std::fs::read(session_path)?, original_session);
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn owner_safe_project_missing_is_typed_and_stops_before_logs()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(owner_safe_project_missing_is_typed_and_stops_before_logs -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
-    mount_doctor(&server, 404, project_not_found_error()).await;
+    mount_doctor(&server, 404, project_not_found_error());
 
     let text = run(&server, true).await?;
     let body: serde_json::Value = serde_json::from_str(text.as_str())?;
@@ -283,13 +267,11 @@ async fn owner_safe_project_missing_is_typed_and_stops_before_logs()
         "use a project_id returned by logbrew projects"
     );
     assert_private_values_absent(text.as_str(), &server);
-    assert_eq!(request_count(&server).await?, 1);
+    assert_eq!(server.received_requests().len(), 1);
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn uppercase_uuid_input_binds_to_the_canonical_lowercase_response()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(uppercase_uuid_input_binds_to_the_canonical_lowercase_response -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     Mock::auth(
         "GET",
@@ -298,16 +280,14 @@ async fn uppercase_uuid_input_binds_to_the_canonical_lowercase_response()
     )
     .respond_with(ResponseTemplate::new(200).set_body_json(doctor_body("ready", "active")))
     .expect(1)
-    .mount(&server)
-    .await;
+    .mount(&server);
     Mock::route("GET", "/api/logs")
         .and(query_param("project_id", UPPER_PROJECT_ID))
         .and(query_param("limit", "1"))
         .and(header("authorization", format!("Bearer {TOKEN}")))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
         .expect(1)
-        .mount(&server)
-        .await;
+        .mount(&server);
 
     let text = run_project(&server, UPPER_PROJECT_ID, true).await?;
     let body: serde_json::Value = serde_json::from_str(text.as_str())?;
@@ -315,13 +295,11 @@ async fn uppercase_uuid_input_binds_to_the_canonical_lowercase_response()
     assert_eq!(body["status"], "ready");
     assert_private_values_absent(text.as_str(), &server);
     assert!(!text.contains(UPPER_PROJECT_ID));
-    assert_eq!(request_count(&server).await?, 2);
+    assert_eq!(server.received_requests().len(), 2);
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn success_contract_mismatches_fail_closed_before_logs()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(success_contract_mismatches_fail_closed_before_logs -> Result<(), Box<dyn std::error::Error>>, {
     let mut cases = Vec::new();
 
     let mut extra = doctor_body("ready", "active");
@@ -362,7 +340,7 @@ async fn success_contract_mismatches_fail_closed_before_logs()
 
     for value in cases {
         let server = MockServer::start().await;
-        mount_doctor(&server, 200, value).await;
+        mount_doctor(&server, 200, value);
 
         let text = run(&server, true).await?;
         let body: serde_json::Value = serde_json::from_str(text.as_str())?;
@@ -371,19 +349,17 @@ async fn success_contract_mismatches_fail_closed_before_logs()
         assert_eq!(body["checks"][0]["status"], "reachable");
         assert_eq!(body["checks"][2]["status"], "invalid_response");
         assert_private_values_absent(text.as_str(), &server);
-        assert_eq!(request_count(&server).await?, 1);
+        assert_eq!(server.received_requests().len(), 1);
     }
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn ready_accepts_a_null_first_telemetry_timestamp_and_uses_setup_status()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(ready_accepts_a_null_first_telemetry_timestamp_and_uses_setup_status -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     let mut response = doctor_body("ready", "active");
     response["first_telemetry_seen_at"] = serde_json::Value::Null;
-    mount_doctor(&server, 200, response).await;
-    mount_logs(&server, 200, serde_json::json!([])).await;
+    mount_doctor(&server, 200, response);
+    mount_logs(&server, 200, serde_json::json!([]));
 
     let text = run(&server, true).await?;
     let body: serde_json::Value = serde_json::from_str(text.as_str())?;
@@ -392,16 +368,14 @@ async fn ready_accepts_a_null_first_telemetry_timestamp_and_uses_setup_status()
     assert_eq!(body["checks"][5]["status"], "seen");
     assert_private_values_absent(text.as_str(), &server);
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn display_safe_open_signal_kind_is_accepted_but_never_rendered()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(display_safe_open_signal_kind_is_accepted_but_never_rendered -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     let mut response = doctor_body("ready", "active");
     response["last_signal"]["kind"] = serde_json::json!("hostile-secret-public-signal");
-    mount_doctor(&server, 200, response).await;
-    mount_logs(&server, 200, serde_json::json!([])).await;
+    mount_doctor(&server, 200, response);
+    mount_logs(&server, 200, serde_json::json!([]));
 
     let text = run(&server, true).await?;
     let body: serde_json::Value = serde_json::from_str(text.as_str())?;
@@ -409,11 +383,9 @@ async fn display_safe_open_signal_kind_is_accepted_but_never_rendered()
     assert_eq!(body["status"], "ready");
     assert_private_values_absent(text.as_str(), &server);
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn malformed_or_noncanonical_error_bodies_fail_closed_without_reflection()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(malformed_or_noncanonical_error_bodies_fail_closed_without_reflection -> Result<(), Box<dyn std::error::Error>>, {
     let cases = [
         (
             401,
@@ -438,7 +410,7 @@ async fn malformed_or_noncanonical_error_bodies_fail_closed_without_reflection()
 
     for (status, response) in cases {
         let server = MockServer::start().await;
-        mount_doctor(&server, status, response).await;
+        mount_doctor(&server, status, response);
 
         let text = run(&server, true).await?;
         let body: serde_json::Value = serde_json::from_str(text.as_str())?;
@@ -446,14 +418,12 @@ async fn malformed_or_noncanonical_error_bodies_fail_closed_without_reflection()
         assert_eq!(body["status"], "check_failed");
         assert_eq!(body["checks"][2]["status"], "invalid_response");
         assert_private_values_absent(text.as_str(), &server);
-        assert_eq!(request_count(&server).await?, 1);
+        assert_eq!(server.received_requests().len(), 1);
     }
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn unauthorized_uses_the_stable_code_and_action_without_rendering_server_text()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(unauthorized_uses_the_stable_code_and_action_without_rendering_server_text -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     mount_doctor(
         &server,
@@ -464,8 +434,7 @@ async fn unauthorized_uses_the_stable_code_and_action_without_rendering_server_t
             "next":"hostile-secret-auth-next",
             "next_action":{"code":"sign_in","target":"auth"}
         }),
-    )
-    .await;
+    );
 
     let text = run(&server, true).await?;
     let body: serde_json::Value = serde_json::from_str(text.as_str())?;
@@ -473,13 +442,11 @@ async fn unauthorized_uses_the_stable_code_and_action_without_rendering_server_t
     assert_eq!(body["status"], "auth_invalid");
     assert_eq!(body["next"], "run logbrew login");
     assert_private_values_absent(text.as_str(), &server);
-    assert_eq!(request_count(&server).await?, 1);
+    assert_eq!(server.received_requests().len(), 1);
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn non_json_and_oversized_doctor_bodies_fail_closed() -> Result<(), Box<dyn std::error::Error>>
-{
+async_test!(non_json_and_oversized_doctor_bodies_fail_closed -> Result<(), Box<dyn std::error::Error>>, {
     for raw in [
         "hostile-secret-non-json".to_owned(),
         "x".repeat(256 * 1024 + 1),
@@ -488,8 +455,7 @@ async fn non_json_and_oversized_doctor_bodies_fail_closed() -> Result<(), Box<dy
         Mock::auth("GET", format!("/api/projects/{PROJECT_ID}/doctor"), TOKEN)
             .respond_with(ResponseTemplate::new(200).set_body_string(raw))
             .expect(1)
-            .mount(&server)
-            .await;
+            .mount(&server);
 
         let text = run(&server, true).await?;
         let body: serde_json::Value = serde_json::from_str(text.as_str())?;
@@ -497,14 +463,12 @@ async fn non_json_and_oversized_doctor_bodies_fail_closed() -> Result<(), Box<dy
         assert_eq!(body["status"], "check_failed");
         assert_eq!(body["checks"][2]["status"], "invalid_response");
         assert_private_values_absent(text.as_str(), &server);
-        assert_eq!(request_count(&server).await?, 1);
+        assert_eq!(server.received_requests().len(), 1);
     }
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn typed_non_success_statuses_use_fixed_local_recovery()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(typed_non_success_statuses_use_fixed_local_recovery -> Result<(), Box<dyn std::error::Error>>, {
     for status in [400, 403, 405, 422, 429, 500, 503] {
         let server = MockServer::start().await;
         mount_doctor(
@@ -516,8 +480,7 @@ async fn typed_non_success_statuses_use_fixed_local_recovery()
                 "hostile-secret-action",
                 "request",
             ),
-        )
-        .await;
+        );
 
         let text = run(&server, true).await?;
         let body: serde_json::Value = serde_json::from_str(text.as_str())?;
@@ -529,14 +492,12 @@ async fn typed_non_success_statuses_use_fixed_local_recovery()
             "retry logbrew doctor --project <project_id>; if it repeats, report the public response contract"
         );
         assert_private_values_absent(text.as_str(), &server);
-        assert_eq!(request_count(&server).await?, 1);
+        assert_eq!(server.received_requests().len(), 1);
     }
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn malformed_log_probe_fails_closed_without_overriding_canonical_readiness()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(malformed_log_probe_fails_closed_without_overriding_canonical_readiness -> Result<(), Box<dyn std::error::Error>>, {
     for response in [
         serde_json::json!({"logs":[],"hostile-secret":"value"}),
         serde_json::json!(["hostile-secret-row"]),
@@ -544,8 +505,8 @@ async fn malformed_log_probe_fails_closed_without_overriding_canonical_readiness
         serde_json::json!([{"message":"hostile-secret-row"}]),
     ] {
         let server = MockServer::start().await;
-        mount_doctor(&server, 200, doctor_body("ready", "active")).await;
-        mount_logs(&server, 200, response).await;
+        mount_doctor(&server, 200, doctor_body("ready", "active"));
+        mount_logs(&server, 200, response);
 
         let text = run(&server, true).await?;
         let body: serde_json::Value = serde_json::from_str(text.as_str())?;
@@ -554,17 +515,15 @@ async fn malformed_log_probe_fails_closed_without_overriding_canonical_readiness
         assert_eq!(body["checks"][5]["status"], "seen");
         assert_eq!(body["checks"][6]["status"], "invalid_response");
         assert_private_values_absent(text.as_str(), &server);
-        assert_eq!(request_count(&server).await?, 2);
+        assert_eq!(server.received_requests().len(), 2);
     }
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn optional_log_auth_rejection_does_not_override_canonical_readiness()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(optional_log_auth_rejection_does_not_override_canonical_readiness -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
-    mount_doctor(&server, 200, doctor_body("ready", "active")).await;
-    mount_logs(&server, 401, unauthorized_error()).await;
+    mount_doctor(&server, 200, doctor_body("ready", "active"));
+    mount_logs(&server, 401, unauthorized_error());
 
     let text = run(&server, true).await?;
     let body: serde_json::Value = serde_json::from_str(text.as_str())?;
@@ -577,16 +536,14 @@ async fn optional_log_auth_rejection_does_not_override_canonical_readiness()
         "inspect recent project logs, issues, actions, releases, or traces"
     );
     assert_private_values_absent(text.as_str(), &server);
-    assert_eq!(request_count(&server).await?, 2);
+    assert_eq!(server.received_requests().len(), 2);
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn log_probe_errors_are_value_safe_and_do_not_reconstruct_readiness()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(log_probe_errors_are_value_safe_and_do_not_reconstruct_readiness -> Result<(), Box<dyn std::error::Error>>, {
     for status in [422, 429, 500] {
         let server = MockServer::start().await;
-        mount_doctor(&server, 200, doctor_body("needs_telemetry", "sdk_seen")).await;
+        mount_doctor(&server, 200, doctor_body("needs_telemetry", "sdk_seen"));
         mount_logs(
             &server,
             status,
@@ -596,8 +553,7 @@ async fn log_probe_errors_are_value_safe_and_do_not_reconstruct_readiness()
                 "hostile-secret-action",
                 "request",
             ),
-        )
-        .await;
+        );
 
         let text = run(&server, true).await?;
         let body: serde_json::Value = serde_json::from_str(text.as_str())?;
@@ -611,14 +567,12 @@ async fn log_probe_errors_are_value_safe_and_do_not_reconstruct_readiness()
         assert_private_values_absent(text.as_str(), &server);
     }
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn transport_failure_is_api_unreachable_and_value_safe()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(transport_failure_is_api_unreachable_and_value_safe -> Result<(), Box<dyn std::error::Error>>, {
     let base_url = "http://127.0.0.1:0";
 
-    let text = run_at(base_url, true, Some(TOKEN.to_owned()), None).await?;
+    let text = run_project_at(base_url, PROJECT_ID, true, Some(TOKEN.to_owned()), None).await?;
     let body: serde_json::Value = serde_json::from_str(text.as_str())?;
 
     assert_eq!(body["status"], "api_unreachable");
@@ -630,25 +584,23 @@ async fn transport_failure_is_api_unreachable_and_value_safe()
     assert!(!text.contains(base_url));
     assert!(!text.contains(TOKEN));
     Ok(())
-}
+});
 
-async fn mount_doctor(server: &MockServer, status: u16, body: serde_json::Value) {
+fn mount_doctor(server: &MockServer, status: u16, body: serde_json::Value) {
     Mock::auth("GET", format!("/api/projects/{PROJECT_ID}/doctor"), TOKEN)
         .respond_with(ResponseTemplate::new(status).set_body_json(body))
         .expect(1)
-        .mount(server)
-        .await;
+        .mount(server);
 }
 
-async fn mount_logs(server: &MockServer, status: u16, body: serde_json::Value) {
+fn mount_logs(server: &MockServer, status: u16, body: serde_json::Value) {
     Mock::route("GET", "/api/logs")
         .and(query_param("project_id", PROJECT_ID))
         .and(query_param("limit", "1"))
         .and(header("authorization", format!("Bearer {TOKEN}")))
         .respond_with(ResponseTemplate::new(status).set_body_json(body))
         .expect(1)
-        .mount(server)
-        .await;
+        .mount(server);
 }
 
 fn doctor_body(state: &str, setup_status: &str) -> serde_json::Value {
@@ -758,15 +710,6 @@ async fn run_with_home(
     run_project_at(server.uri().as_str(), PROJECT_ID, json, None, Some(home)).await
 }
 
-async fn run_at(
-    base_url: &str,
-    json: bool,
-    token: Option<String>,
-    home: Option<std::path::PathBuf>,
-) -> Result<String, Box<dyn std::error::Error>> {
-    run_project_at(base_url, PROJECT_ID, json, token, home).await
-}
-
 async fn run_project_at(
     base_url: &str,
     project_id: &str,
@@ -820,14 +763,6 @@ fn unique_home_from_url(base_url: &str, label: &str) -> std::path::PathBuf {
         "logbrew-project-doctor-{label}-{}-{suffix}",
         std::process::id()
     ))
-}
-
-async fn requests(server: &MockServer) -> Result<Vec<crate::Request>, Box<dyn std::error::Error>> {
-    Ok(server.received_requests().await)
-}
-
-async fn request_count(server: &MockServer) -> Result<usize, Box<dyn std::error::Error>> {
-    Ok(requests(server).await?.len())
 }
 
 fn assert_private_values_absent(text: &str, server: &MockServer) {

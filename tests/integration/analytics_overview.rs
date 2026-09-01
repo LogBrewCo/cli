@@ -56,9 +56,7 @@ fn public_grammar_help_and_get_model_stay_aligned() -> Result<(), Box<dyn std::e
     Ok(())
 }
 
-#[tokio::test]
-async fn built_binary_gets_exact_scope_and_preserves_validated_json()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(built_binary_gets_exact_scope_and_preserves_validated_json -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     let response = overview_response();
     let response_body = serde_json::to_string(&response)?;
@@ -73,8 +71,7 @@ async fn built_binary_gets_exact_scope_and_preserves_validated_json()
             ResponseTemplate::new(200).set_body_raw(response_body.clone(), "application/json"),
         )
         .expect(1)
-        .mount(&server)
-        .await;
+        .mount(&server);
 
     let process = run_binary(&server, true).await?;
 
@@ -82,19 +79,16 @@ async fn built_binary_gets_exact_scope_and_preserves_validated_json()
     let actual = String::from_utf8(process.stdout)?;
     assert_eq!(actual.trim_end(), response_body);
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn built_binary_human_output_explains_activity_coverage_and_next_step()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(built_binary_human_output_explains_activity_coverage_and_next_step -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     let mut response = overview_response();
     response["top_actions"][0]["name"] = "checkout\u{202e}started".into();
     Mock::route("GET", "/api/telemetry/analytics/overview")
         .respond_with(ResponseTemplate::new(200).set_body_json(response))
         .expect(1)
-        .mount(&server)
-        .await;
+        .mount(&server);
 
     let process = run_binary(&server, false).await?;
 
@@ -130,19 +124,16 @@ async fn built_binary_human_output_explains_activity_coverage_and_next_step()
     assert!(!text.contains('\u{202e}'));
     assert!(!text.contains("Use this server-authored reason verbatim."));
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn built_binary_fails_closed_on_unknown_identity_fields_without_reflection()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(built_binary_fails_closed_on_unknown_identity_fields_without_reflection -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     let mut response = overview_response();
     response["query"]["user_id"] = "hostile-user-marker".into();
     Mock::route("GET", "/api/telemetry/analytics/overview")
         .respond_with(ResponseTemplate::new(200).set_body_json(response))
         .expect(1)
-        .mount(&server)
-        .await;
+        .mount(&server);
 
     let process = run_binary(&server, true).await?;
 
@@ -153,11 +144,9 @@ async fn built_binary_fails_closed_on_unknown_identity_fields_without_reflection
     assert_eq!(error["error"], "analytics_overview_response_invalid");
     assert!(!text.contains("hostile-user-marker"));
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn built_binary_fails_closed_on_contradictory_coverage()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(built_binary_fails_closed_on_contradictory_coverage -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     let mut response = overview_response();
     response["coverage"]["subject_coverage"]["legacy_unknown_kind_events"] = 6.into();
@@ -165,8 +154,7 @@ async fn built_binary_fails_closed_on_contradictory_coverage()
     Mock::route("GET", "/api/telemetry/analytics/overview")
         .respond_with(ResponseTemplate::new(200).set_body_json(response))
         .expect(1)
-        .mount(&server)
-        .await;
+        .mount(&server);
 
     let process = run_binary(&server, false).await?;
 
@@ -176,11 +164,9 @@ async fn built_binary_fails_closed_on_contradictory_coverage()
     assert!(text.contains("product analytics overview response is invalid"));
     assert!(!text.contains("contradictory-response-marker"));
     Ok(())
-}
+});
 
-#[tokio::test]
-async fn built_binary_fails_closed_on_impossible_anonymous_cardinality()
--> Result<(), Box<dyn std::error::Error>> {
+async_test!(built_binary_fails_closed_on_impossible_anonymous_cardinality -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
     let mut response = overview_response();
     response["summary"]["active_anonymous_subjects"] = 9.into();
@@ -188,8 +174,7 @@ async fn built_binary_fails_closed_on_impossible_anonymous_cardinality()
     Mock::route("GET", "/api/telemetry/analytics/overview")
         .respond_with(ResponseTemplate::new(200).set_body_json(response))
         .expect(1)
-        .mount(&server)
-        .await;
+        .mount(&server);
 
     let process = run_binary(&server, false).await?;
 
@@ -199,7 +184,7 @@ async fn built_binary_fails_closed_on_impossible_anonymous_cardinality()
     assert!(text.contains("product analytics overview response is invalid"));
     assert!(!text.contains("impossible-cardinality-marker"));
     Ok(())
-}
+});
 
 /// Parses the representative public command shape.
 fn overview_command(json: bool) -> Result<Command, logbrew_cli::CliError> {

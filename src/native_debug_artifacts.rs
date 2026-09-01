@@ -657,14 +657,17 @@ mod tests {
     }
 
     /// Proves the overall deadline returns fixed recovery without a long-running request.
-    #[tokio::test]
-    async fn overall_deadline_is_value_safe() {
-        let error = with_upload_deadline(
-            std::time::Duration::from_millis(1),
-            std::future::pending::<Result<(), crate::RuntimeError>>(),
-        )
-        .await
-        .expect_err("pending upload must hit the supplied test deadline");
+    #[test]
+    fn overall_deadline_is_value_safe() -> Result<(), Box<dyn std::error::Error>> {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?;
+        let error = runtime
+            .block_on(with_upload_deadline(
+                std::time::Duration::from_millis(1),
+                std::future::pending::<Result<(), crate::RuntimeError>>(),
+            ))
+            .expect_err("pending upload must hit the supplied test deadline");
         assert!(matches!(
             error,
             crate::RuntimeError::Unavailable {
@@ -672,5 +675,6 @@ mod tests {
                 next: "rerun the same command; resumable upload will request only missing chunks",
             }
         ));
+        Ok(())
     }
 }
