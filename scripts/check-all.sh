@@ -9,7 +9,7 @@ fi
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
-for dependency in cargo-audit clippy-driver python3 ruby; do
+for dependency in cargo-audit clippy-driver jq python3 ruby; do
   command -v "$dependency" >/dev/null 2>&1 && continue
   printf "Check failed: missing required command '%s'\n" "$dependency" >&2
   if [[ "$dependency" == cargo-audit ]]; then
@@ -21,12 +21,25 @@ for dependency in cargo-audit clippy-driver python3 ruby; do
   exit 1
 done
 
-cargo fmt --all -- --check
-cargo fetch --locked
 test_rustflags="${RUSTFLAGS:+$RUSTFLAGS }-C prefer-dynamic -C link-arg=-Wl,-rpath,$(rustc --print target-libdir)"
-LOGBREW_CLIPPY_WRAPPER=1 RUSTC_WORKSPACE_WRAPPER="$ROOT_DIR/scripts/check-all.sh" RUSTFLAGS="$test_rustflags" CARGO_INCREMENTAL=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_PROFILE_TEST_CODEGEN_UNITS=256 cargo test --quiet --lib --tests --all-features &
+run_rust_tests() (
+  manifest="$(mktemp)"
+  trap 'rm -f "$manifest"' EXIT
+  LOGBREW_CLIPPY_WRAPPER=1 RUSTC_WORKSPACE_WRAPPER="$ROOT_DIR/scripts/check-all.sh" RUSTFLAGS="$test_rustflags" CARGO_INCREMENTAL=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_PROFILE_TEST_CODEGEN_UNITS=256 cargo test --quiet --lib --tests --all-features --no-run --message-format=json >"$manifest"
+  jq -j 'select(.reason == "compiler-artifact" and .profile.test == true and .executable != null) | .executable, "\u0000"' "$manifest" |
+    xargs -0 -n 1 -P 2 sh -c 'exec "$1"' sh & test_runs_pid=$!
+  audit_args=()
+  [[ -d "${CARGO_HOME:-$HOME/.cargo}/advisory-db/crates" ]] && audit_args+=(--no-fetch)
+  cargo audit "${audit_args[@]}" & audit_pid=$!
+  CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$ROOT_DIR/target}" cargo package --locked --allow-dirty --offline --no-verify & package_pid=$!
+  failed=0
+  for pid in "$test_runs_pid" "$audit_pid" "$package_pid"; do wait "$pid" || failed=1; done
+  exit "$failed"
+)
+run_rust_tests &
 test_pid=$!
 (
+cargo fmt --all -- --check
 bash scripts/confidentiality-check.sh
 python3 scripts/brand_assets.py --check
 python3 scripts/test-brand-assets.py
@@ -42,16 +55,8 @@ python3 scripts/test-installed-release-attestation.py
 python3 scripts/test-installed-release-attestation-workflow.py
 ) &
 portable_checks_pid=$!
-audit_args=()
-[[ -d "${CARGO_HOME:-$HOME/.cargo}/advisory-db/crates" ]] && audit_args+=(--no-fetch)
-cargo audit "${audit_args[@]}" &
-audit_pid=$!
-CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$ROOT_DIR/target}" cargo package --locked --allow-dirty --offline --no-verify &
-package_pid=$!
-trap 'kill "$portable_checks_pid" "$audit_pid" "$package_pid" "$test_pid" 2>/dev/null || true' EXIT
+trap 'kill "$portable_checks_pid" "$test_pid" 2>/dev/null || true' EXIT
 python3 scripts/test-real-user-public-install-smoke.py
-wait "$package_pid"
 wait "$test_pid"
 wait "$portable_checks_pid"
-wait "$audit_pid"
 trap - EXIT

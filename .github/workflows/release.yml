@@ -68,6 +68,51 @@ jobs:
           dist ${{ github.event_name == 'push' && format('host --steps=create --tag={0}', github.ref_name) || 'plan' }} --output-format=json > plan-dist-manifest.json
           echo "manifest=$(jq -c '.' plan-dist-manifest.json)" >> "$GITHUB_OUTPUT"
 
+      - name: Fetch exact-main prebuilt artifacts
+        if: ${{ github.event_name == 'push' }}
+        uses: actions/download-artifact@v8
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          run-id: ${{ steps.prebuild.outputs.run-id }}
+          pattern: artifacts-build-*
+          path: target/distrib/
+          merge-multiple: true
+      - id: host
+        if: ${{ github.event_name == 'push' }}
+        shell: bash
+        run: |
+          cp plan-dist-manifest.json target/distrib/
+          dist host --tag="$GITHUB_REF_NAME" --steps=upload --steps=release --output-format=json > dist-manifest.json
+          echo "manifest=$(jq -c '.' dist-manifest.json)" >> "$GITHUB_OUTPUT"
+      - name: Create GitHub Release
+        if: ${{ github.event_name == 'push' }}
+        env:
+          ANNOUNCEMENT_IS_PRERELEASE: ${{ fromJson(steps.plan.outputs.manifest).announcement_is_prerelease }}
+          ANNOUNCEMENT_TITLE: ${{ fromJson(steps.plan.outputs.manifest).announcement_title }}
+          ANNOUNCEMENT_BODY: ${{ fromJson(steps.plan.outputs.manifest).announcement_github_body }}
+        shell: bash
+        run: |
+          find target/distrib -maxdepth 1 -type f -name '*-dist-manifest.json' -delete
+          printf '%s\n' "$ANNOUNCEMENT_BODY" > "$RUNNER_TEMP/notes.txt"
+          release_args=()
+          [[ "$ANNOUNCEMENT_IS_PRERELEASE" == "true" ]] && release_args+=(--prerelease)
+          gh release create "$GITHUB_REF_NAME" --target "$GITHUB_SHA" "${release_args[@]}" --title "$ANNOUNCEMENT_TITLE" --notes-file "$RUNNER_TEMP/notes.txt" target/distrib/*
+      - name: Verify public shell installation
+        if: ${{ github.event_name == 'push' }}
+        run: |
+          installer="$RUNNER_TEMP/logbrew-installer.sh"
+          curl --proto '=https' --tlsv1.2 -LsSf --retry 3 --retry-delay 1 --retry-all-errors "https://github.com/$GITHUB_REPOSITORY/releases/download/${GITHUB_REF_NAME}/logbrew-cli-installer.sh" -o "$installer"
+          cmp "$installer" target/distrib/logbrew-cli-installer.sh
+          CARGO_HOME="$RUNNER_TEMP/cargo-home" bash "$installer" >/dev/null
+          [[ "$("$RUNNER_TEMP/cargo-home/bin/logbrew" version)" == "logbrew ${GITHUB_REF_NAME#v}" ]]
+      - name: Preserve release manifest
+        if: ${{ github.event_name == 'push' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: artifacts-dist-manifest
+          path: dist-manifest.json
+
   build-local-artifacts:
     name: build-local-artifacts (${{ matrix.target }})
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag == '' && github.ref == 'refs/heads/main' }}
@@ -185,65 +230,6 @@ jobs:
           path: |
             ${{ steps.cargo-dist.outputs.paths }}
             ${{ env.BUILD_MANIFEST_NAME }}
-
-  host:
-    needs: plan
-    if: ${{ needs.plan.outputs.publishing == 'true' && needs.plan.outputs.prebuild-run-id != '' }}
-    runs-on: ubuntu-22.04
-    outputs:
-      val: ${{ steps.host.outputs.manifest }}
-    env:
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          persist-credentials: false
-      - name: Install dist
-        shell: bash
-        run: curl --proto '=https' --tlsv1.2 -LsSf https://github.com/axodotdev/cargo-dist/releases/download/v0.32.0/cargo-dist-installer.sh | sh
-      - name: Fetch exact-main prebuilt artifacts
-        uses: actions/download-artifact@v8
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          repository: ${{ github.repository }}
-          run-id: ${{ needs.plan.outputs.prebuild-run-id }}
-          pattern: artifacts-build-*
-          path: target/distrib/
-          merge-multiple: true
-      - name: Restore release plan
-        env:
-          DIST_PLAN: ${{ needs.plan.outputs.val }}
-        run: printf '%s\n' "$DIST_PLAN" > target/distrib/plan-dist-manifest.json
-      - id: host
-        shell: bash
-        run: |
-          dist host ${{ needs.plan.outputs.tag-flag }} --steps=upload --steps=release --output-format=json > dist-manifest.json
-          echo "manifest=$(jq -c '.' dist-manifest.json)" >> "$GITHUB_OUTPUT"
-      - uses: actions/upload-artifact@v7
-        with:
-          name: artifacts-dist-manifest
-          path: dist-manifest.json
-      - name: Create GitHub Release
-        env:
-          ANNOUNCEMENT_IS_PRERELEASE: ${{ fromJson(steps.host.outputs.manifest).announcement_is_prerelease }}
-          ANNOUNCEMENT_TITLE: ${{ fromJson(steps.host.outputs.manifest).announcement_title }}
-          ANNOUNCEMENT_BODY: ${{ fromJson(steps.host.outputs.manifest).announcement_github_body }}
-        shell: bash
-        run: |
-          find target/distrib -maxdepth 1 -type f -name '*-dist-manifest.json' -delete
-          printf '%s\n' "$ANNOUNCEMENT_BODY" > "$RUNNER_TEMP/notes.txt"
-          release_args=()
-          [[ "$ANNOUNCEMENT_IS_PRERELEASE" == "true" ]] && release_args+=(--prerelease)
-          gh release create "${{ needs.plan.outputs.tag }}" --target "$GITHUB_SHA" "${release_args[@]}" --title "$ANNOUNCEMENT_TITLE" --notes-file "$RUNNER_TEMP/notes.txt" target/distrib/*
-      - name: Verify public shell installation
-        env:
-          RELEASE_TAG: ${{ needs.plan.outputs.tag }}
-        run: |
-          installer="$RUNNER_TEMP/logbrew-installer.sh"
-          curl --proto '=https' --tlsv1.2 -LsSf --retry 3 --retry-delay 1 --retry-all-errors "https://github.com/$GITHUB_REPOSITORY/releases/download/${RELEASE_TAG}/logbrew-cli-installer.sh" -o "$installer"
-          cmp "$installer" target/distrib/logbrew-cli-installer.sh
-          CARGO_HOME="$RUNNER_TEMP/cargo-home" bash "$installer" >/dev/null
-          [[ "$("$RUNNER_TEMP/cargo-home/bin/logbrew" version)" == "logbrew ${RELEASE_TAG#v}" ]]
 
   custom-publish-npm-trusted:
     needs: plan

@@ -25,7 +25,7 @@ fn release_workflows_prebuild_publish_and_recover_safely() {
         "cache-workspace-crates: true",
         "runner: windows-2025\n            linker: lld-link",
         "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER: ${{ matrix.linker }}",
-        "run-id: ${{ needs.plan.outputs.prebuild-run-id }}",
+        "run-id: ${{ steps.prebuild.outputs.run-id }}",
         "pattern: artifacts-build-*",
         "name: Prepare and audit Homebrew formula",
         "ruby scripts/prepare-homebrew-formula.rb target/distrib/logbrew.rb \"$version\"",
@@ -33,7 +33,7 @@ fn release_workflows_prebuild_publish_and_recover_safely() {
         "brew audit --strict --formula logbrew-release-verifier/formula/logbrew",
         "inputs.release_tag != '' && inputs.artifacts_run_id != ''",
         "artifacts_run_id: ${{ inputs.artifacts_run_id || needs.plan.outputs.prebuild-run-id }}",
-        "gh release create \"${{ needs.plan.outputs.tag }}\" --target \"$GITHUB_SHA\"",
+        "gh release create \"$GITHUB_REF_NAME\" --target \"$GITHUB_SHA\"",
         "Verify public shell installation",
         "cmp \"$installer\" target/distrib/logbrew-cli-installer.sh",
     ] {
@@ -41,6 +41,8 @@ fn release_workflows_prebuild_publish_and_recover_safely() {
     }
     assert_eq!(RELEASE.matches("refs/heads/main' }}").count(), 2);
     assert_eq!(RELEASE.matches("artifacts_run_id:").count(), 3);
+    assert!(!RELEASE.contains("\n  host:\n"));
+    assert!(!RELEASE.contains("fromJson(steps.host.outputs.manifest)"));
     let targets = DIST
         .lines()
         .find(|line| line.starts_with("targets = "))
