@@ -1,10 +1,5 @@
 //! Public CLI grammar and local recovery contracts.
 
-#[macro_use]
-#[path = "../async_test.rs"]
-mod async_test;
-pub(crate) use async_test::run_async;
-
 mod action_filter_recovery;
 mod command_shaped_help;
 mod commands;

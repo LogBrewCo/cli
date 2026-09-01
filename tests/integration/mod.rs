@@ -1,10 +1,5 @@
 //! Complete public CLI integration contract.
 
-#[macro_use]
-#[path = "../async_test.rs"]
-mod async_test;
-pub(crate) use async_test::run_async;
-
 mod action_investigation;
 mod analytics_compare;
 mod analytics_funnel;
@@ -17,11 +12,6 @@ mod deployment;
 mod execution_commands;
 mod login_loopback;
 mod logout_sessions;
-#[expect(
-    dead_code,
-    reason = "shared support is compiled by focused test targets"
-)]
-mod mock_http;
 mod native_debug_artifact_upload;
 mod native_debug_artifact_upload_bounds;
 mod native_debug_artifacts;
@@ -38,11 +28,4 @@ mod trace_discovery;
 mod usage;
 mod whoami;
 
-mod support;
-
-pub(crate) use mock_http::{Mock, MockServer, Request, ResponseTemplate, retry_then};
-pub(crate) use support::*;
-
-pub(crate) mod matchers {
-    pub(crate) use super::mock_http::matchers::*;
-}
+pub(crate) use crate::support::*;

@@ -25,7 +25,7 @@ from unittest import mock
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 VERIFIER = ROOT / "scripts" / "real_user_public_install_smoke.py"
-VERSION = "0.1.75"
+VERSION = "0.1.76"
 sys.dont_write_bytecode = True
 
 
@@ -429,7 +429,7 @@ class PublicInstallVerifierTests(unittest.TestCase):
             return artifact_id, artifact, result, records
 
         records = []
-        with ThreadPoolExecutor(max_workers=3) as executor:
+        with ThreadPoolExecutor(max_workers=1) as executor:
             for mode, (artifact_id, artifact, result, mode_records) in zip(
                 modes, executor.map(verify, modes), strict=True
             ):
