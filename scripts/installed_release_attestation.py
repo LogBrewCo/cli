@@ -118,9 +118,9 @@ RECEIPTS = {
         "windows-2025", "windows-x64", "native", "native:windows-x64",
         "logbrew-cli-x86_64-pc-windows-msvc.zip",
     ),
-    "native-macos-x64": ReceiptSpec(
-        "macos-15-intel", "macos-x64", "native", "native:macos-x64",
-        "logbrew-cli-x86_64-apple-darwin.tar.xz",
+    "native-macos-arm64": ReceiptSpec(
+        "macos-15", "macos-arm64", "native", "native:macos-arm64",
+        "logbrew-cli-aarch64-apple-darwin.tar.xz",
     ),
 }
 
@@ -210,13 +210,6 @@ def validate_release_run_identity(
         raise AttestationError
 
 
-def release_download_url(repository: str, tag: str, asset_name: str) -> str:
-    """Return the only accepted browser download URL for one release asset."""
-    if SAFE_ASSET_PATTERN.fullmatch(asset_name) is None:
-        raise AttestationError
-    return f"https://github.com/{repository}/releases/download/{tag}/{asset_name}"
-
-
 def select_exact_asset(
     assets: Sequence[object],
     name: str,
@@ -252,8 +245,9 @@ def asset_identity(
         or not isinstance(api_digest, str)
         or not api_digest.startswith("sha256:")
         or SHA256_PATTERN.fullmatch(api_digest[7:]) is None
+        or SAFE_ASSET_PATTERN.fullmatch(name) is None
         or asset.get("browser_download_url")
-        != release_download_url(REPOSITORY, tag, name)
+        != f"https://github.com/{REPOSITORY}/releases/download/{tag}/{name}"
     ):
         raise AttestationError
     return asset_id, size, api_digest[7:]
@@ -313,6 +307,7 @@ def platform_identity(system: str, machine: str) -> tuple[str, str, str]:
         ("linux", "arm64"): ("linux-arm64", "Linux", "ARM64"),
         ("windows", "amd64"): ("windows-x64", "Windows", "X64"),
         ("windows", "x86_64"): ("windows-x64", "Windows", "X64"),
+        ("darwin", "arm64"): ("macos-arm64", "macOS", "ARM64"),
         ("darwin", "x86_64"): ("macos-x64", "macOS", "X64"),
     }
     try:

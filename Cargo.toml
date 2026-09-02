@@ -1,6 +1,6 @@
 [package]
 name = "logbrew-cli"
-version = "0.1.75"
+version = "0.1.76"
 edition = "2024"
 rust-version = "1.87"
 description = "Developer-first observability command-line interface"
@@ -28,16 +28,8 @@ path = "src/main.rs"
 test = false
 
 [[test]]
-name = "integration"
-path = "tests/integration/mod.rs"
-
-[[test]]
-name = "grammar"
-path = "tests/grammar/mod.rs"
-
-[[test]]
-name = "investigation"
-path = "tests/investigation/mod.rs"
+name = "contracts"
+path = "tests/contracts.rs"
 
 [dependencies]
 atomic-write-file = "0.3.0"

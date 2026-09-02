@@ -1,31 +1,12 @@
 //! Public CLI investigation contracts.
 
-#[macro_use]
-#[path = "../async_test.rs"]
-mod async_test;
-pub(crate) use async_test::run_async;
-
 mod api_rendering;
 mod cursor_pagination;
 mod explain_contracts;
 mod issue_investigation;
-#[path = "../integration/mock_http.rs"]
-mod mock_http;
 mod project_create;
 mod span_investigation;
-#[expect(
-    dead_code,
-    reason = "shared support is compiled by focused test targets"
-)]
-#[path = "../integration/support.rs"]
-mod support;
-
-pub(crate) use mock_http::{Mock, MockServer, Request, ResponseTemplate, retry_then};
-pub(crate) use support::*;
-
-pub(crate) mod matchers {
-    pub(crate) use super::mock_http::matchers::*;
-}
+pub(crate) use crate::support::*;
 
 const CLI_CURSOR_RECOVERY: &str = "use --pagination cursor alone for the first page, then use \
     --cursor-time and --cursor-id together from next_cursor";

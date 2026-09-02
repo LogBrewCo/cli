@@ -262,7 +262,7 @@ class InstalledReleaseAttestationTests(unittest.TestCase):
                 "native-linux-x64|ubuntu-24.04|linux-x64|native|native:linux-x64|logbrew-cli-x86_64-unknown-linux-gnu.tar.xz",
                 "powershell-windows-x64|windows-2025|windows-x64|powershell|installer:powershell|logbrew-cli-installer.ps1",
                 "native-windows-x64|windows-2025|windows-x64|native|native:windows-x64|logbrew-cli-x86_64-pc-windows-msvc.zip",
-                "native-macos-x64|macos-15-intel|macos-x64|native|native:macos-x64|logbrew-cli-x86_64-apple-darwin.tar.xz",
+                "native-macos-arm64|macos-15|macos-arm64|native|native:macos-arm64|logbrew-cli-aarch64-apple-darwin.tar.xz",
             },
         )
 

@@ -68,12 +68,12 @@ jobs:
             artifact_id: native:windows-x64
             asset: logbrew-cli-x86_64-pc-windows-msvc.zip
             python: python
-          - receipt: native-macos-x64
-            runner: macos-15-intel
-            platform: macos-x64
+          - receipt: native-macos-arm64
+            runner: macos-15
+            platform: macos-arm64
             mode: native
-            artifact_id: native:macos-x64
-            asset: logbrew-cli-x86_64-apple-darwin.tar.xz
+            artifact_id: native:macos-arm64
+            asset: logbrew-cli-aarch64-apple-darwin.tar.xz
             python: python3
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
