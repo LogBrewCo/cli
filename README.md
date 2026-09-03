@@ -207,8 +207,11 @@ logbrew projects keys create <project_id> \
   --json
 ```
 
-The default kind is `sdk`; supported kinds are `sdk`, `browser`, `server`, and
-`cli`. The command sends one idempotent account-authenticated request and
+The default kind is `sdk`; supported kinds are `sdk`, `browser`, `server`,
+`cli`, and `artifact`. An artifact key is project-scoped and write-only. It can
+upload release source maps and native debug files but cannot read artifact
+metadata or submit telemetry. The command sends one idempotent
+account-authenticated request and
 stores the one-time key in a new owner-only file before reporting success. It
 never prints the key or its path and does not create a duplicate project. An
 ambiguous retry reuses the same request and idempotency key. Use

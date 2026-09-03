@@ -2,7 +2,7 @@
 
 use super::artifact::{Artifact, ArtifactChunk, RESUMABLE_CHUNK_BYTES};
 use super::wire::{self, UploadReceipt};
-use crate::auth::{AuthCredential, send_account_authenticated_with_refresh};
+use crate::auth::{AuthCredential, send_authenticated_with_refresh};
 use crate::{CliEnvironment, NativeDebugUploadOptions, RuntimeError};
 use std::collections::BTreeMap;
 
@@ -125,7 +125,7 @@ pub(super) async fn start(
     url: reqwest::Url,
     prepared: &PreparedUpload,
 ) -> Result<Session, AttemptFailure> {
-    let response = send_account_authenticated_with_refresh(client, env, |client, credential| {
+    let response = send_authenticated_with_refresh(client, env, |client, credential| {
         client
             .post(url.clone())
             .bearer_auth(credential.token())
@@ -161,7 +161,7 @@ pub(super) async fn put_chunk(
         )
         .as_str(),
     );
-    let response = send_account_authenticated_with_refresh(client, env, |client, credential| {
+    let response = send_authenticated_with_refresh(client, env, |client, credential| {
         client
             .put(url.clone())
             .bearer_auth(credential.token())
@@ -197,7 +197,7 @@ pub(super) async fn complete(
         )
         .as_str(),
     );
-    let response = send_account_authenticated_with_refresh(client, env, |client, credential| {
+    let response = send_authenticated_with_refresh(client, env, |client, credential| {
         client
             .post(url.clone())
             .bearer_auth(credential.token())
