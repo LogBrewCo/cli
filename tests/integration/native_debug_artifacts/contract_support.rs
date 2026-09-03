@@ -5,26 +5,6 @@ use std::process::Output;
 use super::support::*;
 use crate::{MockServer, Request};
 
-pub(crate) fn lookup_args<'a>(image_uuid: &'a str, architecture: &'a str) -> Vec<&'a str> {
-    vec![
-        "debug-artifacts",
-        "lookup",
-        "--project",
-        PROJECT_ID,
-        "--release",
-        "checkout@1.2.3",
-        "--environment",
-        "production",
-        "--service",
-        "checkout-api",
-        "--image-uuid",
-        image_uuid,
-        "--architecture",
-        architecture,
-        "--json",
-    ]
-}
-
 pub(crate) fn universal_macho(
     slices: &[(u32, u32, &[u8])],
 ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {

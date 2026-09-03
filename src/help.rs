@@ -59,7 +59,7 @@ Usage:
                          [--environment <environment>] [--provider <provider> --repository <id>] \
                          [--discovery <uuid> --component <uuid>]... [--json]
   logbrew projects keys create <project_id> --ingest-key-file <path> [--label <label>] \
-                         [--kind sdk|browser|server|cli] [--json]
+                         [--kind sdk|browser|server|cli|artifact] [--json]
   logbrew projects archive <project_id> --yes [--json]
   logbrew projects delete <project_id> --confirm <project_id> [--json]
   logbrew usage [--json]
@@ -219,7 +219,7 @@ Authenticated project creation (no dashboard sign-in):
                            --repository <id>] [--discovery <uuid> --component <uuid>]... [--json]
 Existing-project key creation (no dashboard sign-in):
   logbrew projects keys create <project_id> --ingest-key-file <path> [--label <label>] \
-                           [--kind sdk|browser|server|cli] [--json]
+                           [--kind sdk|browser|server|cli|artifact] [--json]
 Run either command after logbrew login. Each stores the one-time ingest key in the chosen \
 owner-only file and never prints the key or its path.
 logbrew setup --create-project shows secure project-creation help and does not create a project.
@@ -342,7 +342,7 @@ Usage:
                            --repository <id>] [--discovery <uuid> --component <uuid>]... \
                            [--abandon-retry] [--json]
   logbrew projects keys create <project_id> --ingest-key-file <path> [--label <label>] \
-                           [--kind sdk|browser|server|cli] [--abandon-retry] [--json]
+                           [--kind sdk|browser|server|cli|artifact] [--abandon-retry] [--json]
   logbrew projects archive <project_id> --yes [--json]
   logbrew projects delete <project_id> --confirm <project_id> [--json]
   logbrew setup --create-project [--json]
@@ -364,6 +364,8 @@ Project creation stores the one-time ingest key in a new owner-only file before 
 it never prints the one-time ingest key or its file path. An ambiguous attempt reuses the pending retry key only for the exact same request; --abandon-retry starts a new explicit attempt.
 Existing-project key creation uses the same storage and retry guarantees with independent private \
 retry state.
+The artifact kind is write-only and project-scoped. It uploads release source maps and native \
+debug files but cannot read artifact metadata or submit telemetry.
 Builds that cannot prove owner-only file permissions fail before sending the create request.
 No local install, quota, or usage state is created.
 Project setup uses POST /api/projects/{project_id}/setup/seen and preserves backend setup status JSON.
@@ -929,8 +931,9 @@ Usage:
                          --environment <environment> --service <service> --image-uuid <uuid> \
                          --architecture <arm|arm64|arm64e|x86|x86_64> [--json]
 
-Discovers and validates Apple dSYM, ZIP, Mach-O, or Android ELF debug objects locally, uploads every supported \
-exact identity, and verifies each identity with an authenticated lookup. Optional repeated \
+Discovers and validates Apple dSYM, ZIP, Mach-O, or Android ELF debug objects locally and uploads every supported \
+exact identity. Account authentication verifies each upload immediately. A project artifact key in \
+LOGBREW_TOKEN reports uploaded state and requires a later account-authenticated lookup. Optional repeated \
 --expect-image-uuid values require an exact discovered UUID set for release automation. --dry-run \
 performs the same local validation without authentication or network access. Upload limits are \
 256 MiB per thin debug object and 512 MiB per source file or resumable upload session. Large \

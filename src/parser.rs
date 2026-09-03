@@ -864,6 +864,7 @@ fn parse_project_ingest_key_create(args: &[String]) -> Result<Command, CliError>
                     "browser" => String::from("browser"),
                     "server" => String::from("server"),
                     "cli" => String::from("cli"),
+                    "artifact" => String::from("artifact"),
                     _ => return Err(CliError::InvalidProjectIngestKeyCreateCommand),
                 });
             }

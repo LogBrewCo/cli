@@ -57,8 +57,7 @@ async_test!(dsym_dry_run_discovers_identity_without_auth_or_network -> Result<()
         ),
     )
     .await?;
-    assert!(output.status.success());
-    assert!(output.stderr.is_empty());
+    super::assert_cli_success(&output);
     let text = String::from_utf8(output.stdout)?;
     let body: serde_json::Value = serde_json::from_str(text.as_str())?;
     assert_eq!(body["ok"], true);
@@ -617,34 +616,82 @@ async_test!(zip_crc_tampering_fails_before_network -> Result<(), Box<dyn std::er
     Ok(())
 });
 
-async_test!(native_upload_rejects_ingest_key_auth_before_network -> Result<(), Box<dyn std::error::Error>>, {
+async_test!(native_lookup_rejects_project_key_auth_before_network -> Result<(), Box<dyn std::error::Error>>, {
     let server = MockServer::start().await;
-    let fixture = Fixture::new("ingest-auth")?;
-    let artifact = fixture.root.join("Customer Secret Symbols");
-    std::fs::write(artifact.as_path(), macho64(0x0100_000c, uuid_bytes(0x10)))?;
-
-    for token in [
-        "lbw_ingest_private_project_key",
-        " \t lbw_ingest_private_project_key",
-    ] {
-        let output = invoke_with_token(
-            &fixture,
-            server.uri().as_str(),
-            upload_args(artifact.as_os_str()),
-            token,
-        )
-        .await?;
-        assert_eq!(output.status.code(), Some(1));
-        let (text, body) = json_failure(&output)?;
-        assert_eq!(body["error"], "unavailable");
-        assert_eq!(
-            body["next"],
-            "run logbrew login and retry the native debug-artifact command"
-        );
-        assert!(!text.contains("lbw_ingest_private_project_key"));
-        assert_private_values_absent(text.as_str(), &fixture, server.uri().as_str());
-    }
+    let fixture = Fixture::new("project-key-lookup")?;
+    let output = invoke_with_token(
+        &fixture,
+        server.uri().as_str(),
+        lookup_args(ARM64_UUID, "arm64"),
+        ARTIFACT_TOKEN,
+    )
+    .await?;
+    let (text, body) = json_failure(&output)?;
+    assert_eq!(body["error"], "unavailable");
+    assert_eq!(
+        body["next"],
+        "run logbrew login and retry the native debug-artifact command"
+    );
+    assert_private_values_absent(text.as_str(), &fixture, server.uri().as_str());
     assert!(received_requests(&server).await?.is_empty());
+    Ok(())
+});
+
+async_test!(project_artifact_key_upload_retries_completion_without_claiming_verification -> Result<(), Box<dyn std::error::Error>>, {
+    let server = MockServer::start().await;
+    let (fixture, artifact, object) = artifact("project-artifact-key", 257)?;
+    let digest = sha256_hex(object.as_slice());
+    let attempts = AtomicUsize::new(0);
+    Mock::route("POST", "/api/native-debug-artifact-uploads")
+        .respond_with(ResponseTemplate::new(200).set_body_json(start_response(&[&digest])))
+        .expect(1)
+        .mount(&server);
+    Mock::route(
+        "PUT",
+        format!("/api/native-debug-artifact-uploads/{RESUMABLE_SESSION_ID}/chunks/{digest}"),
+    )
+    .respond_with(ResponseTemplate::new(200).set_body_json(chunk_response(&digest)))
+    .expect(1)
+    .mount(&server);
+    Mock::route(
+        "POST",
+        format!("/api/native-debug-artifact-uploads/{RESUMABLE_SESSION_ID}/complete"),
+    )
+    .respond_with(move |_request: &Request| {
+        if attempts.fetch_add(1, Ordering::SeqCst) == 0 {
+            ResponseTemplate::new(503).set_body_string("hostile completion text")
+        } else {
+            ResponseTemplate::new(200).set_body_json(upload_success_body(1))
+        }
+    })
+    .expect(2)
+    .mount(&server);
+
+    let output = invoke_with_token(
+        &fixture,
+        server.uri().as_str(),
+        upload_args(artifact.as_os_str()),
+        ARTIFACT_TOKEN,
+    )
+    .await?;
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let text = String::from_utf8(output.stdout)?;
+    let body = serde_json::from_str::<serde_json::Value>(text.as_str())?;
+    assert_eq!(body["status"], "uploaded");
+    assert_eq!(body["artifacts"][0]["status"], "uploaded");
+    assert_eq!(body["next_action"]["code"], "verify_native_debug_artifact_lookup");
+    assert_eq!(body["next_action"]["target"], "native_debug_artifact_lookup");
+    assert!(!text.contains("hostile completion text"));
+    assert_private_values_absent(text.as_str(), &fixture, server.uri().as_str());
+    let requests = received_requests(&server).await?;
+    assert_eq!(
+        requests.iter().map(|request| request.method.as_str()).collect::<Vec<_>>(),
+        ["POST", "PUT", "POST", "POST"]
+    );
+    for request in requests {
+        assert_eq!(header_value(&request, "authorization")?, format!("Bearer {ARTIFACT_TOKEN}"));
+    }
     Ok(())
 });
 

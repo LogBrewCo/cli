@@ -10,6 +10,7 @@ pub(crate) const PROJECT_ID: &str = "123e4567-e89b-12d3-a456-426614174000";
 pub(crate) const ARM64_UUID: &str = "10111213-1415-1617-1819-1a1b1c1d1e1f";
 pub(crate) const X86_64_UUID: &str = "20212223-2425-2627-2829-2a2b2c2d2e2f";
 pub(crate) const TOKEN: &str = "private-account-token-proof";
+pub(crate) const ARTIFACT_TOKEN: &str = "lbw_ingest_artifact_private_value";
 pub(crate) const UPLOAD_ID: &str = "nativeart_11111111111111111111111111111111";
 const ARTIFACT_ID: &str = "nativeartifact_22222222222222222222222222222222";
 
@@ -27,6 +28,26 @@ pub(crate) fn upload_args(path: &std::ffi::OsStr) -> Vec<OsString> {
         OsString::from("--service"),
         OsString::from("checkout-api"),
         OsString::from("--json"),
+    ]
+}
+
+pub(crate) fn lookup_args<'a>(image_uuid: &'a str, architecture: &'a str) -> Vec<&'a str> {
+    vec![
+        "debug-artifacts",
+        "lookup",
+        "--project",
+        PROJECT_ID,
+        "--release",
+        "checkout@1.2.3",
+        "--environment",
+        "production",
+        "--service",
+        "checkout-api",
+        "--image-uuid",
+        image_uuid,
+        "--architecture",
+        architecture,
+        "--json",
     ]
 }
 
@@ -231,6 +252,7 @@ pub(crate) fn assert_private_values_absent(text: &str, fixture: &Fixture, base_u
     let root = fixture.root.to_string_lossy();
     for private in [
         TOKEN,
+        ARTIFACT_TOKEN,
         "Customer Secret",
         "private-arm",
         "private-x86",

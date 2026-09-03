@@ -11,6 +11,7 @@ use logbrew_cli::{
 const PROJECT_ID: &str = "123e4567-e89b-12d3-a456-426614174000";
 const INGEST_ID: &str = "223e4567-e89b-12d3-a456-426614174000";
 const DEFAULT_LABEL: &str = "CLI-created SDK key";
+const ARTIFACT_LABEL: &str = "CLI-created artifact key";
 const ONE_TIME_TOKEN: &str = "lbw_ingest_existing_project_private_value";
 
 #[test]
@@ -22,9 +23,9 @@ fn parses_existing_project_key_create_with_normalized_exact_request() {
         "create",
         PROJECT_ID,
         "--label",
-        "  Mobile server key  ",
+        "  Release artifact key  ",
         "--kind",
-        "server",
+        "artifact",
         "--ingest-key-file",
         "./private/ingest.key",
         "--json",
@@ -39,8 +40,8 @@ fn parses_existing_project_key_create_with_normalized_exact_request() {
     assert_eq!(
         command.request_body(),
         Some(serde_json::json!({
-            "label": "Mobile server key",
-            "kind": "server",
+            "label": "Release artifact key",
+            "kind": "artifact",
             "expires_at": null,
         }))
     );
@@ -129,7 +130,7 @@ fn existing_project_key_create_rejects_hostile_or_ambiguous_grammar_without_refl
         assert_eq!(body["message"], "invalid project ingest key create command");
         assert_eq!(
             body["next"],
-            "use logbrew projects keys create <project_id> --ingest-key-file <path> with optional --label, --kind sdk|browser|server|cli, --abandon-retry, and --json"
+            "use logbrew projects keys create <project_id> --ingest-key-file <path> with optional --label, --kind sdk|browser|server|cli|artifact, --abandon-retry, and --json"
         );
         assert!(!text.contains(invalid_project));
         assert!(!text.contains("hostile-secret"));
@@ -142,7 +143,8 @@ fn projects_help_documents_existing_project_key_creation_and_safe_retry() {
     let text = help::help_text(HelpTopic::Projects);
 
     assert!(text.contains("logbrew projects keys create <project_id> --ingest-key-file <path>"));
-    assert!(text.contains("--kind sdk|browser|server|cli"));
+    assert!(text.contains("--kind sdk|browser|server|cli|artifact"));
+    assert!(text.contains("artifact kind is write-only and project-scoped"));
     assert!(text.contains("existing project without creating a duplicate project"));
     assert!(text.contains("never prints the one-time ingest key or its file path"));
     assert!(text.contains("reuses the pending retry key only for the exact same request"));
@@ -159,14 +161,14 @@ async_test!(existing_project_key_create_posts_exact_request_then_persists_before
     )
     .and(header("content-type", "application/json"))
     .and(body_json(serde_json::json!({
-        "label": DEFAULT_LABEL,
-        "kind": "sdk",
+        "label": ARTIFACT_LABEL,
+        "kind": "artifact",
         "expires_at": null,
     })))
-    .respond_with(ResponseTemplate::new(200).set_body_json(success_response(DEFAULT_LABEL, "sdk")))
+    .respond_with(ResponseTemplate::new(200).set_body_json(success_response(ARTIFACT_LABEL, "artifact")))
     .mount(&server);
     let fixture = Fixture::new("success")?;
-    let command = parse_command(fixture.args(DEFAULT_LABEL, "sdk", false, true))?;
+    let command = parse_command(fixture.args(ARTIFACT_LABEL, "artifact", false, true))?;
     let mut output = Vec::new();
 
     execute_command(&command, &fixture.env(&server), &mut output).await?;
@@ -176,13 +178,13 @@ async_test!(existing_project_key_create_posts_exact_request_then_persists_before
     assert_eq!(body["status"], "created");
     assert_eq!(body["project_id"], PROJECT_ID);
     assert_eq!(body["ingest_key"]["id"], INGEST_ID);
-    assert_eq!(body["ingest_key"]["label"], DEFAULT_LABEL);
-    assert_eq!(body["ingest_key"]["kind"], "sdk");
+    assert_eq!(body["ingest_key"]["label"], ARTIFACT_LABEL);
+    assert_eq!(body["ingest_key"]["kind"], "artifact");
     assert_eq!(body["ingest_key"]["expires_at"], serde_json::Value::Null);
     assert_eq!(body["checks"][0]["status"], "stored");
     assert_eq!(
         body["next"],
-        "configure the SDK with the stored ingest key, then run logbrew doctor --project <project_id>"
+        "load the stored artifact key into LOGBREW_TOKEN, then run logbrew debug-artifacts upload"
     );
     assert!(!text.contains(ONE_TIME_TOKEN));
     assert!(!text.contains(fixture.key_file.to_string_lossy().as_ref()));
@@ -719,6 +721,11 @@ impl Fixture {
 }
 
 fn success_response(label: &str, kind: &str) -> serde_json::Value {
+    let next_action = if kind == "artifact" {
+        serde_json::json!({"code": "upload_release_artifacts", "target": "release_artifact_upload"})
+    } else {
+        serde_json::json!({"code": "send_first_telemetry", "target": "telemetry_ingest"})
+    };
     serde_json::json!({
         "id": INGEST_ID,
         "label": label,
@@ -727,7 +734,7 @@ fn success_response(label: &str, kind: &str) -> serde_json::Value {
         "created_at": "2026-07-31T12:00:00Z",
         "expires_at": null,
         "next": "configure this ingest key in an SDK or client",
-        "next_action": {"code": "send_first_telemetry", "target": "telemetry_ingest"}
+        "next_action": next_action
     })
 }
 

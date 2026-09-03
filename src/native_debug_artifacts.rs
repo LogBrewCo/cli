@@ -13,14 +13,10 @@ use wire::{LookupResult, UploadReceipt};
 
 /// Connection establishment timeout shared by upload and lookup.
 const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
-/// Bounded resumable start request window.
-const START_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
-/// Bounded 4 MiB chunk request window.
-const CHUNK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
-/// Bounded completion request window.
-const COMPLETE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
-/// Bounded exact lookup window.
-const LOOKUP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+/// Bounded small request and exact lookup window.
+const SHORT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+/// Bounded chunk and completion request window.
+const TRANSFER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 /// Overall network deadline for one upload invocation.
 const OVERALL_UPLOAD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30 * 60);
 /// Maximum same-phase attempts: one request plus one explicit idempotent retry.
@@ -45,24 +41,27 @@ pub(super) async fn execute<W: std::io::Write>(
                 options.expected_image_uuids.as_slice(),
             )?;
             if options.dry_run {
-                return write_validation(output, artifacts.as_slice(), json);
+                return write_artifact_result(
+                    output,
+                    artifacts.as_slice(),
+                    json,
+                    "validated",
+                    None,
+                );
             }
             let url = wire::native_artifact_url(env.base_url.as_str())?;
             let session_url = resumable::upload_session_url(env.base_url.as_str())?;
-            let start_client = build_client(START_TIMEOUT)?;
-            let chunk_client = build_client(CHUNK_TIMEOUT)?;
-            let complete_client = build_client(COMPLETE_TIMEOUT)?;
-            let lookup_client = build_client(LOOKUP_TIMEOUT)?;
+            let short_client = build_client(SHORT_TIMEOUT)?;
+            let transfer_client = build_client(TRANSFER_TIMEOUT)?;
             let context = UploadContext {
-                start_client: &start_client,
-                chunk_client: &chunk_client,
-                complete_client: &complete_client,
-                lookup_client: &lookup_client,
+                short_client: &short_client,
+                transfer_client: &transfer_client,
                 env,
                 url,
                 session_url,
                 options,
                 artifacts: artifacts.as_slice(),
+                write_only: crate::auth::token_is_project_ingest_key(env.token.as_deref()),
             };
             with_upload_deadline(
                 OVERALL_UPLOAD_TIMEOUT,
@@ -72,7 +71,7 @@ pub(super) async fn execute<W: std::io::Write>(
         }
         NativeDebugArtifactsTarget::Lookup(options) => {
             let url = wire::native_artifact_url(env.base_url.as_str())?;
-            let client = build_client(LOOKUP_TIMEOUT)?;
+            let client = build_client(SHORT_TIMEOUT)?;
             let lookup = wire::lookup(&client, env, url, options).await?;
             write_lookup(output, options, &lookup, json)
         }
@@ -81,24 +80,22 @@ pub(super) async fn execute<W: std::io::Write>(
 
 /// Immutable request and artifact state shared across bounded upload attempts.
 struct UploadContext<'a> {
-    /// Client with the short session-start window.
-    start_client: &'a reqwest::Client,
-    /// Client with the bounded 4 MiB chunk window.
-    chunk_client: &'a reqwest::Client,
-    /// Client with the short completion window.
-    complete_client: &'a reqwest::Client,
-    /// Client with the short exact-lookup request window.
-    lookup_client: &'a reqwest::Client,
-    /// Canonical account-auth and API environment.
+    /// Client for small requests and lookup.
+    short_client: &'a reqwest::Client,
+    /// Client for chunk transfer and completion.
+    transfer_client: &'a reqwest::Client,
+    /// Authentication and API environment.
     env: &'a CliEnvironment,
-    /// Parsed native debug-artifact endpoint.
+    /// Native artifact endpoint.
     url: reqwest::Url,
-    /// Parsed resumable session endpoint.
+    /// Resumable session endpoint.
     session_url: reqwest::Url,
-    /// Validated upload scope and local mode.
+    /// Validated upload scope.
     options: &'a NativeDebugUploadOptions,
-    /// Canonically ordered validated object identities.
+    /// Ordered object identities.
     artifacts: &'a [Artifact],
+    /// Whether lookup is unavailable to the supplied key.
+    write_only: bool,
 }
 
 /// Validates, uploads, and verifies every discovered object identity.
@@ -107,11 +104,11 @@ async fn execute_upload<W: std::io::Write>(
     json: bool,
     output: &mut W,
 ) -> Result<(), RuntimeError> {
-    if !json {
+    if !context.write_only && !json {
         write_progress(output, "Checking native debug artifact availability.")?;
     }
-    if verify_present(context, None).await? {
-        return write_already_present(output, context.artifacts, json);
+    if !context.write_only && verify_present(context, None).await? {
+        return write_artifact_result(output, context.artifacts, json, "already_present", None);
     }
 
     if !json {
@@ -129,7 +126,7 @@ async fn start_resumable(
 ) -> Result<resumable::Session, RuntimeError> {
     for attempt in 0..MAX_PHASE_ATTEMPTS {
         match resumable::start(
-            context.start_client,
+            context.short_client,
             context.env,
             context.session_url.clone(),
             prepared,
@@ -185,13 +182,24 @@ async fn execute_resumable<W: std::io::Write>(
     if !json {
         write_progress(output, "Completing native debug artifact upload.")?;
     }
-    let completed = complete_with_recovery(context, session).await?;
-    if !completed.lookup_verified
-        && !verify_present(context, Some(completed.receipt.upload_id.as_str())).await?
+    let (receipt, lookup_verified) = complete_with_recovery(context, session).await?;
+    if !context.write_only
+        && !lookup_verified
+        && !verify_present(context, Some(receipt.upload_id.as_str())).await?
     {
         return Err(RuntimeError::NativeDebugVerificationFailed);
     }
-    write_upload(output, &completed.receipt, context.artifacts, json)
+    write_artifact_result(
+        output,
+        context.artifacts,
+        json,
+        if context.write_only {
+            "uploaded"
+        } else {
+            "verified"
+        },
+        Some(&receipt),
+    )
 }
 
 /// Replays only one exact ambiguous chunk within the bounded phase budget.
@@ -202,7 +210,7 @@ async fn put_chunk_with_retry(
 ) -> Result<(), RuntimeError> {
     for attempt in 0..MAX_PHASE_ATTEMPTS {
         match resumable::put_chunk(
-            context.chunk_client,
+            context.transfer_client,
             context.env,
             &context.session_url,
             session,
@@ -227,11 +235,10 @@ async fn put_chunk_with_retry(
 async fn complete_with_recovery(
     context: &UploadContext<'_>,
     session: &resumable::Session,
-) -> Result<CompletedUpload, RuntimeError> {
-    let mut pending_retry_used = false;
+) -> Result<(UploadReceipt, bool), RuntimeError> {
     for attempt in 0..MAX_PHASE_ATTEMPTS {
         match resumable::complete(
-            context.complete_client,
+            context.transfer_client,
             context.env,
             &context.session_url,
             session,
@@ -239,12 +246,7 @@ async fn complete_with_recovery(
         )
         .await
         {
-            Ok(receipt) => {
-                return Ok(CompletedUpload {
-                    receipt,
-                    lookup_verified: false,
-                });
-            }
+            Ok(receipt) => return Ok((receipt, false)),
             Err(failure)
                 if matches!(
                     failure.kind,
@@ -253,20 +255,13 @@ async fn complete_with_recovery(
                         | resumable::FailureKind::CompletionSessionMissing
                 ) =>
             {
-                if let Some(upload) = lookup_recovered_upload(context).await? {
-                    return Ok(CompletedUpload {
-                        receipt: upload,
-                        lookup_verified: true,
-                    });
-                }
-                if failure.kind == resumable::FailureKind::CompletionSessionMissing {
-                    return Err(*failure.error);
-                }
-                if failure.kind == resumable::FailureKind::CompletionPending {
-                    if pending_retry_used {
+                if !context.write_only {
+                    if let Some(upload) = lookup_recovered_upload(context).await? {
+                        return Ok((upload, true));
+                    }
+                    if failure.kind == resumable::FailureKind::CompletionSessionMissing {
                         return Err(*failure.error);
                     }
-                    pending_retry_used = true;
                 }
                 if attempt + 1 >= MAX_PHASE_ATTEMPTS {
                     return Err(*failure.error);
@@ -279,14 +274,6 @@ async fn complete_with_recovery(
     Err(RuntimeError::NativeDebugVerificationFailed)
 }
 
-/// One completed session plus whether exact lookup already verified every artifact.
-struct CompletedUpload {
-    /// Existing stable upload receipt.
-    receipt: UploadReceipt,
-    /// True only when ambiguity recovery bound every identity to this upload.
-    lookup_verified: bool,
-}
-
 /// Returns one recovered receipt only when every identity matches one upload.
 async fn lookup_recovered_upload(
     context: &UploadContext<'_>,
@@ -296,7 +283,7 @@ async fn lookup_recovered_upload(
     for artifact in context.artifacts {
         let options = lookup_options(context.options, artifact);
         match wire::lookup(
-            context.lookup_client,
+            context.short_client,
             context.env,
             context.url.clone(),
             &options,
@@ -339,7 +326,7 @@ async fn verify_present(
     for artifact in context.artifacts {
         let lookup_options = lookup_options(context.options, artifact);
         match wire::lookup(
-            context.lookup_client,
+            context.short_client,
             context.env,
             context.url.clone(),
             &lookup_options,
@@ -426,77 +413,59 @@ fn write_progress<W: std::io::Write>(output: &mut W, message: &str) -> Result<()
     Ok(())
 }
 
-/// Writes local-only validation output without request scope or file identity.
-fn write_validation<W: std::io::Write>(
-    output: &mut W,
-    artifacts: &[Artifact],
-    json: bool,
-) -> Result<(), RuntimeError> {
-    if json {
-        let identities = artifact_summaries(artifacts, "validated");
-        let body = serde_json::json!({
-            "ok": true,
-            "status": "validated",
-            "artifact_count": artifacts.len(),
-            "artifacts": identities,
-            "next_action": {
-                "code": "upload_native_debug_artifact",
-                "target": "native_debug_artifact_upload"
-            }
-        });
-        writeln!(output, "{body}")?;
-    } else {
-        writeln!(output, "Native debug artifacts validated.")?;
-        writeln!(output, "Artifacts: {}", artifacts.len())?;
-        for artifact in artifacts {
-            writeln!(
-                output,
-                "{} {} validated",
-                artifact.architecture.as_str(),
-                artifact.image_uuid
-            )?;
-        }
-        writeln!(output, "Next: rerun without --dry-run to upload.")?;
-    }
-    Ok(())
-}
-
-/// Writes a lookup-confirmed no-op upload result.
-fn write_already_present<W: std::io::Write>(
-    output: &mut W,
-    artifacts: &[Artifact],
-    json: bool,
-) -> Result<(), RuntimeError> {
-    write_without_upload_id(output, artifacts, json, "already_present")
-}
-
-/// Writes a verified result that is not owned by one new upload identifier.
-fn write_without_upload_id<W: std::io::Write>(
+/// Writes one bounded validation or upload result without local file identity.
+fn write_artifact_result<W: std::io::Write>(
     output: &mut W,
     artifacts: &[Artifact],
     json: bool,
     status: &'static str,
+    upload: Option<&UploadReceipt>,
 ) -> Result<(), RuntimeError> {
+    let (heading, next, code, target) = match status {
+        "validated" => (
+            "Native debug artifacts validated.",
+            "rerun without --dry-run to upload.",
+            "upload_native_debug_artifact",
+            "native_debug_artifact_upload",
+        ),
+        "uploaded" => (
+            "Native debug artifacts uploaded.",
+            "run logbrew login, then verify each identity with logbrew debug-artifacts lookup.",
+            "verify_native_debug_artifact_lookup",
+            "native_debug_artifact_lookup",
+        ),
+        "verified" => (
+            "Native debug artifacts uploaded and verified.",
+            "verify native issue symbolication.",
+            "verify_native_issue_symbolication",
+            "native_issue_symbolication",
+        ),
+        "already_present" => (
+            "Native debug artifacts already present and verified.",
+            "verify native issue symbolication.",
+            "verify_native_issue_symbolication",
+            "native_issue_symbolication",
+        ),
+        _ => return Err(RuntimeError::NativeDebugResponseInvalid),
+    };
     if json {
-        let identities = artifact_summaries(artifacts, status);
-        let body = serde_json::json!({
+        let artifact_count = upload.map_or_else(
+            || u64::try_from(artifacts.len()).unwrap_or(u64::MAX),
+            |receipt| receipt.artifact_count,
+        );
+        let mut body = serde_json::json!({
             "ok": true,
             "status": status,
-            "artifact_count": artifacts.len(),
-            "artifacts": identities,
-            "next_action": {
-                "code": "verify_native_issue_symbolication",
-                "target": "native_issue_symbolication"
-            }
+            "artifact_count": artifact_count,
+            "artifacts": artifact_summaries(artifacts, status),
+            "next_action": {"code": code, "target": target}
         });
+        if let Some(receipt) = upload {
+            body["upload_id"] = serde_json::Value::String(receipt.upload_id.clone());
+        }
         writeln!(output, "{body}")?;
     } else {
-        let label = if status == "already_present" {
-            "already present and verified"
-        } else {
-            "uploaded and verified"
-        };
-        writeln!(output, "Native debug artifacts {label}.")?;
+        writeln!(output, "{heading}")?;
         writeln!(output, "Artifacts: {}", artifacts.len())?;
         for artifact in artifacts {
             writeln!(
@@ -506,7 +475,7 @@ fn write_without_upload_id<W: std::io::Write>(
                 artifact.image_uuid
             )?;
         }
-        writeln!(output, "Next: verify native issue symbolication.")?;
+        writeln!(output, "Next: {next}")?;
     }
     Ok(())
 }
@@ -526,43 +495,6 @@ fn artifact_summaries(artifacts: &[Artifact], status: &'static str) -> Vec<serde
             })
         })
         .collect()
-}
-
-/// Writes bounded verified upload output without local artifact identity.
-fn write_upload<W: std::io::Write>(
-    output: &mut W,
-    upload: &UploadReceipt,
-    artifacts: &[Artifact],
-    json: bool,
-) -> Result<(), RuntimeError> {
-    if json {
-        let identities = artifact_summaries(artifacts, "verified");
-        let body = serde_json::json!({
-            "ok": true,
-            "status": "verified",
-            "upload_id": upload.upload_id,
-            "artifact_count": upload.artifact_count,
-            "artifacts": identities,
-            "next_action": {
-                "code": "verify_native_issue_symbolication",
-                "target": "native_issue_symbolication"
-            }
-        });
-        writeln!(output, "{body}")?;
-    } else {
-        writeln!(output, "Native debug artifacts uploaded and verified.")?;
-        writeln!(output, "Artifacts: {}", artifacts.len())?;
-        for artifact in artifacts {
-            writeln!(
-                output,
-                "{} {} verified",
-                artifact.architecture.as_str(),
-                artifact.image_uuid
-            )?;
-        }
-        writeln!(output, "Next: verify native issue symbolication.")?;
-    }
-    Ok(())
 }
 
 /// Writes bounded standalone lookup output without echoing request scope.
@@ -635,24 +567,22 @@ fn write_lookup<W: std::io::Write>(
 #[cfg(test)]
 mod tests {
     use super::{
-        CHUNK_TIMEOUT, COMPLETE_TIMEOUT, CONNECT_TIMEOUT, LOOKUP_TIMEOUT, OVERALL_UPLOAD_TIMEOUT,
-        START_TIMEOUT, build_client, with_upload_deadline,
+        CONNECT_TIMEOUT, OVERALL_UPLOAD_TIMEOUT, SHORT_TIMEOUT, TRANSFER_TIMEOUT, build_client,
+        with_upload_deadline,
     };
 
     /// Proves fixed bounded timeout selection without a slow network request.
     #[test]
-    fn clients_use_separate_bounded_operation_windows() -> Result<(), Box<dyn std::error::Error>> {
+    fn clients_use_bounded_operation_windows() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(CONNECT_TIMEOUT, std::time::Duration::from_secs(10));
-        assert_eq!(START_TIMEOUT, std::time::Duration::from_secs(15));
-        assert_eq!(CHUNK_TIMEOUT, std::time::Duration::from_secs(60));
-        assert_eq!(COMPLETE_TIMEOUT, std::time::Duration::from_secs(60));
-        assert_eq!(LOOKUP_TIMEOUT, std::time::Duration::from_secs(15));
+        assert_eq!(SHORT_TIMEOUT, std::time::Duration::from_secs(15));
+        assert_eq!(TRANSFER_TIMEOUT, std::time::Duration::from_secs(60));
         assert_eq!(
             OVERALL_UPLOAD_TIMEOUT,
             std::time::Duration::from_secs(30 * 60)
         );
-        let _upload = build_client(CHUNK_TIMEOUT)?;
-        let _lookup = build_client(LOOKUP_TIMEOUT)?;
+        let _upload = build_client(TRANSFER_TIMEOUT)?;
+        let _lookup = build_client(SHORT_TIMEOUT)?;
         Ok(())
     }
 
