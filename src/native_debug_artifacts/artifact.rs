@@ -382,13 +382,12 @@ fn read_regular_file(path: &Path) -> Result<Vec<u8>, RuntimeError> {
     let read_limit = u64::try_from(MAX_SOURCE_BYTES)
         .unwrap_or(u64::MAX)
         .saturating_add(1);
-    let bytes_read = (&mut file)
+    let _ = (&mut file)
         .take(read_limit)
         .read_to_end(&mut bytes)
         .map_err(|_| invalid_artifact())?;
     let after = file.metadata().map_err(|_| invalid_artifact())?;
-    if bytes_read != bytes.len()
-        || bytes.len() > MAX_SOURCE_BYTES
+    if bytes.len() > MAX_SOURCE_BYTES
         || u64::try_from(bytes.len()).ok() != Some(before.len())
         || !same_file(&before, &after)
     {
