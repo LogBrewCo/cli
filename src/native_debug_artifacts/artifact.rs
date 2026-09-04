@@ -387,10 +387,7 @@ fn read_regular_file(path: &Path) -> Result<Vec<u8>, RuntimeError> {
         .read_to_end(&mut bytes)
         .map_err(|_| invalid_artifact())?;
     let after = file.metadata().map_err(|_| invalid_artifact())?;
-    if bytes.len() > MAX_SOURCE_BYTES
-        || u64::try_from(bytes.len()).ok() != Some(before.len())
-        || !same_file(&before, &after)
-    {
+    if u64::try_from(bytes.len()).ok() != Some(before.len()) || !same_file(&before, &after) {
         return Err(invalid_artifact());
     }
     Ok(bytes)
