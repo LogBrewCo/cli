@@ -349,8 +349,8 @@ fn validate_issue_response(
     validate_name_version(required_object(event, "sdk")?)?;
     validate_nullable_object(event, "context")?;
     validate_nullable_object(event, "exception")?;
-    validate_object_array(event, "stack_frames", 256)?;
-    validate_object_array(event, "breadcrumbs", 256)?;
+    let _ = validate_object_array(event, "stack_frames", 256)?;
+    let _ = validate_object_array(event, "breadcrumbs", 256)?;
     let _breadcrumbs_truncated = require_bool(event, "breadcrumbs_truncated")?;
     let evidence = required_object(response, "evidence")?;
     validate_evidence(evidence)?;
@@ -1391,7 +1391,7 @@ fn validate_trace_response(value: &Value, expected_id: &str) -> Result<(), Runti
             "next_actions",
         ],
     )?;
-    validate_schema_version_value(response, 2)?;
+    validate_schema_version_value(response, 3)?;
     let subject = required_object(response, "subject")?;
     require_string_equals(subject, "kind", "trace")?;
     require_string_equals(subject, "trace_id", expected_id)?;
@@ -1409,10 +1409,10 @@ fn validate_trace_response(value: &Value, expected_id: &str) -> Result<(), Runti
     for name in ["root_span", "first_error_span", "bottleneck_span"] {
         validate_nullable_object(analysis, name)?;
     }
-    validate_object_array(analysis, "first_error_path", 256)?;
-    validate_object_array(analysis, "bottleneck_path", 256)?;
+    let _ = validate_object_array(analysis, "first_error_path", 256)?;
+    let _ = validate_object_array(analysis, "bottleneck_path", 256)?;
 
-    validate_items_collection(required_object(response, "spans")?, false)?;
+    let _ = validate_items_collection(required_object(response, "spans")?, false)?;
     validate_trace_correlations(required_object(response, "correlations")?)?;
     validate_timeline(required_object(response, "timeline")?)?;
     validate_evidence(required_object(response, "evidence")?)?;
@@ -2012,20 +2012,17 @@ fn validate_nullable_object(value: &Map<String, Value>, name: &str) -> Result<()
 }
 
 /// Validates one required bounded array of objects.
-fn validate_object_array(
-    value: &Map<String, Value>,
+fn validate_object_array<'a>(
+    value: &'a Map<String, Value>,
     name: &str,
     limit: usize,
-) -> Result<(), RuntimeError> {
-    let items = value
+) -> Result<&'a [Value], RuntimeError> {
+    value
         .get(name)
         .and_then(Value::as_array)
-        .ok_or_else(invalid_response)?;
-    if items.len() > limit || items.iter().any(|item| !item.is_object()) {
-        Err(invalid_response())
-    } else {
-        Ok(())
-    }
+        .filter(|items| items.len() <= limit && items.iter().all(Value::is_object))
+        .map(Vec::as_slice)
+        .ok_or_else(invalid_response)
 }
 
 /// Validates one required bounded array of non-empty strings.
@@ -2135,13 +2132,13 @@ fn validate_correlated_collection(
 fn validate_items_collection(
     value: &Map<String, Value>,
     status_required: bool,
-) -> Result<(), RuntimeError> {
+) -> Result<&[Value], RuntimeError> {
     if status_required {
         let _status = validate_availability(value, "status")?;
     }
-    validate_object_array(value, "items", 1_000)?;
+    let items = validate_object_array(value, "items", 1_000)?;
     let _truncated = require_bool(value, "truncated")?;
-    Ok(())
+    Ok(items)
 }
 
 /// Validates one exact-trace availability and summary object.
@@ -2181,7 +2178,7 @@ fn validate_issue_correlations(
     let trace = required_object(value, "trace")?;
     validate_trace_link(trace, false)?;
     for name in ["logs", "actions", "metrics"] {
-        validate_items_collection(required_object(value, name)?, true)?;
+        let _ = validate_items_collection(required_object(value, name)?, true)?;
     }
     let release = required_object(value, "release")?;
     validate_release_scope(release)?;
@@ -2243,7 +2240,7 @@ fn validate_related_issues(
 fn validate_log_correlations(value: &Map<String, Value>) -> Result<(), RuntimeError> {
     validate_trace_link(required_object(value, "trace")?, true)?;
     for name in ["issues", "trace_logs", "nearby_logs", "actions", "metrics"] {
-        validate_items_collection(required_object(value, name)?, true)?;
+        let _ = validate_items_collection(required_object(value, name)?, true)?;
     }
     validate_release_scope(required_object(value, "release")?)
 }
@@ -2253,13 +2250,7 @@ fn validate_trace_correlations(value: &Map<String, Value>) -> Result<(), Runtime
     let window = required_object(value, "window")?;
     let _since = require_timestamp(window, "since")?;
     let _until = require_timestamp(window, "until")?;
-    let scopes = window
-        .get("scopes")
-        .and_then(Value::as_array)
-        .ok_or_else(invalid_response)?;
-    if scopes.len() > 256 {
-        return Err(invalid_response());
-    }
+    let scopes = validate_object_array(window, "scopes", 256)?;
     for scope in scopes {
         let scope = scope.as_object().ok_or_else(invalid_response)?;
         let _project_id = required_uuid_text(scope, "project_id")?;
@@ -2273,7 +2264,11 @@ fn validate_trace_correlations(value: &Map<String, Value>) -> Result<(), Runtime
         validate_trace_issue,
     )?;
     for name in ["logs", "actions", "metrics"] {
-        validate_items_collection(required_object(value, name)?, true)?;
+        let collection = required_object(value, name)?;
+        for item in validate_items_collection(collection, true)? {
+            let item = item.as_object().ok_or_else(invalid_response)?;
+            let _span_id = nullable_w3c_id(item, "span_id", 16)?;
+        }
     }
     Ok(())
 }
@@ -2283,7 +2278,8 @@ fn validate_trace_issue(issue: &Map<String, Value>) -> Result<(), RuntimeError> 
     let cause = required_object(issue, "cause")?;
     let fix = required_object(issue, "fix")?;
     let mut core = issue.clone();
-    core.retain(|field, _value| !matches!(field.as_str(), "cause" | "fix"));
+    let _span_id = nullable_w3c_id(&core, "span_id", 16)?;
+    core.retain(|field, _value| !matches!(field.as_str(), "cause" | "fix" | "span_id"));
     let _id = validate_correlated_signal(
         &core,
         require_string(issue, "project_id")?,
@@ -2550,15 +2546,12 @@ fn validate_issue_deployment(
 
 /// Validates one bounded causal timeline shared by investigation responses.
 fn validate_timeline(value: &Map<String, Value>) -> Result<(), RuntimeError> {
-    let items = value
-        .get("items")
-        .and_then(Value::as_array)
-        .filter(|items| items.len() <= 1_000)
-        .ok_or_else(invalid_response)?;
+    let items = validate_items_collection(value, false)?;
     let mut previous_time = None;
     for item in items {
         let item = item.as_object().ok_or_else(invalid_response)?;
         let _kind = require_string(item, "kind")?;
+        let _span_id = nullable_w3c_id(item, "span_id", 16)?;
         let occurred_at = require_timestamp_millis(item, "occurred_at")?;
         if previous_time
             .replace(occurred_at)
@@ -2567,7 +2560,6 @@ fn validate_timeline(value: &Map<String, Value>) -> Result<(), RuntimeError> {
             return Err(invalid_response());
         }
     }
-    let _truncated = require_bool(value, "truncated")?;
     Ok(())
 }
 
@@ -3814,6 +3806,7 @@ fn append_issue_previews(output: &mut String, items: Option<&[Value]>) {
         append_labeled_integer(output, "occurrences", issue, "occurrence_count");
         append_labeled_text(output, "issue", issue, "issue_id", 80);
         append_labeled_text(output, "trace", issue, "trace_id", 80);
+        append_labeled_text(output, "span", issue, "span_id", 40);
         append_labeled_text(output, "at", issue, "occurred_at", 64);
         output.push('\n');
         append_issue_cause(output, issue.get("cause"));
@@ -3845,6 +3838,7 @@ fn append_action_previews(output: &mut String, items: Option<&[Value]>) {
         append_labeled_integer(output, "events", action, "event_count");
         append_labeled_integer(output, "users", action, "identified_user_count");
         append_labeled_integer(output, "sessions", action, "session_count");
+        append_labeled_text(output, "span", action, "span_id", 40);
         append_labeled_text(output, "at", action, "occurred_at", 64);
         output.push('\n');
     }
@@ -3917,6 +3911,7 @@ fn append_metric_previews(output: &mut String, items: Option<&[Value]>) {
         append_labeled_text(output, "at", metric, "occurred_at", 64);
         append_labeled_text(output, "latest_at", metric, "latest_at", 64);
         append_labeled_text(output, "trace", metric, "trace_id", 80);
+        append_labeled_text(output, "span", metric, "span_id", 40);
         output.push('\n');
     }
 }
