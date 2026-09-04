@@ -404,9 +404,9 @@ async_test!(human_explain_trace_prints_scan_friendly_summary, {
             "/api/telemetry/traces/trace_123/investigation",
             "test-token",
         )
-        .and(query_param("response_version", "2"))
+        .and(query_param("response_version", "3"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "schema_version": 2,
+            "schema_version": 3,
             "subject": {
                 "kind": "trace",
                 "trace_id": "trace_123",
@@ -457,6 +457,7 @@ async_test!(human_explain_trace_prints_scan_friendly_summary, {
                     "message": "provider response could not be decoded",
                     "occurred_at": "2026-06-02T20:00:00.250Z",
                     "service_name": "checkout-api",
+                    "span_id": "0123456789abcdef",
                     "environment": "production",
                     "release": "checkout@1.2.3",
                     "cause": {"status": "reported_hypothesis", "summary": "The provider returned a malformed response.",
@@ -507,7 +508,7 @@ async_test!(human_explain_trace_prints_scan_friendly_summary, {
              service=checkout-api operation=payment.charge status=error duration_ms=420 \
              span=0123456789abcdef\nFirst error path: charge card\nRelated issues: \
              status=available count=1 truncated=false\nIssue: title=PaymentError severity=error \
-             issue=22222222-2222-4222-8222-222222222222 at=2026-06-02T20:00:00.250Z\nCause \
+             issue=22222222-2222-4222-8222-222222222222 span=0123456789abcdef at=2026-06-02T20:00:00.250Z\nCause \
              assessment: status=reported_hypothesis provenance=application_reported\nReported hypothesis \
              (unverified): The provider returned a malformed response.\nCause signals: reported_root_cause\nFix area: \
              status=reported_location provenance=application_reported component=checkout-api \

@@ -2531,7 +2531,7 @@ fn explain_path(target: &ExplainTarget) -> String {
         }
         ExplainTarget::Trace(id) => {
             format!(
-                "/api/telemetry/traces/{}/investigation?response_version=2",
+                "/api/telemetry/traces/{}/investigation?response_version=3",
                 encode_component(id)
             )
         }
