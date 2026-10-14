@@ -95,7 +95,7 @@ fn publication_requires_verified_source_and_single_upload() {
         "--branch main",
         "--commit \"$GITHUB_SHA\"",
         "--status success",
-        "uses: rust-lang/crates-io-auth-action@v1.0.5",
+        "uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5",
         "cargo publish --locked --no-verify",
     ] {
         assert!(CRATES.contains(required), "missing {required}");
@@ -150,7 +150,12 @@ fn publication_requires_verified_source_and_single_upload() {
         "formula commit, validation and push must remain ordered"
     );
     assert_eq!(HOMEBREW.matches("secrets.HOMEBREW_TAP_TOKEN").count(), 1);
-    assert_eq!(HOMEBREW.matches("uses: actions/checkout@v7").count(), 2);
+    assert_eq!(
+        HOMEBREW
+            .matches("uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1")
+            .count(),
+        2
+    );
     assert!(!HOMEBREW.contains("\n          brew ") && !HOMEBREW.contains("\n          ruby "));
     assert!(!HOMEBREW.contains("for release in $(") && !HOMEBREW.contains("echo \"$PLAN\""));
     for source in [RELEASE, CRATES, NPM, HOMEBREW] {
