@@ -1,29 +1,19 @@
 //! Native debug-artifact transport bounds and progress contracts.
 
-#[allow(dead_code)]
-#[path = "native_debug_artifacts/contract_support.rs"]
-mod contract_support;
-#[allow(dead_code)]
-#[path = "native_debug_artifacts/resumable_support.rs"]
-mod resumable_support;
-#[allow(dead_code)]
-#[path = "native_debug_artifacts/support.rs"]
-mod support;
-
-use crate::{Mock, MockServer, ResponseTemplate};
-use contract_support::universal_macho;
-use resumable_support::{
+use super::native_debug_artifacts::contract_support::universal_macho;
+use super::native_debug_artifacts::resumable_support::{
     RESUMABLE_CHUNK_SIZE, RESUMABLE_SESSION_ID, chunk_response, start_response,
 };
+use super::native_debug_artifacts::support::{
+    ARM64_UUID, Fixture, PROJECT_ID, TOKEN, UPLOAD_ID, X86_64_UUID, assert_private_values_absent,
+    command_with_token, header_value, invoke, macho64, missing_lookup, mount_lookup_sequence,
+    sha256_hex, upload_args, upload_success_body, uuid_bytes,
+};
+use crate::{Mock, MockServer, ResponseTemplate};
 use std::io::BufRead as _;
 use std::process::Stdio;
 use std::sync::mpsc;
 use std::time::Duration;
-use support::{
-    ARM64_UUID, Fixture, PROJECT_ID, TOKEN, UPLOAD_ID, X86_64_UUID, assert_private_values_absent,
-    command_with_token, header_value, invoke, macho64, missing_lookup, mount_lookup_sequence,
-    received_requests, sha256_hex, upload_args, upload_success_body, uuid_bytes,
-};
 
 const IMPLEMENTATION: &str = include_str!("../../src/native_debug_artifacts.rs");
 
@@ -47,12 +37,12 @@ fn native_debug_transport_has_explicit_request_and_overall_bounds_without_hidden
 }
 
 async_test!(human_upload_reports_a_fixed_phase_before_waiting_for_the_server -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await?;
     Mock::route("GET", "/api/native-debug-artifacts")
         .respond_with(
             ResponseTemplate::new(200)
                 .set_delay(Duration::from_secs(5))
-                .set_body_json(missing_lookup()),
+                .set_body_json(&missing_lookup()),
         )
         .mount(&server);
 
@@ -95,7 +85,7 @@ async_test!(human_upload_reports_a_fixed_phase_before_waiting_for_the_server -> 
 });
 
 async_test!(large_universal_object_uses_bounded_resumable_chunks_and_one_json_document -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await?;
     let fixture = Fixture::new("bounded-large-universal")?;
     let mut arm64 = macho64(0x0100_000c, uuid_bytes(0x10));
     arm64.resize(RESUMABLE_CHUNK_SIZE + 257, 0x5a);
@@ -136,14 +126,13 @@ async_test!(large_universal_object_uses_bounded_resumable_chunks_and_one_json_do
             found_lookup_for(ARM64_UUID, "arm64", arm_digest.as_str(), arm64.len(), 1),
             found_lookup_for(X86_64_UUID, "x86_64", x86_digest.as_str(), x86_64.len(), 2),
         ],
-    )
-    .await;
+    );
     let missing = chunks
         .iter()
         .map(|(digest, _)| digest.as_str())
         .collect::<Vec<_>>();
     Mock::route("POST", "/api/native-debug-artifact-uploads")
-        .respond_with(ResponseTemplate::new(200).set_body_json(start_response(&missing)))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&start_response(&missing)))
         .expect(1)
         .mount(&server);
     for (digest, _) in &chunks {
@@ -151,7 +140,7 @@ async_test!(large_universal_object_uses_bounded_resumable_chunks_and_one_json_do
             "PUT",
             format!("/api/native-debug-artifact-uploads/{RESUMABLE_SESSION_ID}/chunks/{digest}"),
         )
-        .respond_with(ResponseTemplate::new(200).set_body_json(chunk_response(digest)))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&chunk_response(digest)))
         .expect(1)
         .mount(&server);
     }
@@ -159,7 +148,7 @@ async_test!(large_universal_object_uses_bounded_resumable_chunks_and_one_json_do
         "POST",
         format!("/api/native-debug-artifact-uploads/{RESUMABLE_SESSION_ID}/complete"),
     )
-    .respond_with(ResponseTemplate::new(200).set_body_json(upload_success_body(2)))
+    .respond_with(ResponseTemplate::new(200).set_body_json(&upload_success_body(2)))
     .expect(1)
     .mount(&server);
 
@@ -180,7 +169,7 @@ async_test!(large_universal_object_uses_bounded_resumable_chunks_and_one_json_do
     assert_eq!(body["artifact_count"], 2);
     assert_private_values_absent(text.as_str(), &fixture, server.uri().as_str());
 
-    let requests = received_requests(&server).await?;
+    let requests = server.received_requests();
     assert_eq!(requests.len(), 10);
     assert_eq!(
         requests

@@ -105,7 +105,7 @@ fn parses_only_the_explicit_exact_span_scope() -> Result<(), Box<dyn std::error:
 }
 
 async_test!(built_binary_preserves_exact_validated_json_and_authenticates -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await.expect("loopback server starts");
     let response = span_response();
     mount_response(&server, response.clone());
 
@@ -118,7 +118,7 @@ async_test!(built_binary_preserves_exact_validated_json_and_authenticates -> Res
 });
 
 async_test!(baseline_arithmetic_accepts_the_full_safe_integer_range -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await.expect("loopback server starts");
     let mut response = span_response();
     response["baseline"]["retained_peer_count"] = serde_json::json!(9_000_000_000_000_000_u64);
     response["baseline"]["error_peer_count"] = serde_json::json!(4_500_000_000_000_000_u64);
@@ -135,7 +135,7 @@ async_test!(baseline_arithmetic_accepts_the_full_safe_integer_range -> Result<()
 });
 
 async_test!(available_topology_accepts_an_unretained_immediate_parent -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await.expect("loopback server starts");
     let mut response = span_response();
     response["topology"]["root"] = serde_json::Value::Null;
     response["topology"]["parent"] = serde_json::Value::Null;
@@ -168,7 +168,7 @@ async_test!(available_topology_accepts_an_unretained_immediate_parent -> Result<
 });
 
 async_test!(human_output_explains_topology_baseline_correlations_and_evidence -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await.expect("loopback server starts");
     mount_response(&server, span_response());
 
     let process = run_binary(&server, false, None).await?;
@@ -272,7 +272,7 @@ async_test!(contract_rejects_identity_arithmetic_topology_payload_and_routing_co
         unknown_field,
         wrong_next_action,
     ] {
-        let server = MockServer::start().await;
+        let server = MockServer::start().await.expect("loopback server starts");
         mount_response(&server, response);
         let command = span_command(true)?;
         let mut output = Vec::new();
@@ -288,7 +288,7 @@ async_test!(contract_rejects_identity_arithmetic_topology_payload_and_routing_co
 });
 
 async_test!(unavailable_optional_evidence_keeps_the_subject_and_adds_retry_guidance -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await.expect("loopback server starts");
     let mut response = span_response();
     response["analysis"]["observations"] = serde_json::json!(["subject_error"]);
     response["topology"] = serde_json::json!({
@@ -393,7 +393,7 @@ async_test!(unavailable_optional_evidence_keeps_the_subject_and_adds_retry_guida
 });
 
 async_test!(missing_sdk_and_context_are_explicit_without_rendering_empty_identity -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await.expect("loopback server starts");
     let mut response = span_response();
     response["subject"]["sdk"] = serde_json::json!({"name": "", "version": ""});
     response["context"] = serde_json::Value::Null;
@@ -431,7 +431,7 @@ async_test!(missing_sdk_and_context_are_explicit_without_rendering_empty_identit
 });
 
 async_test!(human_output_escapes_terminal_controls_in_untrusted_subject_text -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await.expect("loopback server starts");
     let mut response = span_response();
     response["subject"]["name"] = serde_json::json!("SELECT\u{001b}[31m checkout");
     response["baseline"]["dimensions"]["name"] = response["subject"]["name"].clone();

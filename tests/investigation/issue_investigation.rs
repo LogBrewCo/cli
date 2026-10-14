@@ -176,7 +176,7 @@ fn help_describes_the_complete_versioned_bundle() {
 }
 
 async_test!(correction_verification_validates_exact_json_and_renders_honest_human_evidence -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await.expect("loopback server starts");
     let bundle = correction_bundle();
     mount_correction(&server, bundle.clone(), 2);
     let command = correction_command(true)?;
@@ -222,7 +222,7 @@ async_test!(correction_verification_rejects_contradictions_and_unknown_fields_wi
         ("/evidence/status", serde_json::json!("partial")),
     ];
     for (pointer, value) in cases {
-        let server = MockServer::start().await;
+        let server = MockServer::start().await.expect("loopback server starts");
         let mut bundle = correction_bundle();
         bundle["baseline_release"] = serde_json::json!(HOSTILE_MARKER);
         *bundle.pointer_mut(pointer).expect("fixture pointer") = value;
@@ -249,7 +249,7 @@ async_test!(investigation_uses_the_versioned_cross_signal_bundle -> Result<(), B
 });
 
 async_test!(exact_occurrence_request_uses_the_exact_id_and_validates_its_receipt -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await.expect("loopback server starts");
     let mut bundle = rich_investigation_bundle();
     bundle["occurrence_selection"]["requested"] = serde_json::json!("exact");
     bundle["occurrence_selection"]["reason"] = serde_json::json!("exact_occurrence_requested");
@@ -465,7 +465,7 @@ async_test!(partial_and_unavailable_occurrence_analysis_keep_the_primary_investi
 });
 
 async_test!(investigate_and_explain_issue_share_one_output_contract -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await.expect("loopback server starts");
     mount_bundle(&server, rich_investigation_bundle(), 2, RECOMMENDED);
 
     let investigate = run(&server, false, "investigate").await?;
@@ -500,7 +500,7 @@ async_test!(invalid_or_duplicate_bundles_fail_closed_without_reflection -> Resul
             "hostile-duplicate-marker",
         ),
     ] {
-        let server = MockServer::start().await;
+        let server = MockServer::start().await.expect("loopback server starts");
         Mock::route(
             "GET",
             format!("/api/telemetry/issues/{ISSUE_ID}/investigation"),
@@ -533,7 +533,7 @@ async_test!(contradictory_contract_bundles_fail_closed_without_reflection -> Res
 });
 
 async_test!(exact_selector_rejects_a_recommended_server_receipt -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await.expect("loopback server starts");
     let mut bundle = rich_investigation_bundle();
     bundle["subject"]["message"] = serde_json::json!(HOSTILE_MARKER);
     mount_bundle(&server, bundle, 1, ("occurrence_id", OCCURRENCE_ID));
@@ -561,7 +561,7 @@ async_test!(exact_selector_rejects_a_recommended_server_receipt -> Result<(), Bo
 });
 
 async_test!(redirects_are_not_followed_with_authentication -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await.expect("loopback server starts");
     Mock::route(
         "GET",
         format!("/api/telemetry/issues/{ISSUE_ID}/investigation"),
@@ -591,7 +591,7 @@ async_test!(redirects_are_not_followed_with_authentication -> Result<(), Box<dyn
 });
 
 async_test!(api_failures_discard_backend_text_and_keep_typed_recovery -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await.expect("loopback server starts");
     Mock::route(
         "GET",
         format!("/api/telemetry/issues/{ISSUE_ID}/investigation"),
@@ -696,7 +696,7 @@ async fn assert_invalid_bundles(
     cases: Vec<serde_json::Value>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     for bundle in cases {
-        let server = MockServer::start().await;
+        let server = MockServer::start().await.expect("loopback server starts");
         mount_bundle(&server, bundle, 1, RECOMMENDED);
         let command = parse_command(["logbrew", "investigate", "issue", ISSUE_ID, "--json"])?;
         let mut output = Vec::new();
@@ -716,7 +716,7 @@ async fn assert_bundle_outputs(
     bundle: serde_json::Value,
     expected_human: &[&str],
 ) -> Result<String, Box<dyn std::error::Error>> {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await.expect("loopback server starts");
     mount_bundle(&server, bundle.clone(), 2, RECOMMENDED);
     let json: serde_json::Value =
         serde_json::from_str(run(&server, true, "investigate").await?.as_str())?;

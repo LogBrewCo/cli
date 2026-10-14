@@ -9,12 +9,12 @@ type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
 async_test!(built_binary_completes_loopback_login_without_exposing_credentials -> TestResult, {
     drop(rustls::crypto::ring::default_provider().install_default());
-    let server = MockServer::start().await;
+    let server = MockServer::start().await?;
     Mock::route("POST", "/api/auth/gitlab")
         .and(body_json(
             serde_json::json!({ "code": "binary-provider-code" }),
         ))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+        .respond_with(ResponseTemplate::new(200).set_body_json(&serde_json::json!({
             "access_token": "binary-access",
             "refresh_token": "binary-refresh"
         })))
@@ -54,8 +54,8 @@ async_test!(built_binary_completes_loopback_login_without_exposing_credentials -
 
 async_test!(browser_login_does_not_forward_exchange_codes_across_redirects -> TestResult, {
     drop(rustls::crypto::ring::default_provider().install_default());
-    let server = MockServer::start().await;
-    let redirected = MockServer::start().await;
+    let server = MockServer::start().await?;
+    let redirected = MockServer::start().await?;
     Mock::route("POST", "/api/auth/gitlab")
         .and(body_json(
             serde_json::json!({ "code": "redirect-provider-code" }),
@@ -67,7 +67,7 @@ async_test!(browser_login_does_not_forward_exchange_codes_across_redirects -> Te
         .expect(1)
         .mount(&server);
     Mock::route("POST", "/capture")
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+        .respond_with(ResponseTemplate::new(200).set_body_json(&serde_json::json!({
             "access_token": "redirect-access",
             "refresh_token": "redirect-refresh"
         })))
@@ -94,7 +94,7 @@ async fn run_binary_login(
     code: &str,
     label: &str,
 ) -> TestResult<(std::process::Output, std::path::PathBuf, String)> {
-    let root = binary_login_root(label)?;
+    let root = super::isolated_home("logbrew-cli-binary-login", label)?;
     let home = root.join("home");
     let bin_dir = root.join("bin");
     let call_file = root.join("browser-url");
@@ -116,26 +116,27 @@ async fn run_binary_login(
     path_entries.extend(std::env::split_paths(&inherited_path));
     let child_path = std::env::join_paths(path_entries)?;
     let child = std::process::Command::new(env!("CARGO_BIN_EXE_logbrew"))
+        .env_clear()
         .arg("login")
         .args(["--provider", "gitlab"])
         .env("HOME", home.as_os_str())
         .env("LOGBREW_API_URL", server.uri())
         .env("LOGBREW_TEST_BROWSER_URL_FILE", call_file.as_os_str())
         .env("PATH", child_path)
-        .env_remove("LOGBREW_TOKEN")
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()?;
 
     let auth_url = wait_for_browser_url(call_file.as_path()).await?;
     let auth_url = reqwest::Url::parse(auth_url.as_str())?;
-    assert_eq!(auth_url.path(), "/api/auth/cli/login");
+    assert_eq!(auth_url.path(), "/api/auth/cli/login", "wrong login route");
     let query = auth_url
         .query_pairs()
         .collect::<std::collections::HashMap<_, _>>();
     assert_eq!(
-        query.get("provider").map(|value| value.as_ref()),
-        Some("gitlab")
+        query.get("provider").map(AsRef::as_ref),
+        Some("gitlab"),
+        "wrong login provider"
     );
     let state = query.get("state").ok_or("missing state")?.to_string();
     let mut callback = reqwest::Url::parse(
@@ -150,7 +151,11 @@ async fn run_binary_login(
         .append_pair("code", code)
         .append_pair("state", state.as_str());
     let callback_response = reqwest::get(callback).await?;
-    assert_eq!(callback_response.status(), reqwest::StatusCode::OK);
+    assert_eq!(
+        callback_response.status(),
+        reqwest::StatusCode::OK,
+        "callback failed"
+    );
 
     let result = tokio::task::spawn_blocking(move || child.wait_with_output()).await??;
     Ok((result, home, state))
@@ -159,7 +164,10 @@ async fn run_binary_login(
 fn assert_output_safe(result: &std::process::Output, secrets: &[&str]) {
     for output in [&result.stdout, &result.stderr] {
         let output = String::from_utf8_lossy(output);
-        assert!(secrets.iter().all(|secret| !output.contains(secret)));
+        assert!(
+            secrets.iter().all(|secret| !output.contains(secret)),
+            "login leaked a secret"
+        );
     }
 }
 
@@ -185,19 +193,4 @@ async fn wait_for_browser_url(path: &std::path::Path) -> Result<String, std::io:
         }
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
-}
-
-/// Creates one isolated root for the executable login flow.
-fn binary_login_root(label: &str) -> Result<std::path::PathBuf, std::io::Error> {
-    let root = std::env::temp_dir().join(format!(
-        "logbrew-cli-binary-login-{label}-{}",
-        std::process::id()
-    ));
-    match std::fs::remove_dir_all(root.as_path()) {
-        Ok(()) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => return Err(error),
-    }
-    std::fs::create_dir_all(root.as_path())?;
-    Ok(root)
 }

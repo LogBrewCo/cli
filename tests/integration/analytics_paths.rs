@@ -2,7 +2,7 @@
 
 use crate::matchers::body_json;
 use crate::{Mock, MockServer, ResponseTemplate};
-use logbrew_cli::{Command, HelpTopic, HttpMethod, help, parse_command};
+use logbrew_cli::{HelpTopic, HttpMethod, help, parse_command};
 
 const PROJECT_ID: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const TRACE_ID: &str = "4bf92f3577b34da6a3ce929d0e0e4736";
@@ -14,25 +14,13 @@ fn public_grammar_help_and_request_model_stay_aligned() -> Result<(), Box<dyn st
         vec!["logbrew", "analytics", "paths", "following", "--help"],
         vec!["logbrew", "help", "analytics", "paths"],
     ] {
-        assert_eq!(
-            parse_command(args)?,
-            Command::Help {
-                topic: HelpTopic::AnalyticsPaths,
-                json: false,
-            }
-        );
+        crate::assert_help(&args, HelpTopic::AnalyticsPaths, false);
     }
     for args in [
         vec!["logbrew", "analytics", "--help"],
         vec!["logbrew", "help", "analytics"],
     ] {
-        assert_eq!(
-            parse_command(args)?,
-            Command::Help {
-                topic: HelpTopic::Analytics,
-                json: false,
-            }
-        );
+        crate::assert_help(&args, HelpTopic::Analytics, false);
     }
     let command = parse_command([
         "logbrew",
@@ -76,7 +64,7 @@ fn public_grammar_help_and_request_model_stay_aligned() -> Result<(), Box<dyn st
 }
 
 async_test!(built_binary_posts_exact_scope_and_preserves_validated_json -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await?;
     let response = paths_response();
     Mock::auth("POST", "/api/telemetry/analytics/paths", "account-token")
         .and(body_json(serde_json::json!({
@@ -90,7 +78,7 @@ async_test!(built_binary_posts_exact_scope_and_preserves_validated_json -> Resul
             "collapse_repeated": true,
             "path_limit": 10
         })))
-        .respond_with(ResponseTemplate::new(200).set_body_json(response.clone()))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&response))
         .expect(1)
         .mount(&server);
 
@@ -103,9 +91,9 @@ async_test!(built_binary_posts_exact_scope_and_preserves_validated_json -> Resul
 });
 
 async_test!(built_binary_human_output_explains_journey_coverage_and_next_step -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await?;
     Mock::route("POST", "/api/telemetry/analytics/paths")
-        .respond_with(ResponseTemplate::new(200).set_body_json(paths_response()))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&paths_response()))
         .expect(1)
         .mount(&server);
 
@@ -132,21 +120,17 @@ async_test!(built_binary_human_output_explains_journey_coverage_and_next_step ->
 });
 
 async_test!(built_binary_fails_closed_on_unknown_identity_fields_without_reflection -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await?;
     let mut response = paths_response();
     response["query"]["session_id"] = "hostile-session-marker".into();
     Mock::route("POST", "/api/telemetry/analytics/paths")
-        .respond_with(ResponseTemplate::new(200).set_body_json(response))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&response))
         .expect(1)
         .mount(&server);
 
     let process = run_binary(&server, true).await?;
 
-    assert!(!process.status.success());
-    assert!(process.stdout.is_empty());
-    let text = String::from_utf8(process.stderr)?;
-    let error: serde_json::Value = serde_json::from_str(text.as_str())?;
-    assert_eq!(error["error"], "analytics_response_invalid");
+    let text = super::cli_json_error(process, "analytics_response_invalid")?;
     assert!(!text.contains("hostile-session-marker"));
     Ok(())
 });

@@ -3,18 +3,17 @@
 use crate::{Mock, MockServer, Request, ResponseTemplate};
 use std::ffi::OsString;
 use std::process::{Command, Output};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-pub(crate) const PROJECT_ID: &str = "123e4567-e89b-12d3-a456-426614174000";
-pub(crate) const ARM64_UUID: &str = "10111213-1415-1617-1819-1a1b1c1d1e1f";
-pub(crate) const X86_64_UUID: &str = "20212223-2425-2627-2829-2a2b2c2d2e2f";
-pub(crate) const TOKEN: &str = "private-account-token-proof";
-pub(crate) const ARTIFACT_TOKEN: &str = "lbw_ingest_artifact_private_value";
-pub(crate) const UPLOAD_ID: &str = "nativeart_11111111111111111111111111111111";
+pub(in crate::integration) const PROJECT_ID: &str = "123e4567-e89b-12d3-a456-426614174000";
+pub(in crate::integration) const ARM64_UUID: &str = "10111213-1415-1617-1819-1a1b1c1d1e1f";
+pub(in crate::integration) const X86_64_UUID: &str = "20212223-2425-2627-2829-2a2b2c2d2e2f";
+pub(in crate::integration) const TOKEN: &str = "private-account-token-proof";
+pub(in crate::integration) const ARTIFACT_TOKEN: &str = "lbw_ingest_artifact_private_value";
+pub(in crate::integration) const UPLOAD_ID: &str = "nativeart_11111111111111111111111111111111";
 const ARTIFACT_ID: &str = "nativeartifact_22222222222222222222222222222222";
 
-pub(crate) fn upload_args(path: &std::ffi::OsStr) -> Vec<OsString> {
+pub(in crate::integration) fn upload_args(path: &std::ffi::OsStr) -> Vec<OsString> {
     vec![
         OsString::from("debug-artifacts"),
         OsString::from("upload"),
@@ -31,7 +30,10 @@ pub(crate) fn upload_args(path: &std::ffi::OsStr) -> Vec<OsString> {
     ]
 }
 
-pub(crate) fn lookup_args<'a>(image_uuid: &'a str, architecture: &'a str) -> Vec<&'a str> {
+pub(in crate::integration) fn lookup_args<'a>(
+    image_uuid: &'a str,
+    architecture: &'a str,
+) -> Vec<&'a str> {
     vec![
         "debug-artifacts",
         "lookup",
@@ -51,7 +53,7 @@ pub(crate) fn lookup_args<'a>(image_uuid: &'a str, architecture: &'a str) -> Vec
     ]
 }
 
-pub(crate) async fn invoke<I, S>(
+pub(in crate::integration) async fn invoke<I, S>(
     fixture: &Fixture,
     base_url: &str,
     args: I,
@@ -63,7 +65,7 @@ where
     invoke_with_token(fixture, base_url, args, TOKEN).await
 }
 
-pub(crate) async fn invoke_with_token<I, S>(
+pub(in crate::integration) async fn invoke_with_token<I, S>(
     fixture: &Fixture,
     base_url: &str,
     args: I,
@@ -78,7 +80,7 @@ where
     Ok(output)
 }
 
-pub(crate) fn command_with_token<I, S>(
+pub(in crate::integration) fn command_with_token<I, S>(
     fixture: &Fixture,
     base_url: &str,
     args: I,
@@ -98,7 +100,7 @@ where
     command
 }
 
-pub(crate) fn upload_success_body(artifact_count: usize) -> serde_json::Value {
+pub(in crate::integration) fn upload_success_body(artifact_count: usize) -> serde_json::Value {
     serde_json::json!({
         "upload_id": UPLOAD_ID,
         "status": "uploaded",
@@ -111,46 +113,46 @@ pub(crate) fn upload_success_body(artifact_count: usize) -> serde_json::Value {
     })
 }
 
-pub(crate) fn json_failure(
+pub(in crate::integration) fn json_failure(
     output: &Output,
 ) -> Result<(String, serde_json::Value), Box<dyn std::error::Error>> {
-    assert!(!output.status.success());
-    assert!(output.stderr.is_empty());
+    assert!(!output.status.success(), "invalid upload must fail");
+    assert!(output.stderr.is_empty(), "JSON failure belongs on stdout");
     let text = String::from_utf8(output.stdout.clone())?;
-    assert_eq!(text.lines().count(), 1);
+    assert_eq!(text.lines().count(), 1, "failure must be one JSON line");
     let body = serde_json::from_str::<serde_json::Value>(text.as_str())?;
-    assert!(body.is_object());
-    assert_eq!(body["ok"], false);
+    assert!(body.is_object(), "failure must be an object");
+    assert_eq!(body["ok"], false, "failure cannot claim success");
     Ok((text, body))
 }
 
-pub(crate) async fn mount_lookup(server: &MockServer, body: serde_json::Value) {
+pub(in crate::integration) fn mount_lookup(server: &MockServer, body: &serde_json::Value) {
     Mock::route("GET", "/api/native-debug-artifacts")
         .respond_with(ResponseTemplate::new(200).set_body_json(body))
         .expect(1)
         .mount(server);
 }
 
-pub(crate) async fn mount_lookup_sequence(server: &MockServer, bodies: Vec<serde_json::Value>) {
-    let bodies = Arc::new(bodies);
-    let attempt = Arc::new(AtomicUsize::new(0));
-    let bodies_for_response = Arc::clone(&bodies);
-    let attempt_for_response = Arc::clone(&attempt);
+pub(in crate::integration) fn mount_lookup_sequence(
+    server: &MockServer,
+    bodies: Vec<serde_json::Value>,
+) {
+    let attempt = AtomicUsize::new(0);
     let expected = u64::try_from(bodies.len()).unwrap_or(u64::MAX);
     Mock::route("GET", "/api/native-debug-artifacts")
         .respond_with(move |_request: &Request| {
-            let index = attempt_for_response.fetch_add(1, Ordering::SeqCst);
-            let body = bodies_for_response
+            let index = attempt.fetch_add(1, Ordering::SeqCst);
+            let body = bodies
                 .get(index)
                 .cloned()
                 .unwrap_or_else(|| serde_json::json!({"unexpected": "sequence exhausted"}));
-            ResponseTemplate::new(200).set_body_json(body)
+            ResponseTemplate::new(200).set_body_json(&body)
         })
         .expect(expected)
         .mount(server);
 }
 
-pub(crate) fn found_lookup(digest: &str, byte_size: usize) -> serde_json::Value {
+pub(in crate::integration) fn found_lookup(digest: &str, byte_size: usize) -> serde_json::Value {
     serde_json::json!({
         "artifact": {
             "artifact_id": ARTIFACT_ID,
@@ -175,7 +177,7 @@ pub(crate) fn found_lookup(digest: &str, byte_size: usize) -> serde_json::Value 
     })
 }
 
-pub(crate) fn missing_lookup() -> serde_json::Value {
+pub(in crate::integration) fn missing_lookup() -> serde_json::Value {
     serde_json::json!({
         "artifact": null,
         "next": "No exact native debug artifact matched. Upload the release debug file and retry lookup.",
@@ -186,16 +188,20 @@ pub(crate) fn missing_lookup() -> serde_json::Value {
     })
 }
 
-pub(crate) fn macho64(cpu_type: u32, uuid: [u8; 16]) -> Vec<u8> {
+pub(in crate::integration) fn macho64(cpu_type: u32, uuid: [u8; 16]) -> Vec<u8> {
     macho64_with_subtype(cpu_type, 0, uuid)
 }
 
-pub(crate) fn macho64_with_subtype(cpu_type: u32, cpu_subtype: u32, uuid: [u8; 16]) -> Vec<u8> {
+pub(in crate::integration) fn macho64_with_subtype(
+    cpu_type: u32,
+    cpu_subtype: u32,
+    uuid: [u8; 16],
+) -> Vec<u8> {
     const COMMAND_BYTES: u32 = 24 + 152;
     const DATA_OFFSET: u32 = 32 + COMMAND_BYTES;
     let mut bytes = Vec::with_capacity(DATA_OFFSET as usize + 1);
     for value in [
-        0xfeed_facfu32,
+        0xfeed_facf_u32,
         cpu_type,
         cpu_subtype,
         10,
@@ -209,18 +215,18 @@ pub(crate) fn macho64_with_subtype(cpu_type: u32, cpu_subtype: u32, uuid: [u8; 1
         bytes.extend_from_slice(value.to_le_bytes().as_slice());
     }
     bytes.extend_from_slice(uuid.as_slice());
-    bytes.extend_from_slice(0x19u32.to_le_bytes().as_slice());
-    bytes.extend_from_slice(152u32.to_le_bytes().as_slice());
+    bytes.extend_from_slice(0x19_u32.to_le_bytes().as_slice());
+    bytes.extend_from_slice(152_u32.to_le_bytes().as_slice());
     push_name(&mut bytes, b"__DWARF");
-    for value in [0u64, 1, u64::from(DATA_OFFSET), 1] {
+    for value in [0_u64, 1, u64::from(DATA_OFFSET), 1] {
         bytes.extend_from_slice(value.to_le_bytes().as_slice());
     }
-    for value in [0u32, 0, 1, 0] {
+    for value in [0_u32, 0, 1, 0] {
         bytes.extend_from_slice(value.to_le_bytes().as_slice());
     }
     push_name(&mut bytes, b"__debug_info");
     push_name(&mut bytes, b"__DWARF");
-    for value in [0u64, 1] {
+    for value in [0_u64, 1] {
         bytes.extend_from_slice(value.to_le_bytes().as_slice());
     }
     for value in [DATA_OFFSET, 0, 0, 0, 0, 0, 0, 0] {
@@ -231,24 +237,29 @@ pub(crate) fn macho64_with_subtype(cpu_type: u32, cpu_subtype: u32, uuid: [u8; 1
 }
 
 fn push_name(bytes: &mut Vec<u8>, name: &[u8]) {
-    let mut field = [0u8; 16];
+    let mut field = [0_u8; 16];
     field[..name.len()].copy_from_slice(name);
     bytes.extend_from_slice(field.as_slice());
 }
 
-pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
+pub(in crate::integration) fn sha256_hex(bytes: &[u8]) -> String {
     use sha2::Digest as _;
     sha2::Sha256::digest(bytes)
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
+        .into_iter()
+        .flat_map(|byte| [byte >> 4, byte & 0x0f])
+        .map(|nibble| char::from(b"0123456789abcdef"[usize::from(nibble)]))
         .collect()
 }
 
-pub(crate) fn uuid_bytes(first: u8) -> [u8; 16] {
+pub(in crate::integration) fn uuid_bytes(first: u8) -> [u8; 16] {
     std::array::from_fn(|index| first.saturating_add(u8::try_from(index).unwrap_or(u8::MAX)))
 }
 
-pub(crate) fn assert_private_values_absent(text: &str, fixture: &Fixture, base_url: &str) {
+pub(in crate::integration) fn assert_private_values_absent(
+    text: &str,
+    fixture: &Fixture,
+    base_url: &str,
+) {
     let root = fixture.root.to_string_lossy();
     for private in [
         TOKEN,
@@ -259,22 +270,27 @@ pub(crate) fn assert_private_values_absent(text: &str, fixture: &Fixture, base_u
         root.as_ref(),
         base_url,
     ] {
-        assert!(!text.contains(private));
+        assert!(!text.contains(private), "output exposed private input");
     }
 }
 
-pub(crate) fn assert_exact_lookup_query(request: &Request) {
-    assert_eq!(request.method.as_str(), "GET");
-    assert_eq!(request.url.path(), "/api/native-debug-artifacts");
+pub(in crate::integration) fn assert_exact_lookup_query(request: &Request) {
+    assert_eq!(request.method.as_str(), "GET", "lookup must read only");
+    assert_eq!(
+        request.url.path(),
+        "/api/native-debug-artifacts",
+        "lookup route changed"
+    );
     assert_eq!(
         request.url.query(),
         Some(
             "project_id=123e4567-e89b-12d3-a456-426614174000&release=checkout%401.2.3&environment=production&service=checkout-api&image_uuid=10111213-1415-1617-1819-1a1b1c1d1e1f&architecture=arm64"
-        )
+        ),
+        "lookup must preserve the exact artifact scope"
     );
 }
 
-pub(crate) fn header_value<'a>(
+pub(in crate::integration) fn header_value<'a>(
     request: &'a Request,
     name: &str,
 ) -> Result<&'a str, Box<dyn std::error::Error>> {
@@ -286,25 +302,19 @@ pub(crate) fn header_value<'a>(
         .map_err(Into::into)
 }
 
-pub(crate) fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+pub(in crate::integration) fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack
         .windows(needle.len())
         .position(|window| window == needle)
 }
 
-pub(crate) async fn received_requests(
-    server: &MockServer,
-) -> Result<Vec<Request>, Box<dyn std::error::Error>> {
-    Ok(server.received_requests())
-}
-
-pub(crate) struct Fixture {
-    pub(crate) root: std::path::PathBuf,
+pub(in crate::integration) struct Fixture {
+    pub(in crate::integration) root: std::path::PathBuf,
     home: std::path::PathBuf,
 }
 
 impl Fixture {
-    pub(crate) fn new(label: &str) -> Result<Self, std::io::Error> {
+    pub(in crate::integration) fn new(label: &str) -> Result<Self, std::io::Error> {
         let nonce = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()

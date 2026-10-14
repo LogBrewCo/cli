@@ -1,15 +1,15 @@
 //! Account usage command and response-contract tests.
 
-use crate::{Mock, MockServer, ResponseTemplate, execute_command};
-use logbrew_cli::{
-    CliEnvironment, CliError, Command, RuntimeError, parse_command, write_cli_error,
-    write_runtime_error,
+use crate::{
+    Mock, MockServer, ResponseTemplate, TestResult, execute_command, failed_command, render_error,
+    runtime_error_text,
 };
+use logbrew_cli::{CliEnvironment, CliError, Command, RuntimeError, parse_command};
 
 const PROJECT_ID: &str = "123e4567-e89b-12d3-a456-426614174000";
 
 #[test]
-fn parses_usage_aliases_as_one_authenticated_read() {
+fn parses_usage_aliases_as_one_authenticated_read() -> TestResult {
     let cases = [
         (["logbrew", "usage"].as_slice(), false),
         (["logbrew", "usage", "--json"].as_slice(), true),
@@ -20,14 +20,15 @@ fn parses_usage_aliases_as_one_authenticated_read() {
 
     for (args, json) in cases {
         assert_eq!(
-            parse_command(args.iter().copied()).expect("usage command parses"),
+            parse_command(args.iter().copied())?,
             Command::Usage { json }
         );
     }
+    Ok(())
 }
 
 #[test]
-fn usage_parser_rejects_closed_grammar_without_reflection() {
+fn usage_parser_rejects_closed_grammar_without_reflection() -> TestResult {
     let cases = [
         ["logbrew", "usage", "--hostile-secret"].as_slice(),
         ["logbrew", "usage", "customer-value"].as_slice(),
@@ -35,20 +36,21 @@ fn usage_parser_rejects_closed_grammar_without_reflection() {
     ];
 
     for args in cases {
-        let error = parse_command(args.iter().copied()).expect_err("usage grammar fails closed");
-        assert_eq!(error, CliError::InvalidUsageCommand);
-        let mut output = Vec::new();
-        write_cli_error(&error, true, &mut output).expect("error renders");
-        let text = String::from_utf8(output).expect("utf8 output");
+        assert_eq!(
+            parse_command(args.iter().copied()),
+            Err(CliError::InvalidUsageCommand)
+        );
+        let text = render_error(args, true)?;
         assert!(!text.contains("hostile-secret"));
         assert!(!text.contains("customer-value"));
         assert!(text.contains("invalid_usage_command"));
         assert!(text.contains("use logbrew usage with optional --json"));
     }
+    Ok(())
 }
 
-async_test!(usage_json_preserves_the_exact_validated_server_object -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+async_test!(usage_json_preserves_the_exact_validated_server_object -> TestResult, {
+    let server = MockServer::start().await?;
     let body = usage_response();
     let raw = body.to_string();
     Mock::auth("GET", "/api/account/usage", "account-token")
@@ -68,12 +70,12 @@ async_test!(usage_json_preserves_the_exact_validated_server_object -> Result<(),
     Ok(())
 });
 
-async_test!(usage_human_output_is_bounded_and_uses_cli_owned_guidance -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+async_test!(usage_human_output_is_bounded_and_uses_cli_owned_guidance -> TestResult, {
+    let server = MockServer::start().await?;
     let mut body = usage_response();
     body["next"] = serde_json::Value::String(String::from("server-owned-next-text"));
     Mock::route("GET", "/api/account/usage")
-        .respond_with(ResponseTemplate::new(200).set_body_json(body))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&body))
         .mount(&server);
 
     let command = parse_command(["logbrew", "account", "usage"])?;
@@ -97,7 +99,7 @@ async_test!(usage_human_output_is_bounded_and_uses_cli_owned_guidance -> Result<
     Ok(())
 });
 
-async_test!(accepts_all_deployed_usage_states_and_action_pairs -> Result<(), Box<dyn std::error::Error>>, {
+async_test!(accepts_all_deployed_usage_states_and_action_pairs -> TestResult, {
     let cases = [
         (
             "ok",
@@ -142,7 +144,7 @@ async_test!(accepts_all_deployed_usage_states_and_action_pairs -> Result<(), Box
     ];
 
     for (state, warning, blocked, limit, code, target) in cases {
-        let server = MockServer::start().await;
+        let server = MockServer::start().await?;
         let mut body = usage_response();
         body["state"] = serde_json::json!(state);
         body["warning"] = serde_json::json!(warning);
@@ -153,7 +155,7 @@ async_test!(accepts_all_deployed_usage_states_and_action_pairs -> Result<(), Box
         body["next_action"]["state"] = serde_json::json!(state);
         body["next_action"]["limit"] = serde_json::json!(limit);
         Mock::route("GET", "/api/account/usage")
-            .respond_with(ResponseTemplate::new(200).set_body_json(body))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&body))
             .mount(&server);
 
         let command = parse_command(["logbrew", "usage", "--json"])?;
@@ -162,44 +164,27 @@ async_test!(accepts_all_deployed_usage_states_and_action_pairs -> Result<(), Box
     Ok(())
 });
 
-async_test!(malformed_or_mismatched_usage_success_fails_closed -> Result<(), Box<dyn std::error::Error>>, {
+async_test!(malformed_or_mismatched_usage_success_fails_closed -> TestResult, {
     let mut cases = Vec::new();
 
     let mut extra = usage_response();
     extra["private_customer"] = serde_json::Value::String(String::from("hidden-value"));
     cases.push(extra);
 
-    let mut bad_percent = usage_response();
-    bad_percent["percent_used"] = serde_json::json!(100.1);
-    cases.push(bad_percent);
-
-    let mut mismatched_state = usage_response();
-    mismatched_state["next_action"]["state"] = serde_json::json!("blocked");
-    cases.push(mismatched_state);
-
-    let mut mismatched_limit = usage_response();
-    mismatched_limit["next_action"]["limit"] = serde_json::json!("bytes");
-    cases.push(mismatched_limit);
-
-    let mut mismatched_reset = usage_response();
-    mismatched_reset["next_action"]["reset_at"] = serde_json::json!("2026-09-01T00:00:00Z");
-    cases.push(mismatched_reset);
-
-    let mut invalid_action = usage_response();
-    invalid_action["next_action"]["target"] = serde_json::json!("pricing");
-    cases.push(invalid_action);
-
-    let mut unknown_action = usage_response();
-    unknown_action["next_action"]["code"] = serde_json::json!("private_action");
-    cases.push(unknown_action);
-
-    let mut invalid_uuid = usage_response();
-    invalid_uuid["by_project"][0]["project_id"] = serde_json::json!("private-customer-id");
-    cases.push(invalid_uuid);
-
-    let mut invalid_time = usage_response();
-    invalid_time["period_start"] = serde_json::json!("not-a-time");
-    cases.push(invalid_time);
+    for (pointer, value) in [
+        ("/percent_used", serde_json::json!(100.1)),
+        ("/next_action/state", serde_json::json!("blocked")),
+        ("/next_action/limit", serde_json::json!("bytes")),
+        ("/next_action/reset_at", serde_json::json!("2026-09-01T00:00:00Z")),
+        ("/next_action/target", serde_json::json!("pricing")),
+        ("/next_action/code", serde_json::json!("private_action")),
+        ("/by_project/0/project_id", serde_json::json!("private-customer-id")),
+        ("/period_start", serde_json::json!("not-a-time")),
+    ] {
+        let mut body = usage_response();
+        *body.pointer_mut(pointer).ok_or("fixture field must exist")? = value;
+        cases.push(body);
+    }
 
     let mut contradictory_flags = usage_response();
     contradictory_flags["state"] = serde_json::json!("ok");
@@ -215,147 +200,55 @@ async_test!(malformed_or_mismatched_usage_success_fails_closed -> Result<(), Box
     cases.push(mismatched_action_state);
 
     for body in cases {
-        let server = MockServer::start().await;
-        Mock::route("GET", "/api/account/usage")
-            .respond_with(ResponseTemplate::new(200).set_body_json(body))
-            .mount(&server);
-        let command = parse_command(["logbrew", "usage", "--json"])?;
-        let error = execute_command(&command, &environment(&server), &mut Vec::new())
-            .await
-            .expect_err("invalid success fails closed");
-        assert_safe_usage_error(&error, "usage response is invalid", "retry logbrew usage")?;
+        assert_invalid_usage_response(200, &body.to_string()).await?;
     }
     Ok(())
 });
 
-async_test!(nonfinite_usage_numbers_fail_closed -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+async_test!(nonfinite_usage_numbers_fail_closed -> TestResult, {
     let raw = usage_response()
         .to_string()
         .replace("\"warning_threshold\":80.0", "\"warning_threshold\":1e400");
-    Mock::route("GET", "/api/account/usage")
-        .respond_with(ResponseTemplate::new(200).set_body_raw(raw, "application/json"))
-        .mount(&server);
-    let command = parse_command(["logbrew", "usage", "--json"])?;
-    let error = execute_command(&command, &environment(&server), &mut Vec::new())
-        .await
-        .expect_err("nonfinite number fails closed");
-    assert_safe_usage_error(&error, "usage response is invalid", "retry logbrew usage")?;
+    assert_invalid_usage_response(200, &raw).await?;
     Ok(())
 });
 
-async_test!(typed_usage_errors_are_fixed_and_never_reflect_backend_text -> Result<(), Box<dyn std::error::Error>>, {
-    let cases = [
-        (
-            401,
-            "unauthorized",
-            "unauthorized",
-            "sign_in",
-            "auth",
-            "run logbrew login",
-        ),
-        (
-            405,
-            "method_not_allowed",
-            "method_not_allowed",
-            "use_supported_method",
-            "api_method",
-            "retry logbrew usage with the supported GET request",
-        ),
-        (
-            500,
-            "internal_error",
-            "server_error",
-            "retry",
-            "request",
-            "retry logbrew usage later",
-        ),
-    ];
-
-    for (status, response_code, expected_code, action, target, expected_next) in cases {
-        let server = MockServer::start().await;
+async_test!(malformed_typed_errors_and_missing_auth_fail_closed -> TestResult, {
+    for (status, code, action, target) in [
+        (401, "unauthorized", "retry", "request"),
+        (500, "undeployed_error", "sign_in", "auth"),
+    ] {
         let body = serde_json::json!({
             "error": "private-host-secret-body",
-            "code": response_code,
-            "next": "send token to private path",
+            "code": code,
+            "next": "send token",
             "next_action": {"code": action, "target": target}
         });
-        Mock::route("GET", "/api/account/usage")
-            .respond_with(ResponseTemplate::new(status).set_body_json(body))
-            .mount(&server);
-        let command = parse_command(["logbrew", "usage", "--json"])?;
-        let error = execute_command(&command, &environment(&server), &mut Vec::new())
-            .await
-            .expect_err("typed error returned");
-        assert_safe_usage_error(&error, expected_code, expected_next)?;
+        assert_invalid_usage_response(status, &body.to_string()).await?;
     }
-    Ok(())
-});
 
-async_test!(malformed_typed_errors_and_missing_auth_fail_closed -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
-    Mock::route("GET", "/api/account/usage")
-        .respond_with(ResponseTemplate::new(401).set_body_json(serde_json::json!({
-            "error": "private-host-secret-body",
-            "code": "unauthorized",
-            "next": "send token",
-            "next_action": {"code": "retry", "target": "request"}
-        })))
-        .mount(&server);
-    let command = parse_command(["logbrew", "usage", "--json"])?;
-    let error = execute_command(&command, &environment(&server), &mut Vec::new())
-        .await
-        .expect_err("mismatched 401 fails closed");
-    assert_safe_usage_error(&error, "usage response is invalid", "retry logbrew usage")?;
-
-    let malformed_server = MockServer::start().await;
-    Mock::route("GET", "/api/account/usage")
-        .respond_with(ResponseTemplate::new(500).set_body_json(serde_json::json!({
-            "error": "private-host-secret-body",
-            "code": "undeployed_error",
-            "next": "send token",
-            "next_action": {"code": "sign_in", "target": "auth"}
-        })))
-        .mount(&malformed_server);
-    let error = execute_command(&command, &environment(&malformed_server), &mut Vec::new())
-        .await
-        .expect_err("mismatched 500 fails closed");
-    assert_safe_usage_error(&error, "usage response is invalid", "retry logbrew usage")?;
-
-    let no_auth_server = MockServer::start().await;
+    let no_auth_server = MockServer::start().await?;
     let no_auth = super::test_env(&no_auth_server, None, None);
-    let error = execute_command(&command, &no_auth, &mut Vec::new())
-        .await
-        .expect_err("missing auth fails locally");
-    let mut output = Vec::new();
-    write_runtime_error(&error, true, &mut output)?;
-    let text = String::from_utf8(output)?;
+    let command = parse_command(["logbrew", "usage", "--json"])?;
+    let error = failed_command(&command, &no_auth).await?;
+    let text = runtime_error_text(&error)?;
     assert!(text.contains("not_logged_in"));
     assert!(text.contains("run logbrew login"));
     assert!(no_auth_server.received_requests().is_empty());
     Ok(())
 });
 
-async_test!(oversized_usage_response_fails_before_body_reflection -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+async_test!(oversized_usage_response_fails_before_body_reflection -> TestResult, {
     let oversized = format!("{{\"private_secret\":\"{}\"}}", "x".repeat(300_000));
-    Mock::route("GET", "/api/account/usage")
-        .respond_with(ResponseTemplate::new(200).set_body_raw(oversized, "application/json"))
-        .mount(&server);
-    let command = parse_command(["logbrew", "usage", "--json"])?;
-    let error = execute_command(&command, &environment(&server), &mut Vec::new())
-        .await
-        .expect_err("oversized response fails closed");
-
-    assert_safe_usage_error(&error, "usage response is invalid", "retry logbrew usage")?;
+    assert_invalid_usage_response(200, &oversized).await?;
     Ok(())
 });
 
-async_test!(duplicate_usage_keys_fail_closed_without_reflection -> Result<(), Box<dyn std::error::Error>>, {
+async_test!(duplicate_usage_keys_fail_closed_without_reflection -> TestResult, {
     let valid = usage_response().to_string();
     let duplicate_success = format!(
         "{{\"period_start\":\"private-host-secret-body\",{}",
-        valid.strip_prefix('{').expect("usage object")
+        valid.strip_prefix('{').ok_or("usage object")?
     );
     let duplicate_nested = valid.replacen(
         "\"plan\":{",
@@ -374,25 +267,17 @@ async_test!(duplicate_usage_keys_fail_closed_without_reflection -> Result<(), Bo
         (200, duplicate_nested),
         (401, duplicate_error),
     ] {
-        let server = MockServer::start().await;
-        Mock::route("GET", "/api/account/usage")
-            .respond_with(ResponseTemplate::new(status).set_body_raw(body, "application/json"))
-            .mount(&server);
-        let command = parse_command(["logbrew", "usage", "--json"])?;
-        let error = execute_command(&command, &environment(&server), &mut Vec::new())
-            .await
-            .expect_err("duplicate keys fail closed");
-        assert_safe_usage_error(&error, "usage response is invalid", "retry logbrew usage")?;
+        assert_invalid_usage_response(status, &body).await?;
     }
     Ok(())
 });
 
-async_test!(usage_does_not_follow_redirects -> Result<(), Box<dyn std::error::Error>>, {
-    let redirect_target = MockServer::start().await;
+async_test!(usage_does_not_follow_redirects -> TestResult, {
+    let redirect_target = MockServer::start().await?;
     Mock::route("GET", "/capture")
-        .respond_with(ResponseTemplate::new(200).set_body_json(usage_response()))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&usage_response()))
         .mount(&redirect_target);
-    let server = MockServer::start().await;
+    let server = MockServer::start().await?;
     Mock::route("GET", "/api/account/usage")
         .respond_with(
             ResponseTemplate::new(302)
@@ -401,18 +286,16 @@ async_test!(usage_does_not_follow_redirects -> Result<(), Box<dyn std::error::Er
         .mount(&server);
 
     let command = parse_command(["logbrew", "usage", "--json"])?;
-    let error = execute_command(&command, &environment(&server), &mut Vec::new())
-        .await
-        .expect_err("redirect is rejected");
+    let error = failed_command(&command, &environment(&server)).await?;
     assert_safe_usage_error(&error, "usage response is invalid", "retry logbrew usage")?;
     assert!(redirect_target.received_requests().is_empty());
     Ok(())
 });
 
-async_test!(usage_rejects_non_root_api_origins_before_io -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+async_test!(usage_rejects_non_root_api_origins_before_io -> TestResult, {
+    let server = MockServer::start().await?;
     Mock::route("GET", "/private-prefix/api/account/usage")
-        .respond_with(ResponseTemplate::new(200).set_body_json(usage_response()))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&usage_response()))
         .mount(&server);
     let environment = CliEnvironment {
         base_url: format!("{}/private-prefix", server.uri()),
@@ -422,9 +305,7 @@ async_test!(usage_rejects_non_root_api_origins_before_io -> Result<(), Box<dyn s
     };
 
     let command = parse_command(["logbrew", "usage", "--json"])?;
-    let error = execute_command(&command, &environment, &mut Vec::new())
-        .await
-        .expect_err("path-bearing origin fails closed");
+    let error = failed_command(&command, &environment).await?;
     assert_safe_usage_error(
         &error,
         "usage request could not be completed",
@@ -433,6 +314,18 @@ async_test!(usage_rejects_non_root_api_origins_before_io -> Result<(), Box<dyn s
     assert!(server.received_requests().is_empty());
     Ok(())
 });
+
+/// Verifies an invalid response through the authenticated HTTP and JSON boundaries.
+async fn assert_invalid_usage_response(status: u16, body: &str) -> TestResult {
+    let server = MockServer::start().await?;
+    Mock::auth("GET", "/api/account/usage", "account-token")
+        .respond_with(ResponseTemplate::new(status).set_body_raw(body, "application/json"))
+        .expect(1)
+        .mount(&server);
+    let command = parse_command(["logbrew", "usage", "--json"])?;
+    let error = failed_command(&command, &environment(&server)).await?;
+    assert_safe_usage_error(&error, "usage response is invalid", "retry logbrew usage")
+}
 
 fn environment(server: &MockServer) -> CliEnvironment {
     super::authenticated_env(server, "account-token", None)
@@ -469,15 +362,20 @@ fn assert_safe_usage_error(
     error: &RuntimeError,
     expected: &str,
     expected_next: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let mut output = Vec::new();
-    write_runtime_error(error, true, &mut output)?;
-    let text = String::from_utf8(output)?;
+) -> TestResult {
+    let text = runtime_error_text(error)?;
     assert!(text.contains(expected), "unexpected error: {text}");
     assert!(text.contains(expected_next), "unexpected recovery: {text}");
-    assert!(!text.contains("private-host-secret-body"));
-    assert!(!text.contains("private_secret"));
-    assert!(!text.contains("send token"));
-    assert!(!text.contains("account-token"));
+    for forbidden in [
+        "private-host-secret-body",
+        "private_secret",
+        "send token",
+        "account-token",
+    ] {
+        assert!(
+            !text.contains(forbidden),
+            "usage errors must not echo private response data"
+        );
+    }
     Ok(())
 }

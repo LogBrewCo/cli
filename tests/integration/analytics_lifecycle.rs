@@ -2,7 +2,7 @@
 
 use crate::matchers::body_json;
 use crate::{Mock, MockServer, ResponseTemplate};
-use logbrew_cli::{Command, HelpTopic, HttpMethod, help, parse_command};
+use logbrew_cli::{HelpTopic, HttpMethod, help, parse_command};
 
 const PROJECT_ID: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 
@@ -12,30 +12,9 @@ fn public_grammar_help_and_request_model_stay_aligned() -> Result<(), Box<dyn st
         vec!["logbrew", "analytics", "lifecycle", "--help"],
         vec!["logbrew", "help", "analytics", "lifecycle"],
     ] {
-        assert_eq!(
-            parse_command(args)?,
-            Command::Help {
-                topic: HelpTopic::AnalyticsLifecycle,
-                json: false,
-            }
-        );
+        crate::assert_help(&args, HelpTopic::AnalyticsLifecycle, false);
     }
-    let command = parse_command([
-        "logbrew",
-        "--json",
-        "analytics",
-        "lifecycle",
-        "--project",
-        PROJECT_ID,
-        "--since",
-        "24h",
-        "--event-kind",
-        "interaction",
-        "--event",
-        "checkout_completed",
-        "--interval",
-        "hour",
-    ])?;
+    let command = parse_command(std::iter::once("logbrew").chain(lifecycle_args(true)))?;
     assert_eq!(
         command.http_path().as_deref(),
         Some("/api/telemetry/analytics/lifecycle")
@@ -57,7 +36,7 @@ fn public_grammar_help_and_request_model_stay_aligned() -> Result<(), Box<dyn st
 }
 
 async_test!(built_binary_posts_exact_scope_and_preserves_validated_json -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await?;
     let response = lifecycle_response();
     Mock::auth(
         "POST",
@@ -72,7 +51,7 @@ async_test!(built_binary_posts_exact_scope_and_preserves_validated_json -> Resul
         "interval": "hour",
         "history_period_count": 2
     })))
-    .respond_with(ResponseTemplate::new(200).set_body_json(response.clone()))
+    .respond_with(ResponseTemplate::new(200).set_body_json(&response))
     .expect(1)
     .mount(&server);
 
@@ -85,9 +64,9 @@ async_test!(built_binary_posts_exact_scope_and_preserves_validated_json -> Resul
 });
 
 async_test!(built_binary_human_output_explains_states_coverage_and_provisional_data -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await?;
     Mock::route("POST", "/api/telemetry/analytics/lifecycle")
-        .respond_with(ResponseTemplate::new(200).set_body_json(lifecycle_response()))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&lifecycle_response()))
         .expect(1)
         .mount(&server);
 
@@ -112,21 +91,17 @@ async_test!(built_binary_human_output_explains_states_coverage_and_provisional_d
 });
 
 async_test!(built_binary_fails_closed_on_unknown_identity_fields_without_reflection -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await?;
     let mut response = lifecycle_response();
     response["buckets"][0]["distinct_id"] = "hostile-subject-marker".into();
     Mock::route("POST", "/api/telemetry/analytics/lifecycle")
-        .respond_with(ResponseTemplate::new(200).set_body_json(response))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&response))
         .expect(1)
         .mount(&server);
 
     let process = run_binary(&server, true).await?;
 
-    assert!(!process.status.success());
-    assert!(process.stdout.is_empty());
-    let text = String::from_utf8(process.stderr)?;
-    let error: serde_json::Value = serde_json::from_str(text.as_str())?;
-    assert_eq!(error["error"], "analytics_lifecycle_response_invalid");
+    let text = super::cli_json_error(process, "analytics_lifecycle_response_invalid")?;
     assert!(!text.contains("hostile-subject-marker"));
     Ok(())
 });
@@ -136,6 +111,13 @@ async fn run_binary(
     server: &MockServer,
     json: bool,
 ) -> Result<std::process::Output, Box<dyn std::error::Error>> {
+    let mut args = lifecycle_args(json);
+    args.extend(["--environment", "production"]);
+    super::run_cli(server, args.as_slice()).await
+}
+
+/// Share the exact lifecycle selection between parser and executable tests.
+fn lifecycle_args(json: bool) -> Vec<&'static str> {
     let mut args = vec![
         "analytics",
         "lifecycle",
@@ -147,15 +129,13 @@ async fn run_binary(
         "interaction",
         "--event",
         "checkout_completed",
-        "--environment",
-        "production",
         "--interval",
         "hour",
     ];
     if json {
         args.push("--json");
     }
-    super::run_cli(server, args.as_slice()).await
+    args
 }
 
 /// Stable schema-version-1 fixture matching the API contract.
@@ -208,80 +188,84 @@ fn lifecycle_response() -> serde_json::Value {
                 "The final bucket is incomplete and provisional."
             ]
         },
-        "buckets": [
-            {
-                "period": 0,
-                "started_at": "2026-08-01T00:00:00Z",
-                "ended_at": "2026-08-01T01:00:00Z",
-                "fully_observed": true,
-                "active_subjects": 6,
-                "new_within_observed_history_subjects": 3,
-                "returning_subjects": 2,
-                "resurrected_subjects": 1,
-                "dormant_subjects": 2,
-                "previous_active_subjects": 4,
-                "new_share_of_active": 0.5,
-                "returning_share_of_active": 0.333_333_333_333_333_3,
-                "resurrected_share_of_active": 0.166_666_666_666_666_66,
-                "dormant_share_of_previous_active": 0.5,
-                "net_active_change": 2
-            },
-            {
-                "period": 1,
-                "started_at": "2026-08-01T01:00:00Z",
-                "ended_at": "2026-08-01T02:00:00Z",
-                "fully_observed": true,
-                "active_subjects": 5,
-                "new_within_observed_history_subjects": 1,
-                "returning_subjects": 3,
-                "resurrected_subjects": 1,
-                "dormant_subjects": 3,
-                "previous_active_subjects": 6,
-                "new_share_of_active": 0.2,
-                "returning_share_of_active": 0.6,
-                "resurrected_share_of_active": 0.2,
-                "dormant_share_of_previous_active": 0.5,
-                "net_active_change": -1
-            },
-            {
-                "period": 2,
-                "started_at": "2026-08-01T02:00:00Z",
-                "ended_at": "2026-08-01T03:00:00Z",
-                "fully_observed": true,
-                "active_subjects": 5,
-                "new_within_observed_history_subjects": 0,
-                "returning_subjects": 4,
-                "resurrected_subjects": 1,
-                "dormant_subjects": 1,
-                "previous_active_subjects": 5,
-                "new_share_of_active": 0.0,
-                "returning_share_of_active": 0.8,
-                "resurrected_share_of_active": 0.2,
-                "dormant_share_of_previous_active": 0.2,
-                "net_active_change": 0
-            },
-            {
-                "period": 3,
-                "started_at": "2026-08-01T03:00:00Z",
-                "ended_at": "2026-08-01T03:30:00Z",
-                "fully_observed": false,
-                "active_subjects": 4,
-                "new_within_observed_history_subjects": 0,
-                "returning_subjects": 3,
-                "resurrected_subjects": 1,
-                "dormant_subjects": 2,
-                "previous_active_subjects": 5,
-                "new_share_of_active": 0.0,
-                "returning_share_of_active": 0.75,
-                "resurrected_share_of_active": 0.25,
-                "dormant_share_of_previous_active": 0.4,
-                "net_active_change": -1
-            }
-        ],
+        "buckets": lifecycle_buckets(),
         "next_action": {
             "code": "compare_lifecycle_contexts",
             "target": "/api/telemetry/analytics/lifecycle",
             "reason": "Repeat this server-authored reason verbatim."
         }
     })
+}
+
+fn lifecycle_buckets() -> serde_json::Value {
+    serde_json::json!([
+        {
+            "period": 0,
+            "started_at": "2026-08-01T00:00:00Z",
+            "ended_at": "2026-08-01T01:00:00Z",
+            "fully_observed": true,
+            "active_subjects": 6,
+            "new_within_observed_history_subjects": 3,
+            "returning_subjects": 2,
+            "resurrected_subjects": 1,
+            "dormant_subjects": 2,
+            "previous_active_subjects": 4,
+            "new_share_of_active": 0.5,
+            "returning_share_of_active": 0.333_333_333_333_333_3,
+            "resurrected_share_of_active": 0.166_666_666_666_666_66,
+            "dormant_share_of_previous_active": 0.5,
+            "net_active_change": 2
+        },
+        {
+            "period": 1,
+            "started_at": "2026-08-01T01:00:00Z",
+            "ended_at": "2026-08-01T02:00:00Z",
+            "fully_observed": true,
+            "active_subjects": 5,
+            "new_within_observed_history_subjects": 1,
+            "returning_subjects": 3,
+            "resurrected_subjects": 1,
+            "dormant_subjects": 3,
+            "previous_active_subjects": 6,
+            "new_share_of_active": 0.2,
+            "returning_share_of_active": 0.6,
+            "resurrected_share_of_active": 0.2,
+            "dormant_share_of_previous_active": 0.5,
+            "net_active_change": -1
+        },
+        {
+            "period": 2,
+            "started_at": "2026-08-01T02:00:00Z",
+            "ended_at": "2026-08-01T03:00:00Z",
+            "fully_observed": true,
+            "active_subjects": 5,
+            "new_within_observed_history_subjects": 0,
+            "returning_subjects": 4,
+            "resurrected_subjects": 1,
+            "dormant_subjects": 1,
+            "previous_active_subjects": 5,
+            "new_share_of_active": 0.0,
+            "returning_share_of_active": 0.8,
+            "resurrected_share_of_active": 0.2,
+            "dormant_share_of_previous_active": 0.2,
+            "net_active_change": 0
+        },
+        {
+            "period": 3,
+            "started_at": "2026-08-01T03:00:00Z",
+            "ended_at": "2026-08-01T03:30:00Z",
+            "fully_observed": false,
+            "active_subjects": 4,
+            "new_within_observed_history_subjects": 0,
+            "returning_subjects": 3,
+            "resurrected_subjects": 1,
+            "dormant_subjects": 2,
+            "previous_active_subjects": 5,
+            "new_share_of_active": 0.0,
+            "returning_share_of_active": 0.75,
+            "resurrected_share_of_active": 0.25,
+            "dormant_share_of_previous_active": 0.4,
+            "net_active_change": -1
+        }
+    ])
 }

@@ -66,7 +66,20 @@ pub(crate) fn assert_cli_success(process: &std::process::Output) {
         "built binary failed: {}",
         String::from_utf8_lossy(process.stderr.as_slice())
     );
-    assert!(process.stderr.is_empty());
+    assert!(process.stderr.is_empty(), "successful CLI wrote to stderr");
+}
+
+/// Require a failed process, empty stdout, and the exact structured error code.
+pub(crate) fn cli_json_error(
+    process: std::process::Output,
+    code: &str,
+) -> crate::TestResult<String> {
+    assert!(!process.status.success(), "invalid command succeeded");
+    assert!(process.stdout.is_empty(), "failed command emitted stdout");
+    let text = String::from_utf8(process.stderr)?;
+    let error: serde_json::Value = serde_json::from_str(&text)?;
+    assert_eq!(error["error"], code, "incorrect error code");
+    Ok(text)
 }
 
 pub(crate) fn authenticated_env(

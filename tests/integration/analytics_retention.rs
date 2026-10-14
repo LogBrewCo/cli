@@ -2,7 +2,7 @@
 
 use crate::matchers::body_json;
 use crate::{Mock, MockServer, ResponseTemplate};
-use logbrew_cli::{Command, HelpTopic, HttpMethod, help, parse_command};
+use logbrew_cli::{HelpTopic, HttpMethod, help, parse_command};
 
 const PROJECT_ID: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 
@@ -12,34 +12,9 @@ fn public_grammar_help_and_request_model_stay_aligned() -> Result<(), Box<dyn st
         vec!["logbrew", "analytics", "retention", "--help"],
         vec!["logbrew", "help", "analytics", "retention"],
     ] {
-        assert_eq!(
-            parse_command(args)?,
-            Command::Help {
-                topic: HelpTopic::AnalyticsRetention,
-                json: false,
-            }
-        );
+        crate::assert_help(&args, HelpTopic::AnalyticsRetention, false);
     }
-    let command = parse_command([
-        "logbrew",
-        "--json",
-        "analytics",
-        "retention",
-        "--project",
-        PROJECT_ID,
-        "--since",
-        "30d",
-        "--start-kind",
-        "page-view",
-        "--start-event",
-        "/signup",
-        "--return-kind",
-        "interaction",
-        "--return-event",
-        "dashboard_opened",
-        "--interval-count",
-        "2",
-    ])?;
+    let command = parse_command(std::iter::once("logbrew").chain(retention_args(true)))?;
     assert_eq!(
         command.http_path().as_deref(),
         Some("/api/telemetry/analytics/retention")
@@ -62,7 +37,7 @@ fn public_grammar_help_and_request_model_stay_aligned() -> Result<(), Box<dyn st
 }
 
 async_test!(built_binary_posts_exact_scope_and_preserves_validated_json -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await?;
     let response = retention_response();
     Mock::auth(
         "POST",
@@ -80,7 +55,7 @@ async_test!(built_binary_posts_exact_scope_and_preserves_validated_json -> Resul
         "mode": "return_on",
         "cohort_mode": "first_in_range"
     })))
-    .respond_with(ResponseTemplate::new(200).set_body_json(response.clone()))
+    .respond_with(ResponseTemplate::new(200).set_body_json(&response))
     .expect(1)
     .mount(&server);
 
@@ -93,9 +68,9 @@ async_test!(built_binary_posts_exact_scope_and_preserves_validated_json -> Resul
 });
 
 async_test!(built_binary_human_output_explains_retention_maturity_coverage_and_next_step -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await?;
     Mock::route("POST", "/api/telemetry/analytics/retention")
-        .respond_with(ResponseTemplate::new(200).set_body_json(retention_response()))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&retention_response()))
         .expect(1)
         .mount(&server);
 
@@ -120,21 +95,17 @@ async_test!(built_binary_human_output_explains_retention_maturity_coverage_and_n
 });
 
 async_test!(built_binary_fails_closed_on_unknown_identity_fields_without_reflection -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await?;
     let mut response = retention_response();
     response["cohorts"][0]["distinct_id"] = "hostile-subject-marker".into();
     Mock::route("POST", "/api/telemetry/analytics/retention")
-        .respond_with(ResponseTemplate::new(200).set_body_json(response))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&response))
         .expect(1)
         .mount(&server);
 
     let process = run_binary(&server, true).await?;
 
-    assert!(!process.status.success());
-    assert!(process.stdout.is_empty());
-    let text = String::from_utf8(process.stderr)?;
-    let error: serde_json::Value = serde_json::from_str(text.as_str())?;
-    assert_eq!(error["error"], "analytics_retention_response_invalid");
+    let text = super::cli_json_error(process, "analytics_retention_response_invalid")?;
     assert!(!text.contains("hostile-subject-marker"));
     Ok(())
 });
@@ -144,6 +115,13 @@ async fn run_binary(
     server: &MockServer,
     json: bool,
 ) -> Result<std::process::Output, Box<dyn std::error::Error>> {
+    let mut args = retention_args(json);
+    args.extend(["--environment", "production"]);
+    super::run_cli(server, args.as_slice()).await
+}
+
+/// Share the exact retention selection between parser and executable tests.
+fn retention_args(json: bool) -> Vec<&'static str> {
     let mut args = vec![
         "analytics",
         "retention",
@@ -159,15 +137,13 @@ async fn run_binary(
         "interaction",
         "--return-event",
         "dashboard_opened",
-        "--environment",
-        "production",
         "--interval-count",
         "2",
     ];
     if json {
         args.push("--json");
     }
-    super::run_cli(server, args.as_slice()).await
+    args
 }
 
 /// Stable schema-version-1 fixture matching the API contract.

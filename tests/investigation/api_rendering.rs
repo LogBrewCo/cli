@@ -7,7 +7,7 @@ use logbrew_cli::{CliEnvironment, RuntimeError, parse_command, write_runtime_err
 const PROJECT_ID: &str = "123e4567-e89b-12d3-a456-426614174000";
 
 async_test!(authenticated_read_logs_rejects_multiple_json_documents, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await.expect("loopback server starts");
     Mock::route("GET", "/api/logs")
         .and(query_param("project_id", PROJECT_ID))
         .and(query_param("search", "startup failure"))
@@ -73,7 +73,7 @@ async_test!(human_logs_render_populated_and_empty_shapes, {
             "human-empty-logs-array",
         ),
     ] {
-        let server = MockServer::start().await;
+        let server = MockServer::start().await.expect("loopback server starts");
         mount_authenticated_json(
             &server,
             "GET",
@@ -177,7 +177,7 @@ async_test!(human_read_actions_and_issues_summarize_pivot_context, {
     ];
 
     for case in cases {
-        let server = MockServer::start().await;
+        let server = MockServer::start().await.expect("loopback server starts");
         mount_authenticated_json(
             &server,
             "GET",
@@ -292,7 +292,7 @@ async_test!(
         ];
 
         for case in cases {
-            let server = MockServer::start().await;
+            let server = MockServer::start().await.expect("loopback server starts");
             mount_authenticated_json(
                 &server,
                 "GET",
@@ -325,7 +325,7 @@ async_test!(
 );
 
 async_test!(invalid_since_preserves_backend_validation_recovery_for_agents -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await.expect("loopback server starts");
     Mock::route("GET", "/api/telemetry/issues")
         .and(query_param("service_name", "checkout-api"))
         .and(query_param("since", "0h"))
@@ -367,7 +367,7 @@ async_test!(invalid_since_preserves_backend_validation_recovery_for_agents -> Re
 });
 
 async_test!(human_read_releases_prints_all_telemetry_counts, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await.expect("loopback server starts");
     Mock::route("GET", "/api/telemetry/releases")
         .and(query_param("environment", "production"))
         .and(header("authorization", "Bearer test-token"))
@@ -398,7 +398,7 @@ async_test!(human_read_releases_prints_all_telemetry_counts, {
 });
 
 async_test!(human_explain_trace_prints_scan_friendly_summary, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await.expect("loopback server starts");
     Mock::auth(
             "GET",
             "/api/telemetry/traces/trace_123/investigation",
@@ -523,7 +523,7 @@ async_test!(human_explain_trace_prints_scan_friendly_summary, {
 });
 
 async_test!(human_read_trace_summarizes_real_api_array_shape, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await.expect("loopback server starts");
     Mock::auth("GET", "/api/telemetry/traces/trace_123", "test-token")
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
             {
@@ -550,7 +550,7 @@ async_test!(human_read_trace_summarizes_real_api_array_shape, {
 async_test!(
     human_read_issue_summarizes_real_api_object_shape_with_next_action,
     {
-        let server = MockServer::start().await;
+        let server = MockServer::start().await.expect("loopback server starts");
         Mock::auth("GET", "/api/telemetry/issues/issue_123", "test-token")
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
                 "id": "issue_123",
@@ -600,7 +600,7 @@ async_test!(human_set_issue_status_renders_wrapped_and_object_shapes, {
             "human-set-issue-object",
         ),
     ] {
-        let server = MockServer::start().await;
+        let server = MockServer::start().await.expect("loopback server starts");
         Mock::auth("PATCH", "/api/telemetry/issues/issue_123", "test-token")
             .respond_with(ResponseTemplate::new(200).set_body_json(body))
             .mount(&server);
@@ -615,7 +615,7 @@ async_test!(human_set_issue_status_renders_wrapped_and_object_shapes, {
 });
 
 async_test!(project_setup_seen_posts_backend_owned_setup_state -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await.expect("loopback server starts");
     Mock::auth("POST", "/api/projects/proj_123/setup/seen", "test-token")
         .and(body_json(serde_json::json!({
             "runtime": "node",
@@ -659,7 +659,7 @@ async_test!(project_setup_seen_posts_backend_owned_setup_state -> Result<(), Box
 });
 
 async_test!(project_setup_seen_omits_source_for_ingest_key_auth -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await.expect("loopback server starts");
     Mock::auth(
         "POST",
         "/api/projects/proj_123/setup/seen",
@@ -694,7 +694,7 @@ async_test!(project_setup_seen_omits_source_for_ingest_key_auth -> Result<(), Bo
 });
 
 async_test!(human_project_setup_seen_prints_status_and_next, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await.expect("loopback server starts");
     Mock::auth("POST", "/api/projects/proj_123/setup/seen", "test-token")
         .and(body_json(serde_json::json!({ "source": "cli" })))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
@@ -719,7 +719,7 @@ async_test!(human_project_setup_seen_prints_status_and_next, {
 });
 
 async_test!(local_auth_refreshes_once_and_persists_replacement_credentials -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await.expect("loopback server starts");
     Mock::auth("GET", "/api/logs", "expired-access")
         .respond_with(ResponseTemplate::new(401).set_body_json(serde_json::json!({
             "error": "not_logged_in"
@@ -776,7 +776,7 @@ async_test!(local_auth_refreshes_once_and_persists_replacement_credentials -> Re
 });
 
 async_test!(concurrent_local_401s_share_one_refresh_rotation -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await.expect("loopback server starts");
     Mock::auth("GET", "/api/logs", "shared-expired")
         .respond_with(ResponseTemplate::new(401))
         .expect(2)
@@ -842,7 +842,7 @@ async_test!(concurrent_local_401s_share_one_refresh_rotation -> Result<(), Box<d
 });
 
 async_test!(env_auth_401_never_reads_or_rotates_local_refresh_credentials -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await.expect("loopback server starts");
     Mock::auth("GET", "/api/logs", "env-expired")
         .respond_with(ResponseTemplate::new(401))
         .expect(1)
@@ -877,7 +877,7 @@ async_test!(env_auth_401_never_reads_or_rotates_local_refresh_credentials -> Res
 });
 
 async_test!(persisted_refresh_session_never_authenticates_to_a_different_api_origin -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await.expect("loopback server starts");
     Mock::route("GET", "/api/logs")
         .respond_with(ResponseTemplate::new(500))
         .expect(0)
@@ -913,7 +913,7 @@ async_test!(api_auth_errors_report_source_without_leaking_tokens -> Result<(), B
         (401, "not_logged_in", "expired", "expired", true),
         (403, "forbidden", "env-token", "file-token", false),
     ] {
-        let server = MockServer::start().await;
+        let server = MockServer::start().await.expect("loopback server starts");
         Mock::auth("GET", "/api/logs", api_token)
             .respond_with(
                 ResponseTemplate::new(status).set_body_json(serde_json::json!({

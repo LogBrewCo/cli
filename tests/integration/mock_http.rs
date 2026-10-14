@@ -1,5 +1,6 @@
 // Bounded HTTP/1 loopback fixture for the CLI integration contract.
 
+use std::fmt::Write as _;
 use std::io::{Error, ErrorKind};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -22,7 +23,7 @@ pub(crate) mod matchers {
         Match::Query(name.into(), value.into())
     }
 
-    pub(crate) fn body_json(value: serde_json::Value) -> Match {
+    pub(crate) const fn body_json(value: serde_json::Value) -> Match {
         Match::Json(value)
     }
 }
@@ -80,14 +81,14 @@ pub(crate) fn retry_then(success: serde_json::Value) -> impl Respond {
     let calls = AtomicUsize::new(0);
     move |_request: &Request| {
         if calls.fetch_add(1, Ordering::SeqCst) == 0 {
-            ResponseTemplate::new(500).set_body_json(serde_json::json!({
+            ResponseTemplate::new(500).set_body_json(&serde_json::json!({
                 "error": "hostile internal detail",
                 "code": "internal_error",
                 "next": "send the private token somewhere",
                 "next_action": {"code": "retry", "target": "request"}
             }))
         } else {
-            ResponseTemplate::new(200).set_body_json(success.clone())
+            ResponseTemplate::new(200).set_body_json(&success)
         }
     }
 }
@@ -101,7 +102,7 @@ pub(crate) struct ResponseTemplate {
 }
 
 impl ResponseTemplate {
-    pub(crate) fn new(status: u16) -> Self {
+    pub(crate) const fn new(status: u16) -> Self {
         Self {
             status,
             headers: Vec::new(),
@@ -110,10 +111,9 @@ impl ResponseTemplate {
         }
     }
 
-    pub(crate) fn set_body_json(mut self, value: serde_json::Value) -> Self {
-        self.body = serde_json::to_vec(&value)
-            .unwrap_or_else(|error| panic!("test response JSON must serialize: {error}"));
-        self.insert_header("content-type", "application/json")
+    pub(crate) fn set_body_json(self, value: impl std::borrow::Borrow<serde_json::Value>) -> Self {
+        self.set_body_string(value.borrow().to_string())
+            .insert_header("content-type", "application/json")
     }
 
     pub(crate) fn set_body_string(mut self, value: impl Into<String>) -> Self {
@@ -133,7 +133,7 @@ impl ResponseTemplate {
         self
     }
 
-    pub(crate) fn set_delay(mut self, delay: std::time::Duration) -> Self {
+    pub(crate) const fn set_delay(mut self, delay: std::time::Duration) -> Self {
         self.delay = delay;
         self
     }
@@ -184,7 +184,7 @@ impl Mock {
         self
     }
 
-    pub(crate) fn expect(mut self, count: u64) -> Self {
+    pub(crate) const fn expect(mut self, count: u64) -> Self {
         self.expected = Some(count);
         self
     }
@@ -214,13 +214,9 @@ pub(crate) struct MockServer {
 }
 
 impl MockServer {
-    pub(crate) async fn start() -> Self {
-        let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
-            .await
-            .unwrap_or_else(|error| panic!("loopback test server must bind: {error}"));
-        let address = listener
-            .local_addr()
-            .unwrap_or_else(|error| panic!("loopback test address must exist: {error}"));
+    pub(crate) async fn start() -> Result<Self, Error> {
+        let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).await?;
+        let address = listener.local_addr()?;
         let state = Arc::new(Mutex::new(State::default()));
         let server_state = Arc::clone(&state);
         let task = tokio::spawn(async move {
@@ -235,11 +231,11 @@ impl MockServer {
                 }));
             }
         });
-        Self {
+        Ok(Self {
             uri: format!("http://{address}"),
             state,
             task,
-        }
+        })
     }
 
     pub(crate) fn uri(&self) -> String {
@@ -381,7 +377,7 @@ async fn write_response(stream: &mut TcpStream, response: &ResponseTemplate) -> 
         if name.contains(['\r', '\n']) || value.contains(['\r', '\n']) {
             return Err(invalid("invalid response header"));
         }
-        head.push_str(&format!("{name}: {value}\r\n"));
+        write!(head, "{name}: {value}\r\n").map_err(Error::other)?;
     }
     stream.write_all(format!("{head}\r\n").as_bytes()).await?;
     stream.write_all(&response.body).await?;

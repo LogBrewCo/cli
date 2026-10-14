@@ -2,7 +2,7 @@
 
 use crate::matchers::body_json;
 use crate::{Mock, MockServer, ResponseTemplate};
-use logbrew_cli::{Command, HelpTopic, HttpMethod, help, parse_command};
+use logbrew_cli::{HelpTopic, HttpMethod, help, parse_command};
 
 const PROJECT_ID: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 
@@ -12,13 +12,7 @@ fn public_grammar_help_and_request_model_stay_aligned() -> Result<(), Box<dyn st
         vec!["logbrew", "analytics", "compare", "--help"],
         vec!["logbrew", "help", "analytics", "segments"],
     ] {
-        assert_eq!(
-            parse_command(args)?,
-            Command::Help {
-                topic: HelpTopic::AnalyticsCompare,
-                json: false,
-            }
-        );
+        crate::assert_help(&args, HelpTopic::AnalyticsCompare, false);
     }
     let command = parse_command(compare_args(true, "old=Old release"))?;
     assert_eq!(
@@ -72,7 +66,7 @@ fn property_predicates_are_bounded_canonical_and_part_of_segment_identity()
 }
 
 async_test!(built_binary_posts_exact_segments_and_preserves_validated_json -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await?;
     let response = comparison_response("Old release");
     Mock::auth(
         "POST",
@@ -102,11 +96,11 @@ async_test!(built_binary_posts_exact_segments_and_preserves_validated_json -> Re
             }
         ]
     })))
-    .respond_with(ResponseTemplate::new(200).set_body_json(response.clone()))
+    .respond_with(ResponseTemplate::new(200).set_body_json(&response))
     .expect(1)
     .mount(&server);
 
-    let process = run_binary(&server, true, "old=Old release").await?;
+    let process = run_binary_args(&server, compare_args(true, "old=Old release")).await?;
 
     super::assert_cli_success(&process);
     let actual: serde_json::Value = serde_json::from_slice(process.stdout.as_slice())?;
@@ -115,13 +109,13 @@ async_test!(built_binary_posts_exact_segments_and_preserves_validated_json -> Re
 });
 
 async_test!(built_binary_human_output_explains_reach_differences_coverage_and_limits -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await?;
     Mock::route("POST", "/api/telemetry/analytics/segments/compare")
-        .respond_with(ResponseTemplate::new(200).set_body_json(comparison_response("Old release")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&comparison_response("Old release")))
         .expect(1)
         .mount(&server);
 
-    let process = run_binary(&server, false, "old=Old release").await?;
+    let process = run_binary_args(&server, compare_args(false, "old=Old release")).await?;
 
     super::assert_cli_success(&process);
     let text = String::from_utf8(process.stdout)?;
@@ -146,7 +140,7 @@ async_test!(built_binary_human_output_explains_reach_differences_coverage_and_li
 });
 
 async_test!(built_binary_accepts_typed_user_identity_coverage_target -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await?;
     let mut response = comparison_response("Old release");
     response["query"]["analysis_unit"] = "identified_user".into();
     response["segments"][0]["coverage"]["unit_identified_events"] = 70.into();
@@ -155,7 +149,7 @@ async_test!(built_binary_accepts_typed_user_identity_coverage_target -> Result<(
     response["next_action"]["code"] = "improve_identity_coverage".into();
     response["next_action"]["target"] = "context.subject.kind=user".into();
     Mock::route("POST", "/api/telemetry/analytics/segments/compare")
-        .respond_with(ResponseTemplate::new(200).set_body_json(response.clone()))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&response))
         .expect(1)
         .mount(&server);
 
@@ -174,15 +168,15 @@ async_test!(built_binary_accepts_typed_user_identity_coverage_target -> Result<(
 });
 
 async_test!(built_binary_separates_missing_properties_from_nonmatching_values -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
-    let response = property_comparison_response();
+    let server = MockServer::start().await?;
+    let response = property_comparison_response()?;
     Mock::route("POST", "/api/telemetry/analytics/segments/compare")
         .and(body_json(
             parse_command(property_compare_args(false))?
                 .request_body()
                 .ok_or("comparison body missing")?,
         ))
-        .respond_with(ResponseTemplate::new(200).set_body_json(response))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&response))
         .expect(1)
         .mount(&server);
 
@@ -207,22 +201,18 @@ async_test!(built_binary_separates_missing_properties_from_nonmatching_values ->
 });
 
 async_test!(built_binary_fails_closed_on_contradictory_property_populations -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
-    let mut response = property_comparison_response();
+    let server = MockServer::start().await?;
+    let mut response = property_comparison_response()?;
     response["segments"][0]["coverage"]["property_filters"]["missing_property_events"] = 9.into();
     response["next_action"]["reason"] = "property-contradiction-marker".into();
     Mock::route("POST", "/api/telemetry/analytics/segments/compare")
-        .respond_with(ResponseTemplate::new(200).set_body_json(response))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&response))
         .expect(1)
         .mount(&server);
 
     let process = run_binary_args(&server, property_compare_args(true)).await?;
 
-    assert!(!process.status.success());
-    assert!(process.stdout.is_empty());
-    let text = String::from_utf8(process.stderr)?;
-    let error: serde_json::Value = serde_json::from_str(text.as_str())?;
-    assert_eq!(error["error"], "analytics_segment_response_invalid");
+    let text = super::cli_json_error(process, "analytics_segment_response_invalid")?;
     assert!(!text.contains("property-contradiction-marker"));
     Ok(())
 });
@@ -241,34 +231,30 @@ async_test!(built_binary_fails_closed_on_unknown_identity_and_contradictory_diff
             response
         },
     ] {
-        let server = MockServer::start().await;
+        let server = MockServer::start().await?;
         Mock::route("POST", "/api/telemetry/analytics/segments/compare")
-            .respond_with(ResponseTemplate::new(200).set_body_json(response))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&response))
             .expect(1)
             .mount(&server);
 
-        let process = run_binary(&server, true, "old=Old release").await?;
+        let process = run_binary_args(&server, compare_args(true, "old=Old release")).await?;
 
-        assert!(!process.status.success());
-        assert!(process.stdout.is_empty());
-        let text = String::from_utf8(process.stderr)?;
-        let error: serde_json::Value = serde_json::from_str(text.as_str())?;
-        assert_eq!(error["error"], "analytics_segment_response_invalid");
+        let text = super::cli_json_error(process, "analytics_segment_response_invalid")?;
         assert!(!text.contains("hostile-subject-marker"));
     }
     Ok(())
 });
 
 async_test!(built_binary_escapes_bidirectional_segment_labels_in_human_output -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await?;
     let label = "Old \u{202e}release";
     Mock::route("POST", "/api/telemetry/analytics/segments/compare")
-        .respond_with(ResponseTemplate::new(200).set_body_json(comparison_response(label)))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&comparison_response(label)))
         .expect(1)
         .mount(&server);
 
     let argument = format!("old={label}");
-    let process = run_binary(&server, false, argument.as_str()).await?;
+    let process = run_binary_args(&server, compare_args(false, argument.as_str())).await?;
 
     assert!(process.status.success());
     let text = String::from_utf8(process.stdout)?;
@@ -276,15 +262,6 @@ async_test!(built_binary_escapes_bidirectional_segment_labels_in_human_output ->
     assert!(!text.contains(label));
     Ok(())
 });
-
-/// Runs the actual CLI process while the async loopback server remains responsive.
-async fn run_binary(
-    server: &MockServer,
-    json: bool,
-    baseline: &str,
-) -> Result<std::process::Output, Box<dyn std::error::Error>> {
-    run_binary_args(server, compare_args(json, baseline)).await
-}
 
 /// Runs the actual CLI process for one fully assembled comparison invocation.
 async fn run_binary_args(
@@ -297,46 +274,15 @@ async fn run_binary_args(
 
 /// Builds one property-based comparison with values known only by the caller.
 fn property_compare_args(json: bool) -> Vec<String> {
-    let mut args = [
-        "logbrew",
-        "analytics",
-        "compare",
-        "--project",
-        PROJECT_ID,
-        "--since",
-        "7d",
-        "--target-kind",
-        "interaction",
-        "--target-event",
-        "checkout_completed",
-        "--segment",
-        "old=Old release",
-        "--segment",
-        "new=New release",
-        "--segment-service",
-        "old=checkout",
-        "--segment-service",
-        "new=checkout",
-        "--segment-release",
-        "old=1.0.0",
-        "--segment-release",
-        "new=1.1.0",
-        "--segment-environment",
-        "old=production",
-        "--segment-environment",
-        "new=production",
-        "--segment-property",
-        "old:tag.plan=free",
-        "--segment-property",
-        "old:resource.framework.name=React",
-        "--segment-property",
-        "new:tag.plan=pro",
-        "--interval",
-        "1h",
-    ]
-    .into_iter()
-    .map(str::to_owned)
-    .collect::<Vec<_>>();
+    let mut args = compare_args(false, "old=Old release");
+    args.extend([
+        "--segment-property".to_owned(),
+        "old:tag.plan=free".to_owned(),
+        "--segment-property".to_owned(),
+        "old:resource.framework.name=React".to_owned(),
+        "--segment-property".to_owned(),
+        "new:tag.plan=pro".to_owned(),
+    ]);
     if json {
         args.push("--json".to_owned());
     }
@@ -438,99 +384,7 @@ fn comparison_response(baseline_label: &str) -> serde_json::Value {
                 "At least one segment has incomplete unit coverage."
             ]
         },
-        "segments": [
-            {
-                "key": "old",
-                "label": baseline_label,
-                "eligible_units": 50,
-                "reached_units": 10,
-                "reach_rate": 0.2,
-                "usable_target_events_per_reached_unit": 1.8,
-                "coverage": {
-                    "classified_events": 100,
-                    "unit_identified_events": 90,
-                    "excluded_events": 10,
-                    "unit_coverage_rate": 0.9,
-                    "target_events": 20,
-                    "usable_target_events": 18,
-                    "excluded_target_events": 2,
-                    "target_unit_coverage_rate": 0.9,
-                    "traced_target_events": 15,
-                    "target_trace_link_rate": 0.75
-                },
-                "series": [
-                    {
-                        "bucket_start": "2026-08-01T00:00:00Z",
-                        "bucket_end": "2026-08-01T01:00:00Z",
-                        "classified_events": 60,
-                        "eligible_units": 35,
-                        "target_events": 12,
-                        "usable_target_events": 10,
-                        "reached_units": 6,
-                        "reach_rate": 0.171_428_571_428_571_43
-                    },
-                    {
-                        "bucket_start": "2026-08-01T01:00:00Z",
-                        "bucket_end": "2026-08-01T02:00:00Z",
-                        "classified_events": 40,
-                        "eligible_units": 25,
-                        "target_events": 8,
-                        "usable_target_events": 8,
-                        "reached_units": 5,
-                        "reach_rate": 0.2
-                    }
-                ]
-            },
-            {
-                "key": "new",
-                "label": "New release",
-                "eligible_units": 60,
-                "reached_units": 18,
-                "reach_rate": 0.3,
-                "usable_target_events_per_reached_unit": 2.0,
-                "coverage": {
-                    "classified_events": 120,
-                    "unit_identified_events": 120,
-                    "excluded_events": 0,
-                    "unit_coverage_rate": 1.0,
-                    "target_events": 36,
-                    "usable_target_events": 36,
-                    "excluded_target_events": 0,
-                    "target_unit_coverage_rate": 1.0,
-                    "traced_target_events": 30,
-                    "target_trace_link_rate": 0.833_333_333_333_333_4
-                },
-                "series": [
-                    {
-                        "bucket_start": "2026-08-01T00:00:00Z",
-                        "bucket_end": "2026-08-01T01:00:00Z",
-                        "classified_events": 70,
-                        "eligible_units": 40,
-                        "target_events": 20,
-                        "usable_target_events": 20,
-                        "reached_units": 10,
-                        "reach_rate": 0.25
-                    },
-                    {
-                        "bucket_start": "2026-08-01T01:00:00Z",
-                        "bucket_end": "2026-08-01T02:00:00Z",
-                        "classified_events": 50,
-                        "eligible_units": 30,
-                        "target_events": 16,
-                        "usable_target_events": 16,
-                        "reached_units": 9,
-                        "reach_rate": 0.3
-                    }
-                ],
-                "comparison_to_baseline": {
-                    "eligible_units_difference": 10,
-                    "reached_units_difference": 8,
-                    "target_events_difference": 16,
-                    "reach_rate_difference": 0.1,
-                    "relative_reach_rate_lift": 0.5
-                }
-            }
-        ],
+        "segments": comparison_segments(baseline_label),
         "next_action": {
             "code": "investigate_segment_paths",
             "target": "/api/telemetry/analytics/paths",
@@ -539,8 +393,104 @@ fn comparison_response(baseline_label: &str) -> serde_json::Value {
     })
 }
 
+fn comparison_segments(baseline_label: &str) -> serde_json::Value {
+    serde_json::json!([
+        {
+            "key": "old",
+            "label": baseline_label,
+            "eligible_units": 50,
+            "reached_units": 10,
+            "reach_rate": 0.2,
+            "usable_target_events_per_reached_unit": 1.8,
+            "coverage": {
+                "classified_events": 100,
+                "unit_identified_events": 90,
+                "excluded_events": 10,
+                "unit_coverage_rate": 0.9,
+                "target_events": 20,
+                "usable_target_events": 18,
+                "excluded_target_events": 2,
+                "target_unit_coverage_rate": 0.9,
+                "traced_target_events": 15,
+                "target_trace_link_rate": 0.75
+            },
+            "series": [
+                {
+                    "bucket_start": "2026-08-01T00:00:00Z",
+                    "bucket_end": "2026-08-01T01:00:00Z",
+                    "classified_events": 60,
+                    "eligible_units": 35,
+                    "target_events": 12,
+                    "usable_target_events": 10,
+                    "reached_units": 6,
+                    "reach_rate": 0.171_428_571_428_571_43
+                },
+                {
+                    "bucket_start": "2026-08-01T01:00:00Z",
+                    "bucket_end": "2026-08-01T02:00:00Z",
+                    "classified_events": 40,
+                    "eligible_units": 25,
+                    "target_events": 8,
+                    "usable_target_events": 8,
+                    "reached_units": 5,
+                    "reach_rate": 0.2
+                }
+            ]
+        },
+        {
+            "key": "new",
+            "label": "New release",
+            "eligible_units": 60,
+            "reached_units": 18,
+            "reach_rate": 0.3,
+            "usable_target_events_per_reached_unit": 2.0,
+            "coverage": {
+                "classified_events": 120,
+                "unit_identified_events": 120,
+                "excluded_events": 0,
+                "unit_coverage_rate": 1.0,
+                "target_events": 36,
+                "usable_target_events": 36,
+                "excluded_target_events": 0,
+                "target_unit_coverage_rate": 1.0,
+                "traced_target_events": 30,
+                "target_trace_link_rate": 0.833_333_333_333_333_4
+            },
+            "series": [
+                {
+                    "bucket_start": "2026-08-01T00:00:00Z",
+                    "bucket_end": "2026-08-01T01:00:00Z",
+                    "classified_events": 70,
+                    "eligible_units": 40,
+                    "target_events": 20,
+                    "usable_target_events": 20,
+                    "reached_units": 10,
+                    "reach_rate": 0.25
+                },
+                {
+                    "bucket_start": "2026-08-01T01:00:00Z",
+                    "bucket_end": "2026-08-01T02:00:00Z",
+                    "classified_events": 50,
+                    "eligible_units": 30,
+                    "target_events": 16,
+                    "usable_target_events": 16,
+                    "reached_units": 9,
+                    "reach_rate": 0.3
+                }
+            ],
+            "comparison_to_baseline": {
+                "eligible_units_difference": 10,
+                "reached_units_difference": 8,
+                "target_events_difference": 16,
+                "reach_rate_difference": 0.1,
+                "relative_reach_rate_lift": 0.5
+            }
+        }
+    ])
+}
+
 /// Adds exact property predicates and their disjoint readiness/value coverage receipts.
-fn property_comparison_response() -> serde_json::Value {
+fn property_comparison_response() -> crate::TestResult<serde_json::Value> {
     let mut response = comparison_response("Old release");
     response["query"]["segments"][0]["property_filters"] = serde_json::json!([
         {"key": "resource.framework.name", "value": "React"},
@@ -568,10 +518,10 @@ fn property_comparison_response() -> serde_json::Value {
     });
     response["confidence"]["limitations"]
         .as_array_mut()
-        .expect("limitations are an array")
+        .ok_or("limitations are an array")?
         .extend([
             serde_json::json!("Property predicates use exact case-sensitive values."),
             serde_json::json!("Sensitive custom property keys are excluded."),
         ]);
-    response
+    Ok(response)
 }

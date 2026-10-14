@@ -1,11 +1,9 @@
 //! Native debug-artifact command and lookup contracts.
 
-#[allow(dead_code)]
-#[path = "native_debug_artifacts/contract_support.rs"]
-mod contract_support;
-#[allow(dead_code)]
-#[path = "native_debug_artifacts/support.rs"]
-mod support;
+pub(super) mod archive_support;
+pub(super) mod contract_support;
+pub(super) mod resumable_support;
+pub(super) mod support;
 
 use crate::{Mock, MockServer, ResponseTemplate};
 use contract_support::*;
@@ -69,7 +67,7 @@ async_test!(upload_grammar_is_closed_and_value_safe -> Result<(), Box<dyn std::e
 });
 
 async_test!(lookup_grammar_rejects_noncanonical_identity_before_network -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await?;
     let fixture = Fixture::new("lookup-grammar")?;
 
     for (image_uuid, architecture) in [
@@ -103,12 +101,12 @@ async_test!(lookup_grammar_rejects_noncanonical_identity_before_network -> Resul
         assert_private_values_absent(text.as_str(), &fixture, server.uri().as_str());
     }
 
-    assert!(received_requests(&server).await?.is_empty());
+    assert!(server.received_requests().is_empty());
     Ok(())
 });
 
 async_test!(malformed_artifact_fails_before_network_without_path_reflection -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await?;
     let fixture = Fixture::new("malformed-object")?;
     let artifact = fixture.root.join("Customer Secret Object.dwarf");
     std::fs::write(artifact.as_path(), b"not a native debug object")?;
@@ -128,15 +126,15 @@ async_test!(malformed_artifact_fails_before_network_without_path_reflection -> R
         "provide one validated Apple dSYM, ZIP, Mach-O object, or Android ELF with debug information matching every --expect-image-uuid value"
     );
     assert_private_values_absent(text.as_str(), &fixture, server.uri().as_str());
-    assert!(received_requests(&server).await?.is_empty());
+    assert!(server.received_requests().is_empty());
     Ok(())
 });
 
 async_test!(unreadable_debug_info_fails_before_network -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await?;
     let fixture = Fixture::new("unreadable-debug-info")?;
     let mut object = macho64(0x0100_000c, uuid_bytes(0x10));
-    object[176..180].copy_from_slice(4096u32.to_le_bytes().as_slice());
+    object[176..180].copy_from_slice(4096_u32.to_le_bytes().as_slice());
     let artifact = fixture.root.join("Unreadable Debug Info");
     std::fs::write(artifact.as_path(), object)?;
 
@@ -150,12 +148,12 @@ async_test!(unreadable_debug_info_fails_before_network -> Result<(), Box<dyn std
     let (text, body) = json_failure(&output)?;
     assert_eq!(body["error"], "native_debug_artifact_invalid");
     assert_private_values_absent(text.as_str(), &fixture, server.uri().as_str());
-    assert!(received_requests(&server).await?.is_empty());
+    assert!(server.received_requests().is_empty());
     Ok(())
 });
 
 async_test!(duplicate_bundle_identity_fails_before_network -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await?;
     let fixture = Fixture::new("duplicate")?;
     let dwarf = fixture.root.join("Duplicate.dSYM/Contents/Resources/DWARF");
     std::fs::create_dir_all(dwarf.as_path())?;
@@ -173,22 +171,21 @@ async_test!(duplicate_bundle_identity_fails_before_network -> Result<(), Box<dyn
     let (text, body) = json_failure(&output)?;
     assert_eq!(body["error"], "native_debug_artifact_invalid");
     assert_private_values_absent(text.as_str(), &fixture, server.uri().as_str());
-    assert!(received_requests(&server).await?.is_empty());
+    assert!(server.received_requests().is_empty());
     Ok(())
 });
 
 async_test!(upload_fails_closed_when_lookup_hash_mismatches -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await?;
     let fixture = Fixture::new("mismatch-verification")?;
     let object = macho64(0x0100_000c, uuid_bytes(0x10));
     mount_lookup(
         &server,
-        found_lookup(
+        &found_lookup(
             "0000000000000000000000000000000000000000000000000000000000000000",
             object.len(),
         ),
-    )
-    .await;
+    );
     let artifact = fixture.root.join("Mismatched Verification Symbols");
     std::fs::write(artifact.as_path(), object)?;
 
@@ -207,9 +204,9 @@ async_test!(upload_fails_closed_when_lookup_hash_mismatches -> Result<(), Box<dy
 
 async_test!(lookup_uses_exact_canonical_query_and_redacts_malformed_success -> Result<(), Box<dyn std::error::Error>>, {
     for architecture in ["arm", "arm64", "arm64e", "x86", "x86_64"] {
-        let server = MockServer::start().await;
+        let server = MockServer::start().await?;
         Mock::route("GET", "/api/native-debug-artifacts")
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            .respond_with(ResponseTemplate::new(200).set_body_json(&serde_json::json!({
                 "unexpected": "hostile backend text"
             })))
             .expect(1)
@@ -225,7 +222,7 @@ async_test!(lookup_uses_exact_canonical_query_and_redacts_malformed_success -> R
         assert_eq!(output.status.code(), Some(1));
         assert_invalid_response_is_redacted(&output, &fixture, &server)?;
 
-        let requests = received_requests(&server).await?;
+        let requests = server.received_requests();
         assert_eq!(requests.len(), 1);
         let request = &requests[0];
         assert_eq!(request.method.as_str(), "GET");
@@ -247,15 +244,14 @@ async_test!(lookup_uses_exact_canonical_query_and_redacts_malformed_success -> R
 
 async_test!(standalone_lookup_distinguishes_found_and_missing_json -> Result<(), Box<dyn std::error::Error>>, {
     let fixture = Fixture::new("lookup-states")?;
-    let found_server = MockServer::start().await;
+    let found_server = MockServer::start().await?;
     mount_lookup(
         &found_server,
-        found_lookup(
+        &found_lookup(
             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             209,
         ),
-    )
-    .await;
+    );
     let found = invoke(
         &fixture,
         found_server.uri().as_str(),
@@ -270,8 +266,8 @@ async_test!(standalone_lookup_distinguishes_found_and_missing_json -> Result<(),
     assert!(found_body["artifact"].is_object());
     assert_private_values_absent(found_text.as_str(), &fixture, found_server.uri().as_str());
 
-    let missing_server = MockServer::start().await;
-    mount_lookup(&missing_server, missing_lookup()).await;
+    let missing_server = MockServer::start().await?;
+    mount_lookup(&missing_server, &missing_lookup());
     let missing = invoke(
         &fixture,
         missing_server.uri().as_str(),

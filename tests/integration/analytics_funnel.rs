@@ -2,7 +2,7 @@
 
 use crate::matchers::body_json;
 use crate::{Mock, MockServer, ResponseTemplate};
-use logbrew_cli::{Command, HelpTopic, HttpMethod, help, parse_command};
+use logbrew_cli::{HelpTopic, HttpMethod, help, parse_command};
 
 const PROJECT_ID: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 
@@ -12,13 +12,7 @@ fn public_grammar_help_and_request_model_stay_aligned() -> Result<(), Box<dyn st
         vec!["logbrew", "analytics", "funnel", "--help"],
         vec!["logbrew", "help", "analytics", "funnels"],
     ] {
-        assert_eq!(
-            parse_command(args)?,
-            Command::Help {
-                topic: HelpTopic::AnalyticsFunnel,
-                json: false,
-            }
-        );
+        crate::assert_help(&args, HelpTopic::AnalyticsFunnel, false);
     }
     let command = parse_command([
         "logbrew",
@@ -59,7 +53,7 @@ fn public_grammar_help_and_request_model_stay_aligned() -> Result<(), Box<dyn st
 }
 
 async_test!(built_binary_posts_exact_scope_and_preserves_validated_json -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await?;
     let response = funnel_response();
     Mock::auth("POST", "/api/telemetry/analytics/funnel", "account-token")
         .and(body_json(serde_json::json!({
@@ -74,7 +68,7 @@ async_test!(built_binary_posts_exact_scope_and_preserves_validated_json -> Resul
                 {"kind": "interaction", "event_name": "signup_completed"}
             ]
         })))
-        .respond_with(ResponseTemplate::new(200).set_body_json(response.clone()))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&response))
         .expect(1)
         .mount(&server);
 
@@ -87,9 +81,9 @@ async_test!(built_binary_posts_exact_scope_and_preserves_validated_json -> Resul
 });
 
 async_test!(built_binary_human_output_explains_conversion_drop_off_coverage_and_semantics -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await?;
     Mock::route("POST", "/api/telemetry/analytics/funnel")
-        .respond_with(ResponseTemplate::new(200).set_body_json(funnel_response()))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&funnel_response()))
         .expect(1)
         .mount(&server);
 
@@ -115,21 +109,17 @@ async_test!(built_binary_human_output_explains_conversion_drop_off_coverage_and_
 });
 
 async_test!(built_binary_fails_closed_on_unknown_identity_fields_without_reflection -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await?;
     let mut response = funnel_response();
     response["steps"][0]["session_id"] = "hostile-session-marker".into();
     Mock::route("POST", "/api/telemetry/analytics/funnel")
-        .respond_with(ResponseTemplate::new(200).set_body_json(response))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&response))
         .expect(1)
         .mount(&server);
 
     let process = run_binary(&server, true).await?;
 
-    assert!(!process.status.success());
-    assert!(process.stdout.is_empty());
-    let text = String::from_utf8(process.stderr)?;
-    let error: serde_json::Value = serde_json::from_str(text.as_str())?;
-    assert_eq!(error["error"], "analytics_funnel_response_invalid");
+    let text = super::cli_json_error(process, "analytics_funnel_response_invalid")?;
     assert!(!text.contains("hostile-session-marker"));
     Ok(())
 });

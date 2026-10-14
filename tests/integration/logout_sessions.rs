@@ -5,12 +5,12 @@ use crate::{Mock, MockServer, ResponseTemplate, execute_command};
 use logbrew_cli::{CliEnvironment, parse_command};
 
 async_test!(logout_revokes_refresh_family_without_bearer_then_clears_local_pair -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await?;
     Mock::route("POST", "/api/auth/logout")
         .and(body_json(serde_json::json!({
             "refresh_token": "logout-refresh-proof"
         })))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+        .respond_with(ResponseTemplate::new(200).set_body_json(&serde_json::json!({
             "revoked": true,
             "next_action": {
                 "code": "clear_local_session",
@@ -46,12 +46,12 @@ async_test!(logout_revokes_refresh_family_without_bearer_then_clears_local_pair 
 });
 
 async_test!(logout_treats_rejected_refresh_as_inactive_and_clears_local_pair -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await?;
     Mock::route("POST", "/api/auth/logout")
         .and(body_json(serde_json::json!({
             "refresh_token": "inactive-refresh-proof"
         })))
-        .respond_with(ResponseTemplate::new(401).set_body_json(serde_json::json!({
+        .respond_with(ResponseTemplate::new(401).set_body_json(&serde_json::json!({
             "code": "unauthorized",
             "error": "unsafe inactive-refresh-proof",
             "next": "unsafe server guidance"
@@ -91,7 +91,7 @@ async_test!(logout_clears_local_pair_when_server_revocation_is_unknown -> Result
         ),
         (
             "malformed-200",
-            ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            ResponseTemplate::new(200).set_body_json(&serde_json::json!({
                 "revoked": true,
                 "next_action": {
                     "code": "clear_local_session",
@@ -106,7 +106,7 @@ async_test!(logout_clears_local_pair_when_server_revocation_is_unknown -> Result
                 .set_body_string("proxy denied unknown-refresh-proof without LogBrew code"),
         ),
     ] {
-        let server = MockServer::start().await;
+        let server = MockServer::start().await?;
         Mock::route("POST", "/api/auth/logout")
             .respond_with(response)
             .mount(&server);
@@ -142,12 +142,12 @@ async_test!(logout_clears_local_pair_when_server_revocation_is_unknown -> Result
 });
 
 async_test!(logout_revokes_stored_session_without_sending_env_or_legacy_tokens -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await?;
     Mock::route("POST", "/api/auth/logout")
         .and(body_json(serde_json::json!({
             "refresh_token": "env-file-refresh-proof"
         })))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+        .respond_with(ResponseTemplate::new(200).set_body_json(&serde_json::json!({
             "revoked": true,
             "next_action": {
                 "code": "clear_local_session",
@@ -171,7 +171,7 @@ async_test!(logout_revokes_stored_session_without_sending_env_or_legacy_tokens -
 
     let legacy_home = logout_home("legacy-token")?;
     let legacy_path = legacy_home.join(".logbrew").join("token");
-    std::fs::create_dir_all(legacy_path.parent().expect("legacy path has parent"))?;
+    std::fs::create_dir_all(legacy_path.parent().ok_or("legacy path has no parent")?)?;
     std::fs::write(legacy_path.as_path(), "legacy-access-proof\n")?;
     let legacy_body = run_logout_json(&server, legacy_home, None).await?;
     assert_eq!(legacy_body["removed"], true);
@@ -201,7 +201,7 @@ async_test!(logout_revokes_stored_session_without_sending_env_or_legacy_tokens -
 async_test!(logout_keeps_legacy_credentials_local_when_api_url_is_invalid -> Result<(), Box<dyn std::error::Error>>, {
     let home = logout_home("legacy-invalid-api")?;
     let legacy_path = home.join(".logbrew").join("token");
-    std::fs::create_dir_all(legacy_path.parent().expect("legacy path has parent"))?;
+    std::fs::create_dir_all(legacy_path.parent().ok_or("legacy path has no parent")?)?;
     std::fs::write(legacy_path.as_path(), "legacy-invalid-api-proof\n")?;
     let command = parse_command(["logbrew", "logout", "--json"])?;
     let env = CliEnvironment {
@@ -223,9 +223,9 @@ async_test!(logout_keeps_legacy_credentials_local_when_api_url_is_invalid -> Res
 });
 
 async_test!(logout_human_output_reports_server_and_environment_state_without_secrets -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await?;
     Mock::route("POST", "/api/auth/logout")
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+        .respond_with(ResponseTemplate::new(200).set_body_json(&serde_json::json!({
             "revoked": true,
             "next_action": {
                 "code": "clear_local_session",
@@ -263,7 +263,7 @@ async_test!(logout_human_output_reports_server_and_environment_state_without_sec
 });
 
 async_test!(logout_unknown_server_with_env_token_preserves_both_recovery_steps -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await?;
     Mock::route("POST", "/api/auth/logout")
         .respond_with(ResponseTemplate::new(503).set_body_string("unsafe combined-proof"))
         .mount(&server);
@@ -298,8 +298,8 @@ async_test!(logout_unknown_server_with_env_token_preserves_both_recovery_steps -
 });
 
 async_test!(logout_does_not_forward_refresh_token_across_redirects -> Result<(), Box<dyn std::error::Error>>, {
-    let redirect_target = MockServer::start().await;
-    let server = MockServer::start().await;
+    let redirect_target = MockServer::start().await?;
+    let server = MockServer::start().await?;
     Mock::route("POST", "/api/auth/logout")
         .respond_with(
             ResponseTemplate::new(307)
@@ -325,9 +325,9 @@ async_test!(logout_does_not_forward_refresh_token_across_redirects -> Result<(),
 });
 
 async_test!(repeated_logout_does_not_replay_deleted_refresh_credentials -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await?;
     Mock::route("POST", "/api/auth/logout")
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+        .respond_with(ResponseTemplate::new(200).set_body_json(&serde_json::json!({
             "revoked": true,
             "next_action": {
                 "code": "clear_local_session",
@@ -354,12 +354,12 @@ async_test!(repeated_logout_does_not_replay_deleted_refresh_credentials -> Resul
 });
 
 async_test!(concurrent_new_login_survives_logout_revocation -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await?;
     Mock::route("POST", "/api/auth/logout")
         .respond_with(
             ResponseTemplate::new(200)
                 .set_delay(std::time::Duration::from_millis(200))
-                .set_body_json(serde_json::json!({
+                .set_body_json(&serde_json::json!({
                     "revoked": true,
                     "next_action": {
                         "code": "clear_local_session",
@@ -383,15 +383,17 @@ async_test!(concurrent_new_login_survives_logout_revocation -> Result<(), Box<dy
         Ok::<Vec<u8>, logbrew_cli::RuntimeError>(output)
     });
 
-    for _attempt in 0..50 {
+    for _attempt in 0..1_000 {
         if !server.received_requests().is_empty() {
             break;
         }
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;
     }
-    assert!(!server.received_requests().is_empty());
-    let writer_home = home;
-    let writer = tokio::task::spawn_blocking(move || write_new_session_after_lock(writer_home));
+    assert!(
+        !server.received_requests().is_empty(),
+        "logout request never reached the server"
+    );
+    let writer = tokio::task::spawn_blocking(move || write_new_session_after_lock(home.as_path()));
 
     let output = logout_task.await??;
     writer.await??;
@@ -410,9 +412,9 @@ async_test!(concurrent_new_login_survives_logout_revocation -> Result<(), Box<dy
 async_test!(waiting_for_credential_lock_does_not_block_async_runtime -> Result<(), Box<dyn std::error::Error>>, {
     use fs2::FileExt as _;
 
-    let server = MockServer::start().await;
+    let server = MockServer::start().await?;
     Mock::route("POST", "/api/auth/logout")
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+        .respond_with(ResponseTemplate::new(200).set_body_json(&serde_json::json!({
             "revoked": true,
             "next_action": {
                 "code": "clear_local_session",
@@ -432,6 +434,7 @@ async_test!(waiting_for_credential_lock_does_not_block_async_runtime -> Result<(
         .read(true)
         .write(true)
         .create(true)
+        .truncate(false)
         .open(lock_path)?;
     held_lock.lock_exclusive()?;
     let releaser = std::thread::spawn(move || {
@@ -450,7 +453,7 @@ async_test!(waiting_for_credential_lock_does_not_block_async_runtime -> Result<(
     tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     let scheduler_delay = started.elapsed();
     let output = logout_task.await??;
-    releaser.join().expect("credential-lock releaser completes");
+    releaser.join().map_err(|_| "credential-lock releaser failed")?;
 
     assert!(
         scheduler_delay < std::time::Duration::from_millis(100),
@@ -493,7 +496,7 @@ fn write_session(
     super::write_test_session(home, origin, access_token, refresh_token)
 }
 
-fn write_new_session_after_lock(home: std::path::PathBuf) -> Result<(), std::io::Error> {
+fn write_new_session_after_lock(home: &std::path::Path) -> Result<(), std::io::Error> {
     use fs2::FileExt as _;
 
     let auth_dir = home.join(".logbrew");
@@ -501,6 +504,7 @@ fn write_new_session_after_lock(home: std::path::PathBuf) -> Result<(), std::io:
         .read(true)
         .write(true)
         .create(true)
+        .truncate(false)
         .open(auth_dir.join("credentials.lock"))?;
     lock_file.lock_exclusive()?;
     std::fs::write(
