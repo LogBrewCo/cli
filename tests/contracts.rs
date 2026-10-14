@@ -19,3 +19,5 @@ pub(crate) mod matchers {
 mod grammar;
 mod integration;
 mod investigation;
+
+type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;

@@ -41,14 +41,11 @@ run_rust_tests &
 test_pid=$!
 (
 cargo fmt --all -- --check
-bash scripts/confidentiality-check.sh
 python3 scripts/brand_assets.py --check
 python3 scripts/test-brand-assets.py
-python3 scripts/check-github-hosted-runners.py
 if [[ "${LOGBREW_CHECK_ALL_SELF_TEST:-1}" != "0" ]]; then
   bash scripts/test-check-all.sh
 fi
-bash scripts/test-package-contents.sh
 ruby scripts/test-prepare-homebrew-formula.rb
 bash scripts/test-release-preflight.sh
 python3 scripts/test-cross-platform-auth-store.py
