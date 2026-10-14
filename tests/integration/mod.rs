@@ -8,6 +8,7 @@ mod analytics_overview;
 mod analytics_paths;
 mod analytics_properties;
 mod analytics_retention;
+mod auth_store_windows;
 mod confidentiality;
 mod deployment;
 mod execution_commands;

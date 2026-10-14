@@ -31,6 +31,11 @@ test = false
 name = "contracts"
 path = "tests/contracts.rs"
 
+[[example]]
+name = "brand-assets"
+path = "tests/brand_assets.rs"
+test = true
+
 [dependencies]
 atomic-write-file = "0.3.0"
 bytes = "1.11.1"
