@@ -133,7 +133,7 @@ check_npm_version_available() {
   local response_file="$3"
   local status
 
-  if ! status="$(http_json_status "https://registry.npmjs.org/${package_name}" "$response_file")"; then
+  if ! status="$(http_json_status "https://registry.npmjs.org/${package_name/\//%2f}" "$response_file")"; then
     fail "could not verify npm package ${package_name}; registry request failed"
   fi
   case "$status" in
@@ -327,7 +327,10 @@ tmp_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_dir"' EXIT
 
 check_crates_version_available "logbrew-cli" "$crate_version" "$tmp_dir/crates.json"
-check_npm_version_available "logbrew-cli" "$crate_version" "$tmp_dir/npm.json"
+for npm_package in @logbrew/cli-darwin-arm64 @logbrew/cli-darwin-x64 @logbrew/cli-linux-arm64 \
+  @logbrew/cli-linux-x64 @logbrew/cli-win32-x64 logbrew-cli; do
+  check_npm_version_available "$npm_package" "$crate_version" "$tmp_dir/npm.json"
+done
 check_homebrew_tap_available "$HOMEBREW_TAP_REPO"
 check_main_branch_protection
 check_required_workflows_active

@@ -5,7 +5,7 @@ members = ["cargo:."]
 cargo-dist-version = "0.32.0"
 ci = "github"
 allow-dirty = ["ci"]
-installers = ["shell", "powershell", "npm", "homebrew", "msi"]
+installers = ["shell", "powershell", "homebrew", "msi"]
 publish-jobs = ["./publish-npm-trusted", "./publish-homebrew-tap"]
 github-custom-job-permissions = { "publish-npm-trusted" = { contents = "read", id-token = "write", packages = "write" }, "publish-homebrew-tap" = { contents = "read" } }
 github-custom-runners = { "x86_64-pc-windows-msvc" = "windows-2025" }

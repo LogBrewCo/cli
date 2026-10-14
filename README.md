@@ -4,7 +4,8 @@
 
 # LogBrew CLI
 
-Public command-line interface for LogBrew.
+Public command-line interface for LogBrew. The npm package is `logbrew-cli`,
+the crates.io crate is `logbrew-cli`, and the installed command is `logbrew`.
 
 The CLI is built for humans and coding agents: stable JSON output, readable
 human output, clear `Next:` recovery steps, and token-safe diagnostics.
@@ -18,6 +19,18 @@ cargo install logbrew-cli
 npm install -g logbrew-cli@latest
 brew install LogBrewCo/tap/logbrew
 ```
+
+To run the CLI once without a global install, use the exact npm package name:
+
+```bash
+npx logbrew-cli@latest --version
+```
+
+The npm package has no install scripts, so it works when npm blocks install
+scripts or runs with `--ignore-scripts`. npm installs the native binary from one
+optional platform package: `@logbrew/cli-darwin-arm64`,
+`@logbrew/cli-darwin-x64`, `@logbrew/cli-linux-arm64`, `@logbrew/cli-linux-x64`
+(glibc), or `@logbrew/cli-win32-x64`. Do not install with `--omit=optional`.
 
 Existing installations do not update themselves. Refresh through the same
 package manager before relying on a newly documented setup capability:
@@ -64,14 +77,18 @@ cargo install --git https://github.com/LogBrewCo/cli logbrew-cli
 ## Distribution
 
 LogBrew CLI is a Rust native binary. Cargo builds a platform-native `logbrew`
-executable for the selected target; npm, Homebrew, shell, PowerShell, and MSI
-installers are wrappers around those native release artifacts.
+executable for the selected target. The npm platform packages, Homebrew, shell,
+PowerShell, and MSI installers ship those native release binaries.
 
 Release publishing is handled by GitHub Actions:
 
 - GitHub Releases: native archives for Linux x64/ARM64, macOS x64/ARM64, and
   Windows x64 on GitHub-hosted runners.
-- Installers: shell, PowerShell, npm package, Homebrew formula, and Windows MSI.
+- Installers: shell, PowerShell, Homebrew formula, and Windows MSI.
+- npm: `logbrew-cli`, a launcher with no install scripts, and five
+  `@logbrew/cli-<os>-<cpu>` packages that each hold one native binary. The
+  release packs them with `scripts/npm-packages.sh` and publishes the platform
+  packages before `logbrew-cli`.
 - Package managers: crates.io and npm via trusted publishing/OIDC, and Homebrew
   via the `LogBrewCo/homebrew-tap` formula repository.
 
@@ -81,10 +98,13 @@ framework integrations, Python framework middleware, Swift, .NET, Go, Java,
 Kotlin, Ruby, Rust SDK crates, and Unity packages remain SDK-owned. This repo
 only publishes the `logbrew` CLI binary and its install wrappers.
 
-Trusted publishing requires the npm package and crates.io crate to already
+Trusted publishing requires each npm package and the crates.io crate to already
 exist, so brand-new package names need one manual first publish before CI release
-tags can publish future versions without long-lived registry tokens. Homebrew
-publishing requires the GitHub Actions secret `HOMEBREW_TAP_TOKEN`.
+tags can publish future versions without long-lived registry tokens. This
+applies to `logbrew-cli` and to each `@logbrew/cli-<os>-<cpu>` package. After
+the first publish, add the trusted publisher with
+`npm trust github <package> --repo LogBrewCo/cli --file release.yml --allow-publish`.
+Homebrew publishing requires the GitHub Actions secret `HOMEBREW_TAP_TOKEN`.
 
 Before pushing a release tag, run the release preflight:
 

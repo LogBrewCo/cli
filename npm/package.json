@@ -1,0 +1,38 @@
+{
+  "name": "logbrew-cli",
+  "version": "0.0.0",
+  "description": "Official LogBrew CLI. Read logs, issues, traces, and releases from your terminal, with JSON output for scripts and AI coding agents.",
+  "keywords": [
+    "logbrew",
+    "logbrew-cli",
+    "cli",
+    "observability",
+    "logs",
+    "logging",
+    "error-tracking",
+    "tracing",
+    "monitoring",
+    "ai-agents"
+  ],
+  "homepage": "https://logbrew.co",
+  "bugs": "https://github.com/LogBrewCo/cli/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/LogBrewCo/cli.git"
+  },
+  "license": "MIT",
+  "author": "LogBrewCo",
+  "bin": {
+    "logbrew": "bin/logbrew.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "optionalDependencies": {
+    "@logbrew/cli-darwin-arm64": "0.0.0",
+    "@logbrew/cli-darwin-x64": "0.0.0",
+    "@logbrew/cli-linux-arm64": "0.0.0",
+    "@logbrew/cli-linux-x64": "0.0.0",
+    "@logbrew/cli-win32-x64": "0.0.0"
+  }
+}

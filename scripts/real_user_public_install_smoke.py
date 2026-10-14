@@ -402,6 +402,7 @@ def install_npm(
             "--global",
             "--prefix",
             str(install_root),
+            "--ignore-scripts",
             "--no-audit",
             "--no-fund",
             str(artifact),

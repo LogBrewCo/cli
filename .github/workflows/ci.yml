@@ -35,3 +35,78 @@ jobs:
 
       - name: Check
         run: bash scripts/check-all.sh
+
+  npm-install:
+    name: npm-install (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-24.04
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm
+          - target: aarch64-apple-darwin
+            runner: macos-15
+          - target: x86_64-pc-windows-msvc
+            runner: windows-2025
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
+        with:
+          toolchain: stable
+
+      - uses: swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: npm-install-${{ matrix.target }}
+
+      - name: Install Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24.19.0"
+
+      - name: Install the latest npm
+        run: npm install --global npm@12.2.0
+
+      - name: Build the release binary
+        run: cargo build --profile dist --locked
+
+      - name: Install the packed npm packages without install scripts
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          version="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')"
+          expected="logbrew $version"
+          binary=target/dist/logbrew
+          [[ "$RUNNER_OS" == Windows ]] && binary+=.exe
+          bash scripts/npm-packages.sh "$version" target/npm "$TARGET=$binary"
+          packages=("$PWD"/target/npm/*.tgz)
+          [[ "${#packages[@]}" -eq 2 ]] || exit 1
+          for package in "${packages[@]}"; do
+            tar -xOzf "$package" package/package.json | jq -e 'has("scripts") | not' >/dev/null
+          done
+          for flags in "" --ignore-scripts; do
+            project="$(mktemp -d)"
+            (
+              cd "$project"
+              npm init -y >/dev/null
+              npm install ${flags:+"$flags"} --no-audit --no-fund "${packages[@]}" 2>&1 | tee install.log
+              if grep -qi 'install-scripts' install.log; then exit 1; fi
+              [[ "$(npx --no -- logbrew --version | tr -d '\r')" == "$expected" ]]
+            )
+          done
+          npm install --global --ignore-scripts --prefix "$PWD/target/npm-global" --no-audit --no-fund "${packages[@]}"
+          launcher=target/npm-global/bin/logbrew
+          [[ "$RUNNER_OS" == Windows ]] && launcher=target/npm-global/logbrew
+          [[ "$("$launcher" --version | tr -d '\r')" == "$expected" ]]
