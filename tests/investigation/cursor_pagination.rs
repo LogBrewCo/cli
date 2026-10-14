@@ -1,9 +1,12 @@
 //! Shared cursor collection command, response, and recovery contracts.
 
-use super::{assert_cursor_flag_errors, assert_cursor_help, authenticated_env, run_command};
+use super::{
+    TestResult, assert_cursor_flag_errors, assert_cursor_help, authenticated_env,
+    rendered_json_error, run_command,
+};
 use crate::matchers::{header, query_param};
 use crate::{Mock, MockServer, ResponseTemplate, execute_command};
-use logbrew_cli::{parse_command, write_cli_error, write_runtime_error};
+use logbrew_cli::{parse_command, write_runtime_error};
 use serde_json::{Map, Value, json};
 
 const PROJECT_ID: &str = "123e4567-e89b-12d3-a456-426614174000";
@@ -104,47 +107,46 @@ const SPECS: [CursorSpec; 5] = [
 ];
 
 #[test]
-fn cursor_pages_preserve_exact_filters_and_backend_cursor_keys() {
+fn cursor_pages_preserve_exact_filters_and_backend_cursor_keys() -> TestResult {
     for spec in SPECS {
-        let initial = parse_command(command_args(spec, false)).expect("first page parses");
+        let initial = parse_command(command_args(spec, false))?;
         assert_eq!(initial.http_path().as_deref(), Some(spec.expected_initial));
-        let continuation = parse_command(command_args(spec, true)).expect("continuation parses");
+        let continuation = parse_command(command_args(spec, true))?;
         assert_eq!(
             continuation.http_path().as_deref(),
             Some(spec.expected_continuation)
         );
     }
+    Ok(())
 }
 
 #[test]
-fn cursor_flags_and_help_are_resource_specific() {
+fn cursor_flags_and_help_are_resource_specific() -> TestResult {
     for spec in SPECS {
-        assert_cursor_flag_errors(spec.resource, CURSOR_TIME, spec.cursor_id, spec.error_code);
-        assert_cursor_help(spec.resource, spec.help_id);
+        assert_cursor_flag_errors(spec.resource, CURSOR_TIME, spec.cursor_id, spec.error_code)?;
+        assert_cursor_help(spec.resource, spec.help_id)?;
     }
-    let error = parse_command(["logbrew", "releases", "--pagination", "cursor", "--json"])
-        .expect_err("releases do not invent cursor support");
-    let mut output = Vec::new();
-    write_cli_error(&error, true, &mut output).expect("error writes");
-    let body: Value = serde_json::from_slice(&output).expect("valid JSON");
+    let (body, _) =
+        rendered_json_error(&["logbrew", "releases", "--pagination", "cursor", "--json"])?;
     assert_eq!(body["error"], "unsupported_flag");
     assert_eq!(body["next"], "run logbrew read releases --help");
+    Ok(())
 }
 
 async_test!(json_preserves_legacy_arrays_and_cursor_envelopes -> Result<(), Box<dyn std::error::Error>>, {
     for spec in SPECS {
-        let legacy_server = MockServer::start().await.expect("loopback server starts");
-        let cursor_server = MockServer::start().await.expect("loopback server starts");
+        let legacy_server = MockServer::start().await?;
+        let cursor_server = MockServer::start().await?;
         let row = row_value(spec);
         let envelope = page_value(spec, row.clone(), Some(cursor_value(spec)));
         Mock::auth("GET", spec.path, "test-token")
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!([row.clone()])))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&json!([row.clone()])))
             .mount(&legacy_server);
         Mock::route("GET", spec.path)
             .and(query_param("pagination", "cursor"))
             .and(query_param("limit", "1"))
             .and(header("authorization", "Bearer test-token"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(envelope.clone()))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&envelope))
             .mount(&cursor_server);
 
         let legacy = run_command(
@@ -175,12 +177,12 @@ async_test!(json_preserves_legacy_arrays_and_cursor_envelopes -> Result<(), Box<
 
 async_test!(human_pages_keep_rows_receipts_and_retryable_continuations -> Result<(), Box<dyn std::error::Error>>, {
     for spec in SPECS {
-        let server = MockServer::start().await.expect("loopback server starts");
+        let server = MockServer::start().await?;
         Mock::route("GET", spec.path)
             .and(query_param("pagination", "cursor"))
             .and(query_param("limit", "1"))
             .and(header("authorization", "Bearer test-token"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(page_value(
+            .respond_with(ResponseTemplate::new(200).set_body_json(&page_value(
                 spec,
                 row_value(spec),
                 Some(cursor_value(spec)),
@@ -227,7 +229,7 @@ async_test!(human_pages_keep_rows_receipts_and_retryable_continuations -> Result
 
 async_test!(terminal_pages_and_replaced_continuations_are_explicit -> Result<(), Box<dyn std::error::Error>>, {
     for spec in SPECS {
-        let terminal = MockServer::start().await.expect("loopback server starts");
+        let terminal = MockServer::start().await?;
         Mock::route("GET", spec.path)
             .and(query_param("pagination", "cursor"))
             .and(query_param("cursor_time", CURSOR_TIME))
@@ -240,7 +242,7 @@ async_test!(terminal_pages_and_replaced_continuations_are_explicit -> Result<(),
                 spec.cursor_id,
             ))
             .and(header("authorization", "Bearer test-token"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(page_value(
+            .respond_with(ResponseTemplate::new(200).set_body_json(&page_value(
                 spec,
                 row_value(spec),
                 None,
@@ -266,14 +268,14 @@ async_test!(terminal_pages_and_replaced_continuations_are_explicit -> Result<(),
     }
 
     let spec = SPECS[2];
-    let server = MockServer::start().await.expect("loopback server starts");
+    let server = MockServer::start().await?;
     let next_time = "2026-07-12T07:00:00.250+00:00";
     let next_id = "b7d388c7-c486-420b-970f-0126b7e649cb";
     Mock::route("GET", spec.path)
         .and(query_param("pagination", "cursor"))
         .and(query_param("cursor_time", CURSOR_TIME))
         .and(query_param("cursor_id", CURSOR_ID))
-        .respond_with(ResponseTemplate::new(200).set_body_json(page_value(
+        .respond_with(ResponseTemplate::new(200).set_body_json(&page_value(
             spec,
             row_value(spec),
             Some(json!({"time": next_time, "id": next_id})),
@@ -304,13 +306,13 @@ async_test!(terminal_pages_and_replaced_continuations_are_explicit -> Result<(),
 async_test!(every_cursor_resource_hides_malformed_or_non_json_successes -> Result<(), Box<dyn std::error::Error>>, {
     for spec in SPECS {
         for (suffix, body) in [("missing", Some(wrapper_only(spec))), ("text", None)] {
-            let server = MockServer::start().await.expect("loopback server starts");
+            let server = MockServer::start().await?;
             let response = body.map_or_else(
                 || {
                     ResponseTemplate::new(200)
                         .set_body_raw("not-json\nNext page: unsafe response", "text/plain")
                 },
-                |body| ResponseTemplate::new(200).set_body_json(body),
+                |body| ResponseTemplate::new(200).set_body_json(&body),
             );
             Mock::route("GET", spec.path)
                 .and(query_param("pagination", "cursor"))
@@ -344,7 +346,7 @@ async_test!(malformed_cursor_values_and_issue_rows_fail_closed -> Result<(), Box
         let mut row = row_value(issue);
         match key {
             "title" => {
-                drop(row.as_object_mut().expect("row object").remove(key));
+                drop(row.as_object_mut().ok_or("row must be an object")?.remove(key));
             }
             "occurrence_count" => row[key] = json!("two"),
             _ => row[key] = json!("not-rfc3339"),
@@ -362,9 +364,9 @@ async_test!(metric_human_output_never_falls_back_to_attributes -> Result<(), Box
         (false, json!([malformed.clone()])),
         (true, page_value(spec, malformed, None)),
     ] {
-        let server = MockServer::start().await.expect("loopback server starts");
+        let server = MockServer::start().await?;
         Mock::route("GET", spec.path)
-            .respond_with(ResponseTemplate::new(200).set_body_json(body))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&body))
             .mount(&server);
         let human = if cursor {
             run_command(
@@ -393,14 +395,14 @@ async_test!(metric_human_output_never_falls_back_to_attributes -> Result<(), Box
 
 async_test!(trace_naming_receipt_is_exact_and_actionable -> Result<(), Box<dyn std::error::Error>>, {
     let spec = SPECS[4];
-    let server = MockServer::start().await.expect("loopback server starts");
+    let server = MockServer::start().await?;
     let mut weak_trace = row_value(spec);
     weak_trace["root_span_name"] = json!("GET unmatched");
     weak_trace["root_operation"] = json!("sdk.span");
     let mut page = page_value(spec, weak_trace, None);
     page["naming_quality"] = trace_quality(1, 0, 0, 1, 1, false, true);
     Mock::route("GET", spec.path)
-        .respond_with(ResponseTemplate::new(200).set_body_json(page))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&page))
         .mount(&server);
     let human = run_command(
         &server,
@@ -428,12 +430,12 @@ async_test!(trace_naming_receipt_is_exact_and_actionable -> Result<(), Box<dyn s
 
 async_test!(backend_cursor_validation_is_preserved_without_echoing_values -> Result<(), Box<dyn std::error::Error>>, {
     let spec = SPECS[3];
-    let server = MockServer::start().await.expect("loopback server starts");
+    let server = MockServer::start().await?;
     Mock::route("GET", spec.path)
         .and(query_param("pagination", "cursor"))
         .and(query_param("cursor_time", "not-a-time"))
         .and(query_param("cursor_id", CURSOR_ID))
-        .respond_with(ResponseTemplate::new(422).set_body_json(json!({
+        .respond_with(ResponseTemplate::new(422).set_body_json(&json!({
             "error": "invalid cursor pagination",
             "code": "validation_failed",
             "next": CURSOR_RECOVERY,
@@ -455,7 +457,8 @@ async_test!(backend_cursor_validation_is_preserved_without_echoing_values -> Res
     let mut output = Vec::new();
     let error = execute_command(&command, &env, &mut output)
         .await
-        .expect_err("invalid backend cursor fails");
+        .err()
+        .ok_or("invalid backend cursor must fail")?;
     write_runtime_error(&error, true, &mut output)?;
     let body: Value = serde_json::from_slice(&output)?;
     assert_eq!(body["status"], 422);
@@ -565,7 +568,7 @@ fn cursor_value(spec: CursorSpec) -> Value {
 
 fn page_value(spec: CursorSpec, row: Value, next_cursor: Option<Value>) -> Value {
     let mut page = Map::new();
-    drop(page.insert(spec.wrapper.into(), json!([row])));
+    drop(page.insert(spec.wrapper.into(), Value::Array(vec![row])));
     drop(page.insert("next_cursor".into(), next_cursor.unwrap_or(Value::Null)));
     if spec.resource == "traces" {
         drop(page.insert(
@@ -608,10 +611,10 @@ async fn assert_invalid_page(
     spec: CursorSpec,
     body: Value,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let server = MockServer::start().await.expect("loopback server starts");
+    let server = MockServer::start().await?;
     Mock::route("GET", spec.path)
         .and(query_param("pagination", "cursor"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(body))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&body))
         .mount(&server);
     let human = run_command(
         &server,
@@ -619,8 +622,16 @@ async fn assert_invalid_page(
         format!("{}-invalid", spec.resource).as_str(),
     )
     .await?;
-    assert_eq!(human, invalid_response(spec.title));
-    assert!(!human.contains("unsafe cursor"));
+    assert_eq!(
+        human,
+        invalid_response(spec.title),
+        "{} must reject the invalid page",
+        spec.resource
+    );
+    assert!(
+        !human.contains("unsafe cursor"),
+        "recovery must not echo the rejected cursor"
+    );
     Ok(())
 }
 

@@ -2,18 +2,18 @@
 
 use super::{assert_private_file, secure_directory, set_private_file_mode};
 use crate::matchers::{body_json, header};
-use crate::{Mock, MockServer, Request, ResponseTemplate, execute_command, retry_then};
-use logbrew_cli::{
-    CliEnvironment, HelpTopic, HttpMethod, RuntimeError, help, parse_command, write_cli_error,
-    write_runtime_error,
+use crate::{
+    Mock, MockServer, Request, ResponseTemplate, TestResult, execute_command, failed_command,
+    rendered_json_error, retry_then, runtime_error_text,
 };
+use logbrew_cli::{CliEnvironment, HelpTopic, HttpMethod, RuntimeError, help, parse_command};
 
 const PROJECT_ID: &str = "123e4567-e89b-12d3-a456-426614174000";
 const INGEST_ID: &str = "223e4567-e89b-12d3-a456-426614174000";
 const ONE_TIME_TOKEN: &str = "lbw_ingest_one_time_private_value";
 
 #[test]
-fn parses_project_create_with_normalized_exact_request() {
+fn parses_project_create_with_normalized_exact_request() -> TestResult {
     let command = parse_command([
         "logbrew",
         "projects",
@@ -26,8 +26,7 @@ fn parses_project_create_with_normalized_exact_request() {
         "--ingest-key-file",
         "./private/ingest.key",
         "--json",
-    ])
-    .expect("project create parses");
+    ])?;
 
     assert_eq!(command.http_path().as_deref(), Some("/api/projects"));
     assert_eq!(command.http_method(), Some(HttpMethod::Post));
@@ -51,8 +50,7 @@ fn parses_project_create_with_normalized_exact_request() {
         "--runtime=",
         "--environment=  ",
         "--ingest-key-file=./private/ingest.key",
-    ])
-    .expect("global json project create parses");
+    ])?;
     assert_eq!(
         global_json.request_body(),
         Some(serde_json::json!({
@@ -61,12 +59,12 @@ fn parses_project_create_with_normalized_exact_request() {
         }))
     );
     assert!(global_json.wants_json());
+    Ok(())
 }
 
 #[test]
-fn parses_repository_discovery_and_component_aware_project_creation() {
-    let catalog = parse_command(["logbrew", "projects", "repositories", "--json"])
-        .expect("repository catalog parses");
+fn parses_repository_discovery_and_component_aware_project_creation() -> TestResult {
+    let catalog = parse_command(["logbrew", "projects", "repositories", "--json"])?;
     assert_eq!(
         catalog.http_path().as_deref(),
         Some("/api/projects/repositories")
@@ -84,8 +82,7 @@ fn parses_repository_discovery_and_component_aware_project_creation() {
         "--repository",
         "provider-repository-42",
         "--json",
-    ])
-    .expect("repository discovery parses");
+    ])?;
     assert_eq!(
         discovery.http_path().as_deref(),
         Some("/api/projects/repositories/components/discover")
@@ -116,8 +113,7 @@ fn parses_repository_discovery_and_component_aware_project_creation() {
         "123e4567-e89b-12d3-a456-426614174002",
         "--component=123e4567-e89b-12d3-a456-426614174003",
         "--json",
-    ])
-    .expect("component-aware project create parses");
+    ])?;
     assert_eq!(
         create.request_body(),
         Some(serde_json::json!({
@@ -149,12 +145,13 @@ fn parses_repository_discovery_and_component_aware_project_creation() {
         ])
         .is_err()
     );
+    Ok(())
 }
 
 async_test!(repository_catalog_is_bounded_and_rejects_external_authorization_paths -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await.expect("loopback server starts");
+    let server = MockServer::start().await?;
     Mock::auth("GET", "/api/projects/repositories", "account-token")
-        .respond_with(ResponseTemplate::new(200).set_body_json(repository_catalog()))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&repository_catalog()))
         .mount(&server);
     let command = parse_command(["logbrew", "projects", "repositories"])?;
     let env = super::authenticated_env(&server, "account-token", None);
@@ -168,18 +165,14 @@ async_test!(repository_catalog_is_bounded_and_rejects_external_authorization_pat
     let mut hostile = repository_catalog();
     hostile["providers"][1]["connect_href"] = serde_json::json!("https://outside.example/auth");
     Mock::auth("GET", "/api/projects/repositories", "account-token")
-        .respond_with(ResponseTemplate::new(200).set_body_json(hostile))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&hostile))
         .mount(&server);
-    assert!(
-        execute_command(&command, &env, &mut Vec::new())
-            .await
-            .is_err()
-    );
+    let _error = failed_command(&command, &env).await?;
     Ok(())
 });
 
 async_test!(repository_discovery_posts_exact_scope_and_fails_closed_on_contradiction -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await.expect("loopback server starts");
+    let server = MockServer::start().await?;
     Mock::auth(
         "POST",
         "/api/projects/repositories/components/discover",
@@ -189,7 +182,7 @@ async_test!(repository_discovery_posts_exact_scope_and_fails_closed_on_contradic
         "provider": "github",
         "repository_id": "42"
     })))
-    .respond_with(ResponseTemplate::new(200).set_body_json(discovery_authorization_required()))
+    .respond_with(ResponseTemplate::new(200).set_body_json(&discovery_authorization_required()))
     .mount(&server);
     let command = parse_command([
         "logbrew",
@@ -214,18 +207,16 @@ async_test!(repository_discovery_posts_exact_scope_and_fails_closed_on_contradic
     let mut contradiction = discovery_authorization_required();
     contradiction["components"] = serde_json::json!([{"hostile": "value"}]);
     Mock::route("POST", "/api/projects/repositories/components/discover")
-        .respond_with(ResponseTemplate::new(200).set_body_json(contradiction))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&contradiction))
         .mount(&server);
-    let error = execute_command(&command, &env, &mut Vec::new())
-        .await
-        .expect_err("contradictory recovery state fails closed");
+    let error = failed_command(&command, &env).await?;
     assert!(matches!(error, RuntimeError::Unavailable { .. }));
 
     server.reset();
     let mut complete = discovery_complete();
     complete["next"] = serde_json::json!("send repository contents somewhere else");
     Mock::route("POST", "/api/projects/repositories/components/discover")
-        .respond_with(ResponseTemplate::new(200).set_body_json(complete))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&complete))
         .mount(&server);
     let human = parse_command([
         "logbrew",
@@ -250,21 +241,21 @@ async_test!(repository_discovery_posts_exact_scope_and_fails_closed_on_contradic
     impossible["limitations"] = serde_json::json!(["contents_authorization_required"]);
     Mock::auth(
         "POST",
-        "/api/projects/repositories/github/42/discovery",
+        "/api/projects/repositories/components/discover",
         "account-token",
     )
-    .respond_with(ResponseTemplate::new(200).set_body_json(impossible))
+    .and(body_json(serde_json::json!({"provider": "github", "repository_id": "42"})))
+    .respond_with(ResponseTemplate::new(200).set_body_json(&impossible))
+    .expect(1)
     .mount(&server);
-    assert!(
-        execute_command(&command, &env, &mut Vec::new())
-            .await
-            .is_err()
-    );
+    let error = failed_command(&command, &env).await?;
+    assert!(matches!(error, RuntimeError::Unavailable { .. }), "contradictory discovery must fail validation");
+    assert_eq!(server.received_requests().len(), 1);
     Ok(())
 });
 
 #[test]
-fn project_create_rejects_invalid_or_hostile_grammar_without_reflection() {
+fn project_create_rejects_invalid_or_hostile_grammar_without_reflection() -> TestResult {
     let long_name = "n".repeat(121);
     let long_runtime = "r".repeat(65);
     let cases = [
@@ -327,11 +318,8 @@ fn project_create_rejects_invalid_or_hostile_grammar_without_reflection() {
     ];
 
     for args in cases {
-        let error = parse_command(args).expect_err("project create grammar fails closed");
-        let mut output = Vec::new();
-        write_cli_error(&error, true, &mut output).expect("error writes");
-        let text = String::from_utf8(output).expect("utf8 output");
-        let body: serde_json::Value = serde_json::from_str(text.as_str()).expect("valid json");
+        let (body, text) =
+            rendered_json_error(&args.iter().map(String::as_str).collect::<Vec<_>>())?;
 
         assert_eq!(body["error"], "invalid_project_create_command");
         assert_eq!(body["message"], "invalid project create command");
@@ -343,6 +331,7 @@ fn project_create_rejects_invalid_or_hostile_grammar_without_reflection() {
         assert!(!text.contains("authorization"));
         assert!(!text.contains("private/key"));
     }
+    Ok(())
 }
 
 #[test]
@@ -365,7 +354,7 @@ fn projects_help_documents_secure_bootstrap_and_retry() {
 
 #[cfg(unix)]
 async_test!(project_create_posts_exact_request_then_persists_before_safe_json -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await.expect("loopback server starts");
+    let server = MockServer::start().await?;
     Mock::auth("POST", "/api/projects", "account-token")
         .and(header("content-type", "application/json"))
         .and(body_json(serde_json::json!({
@@ -374,7 +363,7 @@ async_test!(project_create_posts_exact_request_then_persists_before_safe_json ->
             "environment": "production",
             "source": "cli"
         })))
-        .respond_with(ResponseTemplate::new(200).set_body_json(success_response()))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&success_response()))
         .mount(&server);
     let fixture = Fixture::new("success")?;
     let args = fixture.args("Checkout API", false);
@@ -416,9 +405,9 @@ async_test!(project_create_posts_exact_request_then_persists_before_safe_json ->
 
 #[cfg(target_os = "macos")]
 async_test!(built_binary_accepts_private_destination_below_system_tmp_symlink -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await.expect("loopback server starts");
+    let server = MockServer::start().await?;
     Mock::route("POST", "/api/projects")
-        .respond_with(ResponseTemplate::new(200).set_body_json(success_response()))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&success_response()))
         .mount(&server);
     let fixture = Fixture::new_below(std::path::Path::new("/tmp"), "system-tmp-symlink")?;
     let mut command = super::cli_command(&server);
@@ -458,7 +447,7 @@ async_test!(built_binary_accepts_private_destination_below_system_tmp_symlink ->
 
 #[cfg(unix)]
 async_test!(exact_retry_reuses_persisted_body_and_idempotency_key -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await.expect("loopback server starts");
+    let server = MockServer::start().await?;
     let mut replayed = success_response();
     replayed["ingest"]["expires_at"] = serde_json::Value::Null;
     let responder = retry_then(replayed);
@@ -470,9 +459,7 @@ async_test!(exact_retry_reuses_persisted_body_and_idempotency_key -> Result<(), 
     let command = parse_command(args.clone())?;
     let env = fixture.env(&server);
 
-    let first_error = execute_command(&command, &env, &mut Vec::new())
-        .await
-        .expect_err("first attempt remains retryable");
+    let first_error = failed_command(&command, &env).await?;
     assert!(
         matches!(first_error, RuntimeError::Api { status: 500, .. }),
         "unexpected first error: {first_error:?}"
@@ -503,7 +490,7 @@ async_test!(exact_retry_reuses_persisted_body_and_idempotency_key -> Result<(), 
 
 #[cfg(unix)]
 async_test!(changed_retry_fails_closed_until_explicit_abandonment -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await.expect("loopback server starts");
+    let server = MockServer::start().await?;
     let responder = retry_then(success_response_with_name("Changed API"));
     Mock::route("POST", "/api/projects")
         .respond_with(responder)
@@ -511,14 +498,10 @@ async_test!(changed_retry_fails_closed_until_explicit_abandonment -> Result<(), 
     let fixture = Fixture::new("changed-retry")?;
     let env = fixture.env(&server);
     let original = parse_command(fixture.args("Checkout API", false))?;
-    let _first_error = execute_command(&original, &env, &mut Vec::new())
-        .await
-        .expect_err("first attempt fails");
+    let _first_error = failed_command(&original, &env).await?;
 
     let changed = parse_command(fixture.args("Changed API", false))?;
-    let changed_error = execute_command(&changed, &env, &mut Vec::new())
-        .await
-        .expect_err("changed retry fails locally");
+    let changed_error = failed_command(&changed, &env).await?;
     let changed_text = changed_error.to_string();
     assert!(
         changed_text.contains("pending project creation does not match"),
@@ -544,7 +527,7 @@ async_test!(changed_retry_fails_closed_until_explicit_abandonment -> Result<(), 
 
 #[cfg(unix)]
 async_test!(retry_state_path_is_rejected_as_an_ingest_key_destination -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await.expect("loopback server starts");
+    let server = MockServer::start().await?;
     let fixture = Fixture::new("reserved-retry-target")?;
     let private_dir = fixture.home.join(".logbrew");
     std::fs::create_dir(private_dir.as_path())?;
@@ -554,14 +537,12 @@ async_test!(retry_state_path_is_rejected_as_an_ingest_key_destination -> Result<
     let target_index = args
         .iter()
         .position(|argument| argument == "--ingest-key-file")
-        .expect("ingest key flag")
+        .ok_or("missing ingest key flag")?
         + 1;
     args[target_index] = retry_state.to_string_lossy().into_owned();
 
     let command = parse_command(args)?;
-    let error = execute_command(&command, &fixture.env(&server), &mut Vec::new())
-        .await
-        .expect_err("retry-state destination fails locally");
+    let error = failed_command(&command, &fixture.env(&server)).await?;
 
     assert_eq!(error.to_string(), "ingest key destination is not private");
     assert!(!retry_state.exists());
@@ -571,9 +552,9 @@ async_test!(retry_state_path_is_rejected_as_an_ingest_key_destination -> Result<
 
 #[cfg(unix)]
 async_test!(reserved_state_aliases_do_not_abandon_a_pending_retry -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await.expect("loopback server starts");
+    let server = MockServer::start().await?;
     Mock::route("POST", "/api/projects")
-        .respond_with(ResponseTemplate::new(500).set_body_json(serde_json::json!({
+        .respond_with(ResponseTemplate::new(500).set_body_json(&serde_json::json!({
             "error": "Internal error",
             "code": "internal_error",
             "next": "retry later",
@@ -583,13 +564,12 @@ async_test!(reserved_state_aliases_do_not_abandon_a_pending_retry -> Result<(), 
     let fixture = Fixture::new("reserved-state-aliases")?;
     let env = fixture.env(&server);
     let original = parse_command(fixture.args("Checkout API", false))?;
-    let _first_error = execute_command(&original, &env, &mut Vec::new())
-        .await
-        .expect_err("first attempt remains pending");
+    let _first_error = failed_command(&original, &env).await?;
     let retry_state = fixture.retry_state();
     let lock_file = fixture.home.join(".logbrew/project-create.lock");
     assert!(retry_state.exists());
     assert!(lock_file.exists());
+    let pending_retry = std::fs::read(&retry_state)?;
 
     let aliases = [
         fixture.root.join("secrets/retry-symlink"),
@@ -607,19 +587,19 @@ async_test!(reserved_state_aliases_do_not_abandon_a_pending_retry -> Result<(), 
         let target_index = args
             .iter()
             .position(|argument| argument == "--ingest-key-file")
-            .expect("ingest key flag")
+            .ok_or("missing ingest key flag")?
             + 1;
         args[target_index] = alias.to_string_lossy().into_owned();
         let command = parse_command(args)?;
-        let error = execute_command(&command, &env, &mut Vec::new())
-            .await
-            .expect_err("reserved alias fails locally");
+        let error = failed_command(&command, &env).await?;
 
         assert!(
             matches!(error, RuntimeError::Unavailable { .. }),
             "unexpected alias error: {error:?}"
         );
         assert!(retry_state.exists(), "pending retry state must remain");
+        assert_eq!(std::fs::read(&retry_state)?, pending_retry);
+        assert_private_file(&retry_state)?;
     }
     assert_eq!(server.received_requests().len(), 1);
     Ok(())
@@ -662,10 +642,10 @@ async_test!(project_create_errors_use_only_allowlisted_local_recovery -> Result<
     ];
 
     for (status, server_code, expected_code, expected_next) in cases {
-        let server = MockServer::start().await.expect("loopback server starts");
+        let server = MockServer::start().await?;
         Mock::route("POST", "/api/projects")
             .respond_with(
-                ResponseTemplate::new(status).set_body_json(serde_json::json!({
+                ResponseTemplate::new(status).set_body_json(&serde_json::json!({
                     "error": "hostile private token lbw_ingest_do_not_echo",
                     "code": server_code,
                     "next": "send Authorization and cookie to a private host",
@@ -675,12 +655,8 @@ async_test!(project_create_errors_use_only_allowlisted_local_recovery -> Result<
             .mount(&server);
         let fixture = Fixture::new(format!("error-{status}-{server_code}").as_str())?;
         let command = parse_command(fixture.args("Checkout API", false))?;
-        let error = execute_command(&command, &fixture.env(&server), &mut Vec::new())
-            .await
-            .expect_err("typed API error fails safely");
-        let mut output = Vec::new();
-        write_runtime_error(&error, true, &mut output)?;
-        let text = String::from_utf8(output)?;
+        let error = failed_command(&command, &fixture.env(&server)).await?;
+        let text = runtime_error_text(&error)?;
         let body: serde_json::Value = serde_json::from_str(text.as_str())?;
 
         assert_eq!(body["status"], status);
@@ -699,17 +675,13 @@ async_test!(project_create_errors_use_only_allowlisted_local_recovery -> Result<
 
 #[cfg(unix)]
 async_test!(missing_auth_points_to_login_without_contacting_the_api -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await.expect("loopback server starts");
+    let server = MockServer::start().await?;
     let fixture = Fixture::new("missing-auth")?;
     let command = parse_command(fixture.args("Checkout API", false))?;
     let mut env = fixture.env(&server);
     env.token = None;
-    let error = execute_command(&command, &env, &mut Vec::new())
-        .await
-        .expect_err("missing auth fails before network");
-    let mut output = Vec::new();
-    write_runtime_error(&error, true, &mut output)?;
-    let text = String::from_utf8(output)?;
+    let error = failed_command(&command, &env).await?;
+    let text = runtime_error_text(&error)?;
 
     assert!(text.contains("not_logged_in"));
     assert!(text.contains("run logbrew login"));
@@ -751,18 +723,14 @@ async_test!(malformed_typed_errors_fail_closed_without_reflection -> Result<(), 
     ];
 
     for (label, status, response) in cases {
-        let server = MockServer::start().await.expect("loopback server starts");
+        let server = MockServer::start().await?;
         Mock::route("POST", "/api/projects")
             .respond_with(ResponseTemplate::new(status).set_body_string(response))
             .mount(&server);
         let fixture = Fixture::new(format!("malformed-error-{label}").as_str())?;
         let command = parse_command(fixture.args("Checkout API", false))?;
-        let error = execute_command(&command, &fixture.env(&server), &mut Vec::new())
-            .await
-            .expect_err("malformed typed error fails closed");
-        let mut output = Vec::new();
-        write_runtime_error(&error, true, &mut output)?;
-        let text = String::from_utf8(output)?;
+        let error = failed_command(&command, &fixture.env(&server)).await?;
+        let text = runtime_error_text(&error)?;
 
         assert!(text.contains("invalid error response"));
         assert!(!text.contains("private"));
@@ -805,18 +773,14 @@ async_test!(malformed_or_hostile_success_never_writes_or_echoes_token -> Result<
         ("missing-expiry", missing_expiry),
         ("invalid-expiry", invalid_expiry),
     ] {
-        let server = MockServer::start().await.expect("loopback server starts");
+        let server = MockServer::start().await?;
         Mock::route("POST", "/api/projects")
-            .respond_with(ResponseTemplate::new(200).set_body_json(response))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&response))
             .mount(&server);
         let fixture = Fixture::new(format!("malformed-{label}").as_str())?;
         let command = parse_command(fixture.args("Checkout API", false))?;
-        let error = execute_command(&command, &fixture.env(&server), &mut Vec::new())
-            .await
-            .expect_err("malformed success fails closed");
-        let mut output = Vec::new();
-        write_runtime_error(&error, true, &mut output)?;
-        let text = String::from_utf8(output)?;
+        let error = failed_command(&command, &fixture.env(&server)).await?;
+        let text = runtime_error_text(&error)?;
 
         assert!(text.contains("project creation returned an invalid response"));
         assert!(!text.contains(ONE_TIME_TOKEN));
@@ -831,15 +795,15 @@ async_test!(malformed_or_hostile_success_never_writes_or_echoes_token -> Result<
 
 #[cfg(unix)]
 async_test!(unsafe_or_existing_key_destinations_fail_before_network -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await.expect("loopback server starts");
+    let server = MockServer::start().await?;
     let existing = Fixture::new("existing-target")?;
     std::fs::write(existing.key_file.as_path(), "existing-private-value")?;
     set_private_file_mode(existing.key_file.as_path())?;
     let command = parse_command(existing.args("Checkout API", false))?;
-    let error = execute_command(&command, &existing.env(&server), &mut Vec::new())
-        .await
-        .expect_err("existing destination is not overwritten");
+    let error = failed_command(&command, &existing.env(&server)).await?;
     assert!(error.to_string().contains("destination already exists"));
+    assert_eq!(std::fs::read_to_string(&existing.key_file)?, "existing-private-value");
+    assert_private_file(&existing.key_file)?;
 
     #[cfg(unix)]
     {
@@ -850,20 +814,19 @@ async_test!(unsafe_or_existing_key_destinations_fail_before_network -> Result<()
             std::fs::Permissions::from_mode(0o755),
         )?;
         let command = parse_command(weak.args("Checkout API", false))?;
-        let error = execute_command(&command, &weak.env(&server), &mut Vec::new())
-            .await
-            .expect_err("weak parent fails");
+        let error = failed_command(&command, &weak.env(&server)).await?;
         assert!(error.to_string().contains("destination is not private"));
+        assert!(!weak.key_file.exists(), "unsafe destination must remain absent");
 
         let linked = Fixture::new("symlink-target")?;
         let outside = linked.root.join("outside");
         std::fs::write(outside.as_path(), "outside-value")?;
         symlink(outside.as_path(), linked.key_file.as_path())?;
         let command = parse_command(linked.args("Checkout API", false))?;
-        let error = execute_command(&command, &linked.env(&server), &mut Vec::new())
-            .await
-            .expect_err("symlink target fails");
+        let error = failed_command(&command, &linked.env(&server)).await?;
         assert!(error.to_string().contains("destination already exists"));
+        assert_eq!(std::fs::read_to_string(&outside)?, "outside-value");
+        assert_eq!(std::fs::read_link(&linked.key_file)?, outside);
     }
 
     assert!(server.received_requests().is_empty());
@@ -872,16 +835,14 @@ async_test!(unsafe_or_existing_key_destinations_fail_before_network -> Result<()
 
 #[cfg(unix)]
 async_test!(exact_retry_can_confirm_an_already_persisted_matching_token -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await.expect("loopback server starts");
+    let server = MockServer::start().await?;
     Mock::route("POST", "/api/projects")
         .respond_with(retry_then(success_response()))
         .mount(&server);
     let fixture = Fixture::new("confirm-existing")?;
     let args = fixture.args("Checkout API", false);
     let command = parse_command(args.clone())?;
-    let _error = execute_command(&command, &fixture.env(&server), &mut Vec::new())
-        .await
-        .expect_err("first response is ambiguous");
+    let _error = failed_command(&command, &fixture.env(&server)).await?;
     std::fs::write(fixture.key_file.as_path(), ONE_TIME_TOKEN)?;
     set_private_file_mode(fixture.key_file.as_path())?;
 
@@ -904,9 +865,9 @@ async_test!(exact_retry_can_confirm_an_already_persisted_matching_token -> Resul
 
 #[cfg(unix)]
 async_test!(concurrent_project_create_serializes_to_one_persisted_key -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await.expect("loopback server starts");
+    let server = MockServer::start().await?;
     Mock::route("POST", "/api/projects")
-        .respond_with(ResponseTemplate::new(200).set_body_json(success_response()))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&success_response()))
         .mount(&server);
     let fixture = Fixture::new("concurrent")?;
     let command = parse_command(fixture.args("Checkout API", false))?;
@@ -939,9 +900,9 @@ async_test!(concurrent_project_create_serializes_to_one_persisted_key -> Result<
 
 #[cfg(unix)]
 async_test!(human_project_create_is_bounded_and_path_free -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await.expect("loopback server starts");
+    let server = MockServer::start().await?;
     Mock::route("POST", "/api/projects")
-        .respond_with(ResponseTemplate::new(200).set_body_json(success_response()))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&success_response()))
         .mount(&server);
     let fixture = Fixture::new("human")?;
     let mut args = fixture.args("Checkout API", false);
@@ -964,12 +925,10 @@ async_test!(human_project_create_is_bounded_and_path_free -> Result<(), Box<dyn 
 
 #[cfg(not(unix))]
 async_test!(project_create_fails_before_network_without_provable_owner_only_storage -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await.expect("loopback server starts");
+    let server = MockServer::start().await?;
     let fixture = Fixture::new("unsupported-private-storage")?;
     let command = parse_command(fixture.args("Checkout API", false))?;
-    let error = execute_command(&command, &fixture.env(&server), &mut Vec::new())
-        .await
-        .expect_err("unverifiable private storage fails closed");
+    let error = failed_command(&command, &fixture.env(&server)).await?;
 
     assert!(error.to_string().contains("unavailable on this platform"));
     assert!(server.received_requests().is_empty());
@@ -1127,7 +1086,7 @@ fn discovery_complete() -> serde_json::Value {
         }],
         "coverage": {
             "max_depth": 6,
-            "entry_limit": 5000,
+            "entry_limit": 5_000,
             "entries_seen": 20,
             "manifest_limit": 48,
             "manifests_found": 1,
