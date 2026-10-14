@@ -1,13 +1,13 @@
 //! CLI API response rendering tests.
 
 use crate::matchers::{body_json, header, query_param};
-use crate::{Mock, MockServer, ResponseTemplate, execute_command};
+use crate::{Mock, MockServer, ResponseTemplate, TestResult, execute_command};
 use logbrew_cli::{CliEnvironment, RuntimeError, parse_command, write_runtime_error};
 
 const PROJECT_ID: &str = "123e4567-e89b-12d3-a456-426614174000";
 
-async_test!(authenticated_read_logs_rejects_multiple_json_documents, {
-    let server = MockServer::start().await.expect("loopback server starts");
+async_test!(authenticated_read_logs_rejects_multiple_json_documents -> TestResult, {
+    let server = MockServer::start().await?;
     Mock::route("GET", "/api/logs")
         .and(query_param("project_id", PROJECT_ID))
         .and(query_param("search", "startup failure"))
@@ -29,18 +29,19 @@ async_test!(authenticated_read_logs_rejects_multiple_json_documents, {
         "--since",
         "1h",
         "--json",
-    ])
-    .expect("command parses");
+    ])?;
     let env = super::authenticated_env(&server, "test-token", Some("authenticated-read-test"));
     let mut output = Vec::new();
 
     let error = execute_command(&command, &env, &mut output)
         .await
-        .expect_err("multiple JSON documents fail closed");
+        .err()
+        .ok_or("multiple JSON documents fail closed")?;
     assert!(output.is_empty() && matches!(error, RuntimeError::Unavailable { .. }));
+    Ok(())
 });
 
-async_test!(human_logs_render_populated_and_empty_shapes, {
+async_test!(human_logs_render_populated_and_empty_shapes -> TestResult, {
     let row = |severity| {
         serde_json::json!({
             "level": severity, "severity": severity, "message": "checkout failed",
@@ -73,13 +74,13 @@ async_test!(human_logs_render_populated_and_empty_shapes, {
             "human-empty-logs-array",
         ),
     ] {
-        let server = MockServer::start().await.expect("loopback server starts");
+        let server = MockServer::start().await?;
         mount_authenticated_json(
             &server,
             "GET",
             "/api/logs",
             [("release", release), ("environment", "production")],
-            body,
+            &body,
         );
         let text = successful_human_output(
             &server,
@@ -93,13 +94,13 @@ async_test!(human_logs_render_populated_and_empty_shapes, {
             ],
             home,
         )
-        .await
-        .expect("read succeeds");
+        .await?;
         assert_eq!(text, expected, "case {home}");
     }
+    Ok(())
 });
 
-async_test!(human_read_actions_and_issues_summarize_pivot_context, {
+async_test!(human_read_actions_and_issues_summarize_pivot_context -> TestResult, {
     struct ContextCase {
         route: &'static str,
         query: &'static [(&'static str, &'static str)],
@@ -177,160 +178,158 @@ async_test!(human_read_actions_and_issues_summarize_pivot_context, {
     ];
 
     for case in cases {
-        let server = MockServer::start().await.expect("loopback server starts");
+        let server = MockServer::start().await?;
         mount_authenticated_json(
             &server,
             "GET",
             case.route,
             case.query.iter().copied(),
-            case.body,
+            &case.body,
         );
         let text = successful_human_output(&server, case.args.iter().copied(), case.home)
-            .await
-            .expect("read succeeds");
+            .await?;
 
         assert_eq!(text, case.expected);
     }
+    Ok(())
 });
 
-async_test!(
-    collection_reads_preserve_json_shape_and_render_service_name,
-    {
-        struct ServiceCase {
-            route: &'static str,
-            body: serde_json::Value,
-            args: &'static [&'static str],
-            home: &'static str,
-            expected: &'static str,
-        }
-
-        let cases = [
-            ServiceCase {
-                route: "/api/logs",
-                body: serde_json::json!([{
-                    "level": "warning",
-                    "message": "checkout failed",
-                    "service_name": "checkout-api",
-                    "trace_id": "trace_123"
-                }]),
-                args: &[
-                    "logbrew",
-                    "logs",
-                    "--service",
-                    "checkout-api",
-                    "--since",
-                    "24h",
-                ],
-                home: "human-service-logs",
-                expected: "Logs (1)\n- warning checkout failed service=checkout-api trace=trace_123\n",
-            },
-            ServiceCase {
-                route: "/api/telemetry/issues",
-                body: serde_json::json!([{
-                    "id": "issue_123",
-                    "status": "unresolved",
-                    "severity": "error",
-                    "title": "PaymentError",
-                    "occurrence_count": 2,
-                    "service_name": "checkout-api",
-                    "trace_id": "trace_123"
-                }]),
-                args: &[
-                    "logbrew",
-                    "issues",
-                    "--service",
-                    "checkout-api",
-                    "--since",
-                    "24h",
-                ],
-                home: "human-service-issues",
-                expected: "Issues (1)\n- issue_123 unresolved error PaymentError occurrences=2 \
-                           service=checkout-api trace=trace_123\n",
-            },
-            ServiceCase {
-                route: "/api/telemetry/actions",
-                body: serde_json::json!([{
-                    "name": "checkout_failed",
-                    "severity": "warning",
-                    "service_name": "checkout-api",
-                    "distinct_id": "user_123"
-                }]),
-                args: &[
-                    "logbrew",
-                    "actions",
-                    "--service",
-                    "checkout-api",
-                    "--since",
-                    "24h",
-                ],
-                home: "human-service-actions",
-                expected: "Actions (1)\n- checkout_failed warning service=checkout-api user=user_123\n",
-            },
-            ServiceCase {
-                route: "/api/telemetry/releases",
-                body: serde_json::json!([{
-                    "release": "checkout@1.2.3",
-                    "environment": "production",
-                    "service_name": "checkout-api",
-                    "log_count": 1,
-                    "issue_count": 1,
-                    "trace_span_count": 1,
-                    "action_count": 1
-                }]),
-                args: &[
-                    "logbrew",
-                    "releases",
-                    "--service",
-                    "checkout-api",
-                    "--since",
-                    "24h",
-                ],
-                home: "human-service-releases",
-                expected: "Releases (1)\n- checkout@1.2.3 production service=checkout-api logs=1 issues=1 \
-                           spans=1 actions=1\n",
-            },
-        ];
-
-        for case in cases {
-            let server = MockServer::start().await.expect("loopback server starts");
-            mount_authenticated_json(
-                &server,
-                "GET",
-                case.route,
-                [("service_name", "checkout-api"), ("since", "24h")],
-                case.body,
-            );
-
-            let text = successful_human_output(&server, case.args.iter().copied(), case.home)
-                .await
-                .expect("service-scoped read succeeds");
-            assert_eq!(text, case.expected);
-
-            let mut json_args = case.args.to_vec();
-            json_args.push("--json");
-            let command = parse_command(json_args.iter().copied()).expect("JSON read parses");
-            let env = authenticated_env(&server, case.home);
-            let mut output = Vec::new();
-
-            execute_command(&command, &env, &mut output)
-                .await
-                .expect("JSON read succeeds");
-
-            let body: serde_json::Value =
-                serde_json::from_slice(output.as_slice()).expect("valid JSON response");
-            let rows = body.as_array().expect("backend list shape stays bare");
-            assert_eq!(rows[0]["service_name"], "checkout-api");
-        }
+async_test!(collection_reads_preserve_json_shape_and_render_service_name -> TestResult,
+{
+    struct ServiceCase {
+        route: &'static str,
+        body: serde_json::Value,
+        args: &'static [&'static str],
+        home: &'static str,
+        expected: &'static str,
     }
-);
 
-async_test!(invalid_since_preserves_backend_validation_recovery_for_agents -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await.expect("loopback server starts");
+    let cases = [
+        ServiceCase {
+            route: "/api/logs",
+            body: serde_json::json!([{
+                "level": "warning",
+                "message": "checkout failed",
+                "service_name": "checkout-api",
+                "trace_id": "trace_123"
+            }]),
+            args: &[
+                "logbrew",
+                "logs",
+                "--service",
+                "checkout-api",
+                "--since",
+                "24h",
+            ],
+            home: "human-service-logs",
+            expected: "Logs (1)\n- warning checkout failed service=checkout-api trace=trace_123\n",
+        },
+        ServiceCase {
+            route: "/api/telemetry/issues",
+            body: serde_json::json!([{
+                "id": "issue_123",
+                "status": "unresolved",
+                "severity": "error",
+                "title": "PaymentError",
+                "occurrence_count": 2,
+                "service_name": "checkout-api",
+                "trace_id": "trace_123"
+            }]),
+            args: &[
+                "logbrew",
+                "issues",
+                "--service",
+                "checkout-api",
+                "--since",
+                "24h",
+            ],
+            home: "human-service-issues",
+            expected: "Issues (1)\n- issue_123 unresolved error PaymentError occurrences=2 \
+                       service=checkout-api trace=trace_123\n",
+        },
+        ServiceCase {
+            route: "/api/telemetry/actions",
+            body: serde_json::json!([{
+                "name": "checkout_failed",
+                "severity": "warning",
+                "service_name": "checkout-api",
+                "distinct_id": "user_123"
+            }]),
+            args: &[
+                "logbrew",
+                "actions",
+                "--service",
+                "checkout-api",
+                "--since",
+                "24h",
+            ],
+            home: "human-service-actions",
+            expected: "Actions (1)\n- checkout_failed warning service=checkout-api user=user_123\n",
+        },
+        ServiceCase {
+            route: "/api/telemetry/releases",
+            body: serde_json::json!([{
+                "release": "checkout@1.2.3",
+                "environment": "production",
+                "service_name": "checkout-api",
+                "log_count": 1,
+                "issue_count": 1,
+                "trace_span_count": 1,
+                "action_count": 1
+            }]),
+            args: &[
+                "logbrew",
+                "releases",
+                "--service",
+                "checkout-api",
+                "--since",
+                "24h",
+            ],
+            home: "human-service-releases",
+            expected: "Releases (1)\n- checkout@1.2.3 production service=checkout-api logs=1 issues=1 \
+                       spans=1 actions=1\n",
+        },
+    ];
+
+    for case in cases {
+        let server = MockServer::start().await?;
+        mount_authenticated_json(
+            &server,
+            "GET",
+            case.route,
+            [("service_name", "checkout-api"), ("since", "24h")],
+            &case.body.clone(),
+        );
+
+        let text = successful_human_output(&server, case.args.iter().copied(), case.home)
+            .await?;
+        assert_eq!(text, case.expected);
+
+        let mut json_args = case.args.to_vec();
+        json_args.push("--json");
+        let command = parse_command(json_args.iter().copied())?;
+        let env = authenticated_env(&server, case.home);
+        let mut output = Vec::new();
+
+        execute_command(&command, &env, &mut output)
+            .await?;
+
+        let body: serde_json::Value =
+            serde_json::from_slice(output.as_slice())?;
+        assert_eq!(body, case.body, "JSON evidence changed for {}", case.home);
+        let rows = body.as_array().ok_or("backend list shape stays bare")?;
+        assert_eq!(rows[0]["service_name"], "checkout-api");
+    }
+    Ok(())
+});
+
+async_test!(invalid_since_preserves_backend_validation_recovery_for_agents -> TestResult, {
+    let server = MockServer::start().await?;
     Mock::route("GET", "/api/telemetry/issues")
         .and(query_param("service_name", "checkout-api"))
         .and(query_param("since", "0h"))
         .and(header("authorization", "Bearer test-token"))
-        .respond_with(ResponseTemplate::new(422).set_body_json(serde_json::json!({
+        .respond_with(ResponseTemplate::new(422).set_body_json(&serde_json::json!({
             "code": "validation_failed",
             "error": "invalid since value",
             "next": "use since=24h, since=7d, or an RFC3339 timestamp"
@@ -350,7 +349,8 @@ async_test!(invalid_since_preserves_backend_validation_recovery_for_agents -> Re
 
     let error = execute_command(&command, &env, &mut output)
         .await
-        .expect_err("invalid since fails");
+        .err()
+        .ok_or("invalid since fails")?;
     write_runtime_error(&error, command.wants_json(), &mut output)?;
 
     let body: serde_json::Value = serde_json::from_slice(output.as_slice())?;
@@ -366,12 +366,12 @@ async_test!(invalid_since_preserves_backend_validation_recovery_for_agents -> Re
     Ok(())
 });
 
-async_test!(human_read_releases_prints_all_telemetry_counts, {
-    let server = MockServer::start().await.expect("loopback server starts");
+async_test!(human_read_releases_prints_all_telemetry_counts -> TestResult, {
+    let server = MockServer::start().await?;
     Mock::route("GET", "/api/telemetry/releases")
         .and(query_param("environment", "production"))
         .and(header("authorization", "Bearer test-token"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+        .respond_with(ResponseTemplate::new(200).set_body_json(&serde_json::json!({
             "releases": [
                 {
                     "release": "checkout@1.2.3",
@@ -389,23 +389,23 @@ async_test!(human_read_releases_prints_all_telemetry_counts, {
         ["logbrew", "releases", "--environment", "production"],
         "human-read-releases",
     )
-    .await
-    .expect("read succeeds");
+    .await?;
     assert_eq!(
         text,
         "Releases (1)\n- checkout@1.2.3 production logs=1 issues=1 spans=1 actions=1\n"
     );
+    Ok(())
 });
 
-async_test!(human_explain_trace_prints_scan_friendly_summary, {
-    let server = MockServer::start().await.expect("loopback server starts");
+async_test!(human_explain_trace_prints_scan_friendly_summary -> TestResult, {
+    let server = MockServer::start().await?;
     Mock::auth(
             "GET",
             "/api/telemetry/traces/trace_123/investigation",
             "test-token",
         )
         .and(query_param("response_version", "3"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+        .respond_with(ResponseTemplate::new(200).set_body_json(&serde_json::json!({
             "schema_version": 3,
             "subject": {
                 "kind": "trace",
@@ -498,8 +498,7 @@ async_test!(human_explain_trace_prints_scan_friendly_summary, {
         ["logbrew", "explain", "trace", "trace_123"],
         "human-explain-trace",
     )
-    .await
-    .expect("explain succeeds");
+    .await?;
     assert_eq!(
         text,
         "Trace trace_123 status=errors_observed causality=evidence_only spans=2 errors=1 services=1 \
@@ -520,12 +519,13 @@ async_test!(human_explain_trace_prints_scan_friendly_summary, {
              truncated=0\nMissing: span.attributes\nNext 1: code=inspect_error_span target=trace_span \
              reason=inspect the first retained error span\n"
     );
+    Ok(())
 });
 
-async_test!(human_read_trace_summarizes_real_api_array_shape, {
-    let server = MockServer::start().await.expect("loopback server starts");
+async_test!(human_read_trace_summarizes_real_api_array_shape -> TestResult, {
+    let server = MockServer::start().await?;
     Mock::auth("GET", "/api/telemetry/traces/trace_123", "test-token")
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+        .respond_with(ResponseTemplate::new(200).set_body_json(&serde_json::json!([
             {
                 "trace_id": "trace_123",
                 "name": "checkout",
@@ -539,51 +539,49 @@ async_test!(human_read_trace_summarizes_real_api_array_shape, {
         ["logbrew", "trace", "trace_123"],
         "human-trace-array",
     )
-    .await
-    .expect("trace succeeds");
+    .await?;
     assert_eq!(
         text,
         "Trace trace_123 spans=1 [checkout@1.2.3 / production]\n- checkout\n"
     );
+    Ok(())
 });
 
-async_test!(
-    human_read_issue_summarizes_real_api_object_shape_with_next_action,
-    {
-        let server = MockServer::start().await.expect("loopback server starts");
-        Mock::auth("GET", "/api/telemetry/issues/issue_123", "test-token")
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "id": "issue_123",
-                "status": "unresolved",
-                "severity": "error",
-                "title": "PaymentError",
-                "message": "card declined",
-                "occurrence_count": 2,
-                "first_seen_at": "2026-06-02T19:00:00Z",
-                "last_seen_at": "2026-06-02T20:00:00Z",
-                "trace_id": "trace_123",
-                "release": "checkout@1.2.3",
-                "environment": "production"
-            })))
-            .mount(&server);
-        let text = successful_human_output(
-            &server,
-            ["logbrew", "issue", "issue_123"],
-            "human-issue-object",
-        )
-        .await
-        .expect("issue succeeds");
-        assert_eq!(
-            text,
-            "Issue issue_123 unresolved error trace=trace_123 [checkout@1.2.3 / production]\nTitle: \
-             PaymentError\nMessage: card declined\nOccurrences: 2\nFirst seen: \
-             2026-06-02T19:00:00Z\nLast seen: 2026-06-02T20:00:00Z\nNext: logbrew resolve issue_123 \
-             or logbrew ignore issue_123\n"
-        );
-    }
-);
+async_test!(human_read_issue_summarizes_real_api_object_shape_with_next_action -> TestResult,
+{
+    let server = MockServer::start().await?;
+    Mock::auth("GET", "/api/telemetry/issues/issue_123", "test-token")
+        .respond_with(ResponseTemplate::new(200).set_body_json(&serde_json::json!({
+            "id": "issue_123",
+            "status": "unresolved",
+            "severity": "error",
+            "title": "PaymentError",
+            "message": "card declined",
+            "occurrence_count": 2,
+            "first_seen_at": "2026-06-02T19:00:00Z",
+            "last_seen_at": "2026-06-02T20:00:00Z",
+            "trace_id": "trace_123",
+            "release": "checkout@1.2.3",
+            "environment": "production"
+        })))
+        .mount(&server);
+    let text = successful_human_output(
+        &server,
+        ["logbrew", "issue", "issue_123"],
+        "human-issue-object",
+    )
+    .await?;
+    assert_eq!(
+        text,
+        "Issue issue_123 unresolved error trace=trace_123 [checkout@1.2.3 / production]\nTitle: \
+         PaymentError\nMessage: card declined\nOccurrences: 2\nFirst seen: \
+         2026-06-02T19:00:00Z\nLast seen: 2026-06-02T20:00:00Z\nNext: logbrew resolve issue_123 \
+         or logbrew ignore issue_123\n"
+    );
+    Ok(())
+});
 
-async_test!(human_set_issue_status_renders_wrapped_and_object_shapes, {
+async_test!(human_set_issue_status_renders_wrapped_and_object_shapes -> TestResult, {
     let issue = serde_json::json!({
         "id": "issue_123", "status": "resolved", "trace_id": "trace_123",
         "release": "checkout@1.2.3", "environment": "production"
@@ -600,29 +598,29 @@ async_test!(human_set_issue_status_renders_wrapped_and_object_shapes, {
             "human-set-issue-object",
         ),
     ] {
-        let server = MockServer::start().await.expect("loopback server starts");
+        let server = MockServer::start().await?;
         Mock::auth("PATCH", "/api/telemetry/issues/issue_123", "test-token")
-            .respond_with(ResponseTemplate::new(200).set_body_json(body))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&body))
             .mount(&server);
         let text = successful_human_output(&server, args.iter().copied(), home)
-            .await
-            .expect("set succeeds");
+            .await?;
         assert_eq!(
             text,
             "Issue issue_123 marked resolved trace=trace_123 [checkout@1.2.3 / production].\n"
         );
     }
+    Ok(())
 });
 
-async_test!(project_setup_seen_posts_backend_owned_setup_state -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await.expect("loopback server starts");
+async_test!(project_setup_seen_posts_backend_owned_setup_state -> TestResult, {
+    let server = MockServer::start().await?;
     Mock::auth("POST", "/api/projects/proj_123/setup/seen", "test-token")
         .and(body_json(serde_json::json!({
             "runtime": "node",
             "source": "cli",
             "environment": "production"
         })))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+        .respond_with(ResponseTemplate::new(200).set_body_json(&serde_json::json!({
             "status": "sdk_seen",
             "runtime": "node",
             "source": "cli",
@@ -658,15 +656,15 @@ async_test!(project_setup_seen_posts_backend_owned_setup_state -> Result<(), Box
     Ok(())
 });
 
-async_test!(project_setup_seen_omits_source_for_ingest_key_auth -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await.expect("loopback server starts");
+async_test!(project_setup_seen_omits_source_for_ingest_key_auth -> TestResult, {
+    let server = MockServer::start().await?;
     Mock::auth(
         "POST",
         "/api/projects/proj_123/setup/seen",
         "lbw_ingest_test",
     )
     .and(body_json(serde_json::json!({ "runtime": "node" })))
-    .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+    .respond_with(ResponseTemplate::new(200).set_body_json(&serde_json::json!({
         "status": "sdk_seen",
         "runtime": "node",
         "source": "sdk",
@@ -693,11 +691,11 @@ async_test!(project_setup_seen_omits_source_for_ingest_key_auth -> Result<(), Bo
     Ok(())
 });
 
-async_test!(human_project_setup_seen_prints_status_and_next, {
-    let server = MockServer::start().await.expect("loopback server starts");
+async_test!(human_project_setup_seen_prints_status_and_next -> TestResult, {
+    let server = MockServer::start().await?;
     Mock::auth("POST", "/api/projects/proj_123/setup/seen", "test-token")
         .and(body_json(serde_json::json!({ "source": "cli" })))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+        .respond_with(ResponseTemplate::new(200).set_body_json(&serde_json::json!({
             "status": "sdk_seen",
             "source": "cli",
             "last_seen_at": "2026-06-15T20:00:00Z",
@@ -709,19 +707,19 @@ async_test!(human_project_setup_seen_prints_status_and_next, {
         ["logbrew", "projects", "setup", "proj_123"],
         "human-project-setup-seen",
     )
-    .await
-    .expect("project setup seen succeeds");
+    .await?;
 
     assert_eq!(
         text,
         "Project setup seen: sdk_seen\nLast seen: 2026-06-15T20:00:00Z\nNext: send telemetry for this project\n"
     );
+    Ok(())
 });
 
-async_test!(local_auth_refreshes_once_and_persists_replacement_credentials -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await.expect("loopback server starts");
+async_test!(local_auth_refreshes_once_and_persists_replacement_credentials -> TestResult, {
+    let server = MockServer::start().await?;
     Mock::auth("GET", "/api/logs", "expired-access")
-        .respond_with(ResponseTemplate::new(401).set_body_json(serde_json::json!({
+        .respond_with(ResponseTemplate::new(401).set_body_json(&serde_json::json!({
             "error": "not_logged_in"
         })))
         .expect(1)
@@ -730,28 +728,26 @@ async_test!(local_auth_refreshes_once_and_persists_replacement_credentials -> Re
         .and(body_json(serde_json::json!({
             "refresh_token": "old-refresh"
         })))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+        .respond_with(ResponseTemplate::new(200).set_body_json(&serde_json::json!({
             "access_token": "fresh-access",
             "refresh_token": "fresh-refresh"
         })))
         .expect(1)
         .mount(&server);
     Mock::auth("GET", "/api/logs", "fresh-access")
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+        .respond_with(ResponseTemplate::new(200).set_body_json(&serde_json::json!({
             "logs": []
         })))
         .expect(1)
         .mount(&server);
 
     let command = parse_command(["logbrew", "logs", "--json"])?;
-    let home = api_rendering_home("refresh-local-auth")?;
-    let auth_dir = home.join(".logbrew");
-    std::fs::create_dir_all(auth_dir.as_path())?;
-    write_auth_session(
-        auth_dir.as_path(),
+    let home = super::isolated_home("logbrew-cli", "refresh-local-auth")?;
+    let session = super::write_test_session(
+        &home,
+        server.uri().as_str(),
         "expired-access",
         "old-refresh",
-        server.uri().as_str(),
     )?;
     let env = super::test_env(&server, None, Some(home));
     let mut output = Vec::new();
@@ -761,7 +757,7 @@ async_test!(local_auth_refreshes_once_and_persists_replacement_credentials -> Re
     let text = String::from_utf8(output)?;
     let body: serde_json::Value = serde_json::from_str(text.as_str())?;
     assert_eq!(body["logs"], serde_json::json!([]));
-    let saved = read_auth_session(auth_dir.as_path())?;
+    let saved: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(session)?)?;
     assert_eq!(saved["access_token"], "fresh-access");
     assert_eq!(saved["refresh_token"], "fresh-refresh");
     for secret in [
@@ -775,8 +771,8 @@ async_test!(local_auth_refreshes_once_and_persists_replacement_credentials -> Re
     Ok(())
 });
 
-async_test!(concurrent_local_401s_share_one_refresh_rotation -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await.expect("loopback server starts");
+async_test!(concurrent_local_401s_share_one_refresh_rotation -> TestResult, {
+    let server = MockServer::start().await?;
     Mock::auth("GET", "/api/logs", "shared-expired")
         .respond_with(ResponseTemplate::new(401))
         .expect(2)
@@ -788,7 +784,7 @@ async_test!(concurrent_local_401s_share_one_refresh_rotation -> Result<(), Box<d
         .respond_with(
             ResponseTemplate::new(200)
                 .set_delay(std::time::Duration::from_millis(50))
-                .set_body_json(serde_json::json!({
+                .set_body_json(&serde_json::json!({
                     "access_token": "shared-fresh",
                     "refresh_token": "shared-next-refresh"
                 })),
@@ -796,19 +792,17 @@ async_test!(concurrent_local_401s_share_one_refresh_rotation -> Result<(), Box<d
         .expect(1)
         .mount(&server);
     Mock::auth("GET", "/api/logs", "shared-fresh")
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+        .respond_with(ResponseTemplate::new(200).set_body_json(&serde_json::json!({
             "logs": []
         })))
         .expect(2)
         .mount(&server);
-    let home = api_rendering_home("refresh-concurrent")?;
-    let auth_dir = home.join(".logbrew");
-    std::fs::create_dir_all(auth_dir.as_path())?;
-    write_auth_session(
-        auth_dir.as_path(),
+    let home = super::isolated_home("logbrew-cli", "refresh-concurrent")?;
+    let session = super::write_test_session(
+        &home,
+        server.uri().as_str(),
         "shared-expired",
         "shared-refresh",
-        server.uri().as_str(),
     )?;
     let env = super::test_env(&server, None, Some(home));
     let command = parse_command(["logbrew", "logs", "--json"])?;
@@ -822,6 +816,10 @@ async_test!(concurrent_local_401s_share_one_refresh_rotation -> Result<(), Box<d
     .await;
     first?;
     second?;
+    let saved: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(session)?)?;
+    assert_eq!(saved["access_token"], "shared-fresh");
+    assert_eq!(saved["refresh_token"], "shared-next-refresh");
+    assert_eq!(saved["origin"], server.uri());
 
     for output in [first_output, second_output] {
         let text = String::from_utf8(output)?;
@@ -841,8 +839,8 @@ async_test!(concurrent_local_401s_share_one_refresh_rotation -> Result<(), Box<d
     Ok(())
 });
 
-async_test!(env_auth_401_never_reads_or_rotates_local_refresh_credentials -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await.expect("loopback server starts");
+async_test!(env_auth_401_never_reads_or_rotates_local_refresh_credentials -> TestResult, {
+    let server = MockServer::start().await?;
     Mock::auth("GET", "/api/logs", "env-expired")
         .respond_with(ResponseTemplate::new(401))
         .expect(1)
@@ -851,7 +849,7 @@ async_test!(env_auth_401_never_reads_or_rotates_local_refresh_credentials -> Res
         .respond_with(ResponseTemplate::new(500))
         .expect(0)
         .mount(&server);
-    let home = api_rendering_home("refresh-env-isolated")?;
+    let home = super::isolated_home("logbrew-cli", "refresh-env-isolated")?;
     let auth_dir = home.join(".logbrew");
     std::fs::create_dir_all(auth_dir.as_path())?;
     std::fs::write(auth_dir.join("token"), "local-access\n")?;
@@ -862,9 +860,11 @@ async_test!(env_auth_401_never_reads_or_rotates_local_refresh_credentials -> Res
 
     let error = execute_command(&command, &env, &mut output)
         .await
-        .expect_err("env 401 remains an auth error");
+        .err()
+        .ok_or("env 401 remains an auth error")?;
 
     assert!(matches!(error, RuntimeError::Api { status: 401, .. }));
+    assert!(output.is_empty(), "environment auth failure must not emit data");
     assert_eq!(
         std::fs::read_to_string(auth_dir.join("token"))?.trim(),
         "local-access"
@@ -876,8 +876,8 @@ async_test!(env_auth_401_never_reads_or_rotates_local_refresh_credentials -> Res
     Ok(())
 });
 
-async_test!(persisted_refresh_session_never_authenticates_to_a_different_api_origin -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await.expect("loopback server starts");
+async_test!(persisted_refresh_session_never_authenticates_to_a_different_api_origin -> TestResult, {
+    let server = MockServer::start().await?;
     Mock::route("GET", "/api/logs")
         .respond_with(ResponseTemplate::new(500))
         .expect(0)
@@ -886,14 +886,12 @@ async_test!(persisted_refresh_session_never_authenticates_to_a_different_api_ori
         .respond_with(ResponseTemplate::new(500))
         .expect(0)
         .mount(&server);
-    let home = api_rendering_home("refresh-origin-mismatch")?;
-    let auth_dir = home.join(".logbrew");
-    std::fs::create_dir_all(auth_dir.as_path())?;
-    write_auth_session(
-        auth_dir.as_path(),
+    let home = super::isolated_home("logbrew-cli", "refresh-origin-mismatch")?;
+    let _session = super::write_test_session(
+        &home,
+        "https://trusted.example",
         "origin-access",
         "origin-refresh",
-        "https://trusted.example",
     )?;
     let command = parse_command(["logbrew", "logs", "--json"])?;
     let env = super::test_env(&server, None, Some(home));
@@ -901,41 +899,43 @@ async_test!(persisted_refresh_session_never_authenticates_to_a_different_api_ori
 
     let error = execute_command(&command, &env, &mut output)
         .await
-        .expect_err("origin mismatch fails before network access");
+        .err()
+        .ok_or("origin mismatch fails before network access")?;
 
     assert!(matches!(error, RuntimeError::Unavailable { .. }));
     assert!(output.is_empty());
     Ok(())
 });
 
-async_test!(api_auth_errors_report_source_without_leaking_tokens -> Result<(), Box<dyn std::error::Error>>, {
+async_test!(api_auth_errors_report_source_without_leaking_tokens -> TestResult, {
     for (status, code, api_token, local_token, json) in [
         (401, "not_logged_in", "expired", "expired", true),
         (403, "forbidden", "env-token", "file-token", false),
     ] {
-        let server = MockServer::start().await.expect("loopback server starts");
+        let server = MockServer::start().await?;
         Mock::auth("GET", "/api/logs", api_token)
             .respond_with(
-                ResponseTemplate::new(status).set_body_json(serde_json::json!({
+                ResponseTemplate::new(status).set_body_json(&serde_json::json!({
                     "ok": false, "error": code, "detail": api_token
                 })),
             )
             .mount(&server);
         let args = ["logbrew", "logs", "--json"];
         let command = parse_command(if json { &args[..] } else { &args[..2] })?;
-        let home = api_rendering_home(if json {
+        let home = super::isolated_home("logbrew-cli", if json {
             "api-auth-token-file"
         } else {
             "api-auth-env"
         })?;
         let token_path = home.join(".logbrew").join("token");
-        std::fs::create_dir_all(token_path.parent().expect("token path has parent"))?;
+        std::fs::create_dir_all(token_path.parent().ok_or("token path has parent")?)?;
         std::fs::write(token_path, format!("{local_token}\n"))?;
         let env = super::test_env(&server, (status == 403).then_some(api_token), Some(home));
         let mut output = Vec::new();
         let error = execute_command(&command, &env, &mut output)
             .await
-            .expect_err("auth fails");
+            .err()
+            .ok_or("auth fails")?;
         write_runtime_error(&error, command.wants_json(), &mut output)?;
         let text = String::from_utf8(output)?;
         assert!(!text.contains(api_token) && !text.contains(local_token));
@@ -961,7 +961,7 @@ async fn successful_human_output<I>(
     server: &MockServer,
     args: I,
     home_name: &str,
-) -> Result<String, Box<dyn std::error::Error>>
+) -> TestResult<String>
 where
     I: IntoIterator<Item = &'static str>,
 {
@@ -979,7 +979,7 @@ fn mount_authenticated_json<I>(
     http_method: &str,
     route: &str,
     query: I,
-    body: serde_json::Value,
+    body: &serde_json::Value,
 ) where
     I: IntoIterator<Item = (&'static str, &'static str)>,
 {
@@ -999,40 +999,4 @@ fn authenticated_env(server: &MockServer, home_name: &str) -> CliEnvironment {
         Some("test-token"),
         Some(std::env::temp_dir().join(format!("logbrew-{home_name}-{}", std::process::id()))),
     )
-}
-
-fn api_rendering_home(name: &str) -> Result<std::path::PathBuf, std::io::Error> {
-    let dir = std::env::temp_dir().join(format!("logbrew-cli-{name}-{}", std::process::id()));
-    match std::fs::remove_dir_all(dir.as_path()) {
-        Ok(()) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => return Err(error),
-    }
-    std::fs::create_dir_all(dir.as_path())?;
-    Ok(dir)
-}
-
-fn write_auth_session(
-    auth_dir: &std::path::Path,
-    access_token: &str,
-    refresh_token: &str,
-    origin: &str,
-) -> Result<(), std::io::Error> {
-    std::fs::write(
-        auth_dir.join("session.json"),
-        serde_json::json!({
-            "access_token": access_token,
-            "refresh_token": refresh_token,
-            "origin": origin,
-        })
-        .to_string(),
-    )
-}
-
-fn read_auth_session(
-    auth_dir: &std::path::Path,
-) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
-    Ok(serde_json::from_str(
-        std::fs::read_to_string(auth_dir.join("session.json"))?.as_str(),
-    )?)
 }
