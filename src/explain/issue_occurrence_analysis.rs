@@ -2,13 +2,14 @@
 
 mod render;
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::{Map, Value};
 
 use super::{
     invalid_response, optional_safe_u64, require_exact_fields, require_safe_positive_u64,
     require_safe_u64, require_string, require_timestamp, required_object,
+    validate_evidence_vocabulary, validate_field_receipts,
 };
 use crate::RuntimeError;
 use crate::time::parse_utc_millis;
@@ -73,6 +74,7 @@ struct DistributionFacts {
 /// Validates exact occurrence volume, fixed buckets, distributions, limitations, and receipts.
 pub(super) fn validate(
     analysis: &Map<String, Value>,
+    selection: &Map<String, Value>,
     retained_occurrences: u64,
     first_seen: &str,
     last_seen: &str,
@@ -112,6 +114,7 @@ pub(super) fn validate(
         analysis.get("distributions").ok_or_else(invalid_response)?,
         retained_occurrences,
     )?;
+    validate_observed_occurrences(analysis, selection, retained_occurrences)?;
     if require_safe_u64(coverage, "available_distribution_count")?
         != u64::try_from(distributions.len()).map_err(|_error| invalid_response())?
     {
@@ -138,6 +141,76 @@ pub(super) fn validate(
         distributions.as_slice(),
         !limitations.is_empty(),
     )
+}
+
+/// Named distributions must account for every distinct occurrence already shown.
+fn validate_observed_occurrences(
+    analysis: &Map<String, Value>,
+    selection: &Map<String, Value>,
+    retained: u64,
+) -> Result<(), RuntimeError> {
+    let mut occurrences = BTreeMap::new();
+    for name in ["first", "latest", "selected", "recommended"] {
+        let occurrence = required_object(selection, name)?;
+        let id = require_string(occurrence, "id")?;
+        if occurrences
+            .insert(id, occurrence)
+            .is_some_and(|prior| prior != occurrence)
+        {
+            return Err(invalid_response());
+        }
+    }
+    if u64::try_from(occurrences.len()).map_err(|_| invalid_response())? > retained {
+        return Err(invalid_response());
+    }
+    for distribution in analysis["distributions"]
+        .as_array()
+        .ok_or_else(invalid_response)?
+    {
+        let distribution = distribution.as_object().ok_or_else(invalid_response)?;
+        let dimension = require_string(distribution, "dimension")?;
+        let mut observed = BTreeMap::new();
+        for occurrence in occurrences.values() {
+            let key = match dimension {
+                "sdk" => {
+                    let sdk = required_object(occurrence, "sdk")?;
+                    (
+                        require_string(sdk, "name")?,
+                        Some(require_string(sdk, "version")?),
+                    )
+                }
+                "service" => (require_string(occurrence, "service_name")?, None),
+                _ => (require_string(occurrence, dimension)?, None),
+            };
+            *observed.entry(key).or_insert(0_u64) += 1;
+        }
+        let values = distribution["values"]
+            .as_array()
+            .ok_or_else(invalid_response)?;
+        for value in values {
+            let key = (
+                value["value"].as_str().ok_or_else(invalid_response)?,
+                value["version"].as_str(),
+            );
+            if observed.remove(&key).unwrap_or(0)
+                > value["occurrence_count"]
+                    .as_u64()
+                    .ok_or_else(invalid_response)?
+            {
+                return Err(invalid_response());
+            }
+        }
+        let unnamed_distinct = require_safe_u64(distribution, "distinct_value_count")?
+            .checked_sub(u64::try_from(values.len()).map_err(|_| invalid_response())?)
+            .ok_or_else(invalid_response)?;
+        if observed.values().sum::<u64>()
+            > require_safe_u64(distribution, "other_occurrence_count")?
+            || u64::try_from(observed.len()).map_err(|_| invalid_response())? > unnamed_distinct
+        {
+            return Err(invalid_response());
+        }
+    }
+    Ok(())
 }
 
 /// Proves fixed response caps and the grouped occurrence receipt.
@@ -418,28 +491,12 @@ fn validate_component_receipt(
     available: bool,
     truncated: bool,
 ) -> Result<(), RuntimeError> {
-    let captured = evidence_count(evidence, "captured_fields", field)?;
-    let missing = evidence_count(evidence, "missing_fields", field)?;
-    let redacted = evidence_count(evidence, "redacted_fields", field)?;
-    let truncated_field = format!("{field}.values");
-    let base_truncated = evidence_count(evidence, "truncated_fields", field)?;
-    let truncated_captured = evidence_count(evidence, "captured_fields", truncated_field.as_str())?;
-    let truncated_missing = evidence_count(evidence, "missing_fields", truncated_field.as_str())?;
-    let truncated_redacted = evidence_count(evidence, "redacted_fields", truncated_field.as_str())?;
-    let truncated_count = evidence_count(evidence, "truncated_fields", truncated_field.as_str())?;
-    if captured == usize::from(available)
-        && missing == usize::from(!available)
-        && redacted == 0
-        && base_truncated == 0
-        && truncated_captured == 0
-        && truncated_missing == 0
-        && truncated_redacted == 0
-        && truncated_count == usize::from(truncated)
-    {
-        Ok(())
-    } else {
-        Err(invalid_response())
-    }
+    validate_field_receipts(evidence, field, [available, !available, false, false])?;
+    validate_field_receipts(
+        evidence,
+        &format!("{field}.values"),
+        [false, false, false, truncated],
+    )
 }
 
 /// Rejects additive occurrence receipt names unless a future schema version declares them.
@@ -460,41 +517,5 @@ fn validate_occurrence_receipt_vocabulary(
         "occurrence.distribution.sdk",
         "occurrence.distribution.sdk.values",
     ];
-    for category in [
-        "captured_fields",
-        "missing_fields",
-        "redacted_fields",
-        "truncated_fields",
-    ] {
-        let fields = evidence
-            .get(category)
-            .and_then(Value::as_array)
-            .ok_or_else(invalid_response)?;
-        if fields
-            .iter()
-            .filter_map(Value::as_str)
-            .any(|field| field.starts_with("occurrence.") && !allowed.contains(&field))
-        {
-            return Err(invalid_response());
-        }
-    }
-    Ok(())
-}
-
-/// Counts exact shared evidence receipts so duplicate entries fail closed.
-fn evidence_count(
-    evidence: &Map<String, Value>,
-    category: &str,
-    field: &str,
-) -> Result<usize, RuntimeError> {
-    evidence
-        .get(category)
-        .and_then(Value::as_array)
-        .map(|values| {
-            values
-                .iter()
-                .filter(|value| value.as_str() == Some(field))
-                .count()
-        })
-        .ok_or_else(invalid_response)
+    validate_evidence_vocabulary(evidence, "occurrence", &allowed)
 }

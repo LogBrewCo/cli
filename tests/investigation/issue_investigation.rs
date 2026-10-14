@@ -1,10 +1,13 @@
 //! Rich issue-investigation alias, output, and recovery contracts.
 
 use crate::matchers::{header, query_param};
-use crate::{Mock, MockServer, ResponseTemplate, execute_command};
+use crate::{
+    Mock, MockServer, ResponseTemplate, TestResult, execute_command, failed_command,
+    rendered_json_error, runtime_error_text,
+};
 use logbrew_cli::{
     CliEnvironment, CliError, Command, ExplainTarget, IssueCorrectionTarget,
-    IssueOccurrenceSelection, RuntimeError, parse_command, write_cli_error, write_runtime_error,
+    IssueOccurrenceSelection, RuntimeError, parse_command,
 };
 
 const ISSUE_ID: &str = "11111111-1111-4111-8111-111111111111";
@@ -15,10 +18,130 @@ const HOSTILE_MARKER: &str = "hostile-response-marker";
 const DEPLOYMENT_ID: &str = "candidate-deploy-42";
 const RECOMMENDED: (&str, &str) = ("selection", "recommended");
 
+async_test!(built_binary_rejects_contradictory_trace_summaries -> TestResult, {
+    let cases = mutated_bundles(vec![
+        ("/correlations/trace/summary/root_span", serde_json::Value::Null),
+        ("/correlations/trace/summary/services", serde_json::json!([])),
+        ("/correlations/trace/summary/error_spans", serde_json::json!([])),
+        ("/correlations/trace/summary/error_spans/0/status", serde_json::json!("ok")),
+        ("/correlations/trace/summary/service_count", serde_json::json!(1)),
+        ("/correlations/trace/status", serde_json::json!("unavailable")),
+        ("/correlations/trace/summary", serde_json::Value::Null),
+    ])?;
+    for bundle in cases {
+        assert_binary_bundle(&bundle, false).await?;
+    }
+    Ok(())
+});
+
+async_test!(built_binary_binds_distributions_to_distinct_occurrences -> TestResult, {
+    for bundle in mutated_bundles(vec![
+        ("/occurrence_analysis/distributions/0/values/0/value", serde_json::json!("checkout@0.0.0")),
+        ("/occurrence_analysis/distributions/3/values/1/version", serde_json::json!("0.1.3")),
+        ("/occurrence_selection/latest/release", serde_json::json!("checkout@1.2.1")),
+        ("/occurrence_selection/first/id", serde_json::json!(OCCURRENCE_ID)),
+    ])? {
+        assert_binary_bundle(&bundle, false).await?;
+    }
+    Ok(())
+});
+
+async_test!(built_binary_preserves_complete_partial_and_unavailable_evidence -> TestResult, {
+    let mut truncated = rich_investigation_bundle();
+    let releases = &mut truncated["occurrence_analysis"]["distributions"][0];
+    releases["values"].as_array_mut().ok_or("release values missing")?.truncate(1);
+    releases["other_occurrence_count"] = serde_json::json!(2);
+    add_evidence_field(&mut truncated, "truncated_fields", "occurrence.distribution.release.values")?;
+    for bundle in [rich_investigation_bundle(), truncated, occurrence_analysis_unavailable_bundle()?] {
+        assert_binary_bundle(&bundle, true).await?;
+    }
+    Ok(())
+});
+
+async_test!(bounded_error_previews_preserve_counts_without_inventing_spans -> TestResult, {
+    let mut bundle = rich_investigation_bundle();
+    let summary = &mut bundle["correlations"]["trace"]["summary"];
+    summary["span_count"] = serde_json::json!(8);
+    summary["error_span_count"] = serde_json::json!(6);
+    summary["services"][1]["span_count"] = serde_json::json!(6);
+    summary["services"][1]["error_span_count"] = serde_json::json!(6);
+    let errors = summary["error_spans"].as_array_mut().ok_or("error spans missing")?;
+    for index in 1_u64..5 {
+        let mut span = errors[0].clone();
+        span["span_id"] = serde_json::json!(format!("{index:016x}"));
+        span["duration_ms"] = serde_json::json!(900 - index);
+        errors.push(span);
+    }
+    assert_binary_bundle(&bundle, true).await?;
+    bundle["correlations"]["trace"]["summary"]["error_spans"]
+        .as_array_mut().ok_or("error spans missing")?.truncate(4);
+    assert_binary_bundle(&mark_invalid(bundle), false).await
+});
+
+/// Check both executable output modes without exposing rejected telemetry.
+async fn assert_binary_bundle(bundle: &serde_json::Value, valid: bool) -> TestResult {
+    let server = MockServer::start().await?;
+    mount_bundle(&server, bundle, 2, RECOMMENDED);
+    for json in [false, true] {
+        let mut command = super::cli_command(&server);
+        let _command =
+            command
+                .env("LOGBREW_TOKEN", "test-token")
+                .args(["investigate", "issue", ISSUE_ID]);
+        if json {
+            let _command = command.arg("--json");
+        }
+        let process = super::run_cli_command(command).await?;
+        if valid {
+            super::assert_cli_success(&process);
+            if json {
+                assert_eq!(
+                    serde_json::from_slice::<serde_json::Value>(&process.stdout)?,
+                    *bundle,
+                    "validated JSON must preserve all evidence"
+                );
+            }
+        } else {
+            assert!(!process.status.success(), "contradictory evidence passed");
+            assert!(
+                process.stdout.is_empty(),
+                "rejected evidence reached stdout"
+            );
+            assert!(
+                !String::from_utf8_lossy(&process.stderr).contains(HOSTILE_MARKER),
+                "rejected telemetry reached stderr"
+            );
+            if json {
+                drop(super::cli_json_error(
+                    process,
+                    "investigation_response_invalid",
+                )?);
+            }
+        }
+    }
+    Ok(())
+}
+
 #[test]
-fn parses_only_the_explicit_issue_investigation_grammar() {
-    let command = parse_command(["logbrew", "investigate", "issue", ISSUE_ID, "--json"])
-        .expect("explicit issue investigation parses");
+fn fixture_mutations_reject_non_array_evidence() {
+    let mut bundle = serde_json::json!({
+        "cause": {"signals": false}, "evidence": {"captured_fields": false}
+    });
+    for result in [
+        remove_cause_signal(&mut bundle, "runtime_exception_chain"),
+        remove_evidence_fields(&mut bundle, &["exception_chain"]),
+        add_evidence_field(&mut bundle, "captured_fields", "exception_chain"),
+    ] {
+        assert!(
+            result.is_err(),
+            "fixture mutation must reject non-array evidence"
+        );
+    }
+}
+
+#[test]
+fn parses_only_the_explicit_issue_investigation_grammar() -> TestResult {
+    let command = parse_command(["logbrew", "investigate", "issue", ISSUE_ID, "--json"])?;
 
     assert!(command.wants_json());
     assert_eq!(command.http_path(), None);
@@ -29,8 +152,7 @@ fn parses_only_the_explicit_issue_investigation_grammar() {
         "issue",
         ISSUE_ID,
         "--occurrence=first",
-    ])
-    .expect("named occurrence parses");
+    ])?;
     assert_eq!(
         first,
         Command::InvestigateIssue {
@@ -48,8 +170,7 @@ fn parses_only_the_explicit_issue_investigation_grammar() {
         "--occurrence",
         OCCURRENCE_ID,
         "--json",
-    ])
-    .expect("exact occurrence parses");
+    ])?;
     assert_eq!(
         exact.http_path().as_deref(),
         Some(
@@ -65,8 +186,7 @@ fn parses_only_the_explicit_issue_investigation_grammar() {
         "issue",
         ISSUE_ID,
         "--occurrence=latest",
-    ])
-    .expect("latest occurrence parses");
+    ])?;
     assert_eq!(
         latest.http_path().as_deref(),
         Some(
@@ -74,10 +194,11 @@ fn parses_only_the_explicit_issue_investigation_grammar() {
              response_version=12&selection=latest"
         )
     );
+    Ok(())
 }
 
 #[test]
-fn parses_exact_correction_verification_without_a_parallel_command_stack() {
+fn parses_exact_correction_verification_without_a_parallel_command_stack() -> TestResult {
     let command = parse_command([
         "logbrew",
         "investigate",
@@ -88,8 +209,7 @@ fn parses_exact_correction_verification_without_a_parallel_command_stack() {
         OCCURRENCE_ID,
         "--candidate-deployment=candidate-deploy-42",
         "--json",
-    ])
-    .expect("correction verification parses");
+    ])?;
     assert_eq!(
         command,
         Command::Explain {
@@ -109,6 +229,7 @@ fn parses_exact_correction_verification_without_a_parallel_command_stack() {
              candidate_deployment_id=candidate-deploy-42"
         )
     );
+    Ok(())
 }
 
 #[test]
@@ -129,11 +250,7 @@ fn grammar_failures_are_fixed_and_value_safe() -> Result<(), Box<dyn std::error:
         vec!["issue", "issue_123"],
     ] {
         let args = [vec!["logbrew", "investigate"], suffix].concat();
-        let error = parse_command(args).expect_err("closed investigation grammar rejects input");
-        let mut output = Vec::new();
-        write_cli_error(&error, true, &mut output)?;
-        let text = String::from_utf8(output)?;
-        let body: serde_json::Value = serde_json::from_str(text.as_str())?;
+        let (body, text) = rendered_json_error(&args)?;
 
         assert_eq!(body["error"], "invalid_investigation_command");
         assert_eq!(
@@ -151,11 +268,10 @@ fn grammar_failures_are_fixed_and_value_safe() -> Result<(), Box<dyn std::error:
 }
 
 #[test]
-fn help_describes_the_complete_versioned_bundle() {
-    let command = parse_command(["logbrew", "investigate", "issue", "--help"])
-        .expect("investigation help parses");
+fn help_describes_the_complete_versioned_bundle() -> TestResult {
+    let command = parse_command(["logbrew", "investigate", "issue", "--help"])?;
     let Command::Help { topic, .. } = command else {
-        panic!("investigation help should return help");
+        return Err("investigation help must return help".into());
     };
     let text = logbrew_cli::help::help_text(topic);
 
@@ -173,12 +289,13 @@ fn help_describes_the_complete_versioned_bundle() {
     assert!(text.contains("bounded release, environment, service, and SDK distributions"));
     assert!(text.contains("candidate-deployment"));
     assert!(text.contains("never treats bounded absence as proof"));
+    Ok(())
 }
 
 async_test!(correction_verification_validates_exact_json_and_renders_honest_human_evidence -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await.expect("loopback server starts");
+    let server = MockServer::start().await?;
     let bundle = correction_bundle();
-    mount_correction(&server, bundle.clone(), 2);
+    mount_correction(&server, &bundle, 2);
     let command = correction_command(true)?;
     let mut output = Vec::new();
     execute_command(&command, &authenticated_env(&server), &mut output).await?;
@@ -208,7 +325,7 @@ async_test!(correction_verification_validates_exact_json_and_renders_honest_huma
 });
 
 async_test!(correction_verification_rejects_contradictions_and_unknown_fields_without_reflection -> Result<(), Box<dyn std::error::Error>>, {
-    let cases = [
+    let mut cases = [
         ("/status", serde_json::json!("no_recurrence_observed")),
         ("/absence_is_proof", serde_json::json!(true)),
         (
@@ -220,23 +337,24 @@ async_test!(correction_verification_rejects_contradictions_and_unknown_fields_wi
             serde_json::json!("2026-08-20T08:59:59.999Z"),
         ),
         ("/evidence/status", serde_json::json!("partial")),
-    ];
-    for (pointer, value) in cases {
-        let server = MockServer::start().await.expect("loopback server starts");
+    ].into_iter().map(|(pointer, value)| -> TestResult<_> {
         let mut bundle = correction_bundle();
+        *bundle.pointer_mut(pointer).ok_or("missing fixture pointer")? = value;
+        Ok(bundle)
+    }).collect::<TestResult<Vec<_>>>()?;
+    let mut unknown = correction_bundle();
+    unknown["unknown_field"] = serde_json::json!(HOSTILE_MARKER);
+    cases.push(unknown);
+    for mut bundle in cases {
+        let server = MockServer::start().await?;
         bundle["baseline_release"] = serde_json::json!(HOSTILE_MARKER);
-        *bundle.pointer_mut(pointer).expect("fixture pointer") = value;
-        mount_correction(&server, bundle, 1);
-        let mut output = Vec::new();
-        let error = execute_command(
+        mount_correction(&server, &bundle, 1);
+        let error = failed_command(
             &correction_command(true)?,
             &authenticated_env(&server),
-            &mut output,
         )
-        .await
-        .expect_err("contradictory correction response fails closed");
-        write_runtime_error(&error, true, &mut output)?;
-        let text = String::from_utf8(output)?;
+        .await?;
+        let text = runtime_error_text(&error)?;
         assert!(matches!(error, RuntimeError::ExplainResponseInvalid));
         assert!(!text.contains(HOSTILE_MARKER));
     }
@@ -249,11 +367,11 @@ async_test!(investigation_uses_the_versioned_cross_signal_bundle -> Result<(), B
 });
 
 async_test!(exact_occurrence_request_uses_the_exact_id_and_validates_its_receipt -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await.expect("loopback server starts");
+    let server = MockServer::start().await?;
     let mut bundle = rich_investigation_bundle();
     bundle["occurrence_selection"]["requested"] = serde_json::json!("exact");
     bundle["occurrence_selection"]["reason"] = serde_json::json!("exact_occurrence_requested");
-    mount_bundle(&server, bundle.clone(), 1, ("occurrence_id", OCCURRENCE_ID));
+    mount_bundle(&server, &bundle, 1, ("occurrence_id", OCCURRENCE_ID));
     let command = parse_command([
         "logbrew",
         "investigate",
@@ -280,7 +398,7 @@ async_test!(selected_trace_link_remains_valid_when_typed_trace_context_is_absent
 
 async_test!(captured_native_frame_count_accepts_a_receipted_safe_projection -> Result<(), Box<dyn std::error::Error>>, {
     assert_bundle_outputs(
-        projected_stack_investigation_bundle(),
+        projected_stack_investigation_bundle()?,
         &[
             "Recommended occurrence:",
             "frames=17 stack_truncated=false",
@@ -294,8 +412,8 @@ async_test!(captured_native_frame_count_accepts_a_receipted_safe_projection -> R
 
 async_test!(coverage_and_source_locator_states_preserve_exact_json -> Result<(), Box<dyn std::error::Error>>, {
     for (bundle, impact, locator) in [
-        (complete_user_impact_bundle(), "complete", "available"),
-        (unavailable_user_impact_bundle(), "unavailable", "not_found"),
+        (complete_user_impact_bundle()?, "complete", "available"),
+        (unavailable_user_impact_bundle()?, "unavailable", "not_found"),
     ] {
         assert_eq!(bundle["impact"]["user_impact"]["status"], impact);
         assert_eq!(bundle["source_locator"]["status"], locator);
@@ -372,8 +490,8 @@ async_test!(human_output_surfaces_failure_fix_timeline_correlations_and_limits -
 
 async_test!(exception_chain_absence_and_invalid_storage_are_explicit_in_both_output_modes -> Result<(), Box<dyn std::error::Error>>, {
     for (bundle, expected_status) in [
-        (not_captured_exception_chain_bundle(), "not_captured"),
-        (invalid_exception_chain_bundle(), "invalid"),
+        (not_captured_exception_chain_bundle()?, "not_captured"),
+        (invalid_exception_chain_bundle()?, "invalid"),
     ] {
         let expected = format!("Exception chain: status={expected_status} entries=0");
         let human = assert_bundle_outputs(bundle, &[expected.as_str()]).await?;
@@ -415,14 +533,32 @@ async_test!(regression_evidence_is_strictly_validated_and_visible_in_both_output
     .map(drop)
 });
 
+async_test!(lifecycle_order_keeps_calendar_and_nanosecond_boundaries -> Result<(), Box<dyn std::error::Error>>, {
+    for (older, newer) in [
+        ("0000-12-31T23:59:59Z", "0001-01-01T00:00:00Z"),
+        ("2000-02-29T23:59:59Z", "2000-03-01T00:00:00Z"),
+        ("2016-12-31T23:59:60.999999999Z", "2017-01-01T00:00:00Z"),
+        ("2026-08-04T07:45:00.000000001Z", "2026-08-04T07:45:00.000000002+00:00"),
+    ] {
+        for (first, second, valid) in [(newer, older, true), (older, newer, false)] {
+            let mut bundle = regressed_investigation_bundle();
+            bundle["lifecycle"]["activity"]["changes"][0]["changed_at"] = first.into();
+            bundle["lifecycle"]["activity"]["changes"][1]["changed_at"] = second.into();
+            bundle["lifecycle"]["regression"]["resolution_changed_at"] = first.into();
+            assert_binary_bundle(&bundle, valid).await?;
+        }
+    }
+    Ok(())
+});
+
 async_test!(unavailable_lifecycle_reads_keep_the_primary_issue_and_exact_receipts -> Result<(), Box<dyn std::error::Error>>, {
     for (bundle, expected) in [
         (
-            status_history_unavailable_bundle(),
+            status_history_unavailable_bundle()?,
             "Regression: status=unavailable reason=status_history_unavailable",
         ),
         (
-            recurrence_unavailable_bundle(),
+            recurrence_unavailable_bundle()?,
             "Regression: status=unavailable reason=recurrence_read_unavailable",
         ),
     ] {
@@ -439,12 +575,12 @@ async_test!(unavailable_lifecycle_reads_keep_the_primary_issue_and_exact_receipt
 async_test!(partial_and_unavailable_occurrence_analysis_keep_the_primary_investigation -> Result<(), Box<dyn std::error::Error>>, {
     for (bundle, status, expected) in [
         (
-            trend_unavailable_bundle(),
+            trend_unavailable_bundle()?,
             "partial",
             "Occurrence-analysis limitations: trend_read_unavailable",
         ),
         (
-            occurrence_analysis_unavailable_bundle(),
+            occurrence_analysis_unavailable_bundle()?,
             "unavailable",
             "Occurrence analysis: status=unavailable retained=3 distributions=0/4",
         ),
@@ -465,8 +601,8 @@ async_test!(partial_and_unavailable_occurrence_analysis_keep_the_primary_investi
 });
 
 async_test!(investigate_and_explain_issue_share_one_output_contract -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await.expect("loopback server starts");
-    mount_bundle(&server, rich_investigation_bundle(), 2, RECOMMENDED);
+    let server = MockServer::start().await?;
+    mount_bundle(&server, &rich_investigation_bundle(), 2, RECOMMENDED);
 
     let investigate = run(&server, false, "investigate").await?;
     let explain = run(&server, false, "explain").await?;
@@ -500,7 +636,7 @@ async_test!(invalid_or_duplicate_bundles_fail_closed_without_reflection -> Resul
             "hostile-duplicate-marker",
         ),
     ] {
-        let server = MockServer::start().await.expect("loopback server starts");
+        let server = MockServer::start().await?;
         Mock::route(
             "GET",
             format!("/api/telemetry/issues/{ISSUE_ID}/investigation"),
@@ -508,13 +644,8 @@ async_test!(invalid_or_duplicate_bundles_fail_closed_without_reflection -> Resul
         .respond_with(ResponseTemplate::new(200).set_body_string(body))
         .mount(&server);
         let command = parse_command(["logbrew", "investigate", "issue", ISSUE_ID, "--json"])?;
-        let mut output = Vec::new();
-
-        let error = execute_command(&command, &authenticated_env(&server), &mut output)
-            .await
-            .expect_err("invalid bundle fails closed");
-        write_runtime_error(&error, true, &mut output)?;
-        let text = String::from_utf8(output)?;
+        let error = failed_command(&command, &authenticated_env(&server)).await?;
+        let text = runtime_error_text(&error)?;
         let response: serde_json::Value = serde_json::from_str(text.as_str())?;
 
         assert_eq!(response["error"], "investigation_response_invalid");
@@ -524,19 +655,19 @@ async_test!(invalid_or_duplicate_bundles_fail_closed_without_reflection -> Resul
 });
 
 async_test!(contradictory_contract_bundles_fail_closed_without_reflection -> Result<(), Box<dyn std::error::Error>>, {
-    let mut cases = invalid_user_impact_bundles();
-    cases.extend(invalid_occurrence_analysis_bundles());
-    cases.extend(invalid_occurrence_selection_bundles());
-    cases.extend(invalid_event_evidence_bundles());
-    cases.extend(invalid_lifecycle_bundles());
+    let mut cases = invalid_user_impact_bundles()?;
+    cases.extend(invalid_occurrence_analysis_bundles()?);
+    cases.extend(invalid_occurrence_selection_bundles()?);
+    cases.extend(invalid_event_evidence_bundles()?);
+    cases.extend(invalid_lifecycle_bundles()?);
     assert_invalid_bundles(cases).await
 });
 
 async_test!(exact_selector_rejects_a_recommended_server_receipt -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await.expect("loopback server starts");
+    let server = MockServer::start().await?;
     let mut bundle = rich_investigation_bundle();
     bundle["subject"]["message"] = serde_json::json!(HOSTILE_MARKER);
-    mount_bundle(&server, bundle, 1, ("occurrence_id", OCCURRENCE_ID));
+    mount_bundle(&server, &bundle, 1, ("occurrence_id", OCCURRENCE_ID));
     let command = parse_command([
         "logbrew",
         "investigate",
@@ -546,13 +677,8 @@ async_test!(exact_selector_rejects_a_recommended_server_receipt -> Result<(), Bo
         OCCURRENCE_ID,
         "--json",
     ])?;
-    let mut output = Vec::new();
-
-    let error = execute_command(&command, &authenticated_env(&server), &mut output)
-        .await
-        .expect_err("server selector mismatch fails closed");
-    write_runtime_error(&error, true, &mut output)?;
-    let text = String::from_utf8(output)?;
+    let error = failed_command(&command, &authenticated_env(&server)).await?;
+    let text = runtime_error_text(&error)?;
     let response: serde_json::Value = serde_json::from_str(text.as_str())?;
 
     assert_eq!(response["error"], "investigation_response_invalid");
@@ -561,7 +687,7 @@ async_test!(exact_selector_rejects_a_recommended_server_receipt -> Result<(), Bo
 });
 
 async_test!(redirects_are_not_followed_with_authentication -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await.expect("loopback server starts");
+    let server = MockServer::start().await?;
     Mock::route(
         "GET",
         format!("/api/telemetry/issues/{ISSUE_ID}/investigation"),
@@ -573,17 +699,12 @@ async_test!(redirects_are_not_followed_with_authentication -> Result<(), Box<dyn
     .expect(1)
     .mount(&server);
     Mock::auth("GET", "/redirected", "test-token")
-        .respond_with(ResponseTemplate::new(200).set_body_json(rich_investigation_bundle()))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&rich_investigation_bundle()))
         .expect(0)
         .mount(&server);
     let command = parse_command(["logbrew", "investigate", "issue", ISSUE_ID, "--json"])?;
-    let mut output = Vec::new();
-
-    let error = execute_command(&command, &authenticated_env(&server), &mut output)
-        .await
-        .expect_err("redirect remains a non-success response");
-    write_runtime_error(&error, true, &mut output)?;
-    let response: serde_json::Value = serde_json::from_slice(output.as_slice())?;
+    let error = failed_command(&command, &authenticated_env(&server)).await?;
+    let response: serde_json::Value = serde_json::from_str(&runtime_error_text(&error)?)?;
 
     assert_eq!(response["error"], "api_error");
     assert_eq!(response["status"], 302);
@@ -591,7 +712,7 @@ async_test!(redirects_are_not_followed_with_authentication -> Result<(), Box<dyn
 });
 
 async_test!(api_failures_discard_backend_text_and_keep_typed_recovery -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await.expect("loopback server starts");
+    let server = MockServer::start().await?;
     Mock::route(
         "GET",
         format!("/api/telemetry/issues/{ISSUE_ID}/investigation"),
@@ -602,13 +723,8 @@ async_test!(api_failures_discard_backend_text_and_keep_typed_recovery -> Result<
     )
     .mount(&server);
     let command = parse_command(["logbrew", "investigate", "issue", ISSUE_ID, "--json"])?;
-    let mut output = Vec::new();
-
-    let error = execute_command(&command, &authenticated_env(&server), &mut output)
-        .await
-        .expect_err("failed request returns typed recovery");
-    write_runtime_error(&error, true, &mut output)?;
-    let text = String::from_utf8(output)?;
+    let error = failed_command(&command, &authenticated_env(&server)).await?;
+    let text = runtime_error_text(&error)?;
     let response: serde_json::Value = serde_json::from_str(text.as_str())?;
 
     assert_eq!(response["error"], "api_error");
@@ -628,13 +744,8 @@ async_test!(unsafe_origin_fails_before_network_use_without_reflection -> Result<
         home: None,
         cwd: None,
     };
-    let mut output = Vec::new();
-
-    let error = execute_command(&command, &env, &mut output)
-        .await
-        .expect_err("unsafe origin fails locally");
-    write_runtime_error(&error, true, &mut output)?;
-    let text = String::from_utf8(output)?;
+    let error = failed_command(&command, &env).await?;
+    let text = runtime_error_text(&error)?;
 
     assert!(matches!(error, RuntimeError::Unavailable { .. }));
     assert!(!text.contains("hostile-secret"));
@@ -644,7 +755,7 @@ async_test!(unsafe_origin_fails_before_network_use_without_reflection -> Result<
 
 fn mount_bundle(
     server: &MockServer,
-    bundle: serde_json::Value,
+    bundle: &serde_json::Value,
     expected_requests: u64,
     selector: (&str, &str),
 ) {
@@ -660,7 +771,7 @@ fn mount_bundle(
     .mount(server);
 }
 
-fn mount_correction(server: &MockServer, bundle: serde_json::Value, expected_requests: u64) {
+fn mount_correction(server: &MockServer, bundle: &serde_json::Value, expected_requests: u64) {
     Mock::route(
         "GET",
         format!("/api/telemetry/issues/{ISSUE_ID}/correction-verification"),
@@ -696,18 +807,20 @@ async fn assert_invalid_bundles(
     cases: Vec<serde_json::Value>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     for bundle in cases {
-        let server = MockServer::start().await.expect("loopback server starts");
-        mount_bundle(&server, bundle, 1, RECOMMENDED);
+        let server = MockServer::start().await?;
+        mount_bundle(&server, &bundle, 1, RECOMMENDED);
         let command = parse_command(["logbrew", "investigate", "issue", ISSUE_ID, "--json"])?;
-        let mut output = Vec::new();
-        let error = execute_command(&command, &authenticated_env(&server), &mut output)
-            .await
-            .expect_err("contradictory investigation contract fails closed");
-        write_runtime_error(&error, true, &mut output)?;
-        let text = String::from_utf8(output)?;
+        let error = failed_command(&command, &authenticated_env(&server)).await?;
+        let text = runtime_error_text(&error)?;
         let response: serde_json::Value = serde_json::from_str(text.as_str())?;
-        assert_eq!(response["error"], "investigation_response_invalid");
-        assert!(!text.contains(HOSTILE_MARKER));
+        assert_eq!(
+            response["error"], "investigation_response_invalid",
+            "invalid evidence must retain its typed error"
+        );
+        assert!(
+            !text.contains(HOSTILE_MARKER),
+            "invalid evidence leaked into output"
+        );
     }
     Ok(())
 }
@@ -716,11 +829,14 @@ async fn assert_bundle_outputs(
     bundle: serde_json::Value,
     expected_human: &[&str],
 ) -> Result<String, Box<dyn std::error::Error>> {
-    let server = MockServer::start().await.expect("loopback server starts");
-    mount_bundle(&server, bundle.clone(), 2, RECOMMENDED);
+    let server = MockServer::start().await?;
+    mount_bundle(&server, &bundle, 2, RECOMMENDED);
     let json: serde_json::Value =
         serde_json::from_str(run(&server, true, "investigate").await?.as_str())?;
-    assert_eq!(json, bundle);
+    assert_eq!(
+        json, bundle,
+        "validated JSON must preserve the exact investigation bundle"
+    );
     let human = run(&server, false, "investigate").await?;
     for expected in expected_human {
         assert!(
@@ -779,89 +895,11 @@ fn rich_investigation_bundle() -> serde_json::Value {
             "first_seen_at": "2026-08-04T07:30:00Z",
             "last_seen_at": "2026-08-04T08:00:00Z"
         },
-        "event": {
-            "id": OCCURRENCE_ID,
-            "occurred_at": "2026-08-04T07:59:59Z",
-            "sdk": {"name": "@logbrew/node", "version": "0.1.4"},
-            "context": {
-                "schema_version": 1,
-                "resource": {
-                    "service": {"name": "checkout-api", "version": "1.2.3"},
-                    "deployment": {"environment": "production", "release": "checkout@1.2.3"},
-                    "runtime": {"name": "node", "version": "24"},
-                    "framework": {"name": "fastify", "version": "5"},
-                    "operating_system": {"name": "linux", "version": "6.8", "build": null},
-                    "device": {"family": "server", "model": null, "architecture": "arm64"},
-                    "application": {"name": "checkout", "version": "1.2.3", "build": "42"}
-                },
-                "trace": {
-                    "trace_id": TRACE_ID,
-                    "span_id": "0123456789abcdef",
-                    "parent_span_id": null,
-                    "sampled": true
-                },
-                "session": {"id": "session-opaque", "previous_id": null},
-                "subject": {"id": "subject-opaque", "kind": "user"},
-                "tags": {"plan": "team"}
-            },
-            "exception": {
-                "type": "PaymentProviderError",
-                "mechanism": {"type": "javascript.promise", "handled": false}
-            },
-            "exception_chain": {
-                "status": "captured",
-                "entries": [
-                    {
-                        "id": 0,
-                        "parent_id": null,
-                        "relationship": "reported",
-                        "type": "PaymentProviderError",
-                        "message": "Payment capture failed",
-                        "message_state": "captured",
-                        "module": "checkout.payment",
-                        "mechanism": {"type": "javascript.promise", "handled": false},
-                        "stack_frames": [captured_stack_frame((
-                            "checkout", "capturePayment", "apps/checkout/payment_gateway.ts", 87, 12
-                        ))],
-                        "stack_frames_state": "captured"
-                    },
-                    {
-                        "id": 1,
-                        "parent_id": 0,
-                        "relationship": "cause",
-                        "type": "UpstreamTimeoutError",
-                        "message": null,
-                        "message_state": "redacted",
-                        "module": "checkout.provider",
-                        "mechanism": {"type": "javascript.cause", "handled": true},
-                        "stack_frames": [],
-                        "stack_frames_state": "truncated"
-                    }
-                ],
-                "truncated": true
-            },
-            "request": {
-                "method": "POST",
-                "route_template": "/checkout/{cart_id}",
-                "response_status_code": 503
-            },
-            "stack_frames": [captured_stack_frame((
-                "checkout", "capturePayment", "apps/checkout/payment_gateway.ts", 87, 12
-            ))],
-            "breadcrumbs": [{
-                "timestamp": "2026-08-04T07:59:58Z",
-                "type": "user",
-                "category": "checkout.submit",
-                "level": "info",
-                "message": "Submit checkout",
-                "data": {"screen": "checkout"}
-            }],
-            "breadcrumbs_truncated": false
-        },
+        "event": captured_event(),
         "occurrence_selection": {
             "requested": "recommended",
             "reason": "context_rich_recent_occurrence",
-            "selected": selected.clone(),
+            "selected": selected,
             "first": first,
             "latest": latest,
             "recommended": selected,
@@ -918,260 +956,334 @@ fn rich_investigation_bundle() -> serde_json::Value {
             },
             "provenance": "application_reported"
         },
-        "source_locator": {
-            "status": "available",
-            "repository_provider": "github",
-            "repository_full_name": "example/checkout",
-            "component_path": "apps/checkout",
-            "revision": "0123456789abcdef",
-            "revision_source": "deployment_commit",
-            "repository_relative_file": "apps/checkout/payment_gateway.ts",
-            "evidence": {
-                "status": "complete",
-                "captured_fields": [
-                    "source.component", "source.deployment_revision", "source.repository",
-                    "source.repository_relative_file", "source.service"
-                ],
-                "missing_fields": [],
-                "redacted_fields": [],
-                "truncated_fields": []
-            }
-        },
-        "reproduction": {
-            "status": "ready",
-            "baseline_occurrence_id": OCCURRENCE_ID,
-            "evidence": {
-                "status": "complete",
-                "captured_fields": [
-                    "reproduction.baseline_occurrence", "reproduction.code_location",
-                    "reproduction.expected_failure", "reproduction.trigger"
-                ],
-                "missing_fields": [],
-                "redacted_fields": [],
-                "truncated_fields": []
-            }
-        },
-        "impact": {
-            "occurrence_count": 3,
-            "first_seen_at": "2026-08-04T07:30:00Z",
-            "last_seen_at": "2026-08-04T08:00:00Z",
-            "affected_users": null,
-            "user_impact": {
-                "status": "partial",
-                "known_affected_users": 2,
-                "count_method": "approximate_uniq_combined64",
-                "coverage": {
-                    "retained_occurrences": 3,
-                    "indexed_occurrences": 3,
-                    "historical_unindexed_occurrences": 0,
-                    "identified_user_occurrences": 2,
-                    "anonymous_subject_occurrences": 0,
-                    "missing_subject_occurrences": 0,
-                    "privacy_filtered_subject_occurrences": 1,
-                    "index_coverage_basis_points": 10000,
-                    "identified_user_coverage_basis_points": 6666
-                },
-                "limitations": [
-                    "approximate_distinct_count",
-                    "privacy_filtered_subject_context"
-                ]
+        "source_locator": captured_source_locator(),
+        "reproduction": captured_reproduction(),
+        "impact": captured_impact(),
+        "correlations": captured_correlations(),
+        "evidence": captured_evidence(),
+        "next_actions": captured_next_actions(),
+
+    })
+}
+
+fn captured_event() -> serde_json::Value {
+    serde_json::json!({
+        "id": OCCURRENCE_ID,
+        "occurred_at": "2026-08-04T07:59:59Z",
+        "sdk": {"name": "@logbrew/node", "version": "0.1.4"},
+        "context": {
+            "schema_version": 1,
+            "resource": {
+                "service": {"name": "checkout-api", "version": "1.2.3"},
+                "deployment": {"environment": "production", "release": "checkout@1.2.3"},
+                "runtime": {"name": "node", "version": "24"},
+                "framework": {"name": "fastify", "version": "5"},
+                "operating_system": {"name": "linux", "version": "6.8", "build": null},
+                "device": {"family": "server", "model": null, "architecture": "arm64"},
+                "application": {"name": "checkout", "version": "1.2.3", "build": "42"}
             },
-            "reported": {
-                "affected_user_segment": "paying",
-                "failed_action": "checkout.submit",
-                "user_visible_outcome": "The order was not confirmed.",
-                "provenance": "application_reported"
-            }
-        },
-        "correlations": {
             "trace": {
-                "status": "available",
                 "trace_id": TRACE_ID,
-                "summary": {
-                    "trace_id": TRACE_ID,
-                    "span_count": 3,
-                    "error_span_count": 1,
-                    "service_count": 2,
-                    "project_count": 1,
-                    "started_at": "2026-08-04T07:59:57Z",
-                    "duration_ms": 920,
-                    "root_span": null,
-                    "slowest_child_span": null,
-                    "slowest_path": [],
-                    "error_spans": [],
-                    "services": [],
-                    "releases": ["checkout@1.2.3"],
-                    "environments": ["production"]
+                "span_id": "0123456789abcdef",
+                "parent_span_id": null,
+                "sampled": true
+            },
+            "session": {"id": "session-opaque", "previous_id": null},
+            "subject": {"id": "subject-opaque", "kind": "user"},
+            "tags": {"plan": "team"}
+        },
+        "exception": {
+            "type": "PaymentProviderError",
+            "mechanism": {"type": "javascript.promise", "handled": false}
+        },
+        "exception_chain": {
+            "status": "captured",
+            "entries": [
+                {
+                    "id": 0,
+                    "parent_id": null,
+                    "relationship": "reported",
+                    "type": "PaymentProviderError",
+                    "message": "Payment capture failed",
+                    "message_state": "captured",
+                    "module": "checkout.payment",
+                    "mechanism": {"type": "javascript.promise", "handled": false},
+                    "stack_frames": [captured_stack_frame((
+                        "checkout", "capturePayment", "apps/checkout/payment_gateway.ts", 87, 12
+                    ))],
+                    "stack_frames_state": "captured"
                 },
-                "truncated": false
+                {
+                    "id": 1,
+                    "parent_id": 0,
+                    "relationship": "cause",
+                    "type": "UpstreamTimeoutError",
+                    "message": null,
+                    "message_state": "redacted",
+                    "module": "checkout.provider",
+                    "mechanism": {"type": "javascript.cause", "handled": true},
+                    "stack_frames": [],
+                    "stack_frames_state": "truncated"
+                }
+            ],
+            "truncated": true
+        },
+        "request": {
+            "method": "POST",
+            "route_template": "/checkout/{cart_id}",
+            "response_status_code": 503
+        },
+        "stack_frames": [captured_stack_frame((
+            "checkout", "capturePayment", "apps/checkout/payment_gateway.ts", 87, 12
+        ))],
+        "breadcrumbs": [{
+            "timestamp": "2026-08-04T07:59:58Z",
+            "type": "user",
+            "category": "checkout.submit",
+            "level": "info",
+            "message": "Submit checkout",
+            "data": {"screen": "checkout"}
+        }],
+        "breadcrumbs_truncated": false
+    })
+}
+
+fn captured_source_locator() -> serde_json::Value {
+    serde_json::json!({
+        "status": "available",
+        "repository_provider": "github",
+        "repository_full_name": "example/checkout",
+        "component_path": "apps/checkout",
+        "revision": "0123456789abcdef",
+        "revision_source": "deployment_commit",
+        "repository_relative_file": "apps/checkout/payment_gateway.ts",
+        "evidence": {
+            "status": "complete",
+            "captured_fields": [
+                "source.component", "source.deployment_revision", "source.repository",
+                "source.repository_relative_file", "source.service"
+            ],
+            "missing_fields": [],
+            "redacted_fields": [],
+            "truncated_fields": []
+        }
+    })
+}
+
+fn captured_reproduction() -> serde_json::Value {
+    serde_json::json!({
+        "status": "ready",
+        "baseline_occurrence_id": OCCURRENCE_ID,
+        "evidence": {
+            "status": "complete",
+            "captured_fields": [
+                "reproduction.baseline_occurrence", "reproduction.code_location",
+                "reproduction.expected_failure", "reproduction.trigger"
+            ],
+            "missing_fields": [],
+            "redacted_fields": [],
+            "truncated_fields": []
+        }
+    })
+}
+
+fn captured_impact() -> serde_json::Value {
+    serde_json::json!({
+        "occurrence_count": 3,
+        "first_seen_at": "2026-08-04T07:30:00Z",
+        "last_seen_at": "2026-08-04T08:00:00Z",
+        "affected_users": null,
+        "user_impact": {
+            "status": "partial",
+            "known_affected_users": 2,
+            "count_method": "approximate_uniq_combined64",
+            "coverage": {
+                "retained_occurrences": 3,
+                "indexed_occurrences": 3,
+                "historical_unindexed_occurrences": 0,
+                "identified_user_occurrences": 2,
+                "anonymous_subject_occurrences": 0,
+                "missing_subject_occurrences": 0,
+                "privacy_filtered_subject_occurrences": 1,
+                "index_coverage_basis_points": 10000,
+                "identified_user_coverage_basis_points": 6666
             },
-            "logs": {
-                "status": "available",
-                "items": [{
-                    "id": "33333333-3333-4333-8333-333333333333",
-                    "severity": "error",
-                    "source": "payments",
-                    "message": "provider returned 503",
-                    "occurred_at": "2026-08-04T07:59:59Z",
-                    "service_name": "checkout-api",
-                    "span_id": "0123456789abcdef"
-                }],
-                "truncated": false
-            },
-            "actions": {
-                "status": "available",
-                "items": [{
-                    "id": "44444444-4444-4444-8444-444444444444",
-                    "name": "checkout.submit",
-                    "occurred_at": "2026-08-04T07:59:58Z",
-                    "service_name": "checkout-api"
-                }],
-                "truncated": false
-            },
-            "metrics": {
-                "status": "available",
-                "items": [{
-                    "id": "55555555-5555-4555-8555-555555555555",
-                    "name": "payment.retry.count",
-                    "kind": "counter",
-                    "value": 3.0,
-                    "unit": "attempts",
-                    "temporality": "delta",
-                    "occurred_at": "2026-08-04T07:59:59Z",
-                    "service_name": "checkout-api"
-                }],
-                "truncated": false
-            },
-            "related_issues": {
-                "status": "available",
-                "items": [{
-                    "id": "77777777-7777-4777-8777-777777777777",
-                    "issue_id": "66666666-6666-4666-8666-666666666666",
-                    "project_id": PROJECT_ID,
-                    "severity": "error",
-                    "title": "Sibling checkout failure",
-                    "message": "Observed on the selected occurrence trace.",
-                    "occurred_at": "2026-08-04T07:59:58Z",
-                    "service_name": "payment-worker",
-                    "environment": "production",
-                    "release": "checkout@1.2.3"
-                }],
-                "truncated": false
-            },
-            "release": {
+            "limitations": [
+                "approximate_distinct_count",
+                "privacy_filtered_subject_context"
+            ]
+        },
+        "reported": {
+            "affected_user_segment": "paying",
+            "failed_action": "checkout.submit",
+            "user_visible_outcome": "The order was not confirmed.",
+            "provenance": "application_reported"
+        }
+    })
+}
+
+/// One retained trace with complete service totals and bounded span previews.
+fn captured_trace_summary() -> serde_json::Value {
+    let root = serde_json::json!({
+        "span_id": "0123456789abcdef", "parent_span_id": null,
+        "name": "POST /checkout/{cart_id}", "operation": "http.server", "status": "ok",
+        "started_at": "2026-08-04T07:59:57Z", "duration_ms": 3000,
+        "service_name": "checkout-api"
+    });
+    let child = serde_json::json!({
+        "span_id": "abcdef0123456789", "parent_span_id": "0123456789abcdef",
+        "name": "POST /payments", "operation": "http.client", "status": "error",
+        "started_at": "2026-08-04T07:59:58Z", "duration_ms": 900,
+        "service_name": "payment-provider"
+    });
+    serde_json::json!({
+        "trace_id": TRACE_ID, "span_count": 3, "error_span_count": 1,
+        "service_count": 2, "project_count": 1,
+        "started_at": "2026-08-04T07:59:57Z", "duration_ms": 3000,
+        "root_span": root, "slowest_child_span": child,
+        "slowest_path": [root, child], "error_spans": [child],
+        "services": [
+            {"service_name": "checkout-api", "span_count": 2, "error_span_count": 0, "max_duration_ms": 3000},
+            {"service_name": "payment-provider", "span_count": 1, "error_span_count": 1, "max_duration_ms": 900}
+        ],
+        "releases": ["checkout@1.2.3"], "environments": ["production"]
+    })
+}
+
+fn captured_correlations() -> serde_json::Value {
+    serde_json::json!({
+        "trace": {
+            "status": "available",
+            "trace_id": TRACE_ID,
+            "summary": captured_trace_summary(),
+            "truncated": false
+        },
+        "logs": available_item(&serde_json::json!({
+            "id": "33333333-3333-4333-8333-333333333333",
+            "severity": "error",
+            "source": "payments",
+            "message": "provider returned 503",
+            "occurred_at": "2026-08-04T07:59:59Z",
+            "service_name": "checkout-api",
+            "span_id": "0123456789abcdef"
+        })),
+        "actions": available_item(&serde_json::json!({
+            "id": "44444444-4444-4444-8444-444444444444",
+            "name": "checkout.submit",
+            "occurred_at": "2026-08-04T07:59:58Z",
+            "service_name": "checkout-api"
+        })),
+        "metrics": available_item(&serde_json::json!({
+            "id": "55555555-5555-4555-8555-555555555555",
+            "name": "payment.retry.count",
+            "kind": "counter",
+            "value": 3.0,
+            "unit": "attempts",
+            "temporality": "delta",
+            "occurred_at": "2026-08-04T07:59:59Z",
+            "service_name": "checkout-api"
+        })),
+        "related_issues": available_item(&serde_json::json!({
+            "id": "77777777-7777-4777-8777-777777777777",
+            "issue_id": "66666666-6666-4666-8666-666666666666",
+            "project_id": PROJECT_ID,
+            "severity": "error",
+            "title": "Sibling checkout failure",
+            "message": "Observed on the selected occurrence trace.",
+            "occurred_at": "2026-08-04T07:59:58Z",
+            "service_name": "payment-worker",
+            "environment": "production",
+            "release": "checkout@1.2.3"
+        })),
+        "release": {
+            "release": "checkout@1.2.3",
+            "environment": "production",
+            "service_name": "checkout-api",
+            "deployment_status": "available",
+            "deployment": {
+                "deployment_id": "deploy-123",
                 "release": "checkout@1.2.3",
                 "environment": "production",
                 "service_name": "checkout-api",
-                "deployment_status": "available",
-                "deployment": {
-                    "deployment_id": "deploy-123",
-                    "release": "checkout@1.2.3",
-                    "environment": "production",
-                    "service_name": "checkout-api",
-                    "status": "succeeded",
-                    "started_at": "2026-08-04T07:50:00Z",
-                    "finished_at": "2026-08-04T07:52:00Z",
-                    "commit_sha": "0123456789abcdef"
-                },
-                "time_since_deployment_ms": 479000,
-                "deployment_causality": "evidence_only"
-            }
-        },
-        "evidence": {
-            "status": "partial",
-            "captured_fields": [
-                "actions",
-                "breadcrumbs",
-                "deployment",
-                "deployment.commit_sha",
-                "deployment.timing",
-                "exception",
-                "exception_chain",
-                "exception_chain.messages",
-                "exception_chain.stack_frames",
-                "grouping",
-                "grouping.components",
-                "grouping.stack",
-                "grouping.strategy",
-                "grouping.strategy_details",
-                "logs",
-                "metrics",
-                "lifecycle.regression",
-                "lifecycle.status_history",
-                "occurrence.boundaries",
-                "occurrence.distribution.environment",
-                "occurrence.distribution.release",
-                "occurrence.distribution.sdk",
-                "occurrence.distribution.service",
-                "occurrence.recommendation",
-                "occurrence.selection",
-                "occurrence.trend",
-                "related_issues",
-                "release",
-                "request",
-                "request.method",
-                "request.response_status_code",
-                "request.route_template",
-                "stack_frames",
-                "source_locator",
-                "trace",
-                "affected_users.known"
-            ],
-            "missing_fields": ["affected_users.complete_coverage"],
-            "redacted_fields": ["exception_chain.messages"],
-            "truncated_fields": ["exception_chain.entries", "exception_chain.stack_frames", "request.body"]
-        },
-        "next_actions": [
-            {
-                "priority": 1,
-                "code": "inspect_code_location",
-                "target": "source_code",
-                "reason": "likely_fix_location_available"
+                "status": "succeeded",
+                "started_at": "2026-08-04T07:50:00Z",
+                "finished_at": "2026-08-04T07:52:00Z",
+                "commit_sha": "0123456789abcdef"
             },
-            {
-                "priority": 2,
-                "code": "inspect_trace",
-                "target": "trace_summary",
-                "reason": "linked_trace_available"
-            },
-            {
-                "priority": 3,
-                "code": "review_related_logs",
-                "target": "telemetry_logs",
-                "reason": "related_logs_available"
-            },
-            {
-                "priority": 4,
-                "code": "review_related_actions",
-                "target": "telemetry_actions",
-                "reason": "related_actions_available"
-            },
-            {
-                "priority": 5,
-                "code": "review_related_metrics",
-                "target": "telemetry_metrics",
-                "reason": "related_metrics_available"
-            },
-            {
-                "priority": 6,
-                "code": "compare_release",
-                "target": "release_summary",
-                "reason": "release_identity_available"
-            },
-            {
-                "priority": 7,
-                "code": "verify_correction",
-                "target": "issue_correction_verification",
-                "reason": "reproduction_ready"
-            },
-            {
-                "priority": 8,
-                "code": "improve_capture",
-                "target": "sdk_configuration",
-                "reason": "evidence_incomplete"
-            }
-        ]
+            "time_since_deployment_ms": 479_000,
+            "deployment_causality": "evidence_only"
+        }
     })
+}
+
+fn available_item(item: &serde_json::Value) -> serde_json::Value {
+    serde_json::json!({"status": "available", "items": [item], "truncated": false})
+}
+
+fn captured_evidence() -> serde_json::Value {
+    serde_json::json!({
+        "status": "partial",
+        "captured_fields": [
+            "actions",
+            "breadcrumbs",
+            "deployment",
+            "deployment.commit_sha",
+            "deployment.timing",
+            "exception",
+            "exception_chain",
+            "exception_chain.messages",
+            "exception_chain.stack_frames",
+            "grouping",
+            "grouping.components",
+            "grouping.stack",
+            "grouping.strategy",
+            "grouping.strategy_details",
+            "logs",
+            "metrics",
+            "lifecycle.regression",
+            "lifecycle.status_history",
+            "occurrence.boundaries",
+            "occurrence.distribution.environment",
+            "occurrence.distribution.release",
+            "occurrence.distribution.sdk",
+            "occurrence.distribution.service",
+            "occurrence.recommendation",
+            "occurrence.selection",
+            "occurrence.trend",
+            "related_issues",
+            "release",
+            "request",
+            "request.method",
+            "request.response_status_code",
+            "request.route_template",
+            "stack_frames",
+            "source_locator",
+            "trace",
+            "affected_users.known"
+        ],
+        "missing_fields": ["affected_users.complete_coverage"],
+        "redacted_fields": ["exception_chain.messages"],
+        "truncated_fields": ["exception_chain.entries", "exception_chain.stack_frames", "request.body"]
+    })
+}
+
+fn captured_next_actions() -> serde_json::Value {
+    [
+        ("inspect_code_location", "source_code", "likely_fix_location_available"),
+        ("inspect_trace", "trace_summary", "linked_trace_available"),
+        ("review_related_logs", "telemetry_logs", "related_logs_available"),
+        ("review_related_actions", "telemetry_actions", "related_actions_available"),
+        ("review_related_metrics", "telemetry_metrics", "related_metrics_available"),
+        ("compare_release", "release_summary", "release_identity_available"),
+        ("verify_correction", "issue_correction_verification", "reproduction_ready"),
+        ("improve_capture", "sdk_configuration", "evidence_incomplete"),
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(index, (code, target, reason))| {
+        serde_json::json!({"priority": index + 1, "code": code, "target": target, "reason": reason})
+    })
+    .collect()
 }
 
 fn correction_bundle() -> serde_json::Value {
@@ -1261,8 +1373,12 @@ fn occurrence_analysis() -> serde_json::Value {
         "distributions": [
             {
                 "dimension": "release",
-                "distinct_value_count": 1,
-                "values": [{"value": "checkout@1.2.3", "version": null, "occurrence_count": 3, "share_basis_points": 10000}],
+                "distinct_value_count": 3,
+                "values": [
+                    {"value": "checkout@1.2.1", "version": null, "occurrence_count": 1, "share_basis_points": 3333},
+                    {"value": "checkout@1.2.3", "version": null, "occurrence_count": 1, "share_basis_points": 3333},
+                    {"value": "checkout@1.2.4", "version": null, "occurrence_count": 1, "share_basis_points": 3333}
+                ],
                 "other_occurrence_count": 0
             },
             {
@@ -1282,7 +1398,7 @@ fn occurrence_analysis() -> serde_json::Value {
                 "distinct_value_count": 2,
                 "values": [
                     {"value": "@logbrew/node", "version": "0.1.4", "occurrence_count": 2, "share_basis_points": 6666},
-                    {"value": "@logbrew/node", "version": "0.1.3", "occurrence_count": 1, "share_basis_points": 3333}
+                    {"value": "@logbrew/node", "version": "0.1.2", "occurrence_count": 1, "share_basis_points": 3333}
                 ],
                 "other_occurrence_count": 0
             }
@@ -1372,7 +1488,7 @@ fn regressed_investigation_bundle() -> serde_json::Value {
     bundle
 }
 
-fn status_history_unavailable_bundle() -> serde_json::Value {
+fn status_history_unavailable_bundle() -> TestResult<serde_json::Value> {
     let mut bundle = rich_investigation_bundle();
     bundle["lifecycle"] = serde_json::json!({
         "persisted_status": "unresolved",
@@ -1385,12 +1501,12 @@ fn status_history_unavailable_bundle() -> serde_json::Value {
             "first_reappeared_occurrence": null
         }
     });
-    move_evidence_field_to_missing(&mut bundle, "lifecycle.status_history");
-    move_evidence_field_to_missing(&mut bundle, "lifecycle.regression");
-    bundle
+    move_evidence_field_to_missing(&mut bundle, "lifecycle.status_history")?;
+    move_evidence_field_to_missing(&mut bundle, "lifecycle.regression")?;
+    Ok(bundle)
 }
 
-fn recurrence_unavailable_bundle() -> serde_json::Value {
+fn recurrence_unavailable_bundle() -> TestResult<serde_json::Value> {
     let mut bundle = rich_investigation_bundle();
     bundle["subject"]["status"] = serde_json::json!("resolved");
     bundle["lifecycle"] = serde_json::json!({
@@ -1412,21 +1528,21 @@ fn recurrence_unavailable_bundle() -> serde_json::Value {
             "first_reappeared_occurrence": null
         }
     });
-    move_evidence_field_to_missing(&mut bundle, "lifecycle.regression");
-    bundle
+    move_evidence_field_to_missing(&mut bundle, "lifecycle.regression")?;
+    Ok(bundle)
 }
 
-fn trend_unavailable_bundle() -> serde_json::Value {
+fn trend_unavailable_bundle() -> TestResult<serde_json::Value> {
     let mut bundle = rich_investigation_bundle();
     bundle["occurrence_analysis"]["status"] = serde_json::json!("partial");
     bundle["occurrence_analysis"]["coverage"]["trend_occurrences"] = serde_json::Value::Null;
     bundle["occurrence_analysis"]["trend"] = serde_json::Value::Null;
     bundle["occurrence_analysis"]["limitations"] = serde_json::json!(["trend_read_unavailable"]);
-    move_evidence_field_to_missing(&mut bundle, "occurrence.trend");
-    bundle
+    move_evidence_field_to_missing(&mut bundle, "occurrence.trend")?;
+    Ok(bundle)
 }
 
-fn occurrence_analysis_unavailable_bundle() -> serde_json::Value {
+fn occurrence_analysis_unavailable_bundle() -> TestResult<serde_json::Value> {
     let mut bundle = rich_investigation_bundle();
     bundle["occurrence_analysis"] = serde_json::json!({
         "status": "unavailable",
@@ -1455,32 +1571,33 @@ fn occurrence_analysis_unavailable_bundle() -> serde_json::Value {
         "occurrence.distribution.service",
         "occurrence.distribution.sdk",
     ] {
-        move_evidence_field_to_missing(&mut bundle, field);
+        move_evidence_field_to_missing(&mut bundle, field)?;
     }
-    bundle
+    Ok(bundle)
 }
 
-fn move_evidence_field_to_missing(bundle: &mut serde_json::Value, field: &str) {
-    remove_evidence_fields(bundle, &[field]);
-    add_evidence_field(bundle, "missing_fields", field);
+fn move_evidence_field_to_missing(bundle: &mut serde_json::Value, field: &str) -> TestResult {
+    remove_evidence_fields(bundle, &[field])?;
+    add_evidence_field(bundle, "missing_fields", field)?;
+    Ok(())
 }
 
-fn projected_stack_investigation_bundle() -> serde_json::Value {
+fn projected_stack_investigation_bundle() -> TestResult<serde_json::Value> {
     let mut bundle = rich_investigation_bundle();
     bundle["occurrence_selection"]["selected"]["stack"]["frame_count"] = serde_json::json!(17);
     bundle["occurrence_selection"]["recommended"]["stack"]["frame_count"] = serde_json::json!(17);
-    add_evidence_field(&mut bundle, "truncated_fields", "stack_frames");
-    bundle
+    add_evidence_field(&mut bundle, "truncated_fields", "stack_frames")?;
+    Ok(bundle)
 }
 
-fn not_captured_exception_chain_bundle() -> serde_json::Value {
+fn not_captured_exception_chain_bundle() -> TestResult<serde_json::Value> {
     let mut bundle = rich_investigation_bundle();
     bundle["event"]["exception_chain"] = serde_json::json!({
         "status": "not_captured",
         "entries": [],
         "truncated": false
     });
-    remove_cause_signal(&mut bundle, "runtime_exception_chain");
+    remove_cause_signal(&mut bundle, "runtime_exception_chain")?;
     remove_evidence_fields(
         &mut bundle,
         &[
@@ -1489,20 +1606,20 @@ fn not_captured_exception_chain_bundle() -> serde_json::Value {
             "exception_chain.stack_frames",
             "exception_chain.entries",
         ],
-    );
-    add_evidence_field(&mut bundle, "missing_fields", "exception_chain");
-    bundle
+    )?;
+    add_evidence_field(&mut bundle, "missing_fields", "exception_chain")?;
+    Ok(bundle)
 }
 
-fn invalid_exception_chain_bundle() -> serde_json::Value {
-    let mut bundle = not_captured_exception_chain_bundle();
+fn invalid_exception_chain_bundle() -> TestResult<serde_json::Value> {
+    let mut bundle = not_captured_exception_chain_bundle()?;
     bundle["event"]["exception_chain"] = serde_json::json!({
         "status": "invalid",
         "entries": [],
         "truncated": true
     });
-    add_evidence_field(&mut bundle, "truncated_fields", "exception_chain");
-    bundle
+    add_evidence_field(&mut bundle, "truncated_fields", "exception_chain")?;
+    Ok(bundle)
 }
 
 fn underlying_exception_fix_bundle() -> serde_json::Value {
@@ -1536,14 +1653,15 @@ fn underlying_exception_fix_bundle() -> serde_json::Value {
     bundle
 }
 
-fn remove_cause_signal(bundle: &mut serde_json::Value, signal: &str) {
+fn remove_cause_signal(bundle: &mut serde_json::Value, signal: &str) -> TestResult {
     bundle["cause"]["signals"]
         .as_array_mut()
-        .expect("cause signals are an array")
+        .ok_or("cause signals are an array")?
         .retain(|value| value != signal);
+    Ok(())
 }
 
-fn remove_evidence_fields(bundle: &mut serde_json::Value, fields: &[&str]) {
+fn remove_evidence_fields(bundle: &mut serde_json::Value, fields: &[&str]) -> TestResult {
     for category in [
         "captured_fields",
         "missing_fields",
@@ -1552,17 +1670,19 @@ fn remove_evidence_fields(bundle: &mut serde_json::Value, fields: &[&str]) {
     ] {
         bundle["evidence"][category]
             .as_array_mut()
-            .expect("evidence category is an array")
+            .ok_or("evidence category is an array")?
             .retain(|value| value.as_str().is_none_or(|value| !fields.contains(&value)));
     }
+    Ok(())
 }
 
-fn add_evidence_field(bundle: &mut serde_json::Value, category: &str, field: &str) {
+fn add_evidence_field(bundle: &mut serde_json::Value, category: &str, field: &str) -> TestResult {
     let fields = bundle["evidence"][category]
         .as_array_mut()
-        .expect("evidence category is an array");
+        .ok_or("evidence category is an array")?;
     fields.push(serde_json::json!(field));
     fields.sort_by(|left, right| left.as_str().cmp(&right.as_str()));
+    Ok(())
 }
 
 fn captured_stack_frame(frame: (&str, &str, &str, u32, u32)) -> serde_json::Value {
@@ -1579,13 +1699,15 @@ fn captured_stack_frame(frame: (&str, &str, &str, u32, u32)) -> serde_json::Valu
     })
 }
 
-fn mutated_bundles(cases: Vec<(&str, serde_json::Value)>) -> Vec<serde_json::Value> {
+fn mutated_bundles(cases: Vec<(&str, serde_json::Value)>) -> TestResult<Vec<serde_json::Value>> {
     cases
         .into_iter()
         .map(|(pointer, value)| {
             let mut bundle = rich_investigation_bundle();
-            *bundle.pointer_mut(pointer).expect("fixture pointer exists") = value;
-            mark_invalid(bundle)
+            *bundle
+                .pointer_mut(pointer)
+                .ok_or("fixture pointer must exist")? = value;
+            Ok(mark_invalid(bundle))
         })
         .collect()
 }
@@ -1595,7 +1717,7 @@ fn mark_invalid(mut bundle: serde_json::Value) -> serde_json::Value {
     bundle
 }
 
-fn invalid_event_evidence_bundles() -> Vec<serde_json::Value> {
+fn invalid_event_evidence_bundles() -> TestResult<Vec<serde_json::Value>> {
     let mut cases = mutated_bundles(vec![
         (
             "/event/exception_chain/entries/1/parent_id",
@@ -1627,10 +1749,10 @@ fn invalid_event_evidence_bundles() -> Vec<serde_json::Value> {
             serde_json::json!("partial"),
         ),
         ("/next_actions/6/target", serde_json::json!("source_code")),
-    ]);
+    ])?;
 
     let mut missing_receipt = rich_investigation_bundle();
-    remove_evidence_fields(&mut missing_receipt, &["exception_chain"]);
+    remove_evidence_fields(&mut missing_receipt, &["exception_chain"])?;
     cases.push(mark_invalid(missing_receipt));
 
     let mut forged_fix = underlying_exception_fix_bundle();
@@ -1638,11 +1760,11 @@ fn invalid_event_evidence_bundles() -> Vec<serde_json::Value> {
     cases.push(mark_invalid(forged_fix));
 
     let mut missing_signal = rich_investigation_bundle();
-    remove_cause_signal(&mut missing_signal, "runtime_exception_chain");
+    remove_cause_signal(&mut missing_signal, "runtime_exception_chain")?;
     cases.push(mark_invalid(missing_signal));
 
     let mut missing_request_receipt = rich_investigation_bundle();
-    remove_evidence_fields(&mut missing_request_receipt, &["request.route_template"]);
+    remove_evidence_fields(&mut missing_request_receipt, &["request.route_template"])?;
     cases.push(mark_invalid(missing_request_receipt));
 
     let mut forged_reproduction = rich_investigation_bundle();
@@ -1658,14 +1780,14 @@ fn invalid_event_evidence_bundles() -> Vec<serde_json::Value> {
 
     for field in ["request.body", "request.raw_url"] {
         let mut invalid_request_receipt = rich_investigation_bundle();
-        add_evidence_field(&mut invalid_request_receipt, "captured_fields", field);
+        add_evidence_field(&mut invalid_request_receipt, "captured_fields", field)?;
         cases.push(mark_invalid(invalid_request_receipt));
     }
 
     let mut missing_request = rich_investigation_bundle();
     let _removed = missing_request["event"]
         .as_object_mut()
-        .expect("event")
+        .ok_or("event must be an object")?
         .remove("request");
     remove_evidence_fields(
         &mut missing_request,
@@ -1675,8 +1797,8 @@ fn invalid_event_evidence_bundles() -> Vec<serde_json::Value> {
             "request.route_template",
             "request.response_status_code",
         ],
-    );
-    add_evidence_field(&mut missing_request, "missing_fields", "request");
+    )?;
+    add_evidence_field(&mut missing_request, "missing_fields", "request")?;
     missing_request["evidence"]["status"] = serde_json::json!("complete");
     cases.push(mark_invalid(missing_request));
 
@@ -1688,20 +1810,20 @@ fn invalid_event_evidence_bundles() -> Vec<serde_json::Value> {
             "/grouping/stack/additional_frames_ignored",
             serde_json::json!(true),
         ),
-    ]));
+    ])?);
     let mut unknown_grouping_receipt = rich_investigation_bundle();
     add_evidence_field(
         &mut unknown_grouping_receipt,
         "captured_fields",
         "grouping.raw_value",
-    );
+    )?;
     cases.push(mark_invalid(unknown_grouping_receipt));
 
-    cases
+    Ok(cases)
 }
 
-fn invalid_occurrence_selection_bundles() -> Vec<serde_json::Value> {
-    let mut cases = mutated_bundles(vec![
+fn invalid_selection_field_bundles() -> TestResult<Vec<serde_json::Value>> {
+    mutated_bundles(vec![
         (
             "/event/id",
             serde_json::json!("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"),
@@ -1794,12 +1916,16 @@ fn invalid_occurrence_selection_bundles() -> Vec<serde_json::Value> {
             "/source_locator/repository_relative_file",
             serde_json::json!("../payment_gateway.ts"),
         ),
-    ]);
+    ])
+}
+
+fn invalid_occurrence_selection_bundles() -> TestResult<Vec<serde_json::Value>> {
+    let mut cases = invalid_selection_field_bundles()?;
 
     let mut unknown_context = rich_investigation_bundle();
     let _previous = unknown_context["event"]["context"]
         .as_object_mut()
-        .expect("context")
+        .ok_or("context must be an object")?
         .insert("raw_subject_id".to_owned(), serde_json::json!("private"));
     cases.push(mark_invalid(unknown_context));
 
@@ -1813,18 +1939,18 @@ fn invalid_occurrence_selection_bundles() -> Vec<serde_json::Value> {
     sibling["id"] = serde_json::json!("88888888-8888-4888-8888-888888888888");
     duplicate_issue["correlations"]["related_issues"]["items"]
         .as_array_mut()
-        .expect("related issues")
+        .ok_or("related issues must be an array")?
         .push(sibling);
     cases.push(mark_invalid(duplicate_issue));
 
-    let mut missing_projection = projected_stack_investigation_bundle();
+    let mut missing_projection = projected_stack_investigation_bundle()?;
     missing_projection["evidence"]["truncated_fields"] = serde_json::json!([]);
     cases.push(mark_invalid(missing_projection));
     let mut projection_exceeds = rich_investigation_bundle();
     let frame = projection_exceeds["event"]["stack_frames"][0].clone();
     projection_exceeds["event"]["stack_frames"]
         .as_array_mut()
-        .expect("stack frames")
+        .ok_or("stack frames must be an array")?
         .push(frame);
     projection_exceeds["evidence"]["truncated_fields"] = serde_json::json!(["stack_frames"]);
     cases.push(mark_invalid(projection_exceeds));
@@ -1834,10 +1960,10 @@ fn invalid_occurrence_selection_bundles() -> Vec<serde_json::Value> {
             serde_json::json!(true);
     }
     cases.push(mark_invalid(unreceipted));
-    cases
+    Ok(cases)
 }
 
-fn invalid_lifecycle_bundles() -> Vec<serde_json::Value> {
+fn invalid_lifecycle_bundles() -> TestResult<Vec<serde_json::Value>> {
     let mut cases = mutated_bundles(vec![
         ("/lifecycle/persisted_status", serde_json::json!("ignored")),
         (
@@ -1848,13 +1974,13 @@ fn invalid_lifecycle_bundles() -> Vec<serde_json::Value> {
             "/lifecycle/activity/status",
             serde_json::json!("unavailable"),
         ),
-    ]);
+    ])?;
 
     let mut duplicate_activity = regressed_investigation_bundle();
     let duplicate = duplicate_activity["lifecycle"]["activity"]["changes"][0].clone();
     duplicate_activity["lifecycle"]["activity"]["changes"]
         .as_array_mut()
-        .expect("activity is an array")[1] = duplicate;
+        .ok_or("activity must be an array")?[1] = duplicate;
     cases.push(mark_invalid(duplicate_activity));
 
     for (pointer, value) in [
@@ -1878,21 +2004,21 @@ fn invalid_lifecycle_bundles() -> Vec<serde_json::Value> {
         let mut bundle = regressed_investigation_bundle();
         *bundle
             .pointer_mut(pointer)
-            .expect("regression fixture pointer") = value;
+            .ok_or("regression fixture pointer must exist")? = value;
         cases.push(mark_invalid(bundle));
     }
 
     let mut missing_evidence_receipt = rich_investigation_bundle();
     missing_evidence_receipt["evidence"]["captured_fields"]
         .as_array_mut()
-        .expect("captured fields are an array")
+        .ok_or("captured fields must be an array")?
         .retain(|field| field != "lifecycle.regression");
     cases.push(mark_invalid(missing_evidence_receipt));
 
-    cases
+    Ok(cases)
 }
 
-fn invalid_occurrence_analysis_bundles() -> Vec<serde_json::Value> {
+fn invalid_occurrence_analysis_bundles() -> TestResult<Vec<serde_json::Value>> {
     let mut cases = mutated_bundles(vec![
         (
             "/occurrence_analysis/coverage/retained_occurrences",
@@ -1931,12 +2057,12 @@ fn invalid_occurrence_analysis_bundles() -> Vec<serde_json::Value> {
             "/occurrence_analysis/limitations",
             serde_json::json!(["trend_read_unavailable"]),
         ),
-    ]);
+    ])?;
 
     let mut missing_receipt = rich_investigation_bundle();
     missing_receipt["evidence"]["captured_fields"]
         .as_array_mut()
-        .expect("captured fields")
+        .ok_or("captured fields must be an array")?
         .retain(|field| field != "occurrence.trend");
     cases.push(mark_invalid(missing_receipt));
     for field in [
@@ -1946,7 +2072,7 @@ fn invalid_occurrence_analysis_bundles() -> Vec<serde_json::Value> {
         let mut bundle = rich_investigation_bundle();
         bundle["evidence"]["captured_fields"]
             .as_array_mut()
-            .expect("captured fields")
+            .ok_or("captured fields must be an array")?
             .push(serde_json::json!(field));
         cases.push(mark_invalid(bundle));
     }
@@ -1961,10 +2087,10 @@ fn invalid_occurrence_analysis_bundles() -> Vec<serde_json::Value> {
     unreceipted_truncation["occurrence_analysis"]["distributions"][0]["other_occurrence_count"] =
         serde_json::json!(1);
     cases.push(mark_invalid(unreceipted_truncation));
-    cases
+    Ok(cases)
 }
 
-fn invalid_user_impact_bundles() -> Vec<serde_json::Value> {
+fn invalid_user_impact_bundles() -> TestResult<Vec<serde_json::Value>> {
     mutated_bundles(vec![
         (
             "/impact/user_impact/known_affected_users",
@@ -2006,26 +2132,15 @@ fn invalid_user_impact_bundles() -> Vec<serde_json::Value> {
     ])
 }
 
-fn complete_user_impact_bundle() -> serde_json::Value {
+fn complete_user_impact_bundle() -> TestResult<serde_json::Value> {
     let mut bundle = rich_investigation_bundle();
     bundle["impact"]["affected_users"] = serde_json::json!(2);
-    bundle["impact"]["user_impact"] = serde_json::json!({
-        "status": "complete",
-        "known_affected_users": 2,
-        "count_method": "approximate_uniq_combined64",
-        "coverage": {
-            "retained_occurrences": 3,
-            "indexed_occurrences": 3,
-            "historical_unindexed_occurrences": 0,
-            "identified_user_occurrences": 3,
-            "anonymous_subject_occurrences": 0,
-            "missing_subject_occurrences": 0,
-            "privacy_filtered_subject_occurrences": 0,
-            "index_coverage_basis_points": 10000,
-            "identified_user_coverage_basis_points": 10000
-        },
-        "limitations": ["approximate_distinct_count"]
-    });
+    let impact = &mut bundle["impact"]["user_impact"];
+    impact["status"] = serde_json::json!("complete");
+    impact["coverage"]["identified_user_occurrences"] = serde_json::json!(3);
+    impact["coverage"]["privacy_filtered_subject_occurrences"] = serde_json::json!(0);
+    impact["coverage"]["identified_user_coverage_basis_points"] = serde_json::json!(10000);
+    impact["limitations"] = serde_json::json!(["approximate_distinct_count"]);
     bundle["source_locator"]["revision"] = serde_json::json!("setup-snapshot-123");
     bundle["source_locator"]["revision_source"] = serde_json::json!("setup_snapshot");
     bundle["source_locator"]["repository_relative_file"] = serde_json::Value::Null;
@@ -2035,11 +2150,11 @@ fn complete_user_impact_bundle() -> serde_json::Value {
         "missing_fields": ["source.deployment_revision", "source.repository_relative_file"],
         "redacted_fields": [], "truncated_fields": []
     });
-    add_evidence_field(&mut bundle, "missing_fields", "source_locator.complete");
-    bundle
+    add_evidence_field(&mut bundle, "missing_fields", "source_locator.complete")?;
+    Ok(bundle)
 }
 
-fn unavailable_user_impact_bundle() -> serde_json::Value {
+fn unavailable_user_impact_bundle() -> TestResult<serde_json::Value> {
     let mut bundle = rich_investigation_bundle();
     bundle["impact"]["user_impact"] = serde_json::json!({
         "status": "unavailable",
@@ -2057,6 +2172,6 @@ fn unavailable_user_impact_bundle() -> serde_json::Value {
             "missing_fields": ["source.component"], "redacted_fields": [], "truncated_fields": []
         }
     });
-    add_evidence_field(&mut bundle, "missing_fields", "source_locator.complete");
-    bundle
+    add_evidence_field(&mut bundle, "missing_fields", "source_locator.complete")?;
+    Ok(bundle)
 }
