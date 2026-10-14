@@ -1,8 +1,11 @@
 //! Versioned, bounded product-analytics retention reporting.
 
-#![expect(
-    clippy::missing_docs_in_private_items,
-    reason = "response fields mirror the exact public analytics contract"
+#![cfg_attr(
+    not(test),
+    expect(
+        clippy::missing_docs_in_private_items,
+        reason = "response fields mirror the exact public analytics contract"
+    )
 )]
 
 use serde::Deserialize;
@@ -10,9 +13,7 @@ use serde::Deserialize;
 use crate::analytics_contract::{NextAction, bounded_counts, ratio_matches};
 use crate::analytics_request::{self, Kind, scoped_body};
 use crate::http::{nonempty_control_safe as bounded_contract_text, terminal_safe as display_text};
-use crate::time::{
-    ParsedTimestamp as UtcTimestamp, add_seconds, parse_utc_timestamp, timestamp_nanos,
-};
+use crate::time::{ParsedTimestamp as UtcTimestamp, parse_utc_timestamp};
 use crate::{
     AnalyticsRetentionCohortMode, AnalyticsRetentionEventKind, AnalyticsRetentionInterval,
     AnalyticsRetentionMode, AnalyticsRetentionOptions, CliEnvironment, RuntimeError,
@@ -218,20 +219,16 @@ fn validated_response(
     options: &AnalyticsRetentionOptions,
     body: &str,
 ) -> Result<RetentionResponse, RuntimeError> {
-    let response = serde_json::from_str::<RetentionResponse>(body)
-        .map_err(|_error| Kind::Retention.invalid())?;
-    if response.schema_version != SCHEMA_VERSION
-        || !bounded_contract_text(response.purpose.as_str(), 4096)
-        || !valid_query(options, &response.query)
-        || !valid_coverage(&response.coverage)
-        || !valid_cohorts(&response)
-        || !valid_summary(&response)
-        || !valid_curve(&response)
-        || !valid_next_action(&response)
-    {
-        return Err(Kind::Retention.invalid());
-    }
-    Ok(response)
+    Kind::Retention.parse(body, |response: &RetentionResponse| {
+        response.schema_version == SCHEMA_VERSION
+            && bounded_contract_text(response.purpose.as_str(), 4096)
+            && valid_query(options, &response.query)
+            && valid_coverage(&response.coverage)
+            && valid_cohorts(response)
+            && valid_summary(response)
+            && valid_curve(response)
+            && valid_next_action(response)
+    })
 }
 
 /// Requires the backend echo to match every exact client-selected scope field.
@@ -337,7 +334,7 @@ fn valid_cohorts(response: &RetentionResponse) -> bool {
 fn query_time_bounds(query: &RetentionQuery) -> Option<(UtcTimestamp, UtcTimestamp, u64)> {
     let since = parse_utc_timestamp(query.since.as_str())?;
     let until = parse_utc_timestamp(query.until.as_str())?;
-    let duration = timestamp_nanos(until).checked_sub(timestamp_nanos(since))?;
+    let duration = until.epoch_nanos().checked_sub(since.epoch_nanos())?;
     if duration <= 0 {
         return None;
     }
@@ -373,12 +370,12 @@ fn valid_cohort(
     else {
         return false;
     };
-    let Some(expected_start) = add_seconds(since, offset) else {
+    let Some(expected_start) = since.checked_add_seconds(offset) else {
         return false;
     };
     let Some(uncapped_end) = i64::try_from(response.query.interval_seconds)
         .ok()
-        .and_then(|seconds| add_seconds(expected_start, seconds))
+        .and_then(|seconds| expected_start.checked_add_seconds(seconds))
     else {
         return false;
     };
@@ -967,14 +964,15 @@ mod tests {
     }
 
     #[test]
-    fn validates_and_renders_complete_retention_evidence() {
+    fn validates_and_renders_complete_retention_evidence() -> Result<(), RuntimeError> {
         let body = response().to_string();
-        let response = validated_response(&options(), body.as_str()).expect("valid response");
+        let response = validated_response(&options(), body.as_str())?;
         let rendered = render_response(&response);
         assert!(rendered.contains("Cohort subjects: 10; returned after start: 6 (60.0%)"));
         assert!(rendered.contains("P1 [86400s, 172800s): 2/6 retained (33.3%)"));
         assert!(rendered.contains("Observation limit: 1/2 periods"));
         assert!(!rendered.contains(response.next_action.reason.as_str()));
+        Ok(())
     }
 
     #[test]
@@ -1002,21 +1000,18 @@ mod tests {
     }
 
     #[test]
-    fn accepts_typed_user_capture_targets_for_retention_gaps() {
-        let mut missing_start = response();
-        missing_start["coverage"]["usable_start_events"] = 0.into();
-        missing_start["next_action"]["code"] = "identify_product_users".into();
-        missing_start["next_action"]["target"] = "context.subject.kind=user".into();
-        let missing_start: RetentionResponse =
-            serde_json::from_value(missing_start).expect("start fixture deserializes");
-        assert!(valid_next_action(&missing_start));
-
-        let mut missing_return = response();
-        missing_return["coverage"]["usable_return_events"] = 0.into();
-        missing_return["next_action"]["code"] = "identify_returning_users".into();
-        missing_return["next_action"]["target"] = "context.subject.kind=user".into();
-        let missing_return: RetentionResponse =
-            serde_json::from_value(missing_return).expect("return fixture deserializes");
-        assert!(valid_next_action(&missing_return));
+    fn accepts_typed_user_capture_targets_for_retention_gaps() -> Result<(), serde_json::Error> {
+        for (field, action) in [
+            ("usable_start_events", "identify_product_users"),
+            ("usable_return_events", "identify_returning_users"),
+        ] {
+            let mut missing = response();
+            missing["coverage"][field] = 0.into();
+            missing["next_action"]["code"] = action.into();
+            missing["next_action"]["target"] = "context.subject.kind=user".into();
+            let missing: RetentionResponse = serde_json::from_value(missing)?;
+            assert!(valid_next_action(&missing), "capture action for {field}");
+        }
+        Ok(())
     }
 }

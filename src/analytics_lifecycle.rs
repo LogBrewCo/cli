@@ -1,8 +1,11 @@
 //! Versioned, bounded product-analytics lifecycle reporting.
 
-#![expect(
-    clippy::missing_docs_in_private_items,
-    reason = "response fields mirror the exact public analytics contract"
+#![cfg_attr(
+    not(test),
+    expect(
+        clippy::missing_docs_in_private_items,
+        reason = "response fields mirror the exact public analytics contract"
+    )
 )]
 
 use serde::Deserialize;
@@ -10,10 +13,7 @@ use serde::Deserialize;
 use crate::analytics_contract::{NextAction, bounded_counts, ratio_matches};
 use crate::analytics_request::{self, Kind, scoped_body, valid_event_name};
 use crate::http::{nonempty_control_safe as bounded_contract_text, terminal_safe as display_text};
-use crate::time::{
-    ParsedTimestamp as UtcTimestamp, add_seconds, parse_utc_timestamp, subtract_seconds,
-    timestamp_nanos,
-};
+use crate::time::{ParsedTimestamp as UtcTimestamp, parse_utc_timestamp, subtract_seconds};
 use crate::{
     AnalyticsLifecycleEventKind, AnalyticsLifecycleInterval, AnalyticsLifecycleOptions,
     CliEnvironment, RuntimeError,
@@ -196,18 +196,14 @@ fn validated_response(
     options: &AnalyticsLifecycleOptions,
     body: &str,
 ) -> Result<LifecycleResponse, RuntimeError> {
-    let response = serde_json::from_str::<LifecycleResponse>(body)
-        .map_err(|_error| Kind::Lifecycle.invalid())?;
-    if response.schema_version != SCHEMA_VERSION
-        || !bounded_contract_text(response.purpose.as_str(), 4096)
-        || !valid_query(options, &response.query)
-        || !valid_coverage(&response.coverage)
-        || !valid_summary_and_buckets(&response)
-        || !valid_next_action(&response)
-    {
-        return Err(Kind::Lifecycle.invalid());
-    }
-    Ok(response)
+    Kind::Lifecycle.parse(body, |response: &LifecycleResponse| {
+        response.schema_version == SCHEMA_VERSION
+            && bounded_contract_text(response.purpose.as_str(), 4096)
+            && valid_query(options, &response.query)
+            && valid_coverage(&response.coverage)
+            && valid_summary_and_buckets(response)
+            && valid_next_action(response)
+    })
 }
 
 /// Requires the backend echo to match every exact client-selected scope field.
@@ -253,7 +249,7 @@ fn query_timestamps(query: &LifecycleQuery) -> Option<(UtcTimestamp, UtcTimestam
     let history_since = parse_utc_timestamp(query.history_since.as_str())?;
     let since = parse_utc_timestamp(query.since.as_str())?;
     let until = parse_utc_timestamp(query.until.as_str())?;
-    let range = timestamp_nanos(until).checked_sub(timestamp_nanos(since))?;
+    let range = until.epoch_nanos().checked_sub(since.epoch_nanos())?;
     (history_since < since
         && since < until
         && range <= i128::from(31 * 24 * 60 * 60) * NANOS_PER_SECOND)
@@ -266,7 +262,7 @@ fn expected_bucket_count(
     until: UtcTimestamp,
     interval_seconds: u64,
 ) -> Option<u64> {
-    let range = timestamp_nanos(until).checked_sub(timestamp_nanos(since))?;
+    let range = until.epoch_nanos().checked_sub(since.epoch_nanos())?;
     let interval = i128::from(interval_seconds).checked_mul(NANOS_PER_SECOND)?;
     let buckets = range
         .checked_add(interval.checked_sub(1)?)?
@@ -408,10 +404,10 @@ fn valid_bucket(response: &LifecycleResponse, index: usize, bucket: &LifecycleBu
     let Some(offset) = u64::from(period).checked_mul(interval_seconds) else {
         return false;
     };
-    let Some(expected_start) = add_seconds(since, offset) else {
+    let Some(expected_start) = since.checked_add_seconds(offset) else {
         return false;
     };
-    let Some(expected_full_end) = add_seconds(expected_start, interval_seconds) else {
+    let Some(expected_full_end) = expected_start.checked_add_seconds(interval_seconds) else {
         return false;
     };
     let expected_end = expected_full_end.min(until);
@@ -761,7 +757,7 @@ mod tests {
     }
 
     /// Builds one complete response through the strict JSON boundary.
-    fn response() -> LifecycleResponse {
+    fn response() -> Result<LifecycleResponse, serde_json::Error> {
         serde_json::from_value(serde_json::json!({
             "schema_version": 1,
             "query": {
@@ -819,7 +815,6 @@ mod tests {
                 "reason": "Compare exact bounded contexts."
             }
         }))
-        .expect("fixture deserializes")
     }
 
     /// Builds one complete bucket JSON value.
@@ -834,7 +829,7 @@ mod tests {
     ) -> serde_json::Value {
         let [active, new, returning, resurrected, dormant, previous] = counts;
         let [new_rate, returning_rate, resurrected_rate, dormant_rate] = rates;
-        let value = serde_json::json!({
+        serde_json::json!({
             "period": period,
             "started_at": started_at,
             "ended_at": ended_at,
@@ -850,13 +845,12 @@ mod tests {
             "resurrected_share_of_active": resurrected_rate,
             "dormant_share_of_previous_active": dormant_rate,
             "net_active_change": net_active_change
-        });
-        value
+        })
     }
 
     #[test]
-    fn validates_every_lifecycle_contract_layer() {
-        let response = response();
+    fn validates_every_lifecycle_contract_layer() -> Result<(), serde_json::Error> {
+        let response = response()?;
         assert!(valid_query(&options(), &response.query), "query");
         assert!(valid_coverage(&response.coverage), "coverage");
         for (index, bucket) in response.buckets.iter().enumerate() {
@@ -864,40 +858,43 @@ mod tests {
         }
         assert!(valid_summary_and_buckets(&response), "summary or buckets");
         assert!(valid_next_action(&response), "next action");
+        Ok(())
     }
 
     #[test]
-    fn rejects_contradictory_derived_lifecycle_values() {
-        let mut invalid_coverage = response();
+    fn rejects_contradictory_derived_lifecycle_values() -> Result<(), serde_json::Error> {
+        let mut invalid_coverage = response()?;
         invalid_coverage.coverage.usable_selected_sessionized_events = 21;
         assert!(
             !valid_coverage(&invalid_coverage.coverage),
             "sessionized events cannot exceed usable events"
         );
 
-        let mut invalid_bucket = response();
+        let mut invalid_bucket = response()?;
         invalid_bucket.buckets[0].net_active_change = 1;
         assert!(
             !valid_summary_and_buckets(&invalid_bucket),
             "bucket net change must match active subject counts"
         );
 
-        let mut invalid_action = response();
+        let mut invalid_action = response()?;
         invalid_action.next_action.code = "capture_product_activity".to_owned();
         assert!(
             !valid_next_action(&invalid_action),
             "next action must match the validated lifecycle state"
         );
+        Ok(())
     }
 
     #[test]
-    fn accepts_typed_user_capture_target_for_lifecycle_gap() {
-        let mut response = response();
+    fn accepts_typed_user_capture_target_for_lifecycle_gap() -> Result<(), serde_json::Error> {
+        let mut response = response()?;
         response.coverage.usable_selected_events = 0;
         response.coverage.usable_history_selected_events = 0;
         response.next_action.code = "identify_product_users".to_owned();
         response.next_action.target = "context.subject.kind=user".to_owned();
 
         assert!(valid_next_action(&response));
+        Ok(())
     }
 }

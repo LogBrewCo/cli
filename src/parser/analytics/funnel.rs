@@ -67,9 +67,12 @@ pub(super) fn parse_funnel(args: &[String]) -> Result<Command, CliError> {
 }
 
 /// Partially parsed flags before required-value and shape validation.
-#[expect(
-    clippy::missing_docs_in_private_items,
-    reason = "fields directly represent the closed analytics funnel grammar"
+#[cfg_attr(
+    not(test),
+    expect(
+        clippy::missing_docs_in_private_items,
+        reason = "fields directly represent the closed analytics funnel grammar"
+    )
 )]
 #[derive(Default)]
 struct ParsedFunnelFlags {
@@ -175,13 +178,11 @@ fn following_step_value(args: &[String], index: &mut usize) -> Result<String, Cl
 mod tests {
     use super::*;
 
-    /// Builds parser-owned arguments without shell behavior.
-    fn args(values: &[&str]) -> Vec<String> {
-        values.iter().map(|value| (*value).to_owned()).collect()
-    }
+    use super::super::tests::args;
 
     #[test]
-    fn parses_repeated_steps_aliases_and_human_duration() {
+    fn parses_repeated_steps_aliases_and_human_duration() -> Result<(), Box<dyn std::error::Error>>
+    {
         let command = parse_funnel(&args(&[
             "--project-id",
             "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA",
@@ -198,11 +199,10 @@ mod tests {
             "--env",
             "production",
             "--json",
-        ]))
-        .expect("valid command");
+        ]))?;
 
         let Command::AnalyticsFunnel { options, json } = command else {
-            panic!("wrong command");
+            return Err("wrong command".into());
         };
         assert_eq!(options.project_id, "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
         assert_eq!(options.analysis_unit, AnalyticsFunnelUnit::IdentifiedUser);
@@ -213,6 +213,7 @@ mod tests {
             crate::AnalyticsPathEventKind::PageView
         );
         assert!(json);
+        Ok(())
     }
 
     #[test]

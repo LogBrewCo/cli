@@ -53,9 +53,12 @@ pub(super) fn parse_properties(args: &[String]) -> Result<Command, CliError> {
 }
 
 /// Partially parsed flags before required-value and shape validation.
-#[expect(
-    clippy::missing_docs_in_private_items,
-    reason = "fields directly represent the closed analytics property grammar"
+#[cfg_attr(
+    not(test),
+    expect(
+        clippy::missing_docs_in_private_items,
+        reason = "fields directly represent the closed analytics property grammar"
+    )
 )]
 #[derive(Default)]
 struct ParsedPropertyFlags {
@@ -76,34 +79,24 @@ impl ParsedPropertyFlags {
             service_name: scope.service_name,
             release: scope.release,
             environment: scope.environment,
-            limit: bounded_limit(self.limit.as_deref())?,
+            limit: GRAMMAR.bounded_u8(
+                self.limit.as_deref().map(str::trim),
+                20,
+                1..=50,
+                "invalid analytics property limit",
+            )?,
         })
     }
-}
-
-/// Parses the bounded property-key limit with the public default.
-fn bounded_limit(value: Option<&str>) -> Result<u8, CliError> {
-    value.map_or(Ok(20), |value| {
-        value
-            .trim()
-            .parse::<u8>()
-            .ok()
-            .filter(|limit| (1..=50).contains(limit))
-            .ok_or_else(|| GRAMMAR.invalid_argument("invalid analytics property limit"))
-    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// Builds parser-owned arguments without shell behavior.
-    fn args(values: &[&str]) -> Vec<String> {
-        values.iter().map(|value| (*value).to_owned()).collect()
-    }
+    use super::super::tests::args;
 
     #[test]
-    fn parses_exact_scope_aliases_and_defaults() {
+    fn parses_exact_scope_aliases_and_defaults() -> Result<(), Box<dyn std::error::Error>> {
         let command = parse_properties(&args(&[
             "--project-id",
             "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA",
@@ -115,17 +108,17 @@ mod tests {
             "--limit",
             "40",
             "--json",
-        ]))
-        .expect("valid command");
+        ]))?;
 
         let Command::AnalyticsProperties { options, json } = command else {
-            panic!("wrong command");
+            return Err("wrong command".into());
         };
         assert_eq!(options.project_id, "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
         assert_eq!(options.service_name.as_deref(), Some("checkout-api"));
         assert_eq!(options.environment.as_deref(), Some("production"));
         assert_eq!(options.limit, 40);
         assert!(json);
+        Ok(())
     }
 
     #[test]

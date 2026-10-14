@@ -91,9 +91,12 @@ pub(super) fn parse_retention(args: &[String]) -> Result<Command, CliError> {
 }
 
 /// Partially parsed flags before required-value and shape validation.
-#[expect(
-    clippy::missing_docs_in_private_items,
-    reason = "fields directly represent the closed analytics retention grammar"
+#[cfg_attr(
+    not(test),
+    expect(
+        clippy::missing_docs_in_private_items,
+        reason = "fields directly represent the closed analytics retention grammar"
+    )
 )]
 #[derive(Default)]
 struct ParsedRetentionFlags {
@@ -137,7 +140,12 @@ impl ParsedRetentionFlags {
         let start_kind = retention_event_kind(parsed_start_kind);
         let return_kind = retention_event_kind(parsed_return_kind);
         let interval = normalize_interval(self.interval.as_deref())?;
-        let interval_count = bounded_interval_count(self.interval_count.as_deref())?;
+        let interval_count = GRAMMAR.bounded_u8(
+            self.interval_count.as_deref(),
+            10,
+            1..=31,
+            "invalid retention interval count",
+        )?;
         let mode = normalize_mode(self.mode.as_deref())?;
         let cohort_mode = normalize_cohort_mode(self.cohort_mode.as_deref())?;
 
@@ -197,29 +205,15 @@ fn normalize_cohort_mode(value: Option<&str>) -> Result<AnalyticsRetentionCohort
     }
 }
 
-/// Parses the bounded period count or supplies its public default.
-fn bounded_interval_count(value: Option<&str>) -> Result<u8, CliError> {
-    let Some(value) = value else {
-        return Ok(10);
-    };
-    value
-        .parse::<u8>()
-        .ok()
-        .filter(|count| (1..=31).contains(count))
-        .ok_or_else(|| GRAMMAR.invalid_argument("invalid retention interval count"))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// Builds parser-owned arguments without shell behavior.
-    fn args(values: &[&str]) -> Vec<String> {
-        values.iter().map(|value| (*value).to_owned()).collect()
-    }
+    use super::super::tests::args;
 
     #[test]
-    fn parses_aliases_and_explicit_defaults_into_one_stable_request() {
+    fn parses_aliases_and_explicit_defaults_into_one_stable_request()
+    -> Result<(), Box<dyn std::error::Error>> {
         let command = parse_retention(&args(&[
             "--project-id",
             "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA",
@@ -235,11 +229,10 @@ mod tests {
             "--env",
             "production",
             "--json",
-        ]))
-        .expect("valid command");
+        ]))?;
 
         let Command::AnalyticsRetention { options, json } = command else {
-            panic!("wrong command");
+            return Err("wrong command".into());
         };
         assert_eq!(options.project_id, "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
         assert_eq!(
@@ -258,6 +251,7 @@ mod tests {
             AnalyticsRetentionCohortMode::FirstInRange
         );
         assert!(json);
+        Ok(())
     }
 
     #[test]

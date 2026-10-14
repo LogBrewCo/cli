@@ -1,8 +1,11 @@
 //! Versioned, bounded product-analytics segment comparison reporting.
 
-#![expect(
-    clippy::missing_docs_in_private_items,
-    reason = "response fields mirror the exact public analytics contract"
+#![cfg_attr(
+    not(test),
+    expect(
+        clippy::missing_docs_in_private_items,
+        reason = "response fields mirror the exact public analytics contract"
+    )
 )]
 
 use serde::Deserialize;
@@ -10,9 +13,8 @@ use serde::Deserialize;
 use crate::analytics_contract::{NextAction, bounded_counts, ratio_matches};
 use crate::analytics_request::{self, Kind, insert_optional, valid_event_name};
 use crate::http::{nonempty_control_safe as bounded_contract_text, terminal_safe as display_text};
-use crate::time::{
-    ParsedTimestamp as UtcTimestamp, add_seconds, parse_utc_timestamp, timestamp_nanos,
-};
+use crate::render::{filter_label, percentage};
+use crate::time::{ParsedTimestamp as UtcTimestamp, parse_utc_timestamp};
 use crate::{
     AnalyticsSegment, AnalyticsSegmentComparisonOptions, AnalyticsSegmentEventKind,
     AnalyticsSegmentUnit, CliEnvironment, RuntimeError,
@@ -384,18 +386,14 @@ fn validated_response(
     options: &AnalyticsSegmentComparisonOptions,
     body: &str,
 ) -> Result<ComparisonResponse, RuntimeError> {
-    let response = serde_json::from_str::<ComparisonResponse>(body)
-        .map_err(|_error| Kind::Segments.invalid())?;
-    if response.schema_version != SCHEMA_VERSION
-        || !bounded_contract_text(response.purpose.as_str(), 4096)
-        || !valid_query(options, &response.query)
-        || !valid_confidence(&response.confidence)
-        || !valid_summary_and_segments(options, &response)
-        || !valid_next_action(&response)
-    {
-        return Err(Kind::Segments.invalid());
-    }
-    Ok(response)
+    Kind::Segments.parse(body, |response: &ComparisonResponse| {
+        response.schema_version == SCHEMA_VERSION
+            && bounded_contract_text(response.purpose.as_str(), 4096)
+            && valid_query(options, &response.query)
+            && valid_confidence(&response.confidence)
+            && valid_summary_and_segments(options, response)
+            && valid_next_action(response)
+    })
 }
 
 /// Requires the backend echo to match every client-selected scope field.
@@ -430,7 +428,7 @@ fn valid_query(options: &AnalyticsSegmentComparisonOptions, query: &ComparisonQu
 fn query_timestamps(query: &ComparisonQuery) -> Option<(UtcTimestamp, UtcTimestamp)> {
     let since = parse_utc_timestamp(query.since.as_str())?;
     let until = parse_utc_timestamp(query.until.as_str())?;
-    let range = timestamp_nanos(until).checked_sub(timestamp_nanos(since))?;
+    let range = until.epoch_nanos().checked_sub(since.epoch_nanos())?;
     (since < until && range <= i128::from(31 * 24 * 60 * 60) * NANOS_PER_SECOND)
         .then_some((since, until))
 }
@@ -747,7 +745,7 @@ fn valid_point(
     let Some(end) = parse_utc_timestamp(point.bucket_end.as_str()) else {
         return false;
     };
-    let Some(expected_end) = add_seconds(start, interval_seconds) else {
+    let Some(expected_end) = start.checked_add_seconds(interval_seconds) else {
         return false;
     };
     let interval_nanos = i128::from(interval_seconds) * NANOS_PER_SECOND;
@@ -756,7 +754,7 @@ fn valid_point(
         && start < until
         && end > since
         && previous_start.is_none_or(|previous| start > previous)
-        && timestamp_nanos(start).rem_euclid(interval_nanos) == 0
+        && start.epoch_nanos().rem_euclid(interval_nanos) == 0
         && bounded_counts(&[
             point.classified_events,
             point.eligible_units,
@@ -945,8 +943,8 @@ fn floats_match(actual: f64, expected: f64) -> bool {
 /// Returns the exact number of UTC-aligned buckets intersecting a half-open range.
 fn bucket_count(since: UtcTimestamp, until: UtcTimestamp, interval_seconds: u64) -> Option<u64> {
     let width = i128::from(interval_seconds).checked_mul(NANOS_PER_SECOND)?;
-    let first = timestamp_nanos(since).div_euclid(width);
-    let last = timestamp_nanos(until).checked_sub(1)?.div_euclid(width);
+    let first = since.epoch_nanos().div_euclid(width);
+    let last = until.epoch_nanos().checked_sub(1)?.div_euclid(width);
     u64::try_from(last.checked_sub(first)?.checked_add(1)?).ok()
 }
 
@@ -1197,11 +1195,6 @@ fn render_point(point: &SegmentPoint, output: &mut String) {
     );
 }
 
-/// Returns a terminal-safe exact filter label or a wildcard marker.
-fn filter_label(value: Option<&str>) -> String {
-    value.map_or_else(|| "<any>".to_owned(), display_text)
-}
-
 /// Returns the human identity-boundary label.
 const fn unit_label(unit: AnalyticsSegmentUnit) -> &'static str {
     match unit {
@@ -1216,14 +1209,6 @@ const fn unit_context(unit: AnalyticsSegmentUnit) -> &'static str {
         AnalyticsSegmentUnit::Session => "context.session.id",
         AnalyticsSegmentUnit::IdentifiedUser => "context.subject.id + context.subject.kind=user",
     }
-}
-
-/// Formats one optional fraction as a percentage.
-fn percentage(value: Option<f64>) -> String {
-    value.map_or_else(
-        || "n/a".to_owned(),
-        |value| format!("{:.1}%", value * 100.0),
-    )
 }
 
 /// Formats one optional signed fraction as a percentage-point difference.

@@ -1,8 +1,11 @@
 //! Versioned, bounded product-analytics overview reporting.
 
-#![expect(
-    clippy::missing_docs_in_private_items,
-    reason = "response fields mirror the exact public analytics contract"
+#![cfg_attr(
+    not(test),
+    expect(
+        clippy::missing_docs_in_private_items,
+        reason = "response fields mirror the exact public analytics contract"
+    )
 )]
 
 use serde::Deserialize;
@@ -306,20 +309,16 @@ fn validated_response(
     options: &AnalyticsOverviewOptions,
     body: &str,
 ) -> Result<OverviewResponse, RuntimeError> {
-    let response = serde_json::from_str::<OverviewResponse>(body)
-        .map_err(|_error| Kind::Overview.invalid())?;
-    if response.schema_version != SCHEMA_VERSION
-        || !valid_query(options, &response.query)
-        || !bounded_contract_text(response.purpose.as_str(), 2048)
-        || !valid_action_activity(&response)
-        || !valid_estimation(&response.estimation)
-        || !valid_classified_activity(&response)
-        || !valid_analysis_level(&response)
-        || !valid_next_action(&response)
-    {
-        return Err(Kind::Overview.invalid());
-    }
-    Ok(response)
+    Kind::Overview.parse(body, |response: &OverviewResponse| {
+        response.schema_version == SCHEMA_VERSION
+            && valid_query(options, &response.query)
+            && bounded_contract_text(response.purpose.as_str(), 2048)
+            && valid_action_activity(response)
+            && valid_estimation(&response.estimation)
+            && valid_classified_activity(response)
+            && valid_analysis_level(response)
+            && valid_next_action(response)
+    })
 }
 
 /// Requires the backend echo to match every exact client-selected scope field.

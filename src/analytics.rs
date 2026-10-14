@@ -1,8 +1,11 @@
 //! Versioned, bounded product-analytics path exploration.
 
-#![expect(
-    clippy::missing_docs_in_private_items,
-    reason = "response fields mirror the exact public analytics contract"
+#![cfg_attr(
+    not(test),
+    expect(
+        clippy::missing_docs_in_private_items,
+        reason = "response fields mirror the exact public analytics contract"
+    )
 )]
 
 use serde::Deserialize;
@@ -224,30 +227,26 @@ fn validated_response(
     options: &AnalyticsPathOptions,
     body: &str,
 ) -> Result<PathsResponse, RuntimeError> {
-    let response =
-        serde_json::from_str::<PathsResponse>(body).map_err(|_error| Kind::Paths.invalid())?;
-    if !valid_query(options, &response.query)
-        || response.schema_version != SCHEMA_VERSION
-        || !bounded_contract_text(response.purpose.as_str(), 2048)
-        || !valid_summary(&response)
-        || !valid_coverage(
-            &response.coverage,
-            !response.query.property_filters.is_empty(),
-        )
-        || response.summary.anchored_sessions > response.coverage.usable_anchor_events
-        || !valid_paths(options, &response)
-        || !valid_next_action(&response)
-    {
-        return Err(Kind::Paths.invalid());
-    }
-    Ok(response)
+    Kind::Paths.parse(body, |response: &PathsResponse| {
+        valid_query(options, &response.query)
+            && response.schema_version == SCHEMA_VERSION
+            && bounded_contract_text(response.purpose.as_str(), 2048)
+            && valid_summary(response)
+            && valid_coverage(
+                &response.coverage,
+                !response.query.property_filters.is_empty(),
+            )
+            && response.summary.anchored_sessions <= response.coverage.usable_anchor_events
+            && valid_paths(options, response)
+            && valid_next_action(response)
+    })
 }
 
 /// Requires the backend echo to match every exact client-selected scope field.
 fn valid_query(options: &AnalyticsPathOptions, query: &PathQuery) -> bool {
     query.project_id == options.project_id
-        && bounded_timestamp(query.since.as_str())
-        && bounded_timestamp(query.until.as_str())
+        && crate::time::parse_rfc3339(query.since.as_str()).is_some()
+        && crate::time::parse_rfc3339(query.until.as_str()).is_some()
         && query.service_name == options.service_name
         && query.release == options.release
         && query.environment == options.environment
@@ -273,11 +272,6 @@ fn property_filters_match(
             .iter()
             .zip(expected)
             .all(|(actual, expected)| actual.key == expected.key && actual.value == expected.value)
-}
-
-/// Validates the UTC RFC 3339 shape emitted by the versioned API.
-fn bounded_timestamp(value: &str) -> bool {
-    crate::time::parse_rfc3339(value).is_some()
 }
 
 /// Proves headline counts against the returned path aggregates.
@@ -762,7 +756,7 @@ mod tests {
         }
     }
 
-    fn response(direction: &str, nodes: serde_json::Value) -> String {
+    fn response(direction: &str, nodes: &serde_json::Value) -> serde_json::Value {
         serde_json::json!({
             "schema_version": 1,
             "query": {
@@ -818,24 +812,26 @@ mod tests {
                 "reason": "Measure the top path as a funnel."
             }
         })
-        .to_string()
     }
 
     #[test]
-    fn validates_and_renders_following_paths() {
+    fn validates_and_renders_following_paths() -> Result<(), RuntimeError> {
         let body = response(
             "following",
-            serde_json::json!([
+            &serde_json::json!([
                 {"relative_position": 0, "kind": "page_view", "event_name": "/pricing"},
                 {"relative_position": 1, "kind": "interaction", "event_name": "signup_started"}
             ]),
         );
-        let response = validated_response(&options(AnalyticsPathDirection::Following), &body)
-            .expect("valid response");
+        let response = validated_response(
+            &options(AnalyticsPathDirection::Following),
+            &body.to_string(),
+        )?;
         let rendered = render_response(&response);
         assert!(rendered.contains("[0] page_view /pricing -> [+1] interaction signup_started"));
         assert!(rendered.contains("Capture gap: 20"));
         assert!(!rendered.contains(response.next_action.reason.as_str()));
+        Ok(())
     }
 
     #[test]
@@ -846,30 +842,28 @@ mod tests {
         ]);
         let wrong_position = response(
             "following",
-            serde_json::json!([
+            &serde_json::json!([
                 {"relative_position": 1, "kind": "page_view", "event_name": "/pricing"}
             ]),
         );
-        assert!(validated_response(&options, &wrong_position).is_err());
-
-        let mut wrong_count: serde_json::Value =
-            serde_json::from_str(&response("following", valid_nodes.clone())).expect("json");
-        wrong_count["summary"]["represented_sessions"] = 11.into();
-        assert!(validated_response(&options, &wrong_count.to_string()).is_err());
-
-        let mut wrong_action: serde_json::Value =
-            serde_json::from_str(&response("following", valid_nodes.clone())).expect("json");
-        wrong_action["next_action"]["target"] = "/unexpected".into();
-        assert!(validated_response(&options, &wrong_action.to_string()).is_err());
-
-        let mut unknown: serde_json::Value =
-            serde_json::from_str(&response("following", valid_nodes)).expect("json");
-        unknown["query"]["session_id"] = "secret".into();
-        assert!(validated_response(&options, &unknown.to_string()).is_err());
+        assert!(validated_response(&options, &wrong_position.to_string()).is_err());
+        for (group, field, value) in [
+            ("summary", "represented_sessions", serde_json::json!(11)),
+            ("next_action", "target", serde_json::json!("/unexpected")),
+            ("query", "session_id", serde_json::json!("secret")),
+        ] {
+            let mut invalid = response("following", &valid_nodes);
+            invalid[group][field] = value;
+            assert!(
+                validated_response(&options, &invalid.to_string()).is_err(),
+                "{group}/{field}"
+            );
+        }
     }
 
     #[test]
-    fn validates_property_coverage_and_renders_trace_evidence_without_values() {
+    fn validates_property_coverage_and_renders_trace_evidence_without_values()
+    -> Result<(), RuntimeError> {
         let mut options = options(AnalyticsPathDirection::Following);
         options.property_filters = vec![AnalyticsPathPropertyFilter {
             key: "tag.plan".to_owned(),
@@ -879,8 +873,7 @@ mod tests {
             {"relative_position": 0, "kind": "page_view", "event_name": "/pricing"},
             {"relative_position": 1, "kind": "interaction", "event_name": "signup_started"}
         ]);
-        let mut body: serde_json::Value =
-            serde_json::from_str(&response("following", nodes)).expect("json");
+        let mut body = response("following", &nodes);
         body["query"]["property_filters"] = serde_json::json!([{
             "key": "tag.plan",
             "value": "sensitive-plan-marker"
@@ -913,8 +906,7 @@ mod tests {
             "reason": "Inspect retained same-trace evidence without inferring causality."
         });
 
-        let response = validated_response(&options, body.to_string().as_str())
-            .expect("property-aware response validates");
+        let response = validated_response(&options, body.to_string().as_str())?;
         let rendered = render_response(&response);
 
         assert!(rendered.contains("Anchor properties: 1 exact AND predicate on tag.plan"));
@@ -925,6 +917,7 @@ mod tests {
 
         body["coverage"]["anchor_property_filters"]["missing_property_events"] = 4.into();
         assert!(validated_response(&options, body.to_string().as_str()).is_err());
+        Ok(())
     }
 
     #[test]

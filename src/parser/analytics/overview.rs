@@ -59,9 +59,12 @@ pub(super) fn parse_overview(args: &[String]) -> Result<Command, CliError> {
 }
 
 /// Partially parsed flags before required-value and shape validation.
-#[expect(
-    clippy::missing_docs_in_private_items,
-    reason = "fields directly represent the closed analytics overview grammar"
+#[cfg_attr(
+    not(test),
+    expect(
+        clippy::missing_docs_in_private_items,
+        reason = "fields directly represent the closed analytics overview grammar"
+    )
 )]
 #[derive(Default)]
 struct ParsedOverviewFlags {
@@ -77,7 +80,12 @@ impl ParsedOverviewFlags {
             .scope
             .finish(GRAMMAR, "invalid analytics overview value")?;
         let interval = normalize_interval(self.interval.as_deref())?;
-        let top_limit = bounded_top_limit(self.top_limit.as_deref())?;
+        let top_limit = GRAMMAR.bounded_u8(
+            self.top_limit.as_deref().map(str::trim),
+            10,
+            1..=20,
+            "invalid analytics overview top limit",
+        )?;
 
         Ok(AnalyticsOverviewOptions {
             project_id: scope.project_id,
@@ -108,29 +116,14 @@ fn normalize_interval(value: Option<&str>) -> Result<String, CliError> {
     }
 }
 
-/// Parses the bounded top-ranking limit with the public default.
-fn bounded_top_limit(value: Option<&str>) -> Result<u8, CliError> {
-    value.map_or(Ok(10), |value| {
-        value
-            .trim()
-            .parse::<u8>()
-            .ok()
-            .filter(|limit| (1..=20).contains(limit))
-            .ok_or_else(|| GRAMMAR.invalid_argument("invalid analytics overview top limit"))
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// Builds parser-owned arguments without shell behavior.
-    fn args(values: &[&str]) -> Vec<String> {
-        values.iter().map(|value| (*value).to_owned()).collect()
-    }
+    use super::super::tests::args;
 
     #[test]
-    fn parses_exact_scope_aliases_and_defaults() {
+    fn parses_exact_scope_aliases_and_defaults() -> Result<(), Box<dyn std::error::Error>> {
         let command = parse_overview(&args(&[
             "--project-id",
             "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA",
@@ -144,11 +137,10 @@ mod tests {
             "--limit",
             "12",
             "--json",
-        ]))
-        .expect("valid command");
+        ]))?;
 
         let Command::AnalyticsOverview { options, json } = command else {
-            panic!("wrong command");
+            return Err("wrong command".into());
         };
         assert_eq!(options.project_id, "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
         assert_eq!(options.interval, "5m");
@@ -156,6 +148,7 @@ mod tests {
         assert_eq!(options.environment.as_deref(), Some("production"));
         assert_eq!(options.top_limit, 12);
         assert!(json);
+        Ok(())
     }
 
     #[test]

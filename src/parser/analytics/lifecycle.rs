@@ -68,9 +68,12 @@ pub(super) fn parse_lifecycle(args: &[String]) -> Result<Command, CliError> {
 }
 
 /// Partially parsed flags before required-value and shape validation.
-#[expect(
-    clippy::missing_docs_in_private_items,
-    reason = "fields directly represent the closed analytics lifecycle grammar"
+#[cfg_attr(
+    not(test),
+    expect(
+        clippy::missing_docs_in_private_items,
+        reason = "fields directly represent the closed analytics lifecycle grammar"
+    )
 )]
 #[derive(Default)]
 struct ParsedLifecycleFlags {
@@ -99,7 +102,12 @@ impl ParsedLifecycleFlags {
         )?;
         let event_kind = retention_event_kind(parsed_kind);
         let interval = normalize_interval(self.interval.as_deref())?;
-        let history_period_count = bounded_history_periods(self.history_period_count.as_deref())?;
+        let history_period_count = GRAMMAR.bounded_u8(
+            self.history_period_count.as_deref(),
+            2,
+            2..=31,
+            "invalid lifecycle history period count",
+        )?;
         validate_history_span(interval, history_period_count)?;
 
         Ok(AnalyticsLifecycleOptions {
@@ -136,18 +144,6 @@ fn normalize_interval(value: Option<&str>) -> Result<Option<AnalyticsLifecycleIn
     }
 }
 
-/// Parses the bounded complete-history count or supplies the server default.
-fn bounded_history_periods(value: Option<&str>) -> Result<u8, CliError> {
-    let Some(value) = value else {
-        return Ok(2);
-    };
-    value
-        .parse::<u8>()
-        .ok()
-        .filter(|count| (2..=31).contains(count))
-        .ok_or_else(|| GRAMMAR.invalid_argument("invalid lifecycle history period count"))
-}
-
 /// Rejects interval/count combinations exceeding the server's 62-day history cap.
 fn validate_history_span(
     interval: Option<AnalyticsLifecycleInterval>,
@@ -168,13 +164,11 @@ fn validate_history_span(
 mod tests {
     use super::*;
 
-    /// Builds parser-owned arguments without shell behavior.
-    fn args(values: &[&str]) -> Vec<String> {
-        values.iter().map(|value| (*value).to_owned()).collect()
-    }
+    use super::super::tests::args;
 
     #[test]
-    fn parses_aliases_and_server_defaults_into_one_stable_request() {
+    fn parses_aliases_and_server_defaults_into_one_stable_request()
+    -> Result<(), Box<dyn std::error::Error>> {
         let command = parse_lifecycle(&args(&[
             "--project-id",
             "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA",
@@ -186,11 +180,10 @@ mod tests {
             "--env",
             "production",
             "--json",
-        ]))
-        .expect("valid command");
+        ]))?;
 
         let Command::AnalyticsLifecycle { options, json } = command else {
-            panic!("wrong command");
+            return Err("wrong command".into());
         };
         assert_eq!(options.project_id, "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
         assert_eq!(
@@ -200,6 +193,7 @@ mod tests {
         assert_eq!(options.interval, None);
         assert_eq!(options.history_period_count, 2);
         assert!(json);
+        Ok(())
     }
 
     #[test]
