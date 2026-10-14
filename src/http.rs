@@ -17,17 +17,16 @@ pub(crate) enum BodyError {
 #[serde(deny_unknown_fields)]
 pub(crate) struct ErrorShape {
     /// Human-readable error field.
-    #[serde(rename = "error")]
-    _error: serde_json::Value,
+    error: String,
     /// Stable error-code field.
-    #[serde(rename = "code")]
-    _code: serde_json::Value,
+    code: String,
     /// Recovery guidance field.
-    #[serde(rename = "next")]
-    _next: serde_json::Value,
+    next: String,
     /// Typed recovery-action field.
-    #[serde(rename = "next_action")]
-    _next_action: ErrorActionShape,
+    next_action: ErrorActionShape,
+    /// A present retry delay must be a positive whole number, never null.
+    #[serde(default, deserialize_with = "present_retry_delay")]
+    retry_after_seconds: Option<std::num::NonZeroU64>,
 }
 
 /// Duplicate-aware exact standard API recovery action.
@@ -35,11 +34,79 @@ pub(crate) struct ErrorShape {
 #[serde(deny_unknown_fields)]
 pub(crate) struct ErrorActionShape {
     /// Stable action-code field.
-    #[serde(rename = "code")]
-    _code: serde_json::Value,
+    code: String,
     /// Stable action-target field.
-    #[serde(rename = "target")]
-    _target: serde_json::Value,
+    target: String,
+}
+
+/// Distinguishes an absent retry delay from a present invalid or null value.
+fn present_retry_delay<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<std::num::NonZeroU64>, D::Error> {
+    <std::num::NonZeroU64 as serde::Deserialize>::deserialize(deserializer).map(Some)
+}
+
+impl ErrorShape {
+    /// Parses exact fields with the command's existing text bounds and policy.
+    pub(crate) fn parse(
+        body: &str,
+        status: u16,
+        error_limit: usize,
+        valid_text: fn(&str, usize) -> bool,
+    ) -> Option<Self> {
+        let value: Self = serde_json::from_str(body).ok()?;
+        ((status == 429) == value.retry_after_seconds.is_some()
+            && [
+                (value.error.as_str(), error_limit),
+                (value.next.as_str(), 512),
+                (value.code.as_str(), 64),
+                (value.next_action.code.as_str(), 64),
+                (value.next_action.target.as_str(), 64),
+            ]
+            .into_iter()
+            .all(|(text, limit)| valid_text(text, limit)))
+        .then_some(value)
+    }
+
+    /// Returns the complete error and recovery identity for exact matching.
+    pub(crate) fn action(&self) -> (&str, &str, &str) {
+        (&self.code, &self.next_action.code, &self.next_action.target)
+    }
+
+    /// Matches shared read failures without granting account-specific recovery.
+    pub(crate) fn matches_read_status(&self, status: u16) -> bool {
+        match status {
+            401 => self.action() == ("unauthorized", "sign_in", "auth"),
+            405 => self.action() == ("method_not_allowed", "use_supported_method", "api_method"),
+            429 => self.action() == ("rate_limited", "retry_with_backoff", "request"),
+            500..=599 => server_error_action_matches(self.action()),
+            _ => false,
+        }
+    }
+
+    /// Preserves the validated delay and replaces remote prose with local guidance.
+    pub(crate) fn rate_limit_body(&self, command: &str) -> Option<String> {
+        self.retry_after_seconds.map(|delay| {
+            serde_json::json!({
+                "error": "request is rate limited",
+                "code": "rate_limited",
+                "next": format!("wait at least {delay} seconds, then retry logbrew {command} with exponential backoff and jitter"),
+                "next_action": {"code": "retry_with_backoff", "target": "request"},
+                "retry_after_seconds": delay.get(),
+            })
+            .to_string()
+        })
+    }
+}
+
+/// Matches the exact recovery action associated with a generic server failure.
+pub(crate) fn server_error_action_matches(fields: (&str, &str, &str)) -> bool {
+    matches!(
+        fields,
+        ("storage_error", "retry_or_check_storage", "backend_status")
+            | ("json_error", "send_valid_json", "request")
+            | ("internal_error", "retry_or_contact_support", "support")
+    )
 }
 
 /// Returns a client builder after installing the process-wide TLS provider.

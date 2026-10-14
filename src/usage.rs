@@ -49,9 +49,12 @@ struct UsageLimits {
 }
 
 /// Duplicate-aware exact top-level usage shape.
-#[expect(
-    clippy::missing_docs_in_private_items,
-    reason = "field names intentionally mirror the validated public JSON contract"
+#[cfg_attr(
+    not(test),
+    expect(
+        clippy::missing_docs_in_private_items,
+        reason = "field names intentionally mirror the validated public JSON contract"
+    )
 )]
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -91,9 +94,12 @@ struct UsageShape {
 }
 
 /// Duplicate-aware plan object.
-#[expect(
-    clippy::missing_docs_in_private_items,
-    reason = "field names intentionally mirror the validated public JSON contract"
+#[cfg_attr(
+    not(test),
+    expect(
+        clippy::missing_docs_in_private_items,
+        reason = "field names intentionally mirror the validated public JSON contract"
+    )
 )]
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -105,9 +111,12 @@ struct PlanShape {
 }
 
 /// Duplicate-aware limits object.
-#[expect(
-    clippy::missing_docs_in_private_items,
-    reason = "field names intentionally mirror the validated public JSON contract"
+#[cfg_attr(
+    not(test),
+    expect(
+        clippy::missing_docs_in_private_items,
+        reason = "field names intentionally mirror the validated public JSON contract"
+    )
 )]
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -123,9 +132,12 @@ struct LimitsShape {
 }
 
 /// Duplicate-aware totals object.
-#[expect(
-    clippy::missing_docs_in_private_items,
-    reason = "field names intentionally mirror the validated public JSON contract"
+#[cfg_attr(
+    not(test),
+    expect(
+        clippy::missing_docs_in_private_items,
+        reason = "field names intentionally mirror the validated public JSON contract"
+    )
 )]
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -139,9 +151,12 @@ struct TotalsShape {
 }
 
 /// Duplicate-aware usage action object.
-#[expect(
-    clippy::missing_docs_in_private_items,
-    reason = "field names intentionally mirror the validated public JSON contract"
+#[cfg_attr(
+    not(test),
+    expect(
+        clippy::missing_docs_in_private_items,
+        reason = "field names intentionally mirror the validated public JSON contract"
+    )
 )]
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -159,9 +174,12 @@ struct UsageActionShape {
 }
 
 /// Duplicate-aware project breakdown row.
-#[expect(
-    clippy::missing_docs_in_private_items,
-    reason = "field names intentionally mirror the validated public JSON contract"
+#[cfg_attr(
+    not(test),
+    expect(
+        clippy::missing_docs_in_private_items,
+        reason = "field names intentionally mirror the validated public JSON contract"
+    )
 )]
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -175,9 +193,12 @@ struct ProjectUsageShape {
 }
 
 /// Duplicate-aware stream breakdown row.
-#[expect(
-    clippy::missing_docs_in_private_items,
-    reason = "field names intentionally mirror the validated public JSON contract"
+#[cfg_attr(
+    not(test),
+    expect(
+        clippy::missing_docs_in_private_items,
+        reason = "field names intentionally mirror the validated public JSON contract"
+    )
 )]
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -433,37 +454,18 @@ fn validate_error(
     body: &str,
     credential: &AuthCredential,
 ) -> Result<RuntimeError, RuntimeError> {
-    let _shape =
-        serde_json::from_str::<crate::http::ErrorShape>(body).map_err(|_| invalid_response())?;
-    let value = serde_json::from_str::<serde_json::Value>(body).map_err(|_| invalid_response())?;
-    let object = exact_object(&value, &["error", "code", "next", "next_action"])?;
-    let _error = safe_string(object.get("error"), 256)?;
-    let _next = safe_string(object.get("next"), 512)?;
-    let code = safe_string(object.get("code"), 64)?;
-    let action = exact_object(required(object.get("next_action"))?, &["code", "target"])?;
-    let action_code = safe_string(action.get("code"), 64)?;
-    let action_target = safe_string(action.get("target"), 64)?;
-    let typed = match status {
-        401 => code == "unauthorized" && action_code == "sign_in" && action_target == "auth",
-        405 => {
-            code == "method_not_allowed"
-                && action_code == "use_supported_method"
-                && action_target == "api_method"
-        }
-        429 => code == "rate_limited" && action_code == "retry" && action_target == "request",
-        500..=599 => {
-            matches!(code, "internal_error" | "storage_error" | "json_error")
-                && action_code == "retry"
-                && action_target == "request"
-        }
-        _ => false,
-    };
-    if !typed {
+    let value = crate::http::ErrorShape::parse(body, status, 256, |text, limit| {
+        !text.is_empty() && crate::http::display_safe(text, limit)
+    })
+    .ok_or_else(invalid_response)?;
+    if !value.matches_read_status(status) {
         return Err(invalid_response());
     }
     Ok(RuntimeError::Api {
         status,
-        body: safe_error_body(status),
+        body: value
+            .rate_limit_body("usage")
+            .unwrap_or_else(|| safe_error_body(status)),
         auth_source: credential.source(),
         auth_label: credential.label(),
     })
@@ -483,12 +485,6 @@ fn safe_error_body(status: u16) -> String {
             "code": "method_not_allowed",
             "next": "retry logbrew usage with the supported GET request",
             "next_action": {"code": "use_supported_method", "target": "api_method"}
-        }),
-        429 => serde_json::json!({
-            "error": "usage request is rate limited",
-            "code": "rate_limited",
-            "next": "retry logbrew usage later",
-            "next_action": {"code": "retry", "target": "request"}
         }),
         500..=599 => serde_json::json!({
             "error": "usage service is unavailable",

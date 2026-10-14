@@ -246,7 +246,7 @@ fn insert_optional(
 #[cfg(test)]
 mod tests {
     use super::{safe_error_body, sanitize_diagnostics};
-    use crate::{SupportContextReplyOptions, SupportTarget};
+    use crate::SupportTarget;
 
     #[test]
     fn diagnostics_remove_sensitive_keys_and_redact_sensitive_values() {
@@ -278,25 +278,33 @@ mod tests {
     }
 
     #[test]
-    fn support_error_body_uses_local_guidance_instead_of_backend_text() {
+    fn support_error_body_uses_local_guidance_instead_of_backend_text()
+    -> Result<(), serde_json::Error> {
         let target = SupportTarget::Detail(String::from("sup_9b2b4b3abd4e4f85a0f648118f037c17"));
         let safe = safe_error_body(&target, 422);
-        let value: serde_json::Value = serde_json::from_str(&safe).expect("safe JSON");
+        let value: serde_json::Value = serde_json::from_str(&safe)?;
         assert_eq!(value["code"], "validation_failed");
         assert_eq!(value["error"], "invalid support request");
         assert_eq!(value["next"], "check support command flags and retry");
         assert_eq!(value["next_action"]["code"], "fix_request");
+        Ok(())
     }
 
     #[test]
-    fn support_conflicts_are_scoped_to_context_replies() {
-        let detail = SupportTarget::Detail(String::from("sup_9b2b4b3abd4e4f85a0f648118f037c17"));
-        let reply = SupportTarget::ReplyContext(Box::new(SupportContextReplyOptions::default()));
-        let detail_body: serde_json::Value =
-            serde_json::from_str(&safe_error_body(&detail, 409)).expect("safe detail JSON");
-        let reply_body: serde_json::Value =
-            serde_json::from_str(&safe_error_body(&reply, 409)).expect("safe reply JSON");
-        assert_eq!(detail_body["code"], "support_conflict");
-        assert_eq!(reply_body["code"], "support_context_conflict");
+    fn support_conflicts_are_scoped_to_context_replies() -> Result<(), serde_json::Error> {
+        for (target, code) in [
+            (
+                SupportTarget::Detail(String::from("sup_9b2b4b3abd4e4f85a0f648118f037c17")),
+                "support_conflict",
+            ),
+            (
+                SupportTarget::ReplyContext(Box::default()),
+                "support_context_conflict",
+            ),
+        ] {
+            let body: serde_json::Value = serde_json::from_str(&safe_error_body(&target, 409))?;
+            assert_eq!(body["code"], code, "conflict follows the support operation");
+        }
+        Ok(())
     }
 }
