@@ -376,6 +376,7 @@ fn validate_issue_response(
     )?;
     issue_occurrence_analysis::validate(
         required_object(response, "occurrence_analysis")?,
+        required_object(response, "occurrence_selection")?,
         occurrence_count,
         first_seen,
         last_seen,
@@ -1702,7 +1703,7 @@ fn validate_shared_trace_summary(
     let _started_at = require_timestamp(value, "started_at")?;
     let _duration_ms = require_safe_u64(value, "duration_ms")?;
     let root = optional_object_value(value.get("root_span"))?;
-    if expected.is_some() && root.is_none() {
+    if root.is_none() {
         return Err(invalid_response());
     }
     if let Some(root) = root {
@@ -1723,13 +1724,13 @@ fn validate_shared_trace_summary(
             validate_shared_span_summary(span)?;
             if !ids.insert(require_string(span, "span_id")?)
                 || errors_only
-                    && expected.is_some()
-                    && !is_error_status(optional_string(span, "status")?)
+                    && !optional_string(span, "status")?
+                        .is_some_and(|status| status.eq_ignore_ascii_case("error"))
             {
                 return Err(invalid_response());
             }
         }
-        if errors_only && spans.len() > usize::try_from(error_count).unwrap_or(usize::MAX) {
+        if errors_only && spans.len() != usize::try_from(error_count.min(5)).unwrap_or(usize::MAX) {
             return Err(invalid_response());
         }
     }
@@ -2177,6 +2178,13 @@ fn validate_issue_correlations(
     )?;
     let trace = required_object(value, "trace")?;
     validate_trace_link(trace, false)?;
+    let summary = optional_object_value(trace.get("summary"))?;
+    if (require_string(trace, "status")? == "available") != summary.is_some() {
+        return Err(invalid_response());
+    }
+    if let Some(summary) = summary {
+        validate_shared_trace_summary(summary, None)?;
+    }
     for name in ["logs", "actions", "metrics"] {
         let _ = validate_items_collection(required_object(value, name)?, true)?;
     }
