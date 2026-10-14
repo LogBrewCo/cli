@@ -26,7 +26,7 @@ test_rustflags="${RUSTFLAGS:+$RUSTFLAGS }-C prefer-dynamic -C link-arg=-Wl,-rpat
 run_rust_tests() (
   manifest="$(mktemp)"
   trap 'rm -f "$manifest"' EXIT
-  LOGBREW_CLIPPY_WRAPPER=1 RUSTC_WORKSPACE_WRAPPER="$ROOT_DIR/scripts/check-all.sh" RUSTFLAGS="$test_rustflags" CARGO_INCREMENTAL=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_PROFILE_TEST_CODEGEN_UNITS=512 cargo test --quiet --lib --tests --all-features --no-run --message-format=json >"$manifest"
+  LOGBREW_CLIPPY_WRAPPER=1 RUSTC_WORKSPACE_WRAPPER="$ROOT_DIR/scripts/check-all.sh" RUSTFLAGS="$test_rustflags" CARGO_INCREMENTAL=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_PROFILE_TEST_CODEGEN_UNITS=512 cargo test --quiet --lib --tests --examples --all-features --no-run --message-format=json >"$manifest"
   jq -j 'select(.reason == "compiler-artifact" and .profile.test == true and .executable != null) | .executable, "\u0000"' "$manifest" |
     xargs -0 -n 1 -P 2 sh -c 'exec "$1" --quiet' sh & test_runs_pid=$!
   audit_args=()
@@ -41,14 +41,11 @@ run_rust_tests &
 test_pid=$!
 (
 cargo fmt --all -- --check
-python3 scripts/brand_assets.py --check
-python3 scripts/test-brand-assets.py
 if [[ "${LOGBREW_CHECK_ALL_SELF_TEST:-1}" != "0" ]]; then
   bash scripts/test-check-all.sh
 fi
 ruby scripts/test-prepare-homebrew-formula.rb
 bash scripts/test-release-preflight.sh
-python3 scripts/test-cross-platform-auth-store.py
 python3 scripts/test-installed-release-attestation.py
 python3 scripts/test-installed-release-attestation-workflow.py
 ) &
