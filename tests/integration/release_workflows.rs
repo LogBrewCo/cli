@@ -61,6 +61,19 @@ fn release_workflows_prebuild_publish_and_recover_safely() -> crate::TestResult 
     ] {
         assert!(RELEASE.contains(required), "missing {required}");
     }
+    assert!(ordered(
+        RELEASE,
+        &[
+            "  plan:\n    runs-on: ubuntu-22.04\n    permissions:",
+            "      id-token: write\n      attestations: write\n",
+            "-name '*-dist-manifest.json' -delete",
+            "uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2",
+            "subject-path: target/distrib/*",
+            "gh release create \"$GITHUB_REF_NAME\"",
+        ]
+    ));
+    assert_eq!(RELEASE.matches("id-token: write").count(), 2);
+    assert_eq!(RELEASE.matches("attestations: write").count(), 1);
     assert_eq!(RELEASE.matches("refs/heads/main' }}").count(), 2);
     assert_eq!(RELEASE.matches("artifacts_run_id:").count(), 3);
     assert!(!RELEASE.contains("\n  host:\n"));
