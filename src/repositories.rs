@@ -1,8 +1,11 @@
 //! Strict repository catalog and bounded component-discovery output.
 
-#![expect(
-    clippy::missing_docs_in_private_items,
-    reason = "private wire fields mirror the validated public API contract"
+#![cfg_attr(
+    not(test),
+    expect(
+        clippy::missing_docs_in_private_items,
+        reason = "private wire fields mirror the validated public API contract"
+    )
 )]
 
 use std::collections::BTreeSet;
@@ -138,16 +141,6 @@ struct Coverage {
 struct Action {
     code: String,
     target: String,
-}
-
-#[derive(serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ErrorEnvelope {
-    error: String,
-    code: String,
-    next: String,
-    next_action: Action,
-    retry_after_seconds: Option<u64>,
 }
 
 /// Validates and writes one successful repository setup response.
@@ -602,65 +595,31 @@ pub(crate) fn validate_error(
     body: &str,
     credential: &AuthCredential,
 ) -> Result<RuntimeError, RuntimeError> {
-    let value: ErrorEnvelope = serde_json::from_str(body).map_err(|_| invalid_response())?;
-    if !safe(&value.error, 512, false) || !safe(&value.next, 512, false) {
-        return Err(invalid_response());
-    }
-    let valid = match status {
-        401 => {
-            value.code == "unauthorized"
-                && value.next_action.code == "sign_in"
-                && value.next_action.target == "auth"
-        }
-        404 => {
-            value.code == "not_found"
-                && value.next_action.code == "check_resource"
-                && value.next_action.target == "resource"
-        }
-        405 => {
-            value.code == "method_not_allowed"
-                && value.next_action.code == "use_supported_method"
-                && value.next_action.target == "api_method"
-        }
-        422 => {
-            matches!(value.code.as_str(), "validation_failed" | "invalid_json")
-                && matches!(
-                    value.next_action.code.as_str(),
-                    "fix_request" | "send_valid_json"
+    let value =
+        crate::http::ErrorShape::parse(body, status, 512, |text, limit| safe(text, limit, false))
+            .ok_or_else(invalid_response)?;
+    let (code, action_code, action_target) = value.action();
+    if !value.matches_read_status(status)
+        && !matches!(
+            (status, code, action_code, action_target),
+            (404, "not_found", "check_resource", "resource")
+                | (
+                    422,
+                    "validation_failed" | "invalid_json",
+                    "fix_request" | "send_valid_json",
+                    "request"
                 )
-                && value.next_action.target == "request"
-        }
-        429 => {
-            value.code == "rate_limited"
-                && value.next_action.code == "retry_with_backoff"
-                && value.next_action.target == "request"
-                && value.retry_after_seconds.is_some()
-        }
-        500..=599 => matches!(
-            (
-                value.code.as_str(),
-                value.next_action.code.as_str(),
-                value.next_action.target.as_str()
-            ),
-            ("storage_error", "retry_or_check_storage", "backend_status")
-                | ("json_error", "send_valid_json", "request")
-                | ("internal_error", "retry_or_contact_support", "support")
-        ),
-        _ => false,
-    };
-    if !valid || (status != 429 && value.retry_after_seconds.is_some()) {
+        )
+    {
         return Err(invalid_response());
     }
     Ok(RuntimeError::Api {
         status,
         body: serde_json::json!({
             "error": "repository setup request failed",
-            "code": value.code,
+            "code": code,
             "next": "retry the repository setup command after correcting the reported state",
-            "next_action": {
-                "code": value.next_action.code,
-                "target": value.next_action.target,
-            }
+            "next_action": {"code": action_code, "target": action_target}
         })
         .to_string(),
         auth_source: credential.source(),

@@ -117,45 +117,24 @@ fn validate_error(
     if status == 409 {
         return validate_recovery_error(body, credential);
     }
-    let _shape =
-        serde_json::from_str::<crate::http::ErrorShape>(body).map_err(|_| invalid_response())?;
-    let value = serde_json::from_str::<serde_json::Value>(body).map_err(|_| invalid_response())?;
-    let object = value.as_object().ok_or_else(invalid_response)?;
-    let _error = safe_string(object.get("error"), 512)?;
-    let code = safe_string(object.get("code"), 64)?;
-    let _next = safe_string(object.get("next"), 512)?;
-    let action = object
-        .get("next_action")
-        .and_then(serde_json::Value::as_object)
-        .ok_or_else(invalid_response)?;
-    let action_code = safe_string(action.get("code"), 64)?;
-    let action_target = safe_string(action.get("target"), 64)?;
-    let typed = match status {
-        401 => code == "unauthorized" && action_code == "sign_in" && action_target == "auth",
-        403 => code == "forbidden" && action_code == "request_access" && action_target == "auth",
-        410 => {
-            code == "account_recovery_expired"
-                && action_code == "create_account"
-                && action_target == "auth"
-        }
-        405 => {
-            code == "method_not_allowed"
-                && action_code == "use_supported_method"
-                && action_target == "api_method"
-        }
-        500..=599 => {
-            matches!(code, "storage_error" | "json_error" | "internal_error")
-                && action_code == "retry"
-                && action_target == "request"
-        }
-        _ => false,
-    };
-    if !typed {
+    let value = crate::http::ErrorShape::parse(body, status, 512, |text, limit| {
+        safe_text(text, limit, false)
+    })
+    .ok_or_else(invalid_response)?;
+    if !value.matches_read_status(status)
+        && !matches!(
+            (status, value.action()),
+            (403, ("forbidden", "request_access", "auth"))
+                | (410, ("account_recovery_expired", "create_account", "auth"))
+        )
+    {
         return Err(invalid_response());
     }
     Ok(RuntimeError::Api {
         status,
-        body: safe_error_body(status),
+        body: value
+            .rate_limit_body("whoami")
+            .unwrap_or_else(|| safe_error_body(status)),
         auth_source: credential.source(),
         auth_label: credential.label(),
     })

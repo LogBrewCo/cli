@@ -237,12 +237,7 @@ fn validate_archive_error(
         403 => fields == ("forbidden", "request_access", "auth"),
         404 => fields == ("not_found", "check_resource", "resource"),
         405 => fields == ("method_not_allowed", "use_supported_method", "api_method"),
-        500..=599 => matches!(
-            fields,
-            ("storage_error", "retry_or_check_storage", "backend_status")
-                | ("json_error", "send_valid_json", "request")
-                | ("internal_error", "retry_or_contact_support", "support")
-        ),
+        500..=599 => crate::http::server_error_action_matches(fields),
         _ => false,
     };
     if !safe || !typed {

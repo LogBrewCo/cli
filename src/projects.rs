@@ -13,9 +13,12 @@ const RESPONSE_LIMIT: usize = 1024 * 1024;
 const HUMAN_ROW_LIMIT: usize = 100;
 
 /// Duplicate-aware exact project row shape.
-#[expect(
-    clippy::missing_docs_in_private_items,
-    reason = "field names intentionally mirror the validated public JSON contract"
+#[cfg_attr(
+    not(test),
+    expect(
+        clippy::missing_docs_in_private_items,
+        reason = "field names intentionally mirror the validated public JSON contract"
+    )
 )]
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -53,9 +56,12 @@ struct ProjectShape {
 }
 
 /// Duplicate-aware exact effective-access shape.
-#[expect(
-    clippy::missing_docs_in_private_items,
-    reason = "field names intentionally mirror the validated public JSON contract"
+#[cfg_attr(
+    not(test),
+    expect(
+        clippy::missing_docs_in_private_items,
+        reason = "field names intentionally mirror the validated public JSON contract"
+    )
 )]
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -242,39 +248,18 @@ fn validate_error(
     body: &str,
     credential: &AuthCredential,
 ) -> Result<RuntimeError, RuntimeError> {
-    let _shape =
-        serde_json::from_str::<crate::http::ErrorShape>(body).map_err(|_| invalid_response())?;
-    let value = serde_json::from_str::<serde_json::Value>(body).map_err(|_| invalid_response())?;
-    let object = value.as_object().ok_or_else(invalid_response)?;
-    let _error = safe_string(object.get("error"), 512, false)?;
-    let code = safe_string(object.get("code"), 64, false)?;
-    let _next = safe_string(object.get("next"), 512, false)?;
-    let action = object
-        .get("next_action")
-        .and_then(serde_json::Value::as_object)
-        .ok_or_else(invalid_response)?;
-    let action_code = safe_string(action.get("code"), 64, false)?;
-    let action_target = safe_string(action.get("target"), 64, false)?;
-    let typed = match status {
-        401 => code == "unauthorized" && action_code == "sign_in" && action_target == "auth",
-        405 => {
-            code == "method_not_allowed"
-                && action_code == "use_supported_method"
-                && action_target == "api_method"
-        }
-        500..=599 => {
-            matches!(code, "storage_error" | "json_error" | "internal_error")
-                && action_code == "retry"
-                && action_target == "request"
-        }
-        _ => false,
-    };
-    if !typed {
+    let value = crate::http::ErrorShape::parse(body, status, 512, |text, limit| {
+        text.len() <= limit && crate::http::nonempty_display_safe(text, usize::MAX)
+    })
+    .ok_or_else(invalid_response)?;
+    if !value.matches_read_status(status) {
         return Err(invalid_response());
     }
     Ok(RuntimeError::Api {
         status,
-        body: safe_error_body(status),
+        body: value
+            .rate_limit_body("projects")
+            .unwrap_or_else(|| safe_error_body(status)),
         auth_source: credential.source(),
         auth_label: credential.label(),
     })

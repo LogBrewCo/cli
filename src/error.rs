@@ -325,49 +325,31 @@ pub fn write_native_debug_runtime_error<W: std::io::Write>(
     error: &RuntimeError,
     output: &mut W,
 ) -> Result<(), std::io::Error> {
-    let body = match error {
-        RuntimeError::Api { status, body, .. } => {
-            let details = ApiErrorDetails::parse(body);
-            let (fallback_code, fallback_next) = native_debug_api_recovery(*status);
-            let code = details
-                .code
-                .as_deref()
-                .and_then(|value| allowed_native_debug_code(*status, value))
-                .unwrap_or(fallback_code);
-            let next = details
-                .next
-                .as_deref()
-                .and_then(|value| allowed_native_debug_next(*status, value))
-                .unwrap_or(fallback_next);
-            serde_json::json!({
-                "ok": false,
-                "error": code,
-                "status": status,
-                "next": next,
-            })
-        }
-        RuntimeError::Cli(_)
-        | RuntimeError::Io(_)
-        | RuntimeError::Http(_)
-        | RuntimeError::MissingToken
-        | RuntimeError::StatusUnavailable { .. }
-        | RuntimeError::Unavailable { .. }
-        | RuntimeError::InvestigationResponseInvalid
-        | RuntimeError::ExplainResponseInvalid
-        | RuntimeError::AnalyticsOverviewResponseInvalid
-        | RuntimeError::AnalyticsPropertiesResponseInvalid
-        | RuntimeError::AnalyticsResponseInvalid
-        | RuntimeError::AnalyticsFunnelResponseInvalid
-        | RuntimeError::AnalyticsRetentionResponseInvalid
-        | RuntimeError::AnalyticsLifecycleResponseInvalid
-        | RuntimeError::AnalyticsSegmentResponseInvalid
-        | RuntimeError::NativeDebugArtifactInvalid
-        | RuntimeError::NativeDebugResponseInvalid
-        | RuntimeError::NativeDebugVerificationFailed => serde_json::json!({
+    let body = if let RuntimeError::Api { status, body, .. } = error {
+        let details = ApiErrorDetails::parse(body);
+        let (fallback_code, fallback_next) = native_debug_api_recovery(*status);
+        let code = details
+            .code
+            .as_deref()
+            .and_then(|value| allowed_native_debug_code(*status, value))
+            .unwrap_or(fallback_code);
+        let next = details
+            .next
+            .as_deref()
+            .and_then(|value| allowed_native_debug_next(*status, value))
+            .unwrap_or(fallback_next);
+        serde_json::json!({
+            "ok": false,
+            "error": code,
+            "status": status,
+            "next": next,
+        })
+    } else {
+        serde_json::json!({
             "ok": false,
             "error": runtime_error_code(error),
             "next": fallback_runtime_error_next_step(error),
-        }),
+        })
     };
     writeln!(output, "{body}")
 }
@@ -496,121 +478,88 @@ fn write_human_runtime_error<W: std::io::Write>(
     error: &RuntimeError,
     output: &mut W,
 ) -> Result<(), std::io::Error> {
-    match error {
-        RuntimeError::StatusUnavailable {
-            api_url,
-            status_code,
-            body,
-            auth_label,
-            message,
-            ..
-        } => {
-            writeln!(output, "LogBrew API unreachable.")?;
-            writeln!(output, "API: {api_url}")?;
-            writeln!(output, "Auth: {auth_label}")?;
-            if let Some(status_code) = status_code {
-                writeln!(output, "Status: {status_code}")?;
-            }
-            if let Some(body) = body.as_ref().filter(|body| !body.is_empty()) {
-                writeln!(output, "Body: {body}")?;
-            } else {
-                writeln!(output, "Reason: {message}")?;
-            }
-            writeln!(output, "Next: {STATUS_UNAVAILABLE_NEXT_STEP}")?;
-            Ok(())
+    if let RuntimeError::StatusUnavailable {
+        api_url,
+        status_code,
+        body,
+        auth_label,
+        message,
+        ..
+    } = error
+    {
+        writeln!(output, "LogBrew API unreachable.")?;
+        writeln!(output, "API: {api_url}")?;
+        writeln!(output, "Auth: {auth_label}")?;
+        if let Some(status_code) = status_code {
+            writeln!(output, "Status: {status_code}")?;
         }
-        RuntimeError::Api {
-            status,
-            body,
-            auth_label,
-            ..
-        } => {
-            let api_details = ApiErrorDetails::parse(body);
-            writeln!(output, "{error}")?;
-            if let Some(code) = api_details.code.as_deref() {
-                writeln!(output, "Code: {code}")?;
-            }
-            writeln!(output, "Auth: {auth_label}")?;
-            writeln!(output, "Next: {}", api_next_step(*status, &api_details))
+        if let Some(body) = body.as_ref().filter(|body| !body.is_empty()) {
+            writeln!(output, "Body: {body}")?;
+        } else {
+            writeln!(output, "Reason: {message}")?;
         }
-        RuntimeError::Cli(_)
-        | RuntimeError::Io(_)
-        | RuntimeError::Http(_)
-        | RuntimeError::MissingToken
-        | RuntimeError::InvestigationResponseInvalid
-        | RuntimeError::ExplainResponseInvalid
-        | RuntimeError::AnalyticsOverviewResponseInvalid
-        | RuntimeError::AnalyticsPropertiesResponseInvalid
-        | RuntimeError::AnalyticsResponseInvalid
-        | RuntimeError::AnalyticsFunnelResponseInvalid
-        | RuntimeError::AnalyticsRetentionResponseInvalid
-        | RuntimeError::AnalyticsLifecycleResponseInvalid
-        | RuntimeError::AnalyticsSegmentResponseInvalid
-        | RuntimeError::NativeDebugArtifactInvalid
-        | RuntimeError::NativeDebugResponseInvalid
-        | RuntimeError::NativeDebugVerificationFailed
-        | RuntimeError::Unavailable { .. } => {
-            writeln!(output, "{error}")?;
-            writeln!(output, "Next: {}", runtime_error_next_step(error))?;
-            Ok(())
-        }
+        return writeln!(output, "Next: {STATUS_UNAVAILABLE_NEXT_STEP}");
     }
+    writeln!(output, "{error}")?;
+    let next = if let RuntimeError::Api {
+        status,
+        body,
+        auth_label,
+        ..
+    } = error
+    {
+        let api_details = ApiErrorDetails::parse(body);
+        if let Some(code) = api_details.code.as_deref() {
+            writeln!(output, "Code: {code}")?;
+        }
+        writeln!(output, "Auth: {auth_label}")?;
+        api_next_step(*status, &api_details)
+    } else {
+        Cow::Borrowed(fallback_runtime_error_next_step(error))
+    };
+    writeln!(output, "Next: {next}")
 }
 
 /// Builds a JSON runtime error body for agents.
 fn runtime_error_json(error: &RuntimeError) -> serde_json::Value {
-    match error {
-        RuntimeError::MissingToken
-        | RuntimeError::Unavailable { .. }
-        | RuntimeError::InvestigationResponseInvalid
-        | RuntimeError::ExplainResponseInvalid
-        | RuntimeError::AnalyticsOverviewResponseInvalid
-        | RuntimeError::AnalyticsPropertiesResponseInvalid
-        | RuntimeError::AnalyticsResponseInvalid
-        | RuntimeError::AnalyticsFunnelResponseInvalid
-        | RuntimeError::AnalyticsRetentionResponseInvalid
-        | RuntimeError::AnalyticsLifecycleResponseInvalid
-        | RuntimeError::AnalyticsSegmentResponseInvalid
-        | RuntimeError::NativeDebugArtifactInvalid
-        | RuntimeError::NativeDebugResponseInvalid
-        | RuntimeError::NativeDebugVerificationFailed
-        | RuntimeError::Io(_)
-        | RuntimeError::Http(_) => serde_json::json!({
+    if let RuntimeError::Api {
+        status,
+        body,
+        auth_source,
+        ..
+    } = error
+    {
+        let api_details = ApiErrorDetails::parse(body);
+        let next = api_next_step(*status, &api_details);
+        let mut value = serde_json::json!({
             "ok": false,
             "error": runtime_error_code(error),
             "message": error.to_string(),
-            "next": runtime_error_next_step(error),
-        }),
-        RuntimeError::Api {
-            status,
-            body,
-            auth_source,
-            ..
-        } => {
-            let api_details = ApiErrorDetails::parse(body);
-            let next = api_next_step(*status, &api_details);
-            serde_json::json!({
-                "ok": false,
-                "error": runtime_error_code(error),
-                "message": error.to_string(),
-                "status": status,
-                "body": body,
-                "api_error": api_details.error.as_deref(),
-                "api_code": api_details.code.as_deref(),
-                "api_next": api_details.next.as_deref(),
-                "auth_source": auth_source,
-                "next": next,
-            })
+            "status": status,
+            "body": body,
+            "api_error": api_details.error.as_deref(),
+            "api_code": api_details.code.as_deref(),
+            "api_next": api_details.next.as_deref(),
+            "auth_source": auth_source,
+            "next": next,
+        });
+        if *status == 429 && api_details.code.as_deref() == Some("rate_limited") {
+            if let Some(delay) = api_details.retry_after_seconds {
+                value["retry_after_seconds"] = serde_json::json!(delay);
+            }
         }
-        RuntimeError::StatusUnavailable {
-            api_url,
-            status_code,
-            body,
-            authenticated,
-            auth_source,
-            message,
-            ..
-        } => serde_json::json!({
+        value
+    } else if let RuntimeError::StatusUnavailable {
+        api_url,
+        status_code,
+        body,
+        authenticated,
+        auth_source,
+        message,
+        ..
+    } = error
+    {
+        serde_json::json!({
             "ok": false,
             "error": runtime_error_code(error),
             "status": "unreachable",
@@ -620,14 +569,15 @@ fn runtime_error_json(error: &RuntimeError) -> serde_json::Value {
             "authenticated": authenticated,
             "auth_source": auth_source,
             "message": message,
-            "next": runtime_error_next_step(error),
-        }),
-        RuntimeError::Cli(error) => serde_json::json!({
+            "next": fallback_runtime_error_next_step(error),
+        })
+    } else {
+        serde_json::json!({
             "ok": false,
-            "error": cli_error_code(error),
+            "error": runtime_error_code(error),
             "message": error.to_string(),
-            "next": cli_error_next_step(error),
-        }),
+            "next": fallback_runtime_error_next_step(error),
+        })
     }
 }
 
@@ -794,6 +744,8 @@ struct ApiErrorDetails {
     code: Option<String>,
     /// Backend-provided recovery step.
     next: Option<String>,
+    /// Positive whole-second delay, never used to retry automatically.
+    retry_after_seconds: Option<u64>,
 }
 
 impl ApiErrorDetails {
@@ -807,6 +759,10 @@ impl ApiErrorDetails {
             error: json_string_field(&value, "error"),
             code: json_string_field(&value, "code"),
             next: json_string_field(&value, "next"),
+            retry_after_seconds: value
+                .get("retry_after_seconds")
+                .and_then(serde_json::Value::as_u64)
+                .filter(|delay| *delay > 0),
         }
     }
 }
@@ -819,36 +775,6 @@ fn json_string_field(value: &serde_json::Value, key: &str) -> Option<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
-}
-
-/// Returns a useful next step for runtime errors when one is known.
-fn runtime_error_next_step(error: &RuntimeError) -> Cow<'static, str> {
-    match error {
-        RuntimeError::Api { status, body, .. } => {
-            let api_details = ApiErrorDetails::parse(body);
-            api_next_step(*status, &api_details)
-        }
-        RuntimeError::Cli(_)
-        | RuntimeError::Io(_)
-        | RuntimeError::Http(_)
-        | RuntimeError::MissingToken
-        | RuntimeError::InvestigationResponseInvalid
-        | RuntimeError::ExplainResponseInvalid
-        | RuntimeError::AnalyticsOverviewResponseInvalid
-        | RuntimeError::AnalyticsPropertiesResponseInvalid
-        | RuntimeError::AnalyticsResponseInvalid
-        | RuntimeError::AnalyticsFunnelResponseInvalid
-        | RuntimeError::AnalyticsRetentionResponseInvalid
-        | RuntimeError::AnalyticsLifecycleResponseInvalid
-        | RuntimeError::AnalyticsSegmentResponseInvalid
-        | RuntimeError::NativeDebugArtifactInvalid
-        | RuntimeError::NativeDebugResponseInvalid
-        | RuntimeError::NativeDebugVerificationFailed
-        | RuntimeError::StatusUnavailable { .. }
-        | RuntimeError::Unavailable { .. } => {
-            Cow::Borrowed(fallback_runtime_error_next_step(error))
-        }
-    }
 }
 
 /// Returns the API next step, preferring backend guidance when available.
