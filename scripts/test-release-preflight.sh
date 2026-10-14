@@ -66,8 +66,8 @@ case "$url" in
       printf '200'
     fi
     ;;
-  https://registry.npmjs.org/logbrew-cli)
-    if [[ "${LOGBREW_TEST_NPM_PACKAGE:-exists}" == "missing" ]]; then
+  https://registry.npmjs.org/logbrew-cli | https://registry.npmjs.org/@logbrew%2fcli-*)
+    if [[ "${url##*/}" == "${LOGBREW_TEST_NPM_PACKAGE:-}" ]]; then
       printf '{}\n' >"$output_file"
       printf '404'
     else
@@ -289,7 +289,7 @@ if ! grep -Fq "Release preflight failed: crates.io package logbrew-cli does not 
 fi
 
 : >"$output_file"
-if LOGBREW_TEST_SECRETS=all LOGBREW_TEST_NPM_PACKAGE=missing PATH="$tmp_dir:$PATH" bash scripts/release-preflight.sh v0.1.0 >"$output_file" 2>&1; then
+if LOGBREW_TEST_SECRETS=all LOGBREW_TEST_NPM_PACKAGE=logbrew-cli PATH="$tmp_dir:$PATH" bash scripts/release-preflight.sh v0.1.0 >"$output_file" 2>&1; then
   printf 'expected release preflight to fail when trusted npm bootstrap is missing\n' >&2
   cat "$output_file" >&2
   exit 1
@@ -297,6 +297,20 @@ fi
 
 if ! grep -Fq "Release preflight failed: npm package logbrew-cli does not exist yet; trusted publishing requires a first manual package publish before CI release tags" "$output_file"; then
   printf 'expected release preflight to explain missing npm trusted bootstrap\n' >&2
+  printf 'actual output:\n' >&2
+  cat "$output_file" >&2
+  exit 1
+fi
+
+: >"$output_file"
+if LOGBREW_TEST_SECRETS=all LOGBREW_TEST_NPM_PACKAGE=@logbrew%2fcli-win32-x64 PATH="$tmp_dir:$PATH" bash scripts/release-preflight.sh v0.1.0 >"$output_file" 2>&1; then
+  printf 'expected release preflight to fail when a trusted npm platform package bootstrap is missing\n' >&2
+  cat "$output_file" >&2
+  exit 1
+fi
+
+if ! grep -Fq "Release preflight failed: npm package @logbrew/cli-win32-x64 does not exist yet; trusted publishing requires a first manual package publish before CI release tags" "$output_file"; then
+  printf 'expected release preflight to explain missing npm platform package bootstrap\n' >&2
   printf 'actual output:\n' >&2
   cat "$output_file" >&2
   exit 1

@@ -236,12 +236,34 @@ jobs:
           cp "$audit_repo/Formula/logbrew.rb" target/distrib/logbrew.rb
           cleanup_audit_tap
           trap - EXIT
+      - name: Pack npm packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(jq -r '.releases | map(select(.app_name == "logbrew-cli")) | if length == 1 then .[0].app_version else "" end' dist-manifest.json)"
+          binaries=()
+          for archive in target/distrib/logbrew-cli-*.tar.xz target/distrib/logbrew-cli-*.zip; do
+            target="$(basename "$archive")"
+            target="${target#logbrew-cli-}"
+            target="${target%.tar.xz}"
+            target="${target%.zip}"
+            mkdir "$RUNNER_TEMP/$target"
+            if [[ "$archive" == *.zip ]]; then unzip -q "$archive" -d "$RUNNER_TEMP/$target"; else tar -xJf "$archive" -C "$RUNNER_TEMP/$target"; fi
+            binaries+=("$target=$(find "$RUNNER_TEMP/$target" -type f \( -name logbrew -o -name logbrew.exe \))")
+          done
+          [[ "${#binaries[@]}" -eq 5 ]] || exit 1
+          bash scripts/npm-packages.sh "$version" target/npm "${binaries[@]}"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: artifacts-build-global
           path: |
             ${{ steps.cargo-dist.outputs.paths }}
             ${{ env.BUILD_MANIFEST_NAME }}
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: npm-packages
+          path: target/npm/*.tgz
+          if-no-files-found: error
 
   custom-publish-npm-trusted:
     needs: plan

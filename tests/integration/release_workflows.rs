@@ -4,6 +4,9 @@ const NPM: &str = include_str!("../../.github/workflows/publish-npm-trusted.yml"
 const HOMEBREW: &str = include_str!("../../.github/workflows/publish-homebrew-tap.yml");
 const PUBLISH_BOUNDARY: &str = include_str!("../../scripts/validate-publish-boundary.sh");
 const DIST: &str = include_str!("../../dist-workspace.toml");
+const NPM_PACKAGE: &str = include_str!("../../npm/package.json");
+const NPM_PACKAGES: &str = include_str!("../../scripts/npm-packages.sh");
+const PREFLIGHT: &str = include_str!("../../scripts/release-preflight.sh");
 
 fn ordered(text: &str, values: &[&str]) -> bool {
     values
@@ -58,6 +61,8 @@ fn release_workflows_prebuild_publish_and_recover_safely() -> crate::TestResult 
         "gh release create \"$GITHUB_REF_NAME\" --target \"$GITHUB_SHA\"",
         "Verify public shell installation",
         "cmp \"$installer\" target/distrib/logbrew-cli-installer.sh",
+        "bash scripts/npm-packages.sh \"$version\" target/npm \"${binaries[@]}\"",
+        "name: npm-packages\n          path: target/npm/*.tgz",
     ] {
         assert!(RELEASE.contains(required), "missing {required}");
     }
@@ -123,7 +128,6 @@ fn publication_requires_verified_source_and_single_upload() {
             "--repo \"$GITHUB_REPOSITORY\"",
             ".headSha == $target",
             "run-id: ${{ inputs.artifacts_run_id }}",
-            "pattern: artifacts-build-global",
         ] {
             assert!(
                 source.contains(required) || PUBLISH_BOUNDARY.contains(required),
@@ -133,7 +137,15 @@ fn publication_requires_verified_source_and_single_upload() {
         assert!(source.contains("validate-publish-boundary.sh"));
     }
     assert_eq!(PUBLISH_BOUNDARY.matches("|| exit 1").count(), 5);
-    assert!(NPM.contains("npm publish --access public \"./${packages[0]}\""));
+    assert!(HOMEBREW.contains("pattern: artifacts-build-global"));
+    assert!(NPM.contains("name: npm-packages") && !NPM.contains("artifacts-build-global"));
+    assert_eq!(
+        NPM.matches("npm publish --access public \"./$tarball\"")
+            .count(),
+        1
+    );
+    assert!(NPM.contains("(has(\"scripts\") | not)"));
+    assert!(NPM.contains("[[ \"$published\" == \"$integrity\" ]] || exit 1"));
     assert!(NPM.contains("node-version: \"24.19.0\"") && !NPM.contains("npm install --global"));
     assert!(!NPM.contains("  workflow_dispatch:"));
 
@@ -174,4 +186,43 @@ fn publication_requires_verified_source_and_single_upload() {
     for source in [RELEASE, CRATES, NPM, HOMEBREW] {
         assert!(!source.contains("pull_request_target") && !source.contains("schedule:"));
     }
+}
+
+#[test]
+fn npm_release_publishes_script_free_platform_packages_first() -> crate::TestResult {
+    let manifest: serde_json::Value = serde_json::from_str(NPM_PACKAGE)?;
+    assert_eq!(manifest["name"], "logbrew-cli");
+    assert_eq!(
+        manifest["bin"],
+        serde_json::json!({"logbrew": "bin/logbrew.js"})
+    );
+    assert!(manifest.get("scripts").is_none());
+    let platforms = manifest["optionalDependencies"]
+        .as_object()
+        .ok_or("optional dependencies missing")?
+        .keys()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    assert_eq!(platforms.len(), 5);
+    let mut publish_order = platforms.clone();
+    publish_order.push("logbrew-cli; do");
+    assert!(
+        ordered(NPM, &publish_order),
+        "platform packages must publish first"
+    );
+    for platform in platforms {
+        let suffix = platform
+            .strip_prefix("@logbrew/cli-")
+            .ok_or("unexpected platform package scope")?;
+        let (os, cpu) = suffix
+            .split_once('-')
+            .ok_or("unexpected platform package")?;
+        assert!(
+            NPM_PACKAGES.contains(&format!("os={os} cpu={cpu} ;;")),
+            "packer misses {platform}"
+        );
+        assert!(PREFLIGHT.contains(platform), "preflight misses {platform}");
+    }
+    assert!(!DIST.contains("\"npm\""));
+    Ok(())
 }

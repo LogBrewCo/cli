@@ -464,6 +464,8 @@ class PublicInstallVerifierTests(unittest.TestCase):
             cargo_record["rustup_home"],
             str(self.temp_dir / "tool-home" / ".rustup"),
         )
+        npm_record = next(record for record in records if record["command"] == "npm")
+        self.assertIn("--ignore-scripts", npm_record["args"])
         brew_args = [
             record["args"] for record in records if record["command"] == "brew"
         ]
