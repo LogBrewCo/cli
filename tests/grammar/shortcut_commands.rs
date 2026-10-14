@@ -1,14 +1,14 @@
 //! CLI real-user shortcut tests.
 
+use super::{TestResult, assert_command, assert_path};
 use logbrew_cli::{
     CliError, Command, ExplainTarget, IssueOccurrenceSelection, ReadOptions, ReadTarget, SetTarget,
     WatchOptions, WatchTarget, parse_command,
 };
 
 #[test]
-fn parses_top_level_singular_collection_shortcuts() {
-    let log = parse_command(["logbrew", "log", "--release", "checkout@1", "--json"])
-        .expect("log shortcut parses");
+fn parses_top_level_singular_collection_shortcuts() -> TestResult {
+    let log = parse_command(["logbrew", "log", "--release", "checkout@1", "--json"])?;
     assert_eq!(
         log,
         Command::Read {
@@ -21,7 +21,7 @@ fn parses_top_level_singular_collection_shortcuts() {
         }
     );
     assert_eq!(
-        log.http_path().expect("log shortcut has endpoint"),
+        log.http_path().ok_or("log shortcut has endpoint")?,
         "/api/logs?release=checkout%401"
     );
 
@@ -31,8 +31,7 @@ fn parses_top_level_singular_collection_shortcuts() {
         "--environment",
         "production",
         "--json",
-    ])
-    .expect("release shortcut parses");
+    ])?;
     assert_eq!(
         release,
         Command::Read {
@@ -45,13 +44,14 @@ fn parses_top_level_singular_collection_shortcuts() {
         }
     );
     assert_eq!(
-        release.http_path().expect("release shortcut has endpoint"),
+        release.http_path().ok_or("release shortcut has endpoint")?,
         "/api/telemetry/releases?environment=production"
     );
+    Ok(())
 }
 
 #[test]
-fn parses_common_human_terms_as_read_shortcuts() {
+fn parses_common_human_terms_as_read_shortcuts() -> TestResult {
     let errors = parse_command([
         "logbrew",
         "errors",
@@ -60,8 +60,7 @@ fn parses_common_human_terms_as_read_shortcuts() {
         "--release",
         "checkout@1",
         "--json",
-    ])
-    .expect("errors shortcut parses");
+    ])?;
 
     assert_eq!(
         errors,
@@ -76,7 +75,7 @@ fn parses_common_human_terms_as_read_shortcuts() {
         }
     );
     assert_eq!(
-        errors.http_path().expect("errors shortcut has endpoint"),
+        errors.http_path().ok_or("errors shortcut has endpoint")?,
         "/api/telemetry/issues?status=unresolved&release=checkout%401"
     );
 
@@ -88,8 +87,7 @@ fn parses_common_human_terms_as_read_shortcuts() {
         "--environment",
         "production",
         "--json",
-    ])
-    .expect("events shortcut parses");
+    ])?;
 
     assert_eq!(
         events,
@@ -104,38 +102,86 @@ fn parses_common_human_terms_as_read_shortcuts() {
         }
     );
     assert_eq!(
-        events.http_path().expect("events shortcut has endpoint"),
+        events.http_path().ok_or("events shortcut has endpoint")?,
         "/api/telemetry/actions?name=checkout_failed&environment=production"
     );
 
-    let read_exceptions =
-        parse_command(["logbrew", "read", "exceptions", "--json"]).expect("exceptions parse");
+    let read_exceptions = parse_command(["logbrew", "read", "exceptions", "--json"])?;
     assert_eq!(
         read_exceptions,
         Command::Read {
             target: ReadTarget::Issues,
-            options: Box::new(ReadOptions {
-                ..ReadOptions::default()
-            }),
+            options: Box::default(),
             json: true,
         }
     );
 
-    let read_event = parse_command(["logbrew", "read", "event", "--json"]).expect("event parse");
+    let read_event = parse_command(["logbrew", "read", "event", "--json"])?;
     assert_eq!(
         read_event,
         Command::Read {
             target: ReadTarget::Actions,
-            options: Box::new(ReadOptions {
-                ..ReadOptions::default()
-            }),
+            options: Box::default(),
             json: true,
         }
     );
+    Ok(())
 }
 
 #[test]
 fn parses_issue_status_words_as_issue_list_filters() {
+    for (args, expected_path) in [
+        (
+            &["logbrew", "latest", "issues", "ignored", "--json"][..],
+            "/api/telemetry/issues?status=ignored",
+        ),
+        (
+            &["logbrew", "last", "open", "issues", "--json"],
+            "/api/telemetry/issues?status=unresolved",
+        ),
+        (
+            &["logbrew", "read", "exceptions", "unresolved", "--json"],
+            "/api/telemetry/issues?status=unresolved",
+        ),
+        (
+            &["logbrew", "issue", "open", "--json"],
+            "/api/telemetry/issues?status=unresolved",
+        ),
+        (
+            &["logbrew", "read", "open", "issue", "--json"],
+            "/api/telemetry/issues?status=unresolved",
+        ),
+        (
+            &["logbrew", "read", "issue", "closed", "--json"],
+            "/api/telemetry/issues?status=resolved",
+        ),
+        (
+            &["logbrew", "show", "issue", "ignored", "--json"],
+            "/api/telemetry/issues?status=ignored",
+        ),
+        (
+            &["logbrew", "open", "issue", "--json"],
+            "/api/telemetry/issues?status=unresolved",
+        ),
+        (
+            &["logbrew", "last", "closed", "issue", "--json"],
+            "/api/telemetry/issues?status=resolved",
+        ),
+        (
+            &["logbrew", "ignored", "exceptions", "--json"],
+            "/api/telemetry/issues?status=ignored",
+        ),
+        (
+            &["logbrew", "resolved", "issues", "--json"],
+            "/api/telemetry/issues?status=resolved",
+        ),
+    ] {
+        assert_path(args, expected_path);
+    }
+}
+
+#[test]
+fn parses_issue_status_shortcuts_with_scope_and_count() {
     for (args, expected_path) in [
         (
             &[
@@ -160,14 +206,6 @@ fn parses_issue_status_words_as_issue_list_filters() {
             "/api/telemetry/issues?status=resolved&environment=production",
         ),
         (
-            &["logbrew", "latest", "issues", "ignored", "--json"],
-            "/api/telemetry/issues?status=ignored",
-        ),
-        (
-            &["logbrew", "last", "open", "issues", "--json"],
-            "/api/telemetry/issues?status=unresolved",
-        ),
-        (
             &["logbrew", "last", "5", "open", "issues", "--json"],
             "/api/telemetry/issues?status=unresolved&limit=5",
         ),
@@ -176,26 +214,6 @@ fn parses_issue_status_words_as_issue_list_filters() {
                 "logbrew", "read", "recent", "3", "closed", "errors", "--json",
             ],
             "/api/telemetry/issues?status=resolved&limit=3",
-        ),
-        (
-            &["logbrew", "read", "exceptions", "unresolved", "--json"],
-            "/api/telemetry/issues?status=unresolved",
-        ),
-        (
-            &["logbrew", "issue", "open", "--json"],
-            "/api/telemetry/issues?status=unresolved",
-        ),
-        (
-            &["logbrew", "read", "open", "issue", "--json"],
-            "/api/telemetry/issues?status=unresolved",
-        ),
-        (
-            &["logbrew", "read", "issue", "closed", "--json"],
-            "/api/telemetry/issues?status=resolved",
-        ),
-        (
-            &["logbrew", "show", "issue", "ignored", "--json"],
-            "/api/telemetry/issues?status=ignored",
         ),
         (
             &[
@@ -207,10 +225,6 @@ fn parses_issue_status_words_as_issue_list_filters() {
                 "--json",
             ],
             "/api/telemetry/issues?status=unresolved&release=checkout%401",
-        ),
-        (
-            &["logbrew", "open", "issue", "--json"],
-            "/api/telemetry/issues?status=unresolved",
         ),
         (
             &[
@@ -235,35 +249,19 @@ fn parses_issue_status_words_as_issue_list_filters() {
             "/api/telemetry/issues?status=resolved&environment=production",
         ),
         (
-            &["logbrew", "last", "closed", "issue", "--json"],
-            "/api/telemetry/issues?status=resolved",
-        ),
-        (
             &["logbrew", "last", "5", "closed", "issue", "--json"],
             "/api/telemetry/issues?status=resolved&limit=5",
         ),
-        (
-            &["logbrew", "ignored", "exceptions", "--json"],
-            "/api/telemetry/issues?status=ignored",
-        ),
-        (
-            &["logbrew", "resolved", "issues", "--json"],
-            "/api/telemetry/issues?status=resolved",
-        ),
     ] {
-        let command = parse_command(args.iter().copied()).expect("issue status shortcut parses");
-
-        assert_eq!(
-            command.http_path().expect("issue list has endpoint"),
-            expected_path
-        );
+        assert_path(args, expected_path);
     }
 }
 
 #[test]
-fn keeps_filter_words_before_issue_status_shortcuts_recoverable() {
+fn keeps_filter_words_before_issue_status_shortcuts_recoverable() -> TestResult {
     let error = parse_command(["logbrew", "issues", "release", "checkout@1", "--json"])
-        .expect_err("filter word before issue status fails");
+        .err()
+        .ok_or("filter word before issue status fails")?;
 
     assert_eq!(
         error,
@@ -282,7 +280,8 @@ fn keeps_filter_words_before_issue_status_shortcuts_recoverable() {
         "checkout@1",
         "--json",
     ])
-    .expect_err("filter word after status-first issue shortcut fails");
+    .err()
+    .ok_or("filter word after status-first issue shortcut fails")?;
 
     assert_eq!(
         status_first_error,
@@ -292,12 +291,12 @@ fn keeps_filter_words_before_issue_status_shortcuts_recoverable() {
             next: "use --release <release>",
         }
     );
+    Ok(())
 }
 
 #[test]
-fn parses_recency_words_as_read_shortcuts() {
-    let latest_logs = parse_command(["logbrew", "latest", "logs", "--limit", "20", "--json"])
-        .expect("latest logs parses");
+fn parses_recency_words_as_read_shortcuts() -> TestResult {
+    let latest_logs = parse_command(["logbrew", "latest", "logs", "--limit", "20", "--json"])?;
     assert_eq!(
         latest_logs,
         Command::Read {
@@ -310,24 +309,22 @@ fn parses_recency_words_as_read_shortcuts() {
         }
     );
     assert_eq!(
-        latest_logs.http_path().expect("latest logs has endpoint"),
+        latest_logs.http_path().ok_or("latest logs has endpoint")?,
         "/api/logs?limit=20"
     );
 
     let recent_issues =
-        parse_command(["logbrew", "recent", "issues", "--status", "open", "--json"])
-            .expect("recent issues parses");
+        parse_command(["logbrew", "recent", "issues", "--status", "open", "--json"])?;
     assert_eq!(
         recent_issues
             .http_path()
-            .expect("recent issues has endpoint"),
+            .ok_or("recent issues has endpoint")?,
         "/api/telemetry/issues?status=unresolved"
     );
 
-    let last_action = parse_command(["logbrew", "last", "action", "checkout_failed", "--json"])
-        .expect("last action parses");
+    let last_action = parse_command(["logbrew", "last", "action", "checkout_failed", "--json"])?;
     assert_eq!(
-        last_action.http_path().expect("last action has endpoint"),
+        last_action.http_path().ok_or("last action has endpoint")?,
         "/api/telemetry/actions?name=checkout_failed"
     );
 
@@ -338,14 +335,14 @@ fn parses_recency_words_as_read_shortcuts() {
         "--environment",
         "production",
         "--json",
-    ])
-    .expect("newest release parses");
+    ])?;
     assert_eq!(
         newest_release
             .http_path()
-            .expect("newest release has endpoint"),
+            .ok_or("newest release has endpoint")?,
         "/api/telemetry/releases?environment=production"
     );
+    Ok(())
 }
 
 #[test]
@@ -385,17 +382,12 @@ fn parses_recency_count_before_resource_as_limit() {
             "/api/telemetry/releases?environment=production&limit=2",
         ),
     ] {
-        let command = parse_command(args.iter().copied()).expect("recency count shortcut parses");
-
-        assert_eq!(
-            command.http_path().expect("recency count has endpoint"),
-            expected_path
-        );
+        assert_path(args, expected_path);
     }
 }
 
 #[test]
-fn parses_read_prefixed_recency_and_status_shortcuts() {
+fn parses_read_prefixed_recency_and_status_shortcuts() -> TestResult {
     for (args, expected_path) in [
         (
             &[
@@ -457,19 +449,20 @@ fn parses_read_prefixed_recency_and_status_shortcuts() {
             "/api/telemetry/issues?status=resolved&environment=production",
         ),
     ] {
-        let command = parse_command(args.iter().copied()).expect("read-prefixed shortcut parses");
+        let command = parse_command(args.iter().copied())?;
 
         assert_eq!(
             command
                 .http_path()
-                .expect("read-prefixed shortcut has endpoint"),
+                .ok_or("read-prefixed shortcut has endpoint")?,
             expected_path
         );
     }
+    Ok(())
 }
 
 #[test]
-fn keeps_filter_words_after_read_prefixed_status_shortcuts_recoverable() {
+fn keeps_filter_words_after_read_prefixed_status_shortcuts_recoverable() -> TestResult {
     let error = parse_command([
         "logbrew",
         "read",
@@ -479,7 +472,8 @@ fn keeps_filter_words_after_read_prefixed_status_shortcuts_recoverable() {
         "checkout@1",
         "--json",
     ])
-    .expect_err("filter word after read-prefixed status shortcut fails");
+    .err()
+    .ok_or("filter word after read-prefixed status shortcut fails")?;
 
     assert_eq!(
         error,
@@ -489,6 +483,7 @@ fn keeps_filter_words_after_read_prefixed_status_shortcuts_recoverable() {
             next: "use --release <release>",
         }
     );
+    Ok(())
 }
 
 #[test]
@@ -528,17 +523,12 @@ fn parses_positional_log_level_shortcuts_for_noisy_logs() {
             "/api/logs?severity=warning&search=checkout%20failed&release=api%401",
         ),
     ] {
-        let command = parse_command(args.iter().copied()).expect("command parses");
-
-        assert_eq!(
-            command.http_path().expect("read logs has endpoint"),
-            expected_path
-        );
+        assert_path(args, expected_path);
     }
 }
 
 #[test]
-fn rejects_filter_words_after_positional_log_level_shortcuts() {
+fn rejects_filter_words_after_positional_log_level_shortcuts() -> TestResult {
     let error = parse_command([
         "logbrew",
         "logs",
@@ -547,7 +537,8 @@ fn rejects_filter_words_after_positional_log_level_shortcuts() {
         "checkout@1",
         "--json",
     ])
-    .expect_err("filter word after positional log level fails");
+    .err()
+    .ok_or("filter word after positional log level fails")?;
 
     assert_eq!(
         error,
@@ -557,6 +548,7 @@ fn rejects_filter_words_after_positional_log_level_shortcuts() {
             next: "use --release <release>",
         }
     );
+    Ok(())
 }
 
 #[test]
@@ -581,12 +573,7 @@ fn parses_natural_log_search_after_log_shortcuts() {
             "/api/logs?severity=error&search=checkout%20failed&release=api%401",
         ),
     ] {
-        let command = parse_command(args.iter().copied()).expect("natural logs search parses");
-
-        assert_eq!(
-            command.http_path().expect("read logs has endpoint"),
-            expected_path
-        );
+        assert_path(args, expected_path);
     }
 }
 
@@ -671,17 +658,12 @@ fn parses_natural_log_search_after_explicit_log_filters() {
             "/api/logs?service_name=checkout-api&search=checkout%20failed",
         ),
     ] {
-        let command = parse_command(args.iter().copied()).expect("explicit filter search parses");
-
-        assert_eq!(
-            command.http_path().expect("read logs has endpoint"),
-            expected_path
-        );
+        assert_path(args, expected_path);
     }
 }
 
 #[test]
-fn keeps_ambiguous_log_positionals_as_recoverable_errors() {
+fn keeps_ambiguous_log_positionals_as_recoverable_errors() -> TestResult {
     for (args, expected_argument, expected_next) in [
         (
             &["logbrew", "logs", "checkout@1.2.3", "--json"][..],
@@ -707,7 +689,9 @@ fn keeps_ambiguous_log_positionals_as_recoverable_errors() {
             "use --release <release>",
         ),
     ] {
-        let error = parse_command(args.iter().copied()).expect_err("ambiguous positional fails");
+        let error = parse_command(args.iter().copied())
+            .err()
+            .ok_or("ambiguous positional fails")?;
 
         assert_eq!(
             error,
@@ -718,10 +702,11 @@ fn keeps_ambiguous_log_positionals_as_recoverable_errors() {
             }
         );
     }
+    Ok(())
 }
 
 #[test]
-fn parses_action_aliases_with_names_as_name_filters() {
+fn parses_action_aliases_with_names_as_name_filters() -> TestResult {
     let events = parse_command([
         "logbrew",
         "events",
@@ -731,8 +716,7 @@ fn parses_action_aliases_with_names_as_name_filters() {
         "--environment",
         "production",
         "--json",
-    ])
-    .expect("event name shortcut parses");
+    ])?;
 
     assert_eq!(
         events,
@@ -750,7 +734,7 @@ fn parses_action_aliases_with_names_as_name_filters() {
     assert_eq!(
         events
             .http_path()
-            .expect("event name shortcut has endpoint"),
+            .ok_or("event name shortcut has endpoint")?,
         "/api/telemetry/actions?name=checkout_failed&release=checkout%401&environment=production"
     );
 
@@ -761,8 +745,7 @@ fn parses_action_aliases_with_names_as_name_filters() {
         "checkout_failed",
         "--env",
         "production",
-    ])
-    .expect("global json action name shortcut parses");
+    ])?;
     assert_eq!(
         action,
         Command::Read {
@@ -778,12 +761,11 @@ fn parses_action_aliases_with_names_as_name_filters() {
     assert_eq!(
         action
             .http_path()
-            .expect("action name shortcut has endpoint"),
+            .ok_or("action name shortcut has endpoint")?,
         "/api/telemetry/actions?name=checkout_failed&environment=production"
     );
 
-    let read_events = parse_command(["logbrew", "read", "events", "checkout_failed", "--json"])
-        .expect("read event name shortcut parses");
+    let read_events = parse_command(["logbrew", "read", "events", "checkout_failed", "--json"])?;
     assert_eq!(
         read_events,
         Command::Read {
@@ -798,22 +780,22 @@ fn parses_action_aliases_with_names_as_name_filters() {
     assert_eq!(
         read_events
             .http_path()
-            .expect("read event name shortcut has endpoint"),
+            .ok_or("read event name shortcut has endpoint")?,
         "/api/telemetry/actions?name=checkout_failed"
     );
 
-    let read_action = parse_command(["logbrew", "read", "action", "checkout_failed", "--json"])
-        .expect("read action name shortcut parses");
+    let read_action = parse_command(["logbrew", "read", "action", "checkout_failed", "--json"])?;
     assert_eq!(
         read_action
             .http_path()
-            .expect("read action name shortcut has endpoint"),
+            .ok_or("read action name shortcut has endpoint")?,
         "/api/telemetry/actions?name=checkout_failed"
     );
+    Ok(())
 }
 
 #[test]
-fn parses_live_reading_verbs_as_watch_shortcuts() {
+fn parses_live_reading_verbs_as_watch_shortcuts() -> TestResult {
     for (args, expected_target, expected_json) in [
         (
             &["logbrew", "tail", "logs", "--json"][..],
@@ -836,7 +818,7 @@ fn parses_live_reading_verbs_as_watch_shortcuts() {
             true,
         ),
     ] {
-        let command = parse_command(args.iter().copied()).expect("watch shortcut parses");
+        let command = parse_command(args.iter().copied())?;
 
         assert_eq!(
             command,
@@ -848,10 +830,11 @@ fn parses_live_reading_verbs_as_watch_shortcuts() {
         );
         assert!(command.http_path().is_none());
     }
+    Ok(())
 }
 
 #[test]
-fn parses_issue_status_shortcuts_as_mutations() {
+fn parses_issue_status_shortcuts_as_mutations() -> TestResult {
     for (args, expected_status) in [
         (
             &["logbrew", "resolve", "issue_123", "--json"][..],
@@ -897,7 +880,7 @@ fn parses_issue_status_shortcuts_as_mutations() {
         (&["logbrew", "issue_123", "ignored", "--json"], "ignored"),
         (&["logbrew", "issue_123", "open", "--json"], "unresolved"),
     ] {
-        let command = parse_command(args.iter().copied()).expect("status shortcut parses");
+        let command = parse_command(args.iter().copied())?;
 
         assert_eq!(
             command,
@@ -910,25 +893,26 @@ fn parses_issue_status_shortcuts_as_mutations() {
             }
         );
         assert_eq!(
-            command.http_path().expect("status shortcut has endpoint"),
+            command.http_path().ok_or("status shortcut has endpoint")?,
             "/api/telemetry/issues/issue_123"
         );
         assert_eq!(
-            command.request_body().expect("status shortcut has body"),
+            command.request_body().ok_or("status shortcut has body")?,
             serde_json::json!({ "status": expected_status })
         );
     }
+    Ok(())
 }
 
 #[test]
-fn parses_issue_aliases_with_ids_as_issue_detail_shortcuts() {
+fn parses_issue_aliases_with_ids_as_issue_detail_shortcuts() -> TestResult {
     for args in [
         &["logbrew", "issues", "issue_123", "--json"][..],
         &["logbrew", "errors", "issue_123", "--json"],
         &["logbrew", "exception", "--json", "issue-123"],
         &["logbrew", "read", "exceptions", "issue_123", "--json"],
     ] {
-        let command = parse_command(args.iter().copied()).expect("issue alias id parses");
+        let command = parse_command(args.iter().copied())?;
 
         let expected_id = if args.contains(&"issue-123") {
             "issue-123"
@@ -944,125 +928,74 @@ fn parses_issue_aliases_with_ids_as_issue_detail_shortcuts() {
             }
         );
         assert_eq!(
-            command.http_path().expect("issue alias id has endpoint"),
+            command.http_path().ok_or("issue alias id has endpoint")?,
             format!("/api/telemetry/issues/{expected_id}")
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn parses_json_before_shortcut_ids() {
+    for (args, target) in [
+        (
+            &["logbrew", "issue", "--json", "issue_123"][..],
+            ReadTarget::Issue("issue_123".to_owned()),
+        ),
+        (
+            &["logbrew", "trace", "--json", "trace-123"][..],
+            ReadTarget::Trace("trace-123".to_owned()),
+        ),
+    ] {
+        assert_command(
+            args,
+            Command::Read {
+                target,
+                options: Box::default(),
+                json: true,
+            },
+        );
+    }
+    for args in [
+        &["logbrew", "resolve", "--json", "issue_123"][..],
+        &["logbrew", "issue", "--json", "issue_123", "resolve"],
+        &["logbrew", "issue_123", "resolve", "--json"],
+        &["logbrew", "--json", "issue_123", "close"],
+    ] {
+        assert_command(
+            args,
+            Command::Set {
+                target: SetTarget::IssueStatus {
+                    id: "issue_123".to_owned(),
+                    status: "resolved".to_owned(),
+                },
+                json: true,
+            },
         );
     }
 }
 
 #[test]
-fn parses_json_before_shortcut_ids() {
-    let issue = parse_command(["logbrew", "issue", "--json", "issue_123"]).expect("issue parses");
-    assert_eq!(
-        issue,
-        Command::Read {
-            target: ReadTarget::Issue("issue_123".to_owned()),
-            options: Box::default(),
-            json: true,
-        }
-    );
-
-    let trace = parse_command(["logbrew", "trace", "--json", "trace-123"]).expect("trace parses");
-    assert_eq!(
-        trace,
-        Command::Read {
-            target: ReadTarget::Trace("trace-123".to_owned()),
-            options: Box::default(),
-            json: true,
-        }
-    );
-
-    let resolve =
-        parse_command(["logbrew", "resolve", "--json", "issue_123"]).expect("resolve parses");
-    assert_eq!(
-        resolve,
-        Command::Set {
-            target: SetTarget::IssueStatus {
-                id: "issue_123".to_owned(),
-                status: "resolved".to_owned(),
-            },
-            json: true,
-        }
-    );
-
-    let issue_first_resolve = parse_command(["logbrew", "issue", "--json", "issue_123", "resolve"])
-        .expect("issue-first resolve parses");
-    assert_eq!(
-        issue_first_resolve,
-        Command::Set {
-            target: SetTarget::IssueStatus {
-                id: "issue_123".to_owned(),
-                status: "resolved".to_owned(),
-            },
-            json: true,
-        }
-    );
-
-    let pasted_id_resolve = parse_command(["logbrew", "issue_123", "resolve", "--json"])
-        .expect("pasted id resolve parses");
-    assert_eq!(
-        pasted_id_resolve,
-        Command::Set {
-            target: SetTarget::IssueStatus {
-                id: "issue_123".to_owned(),
-                status: "resolved".to_owned(),
-            },
-            json: true,
-        }
-    );
-
-    let pasted_id_close =
-        parse_command(["logbrew", "--json", "issue_123", "close"]).expect("pasted id close parses");
-    assert_eq!(
-        pasted_id_close,
-        Command::Set {
-            target: SetTarget::IssueStatus {
-                id: "issue_123".to_owned(),
-                status: "resolved".to_owned(),
-            },
-            json: true,
-        }
-    );
-}
-
-#[test]
 fn parses_trace_vocabulary_with_ids_as_trace_detail_shortcuts() {
     let trace_id = "4bf92f3577b34da6a3ce929d0e0e4736";
-
-    let traces = parse_command(["logbrew", "traces", trace_id, "--json"]).expect("traces parses");
-    assert_eq!(
-        traces,
-        Command::Read {
-            target: ReadTarget::Trace(trace_id.to_owned()),
-            options: Box::default(),
-            json: true,
-        }
-    );
-
-    let spans = parse_command(["logbrew", "spans", "--json", trace_id]).expect("spans parses");
-    assert_eq!(
-        spans,
-        Command::Read {
-            target: ReadTarget::Trace(trace_id.to_owned()),
-            options: Box::default(),
-            json: true,
-        }
-    );
-
-    let read_spans =
-        parse_command(["logbrew", "read", "spans", trace_id, "--json"]).expect("read spans parses");
-    assert_eq!(
-        read_spans,
-        Command::Read {
-            target: ReadTarget::Trace(trace_id.to_owned()),
-            options: Box::default(),
-            json: true,
-        }
-    );
+    for args in [
+        &["logbrew", "traces", trace_id, "--json"][..],
+        &["logbrew", "spans", "--json", trace_id],
+        &["logbrew", "read", "spans", trace_id, "--json"],
+    ] {
+        assert_command(
+            args,
+            Command::Read {
+                target: ReadTarget::Trace(trace_id.to_owned()),
+                options: Box::default(),
+                json: true,
+            },
+        );
+    }
 }
 
 #[test]
-fn parses_common_read_verbs_as_read_shortcuts() {
+fn parses_common_read_verbs_as_read_shortcuts() -> TestResult {
     let show_logs = parse_command([
         "logbrew",
         "show",
@@ -1070,8 +1003,7 @@ fn parses_common_read_verbs_as_read_shortcuts() {
         "--release",
         "checkout@1",
         "--json",
-    ])
-    .expect("show logs parses");
+    ])?;
 
     assert_eq!(
         show_logs,
@@ -1085,12 +1017,11 @@ fn parses_common_read_verbs_as_read_shortcuts() {
         }
     );
     assert_eq!(
-        show_logs.http_path().expect("show logs has endpoint"),
+        show_logs.http_path().ok_or("show logs has endpoint")?,
         "/api/logs?release=checkout%401"
     );
 
-    let list_errors = parse_command(["logbrew", "list", "errors", "--status", "open"])
-        .expect("list errors parses");
+    let list_errors = parse_command(["logbrew", "list", "errors", "--status", "open"])?;
     assert_eq!(
         list_errors,
         Command::Read {
@@ -1103,6 +1034,24 @@ fn parses_common_read_verbs_as_read_shortcuts() {
         }
     );
 
+    let get_issue = parse_command(["logbrew", "get", "issue", "issue_123", "--json"])?;
+    assert_eq!(
+        get_issue,
+        Command::Read {
+            target: ReadTarget::Issue("issue_123".to_owned()),
+            options: Box::default(),
+            json: true,
+        }
+    );
+    assert_eq!(
+        get_issue.http_path().ok_or("get issue has endpoint")?,
+        "/api/telemetry/issues/issue_123"
+    );
+    Ok(())
+}
+
+#[test]
+fn parses_singular_collections_with_read_verbs() -> TestResult {
     for (args, target, path) in [
         (
             &["logbrew", "show", "log", "--json"][..],
@@ -1150,7 +1099,7 @@ fn parses_common_read_verbs_as_read_shortcuts() {
             "/api/telemetry/releases",
         ),
     ] {
-        let command = parse_command(args.iter().copied()).expect("singular read parses");
+        let command = parse_command(args.iter().copied())?;
         assert_eq!(
             command,
             Command::Read {
@@ -1160,33 +1109,16 @@ fn parses_common_read_verbs_as_read_shortcuts() {
             }
         );
         assert_eq!(
-            command.http_path().expect("singular read has endpoint"),
+            command.http_path().ok_or("singular read has endpoint")?,
             path
         );
     }
-
-    let get_issue = parse_command(["logbrew", "get", "issue", "issue_123", "--json"])
-        .expect("get issue parses");
-    assert_eq!(
-        get_issue,
-        Command::Read {
-            target: ReadTarget::Issue("issue_123".to_owned()),
-            options: Box::new(ReadOptions {
-                ..ReadOptions::default()
-            }),
-            json: true,
-        }
-    );
-    assert_eq!(
-        get_issue.http_path().expect("get issue has endpoint"),
-        "/api/telemetry/issues/issue_123"
-    );
+    Ok(())
 }
 
 #[test]
-fn parses_pasted_explain_ids_without_resource_word() {
-    let issue = parse_command(["logbrew", "explain", "issue_123", "--json"])
-        .expect("explain issue id parses");
+fn parses_pasted_explain_ids_without_resource_word() -> TestResult {
+    let issue = parse_command(["logbrew", "explain", "issue_123", "--json"])?;
 
     assert_eq!(
         issue,
@@ -1199,7 +1131,7 @@ fn parses_pasted_explain_ids_without_resource_word() {
         }
     );
     assert_eq!(
-        issue.http_path().expect("inferred issue has endpoint"),
+        issue.http_path().ok_or("inferred issue has endpoint")?,
         "/api/telemetry/issues/issue_123/investigation?response_version=12&selection=recommended"
     );
 
@@ -1208,8 +1140,7 @@ fn parses_pasted_explain_ids_without_resource_word() {
         "explain",
         "123e4567-e89b-12d3-a456-426614174000",
         "--json",
-    ])
-    .expect("explain uuid issue parses");
+    ])?;
     assert_eq!(
         uuid_issue,
         Command::Explain {
@@ -1226,8 +1157,7 @@ fn parses_pasted_explain_ids_without_resource_word() {
         "explain",
         "4bf92f3577b34da6a3ce929d0e0e4736",
         "--json",
-    ])
-    .expect("explain trace id parses");
+    ])?;
 
     assert_eq!(
         trace,
@@ -1237,12 +1167,11 @@ fn parses_pasted_explain_ids_without_resource_word() {
         }
     );
     assert_eq!(
-        trace.http_path().expect("inferred trace has endpoint"),
+        trace.http_path().ok_or("inferred trace has endpoint")?,
         "/api/telemetry/traces/4bf92f3577b34da6a3ce929d0e0e4736/investigation?response_version=3"
     );
 
-    let issue_suffix = parse_command(["logbrew", "issue_123", "explain", "--json"])
-        .expect("issue id explain suffix parses");
+    let issue_suffix = parse_command(["logbrew", "issue_123", "explain", "--json"])?;
     assert_eq!(
         issue_suffix,
         Command::Explain {
@@ -1259,8 +1188,7 @@ fn parses_pasted_explain_ids_without_resource_word() {
         "--json",
         "4bf92f3577b34da6a3ce929d0e0e4736",
         "explain",
-    ])
-    .expect("trace id explain suffix parses");
+    ])?;
     assert_eq!(
         trace_suffix,
         Command::Explain {
@@ -1268,12 +1196,12 @@ fn parses_pasted_explain_ids_without_resource_word() {
             json: true,
         }
     );
+    Ok(())
 }
 
 #[test]
-fn parses_resource_detail_explain_suffixes() {
-    let issue = parse_command(["logbrew", "issue", "issue_123", "explain", "--json"])
-        .expect("issue detail explain suffix parses");
+fn parses_resource_detail_explain_suffixes() -> TestResult {
+    let issue = parse_command(["logbrew", "issue", "issue_123", "explain", "--json"])?;
     assert_eq!(
         issue,
         Command::Explain {
@@ -1291,8 +1219,7 @@ fn parses_resource_detail_explain_suffixes() {
         "trace",
         "4bf92f3577b34da6a3ce929d0e0e4736",
         "explain",
-    ])
-    .expect("trace detail explain suffix parses");
+    ])?;
     assert_eq!(
         trace,
         Command::Explain {
@@ -1300,11 +1227,12 @@ fn parses_resource_detail_explain_suffixes() {
             json: true,
         }
     );
+    Ok(())
 }
 
 #[test]
-fn parses_pasted_detail_ids_as_read_shortcuts() {
-    let issue = parse_command(["logbrew", "issue_123", "--json"]).expect("issue id parses");
+fn parses_pasted_detail_ids_as_read_shortcuts() -> TestResult {
+    let issue = parse_command(["logbrew", "issue_123", "--json"])?;
     assert_eq!(
         issue,
         Command::Read {
@@ -1314,12 +1242,11 @@ fn parses_pasted_detail_ids_as_read_shortcuts() {
         }
     );
     assert_eq!(
-        issue.http_path().expect("issue id has endpoint"),
+        issue.http_path().ok_or("issue id has endpoint")?,
         "/api/telemetry/issues/issue_123"
     );
 
-    let trace = parse_command(["logbrew", "--json", "4bf92f3577b34da6a3ce929d0e0e4736"])
-        .expect("trace id parses");
+    let trace = parse_command(["logbrew", "--json", "4bf92f3577b34da6a3ce929d0e0e4736"])?;
     assert_eq!(
         trace,
         Command::Read {
@@ -1329,7 +1256,8 @@ fn parses_pasted_detail_ids_as_read_shortcuts() {
         }
     );
     assert_eq!(
-        trace.http_path().expect("trace id has endpoint"),
+        trace.http_path().ok_or("trace id has endpoint")?,
         "/api/telemetry/traces/4bf92f3577b34da6a3ce929d0e0e4736"
     );
+    Ok(())
 }

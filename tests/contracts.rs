@@ -21,3 +21,29 @@ mod integration;
 mod investigation;
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
+
+fn assert_command(args: &[&str], expected: logbrew_cli::Command) {
+    assert_eq!(
+        logbrew_cli::parse_command(args.iter().copied()),
+        Ok(expected),
+        "unexpected command for {args:?}"
+    );
+}
+
+fn assert_help(args: &[&str], topic: logbrew_cli::HelpTopic, json: bool) {
+    assert_command(args, logbrew_cli::Command::Help { topic, json });
+}
+
+fn render_error(args: &[&str], json: bool) -> TestResult<String> {
+    let error = logbrew_cli::parse_command(args.iter().copied())
+        .err()
+        .ok_or("command must fail closed")?;
+    let mut output = Vec::new();
+    logbrew_cli::write_cli_error(&error, json, &mut output)?;
+    Ok(String::from_utf8(output)?)
+}
+
+fn rendered_json_error(args: &[&str]) -> TestResult<(serde_json::Value, String)> {
+    let text = render_error(args, true)?;
+    Ok((serde_json::from_str(&text)?, text))
+}

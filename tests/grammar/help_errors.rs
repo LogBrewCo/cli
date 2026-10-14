@@ -1,96 +1,66 @@
 //! CLI help error recovery tests.
 
-use logbrew_cli::{parse_command, write_cli_error};
+use super::{TestResult, assert_human_error, assert_json_error};
 
 #[test]
-fn rejects_unknown_flag_in_explicit_help() {
-    let error =
-        parse_command(["logbrew", "help", "logs", "--bogus", "--json"]).expect_err("bad help");
-    let mut output = Vec::new();
-
-    write_cli_error(&error, true, &mut output).expect("error writes");
-
-    let body: serde_json::Value = serde_json::from_slice(output.as_slice()).expect("valid json");
-    assert_eq!(body["ok"], false);
-    assert_eq!(body["error"], "unknown_flag");
-    assert_eq!(body["message"], "unknown flag: --bogus");
-    assert_eq!(body["next"], "run logbrew --help");
+fn rejects_unknown_flag_in_explicit_help() -> TestResult {
+    assert_json_error(
+        &["logbrew", "help", "logs", "--bogus", "--json"],
+        "unknown_flag",
+        "unknown flag: --bogus",
+        "run logbrew --help",
+    )
 }
 
 #[test]
-fn rejects_known_filter_flag_in_help_shortcut() {
-    let error = parse_command(["logbrew", "logs", "--help", "--release", "api@1"])
-        .expect_err("bad help shortcut");
-    let mut output = Vec::new();
-
-    write_cli_error(&error, false, &mut output).expect("error writes");
-
-    let text = String::from_utf8(output).expect("utf8 output");
-    assert_eq!(text, "unknown flag: --release\nNext: run logbrew --help\n");
+fn rejects_known_filter_flag_in_help_shortcut() -> TestResult {
+    assert_human_error(
+        &["logbrew", "logs", "--help", "--release", "api@1"],
+        "unknown flag: --release",
+        "run logbrew --help",
+    )
 }
 
 #[test]
-fn rejects_extra_argument_after_root_help() {
-    let error =
-        parse_command(["logbrew", "--help", "logs", "--json"]).expect_err("extra help argument");
-    let mut output = Vec::new();
-
-    write_cli_error(&error, true, &mut output).expect("error writes");
-
-    let body: serde_json::Value = serde_json::from_slice(output.as_slice()).expect("valid json");
-    assert_eq!(body["ok"], false);
-    assert_eq!(body["error"], "unexpected_argument");
-    assert_eq!(body["message"], "unexpected argument for help: logs");
-    assert_eq!(body["next"], "run logbrew --help");
+fn rejects_extra_argument_after_root_help() -> TestResult {
+    assert_json_error(
+        &["logbrew", "--help", "logs", "--json"],
+        "unexpected_argument",
+        "unexpected argument for help: logs",
+        "run logbrew --help",
+    )
 }
 
 #[test]
-fn rejects_extra_argument_in_help_shortcut() {
-    let error = parse_command(["logbrew", "logs", "--help", "checkout@1"])
-        .expect_err("extra help shortcut argument");
-    let mut output = Vec::new();
-
-    write_cli_error(&error, false, &mut output).expect("error writes");
-
-    let text = String::from_utf8(output).expect("utf8 output");
-    assert_eq!(
-        text,
-        "unexpected argument for help: checkout@1\nNext: run logbrew --help\n"
-    );
+fn rejects_extra_argument_in_help_shortcut() -> TestResult {
+    assert_human_error(
+        &["logbrew", "logs", "--help", "checkout@1"],
+        "unexpected argument for help: checkout@1",
+        "run logbrew --help",
+    )
 }
 
 #[test]
-fn rejects_extra_argument_in_read_help_topic() {
-    let error = parse_command(["logbrew", "help", "read", "logs", "extra", "--json"])
-        .expect_err("extra read help argument");
-    let mut output = Vec::new();
-
-    write_cli_error(&error, true, &mut output).expect("error writes");
-
-    let body: serde_json::Value = serde_json::from_slice(output.as_slice()).expect("valid json");
-    assert_eq!(body["ok"], false);
-    assert_eq!(body["error"], "unexpected_argument");
-    assert_eq!(body["message"], "unexpected argument for help: extra");
-    assert_eq!(body["next"], "run logbrew --help");
+fn rejects_extra_argument_in_read_help_topic() -> TestResult {
+    assert_json_error(
+        &["logbrew", "help", "read", "logs", "extra", "--json"],
+        "unexpected_argument",
+        "unexpected argument for help: extra",
+        "run logbrew --help",
+    )
 }
 
 #[test]
-fn rejects_extra_argument_in_subcommand_resource_help_topic() {
-    let error = parse_command(["logbrew", "help", "explain", "trace", "trace_123", "extra"])
-        .expect_err("extra explain help argument");
-    let mut output = Vec::new();
-
-    write_cli_error(&error, false, &mut output).expect("error writes");
-
-    let text = String::from_utf8(output).expect("utf8 output");
-    assert_eq!(
-        text,
-        "unexpected argument for help: extra\nNext: run logbrew --help\n"
-    );
+fn rejects_extra_argument_in_subcommand_resource_help_topic() -> TestResult {
+    assert_human_error(
+        &["logbrew", "help", "explain", "trace", "trace_123", "extra"],
+        "unexpected argument for help: extra",
+        "run logbrew --help",
+    )
 }
 
 #[test]
-fn rejects_actual_extra_argument_after_copied_detail_help_ids() {
+fn rejects_actual_extra_argument_after_copied_detail_help_ids() -> TestResult {
     for args in [
         &["logbrew", "help", "trace", "trace_123", "extra"][..],
         &["logbrew", "help", "trace", "trace_123", "explain", "extra"],
@@ -99,21 +69,17 @@ fn rejects_actual_extra_argument_after_copied_detail_help_ids() {
         &["logbrew", "help", "read", "trace", "trace_123", "extra"],
         &["logbrew", "help", "show", "errors", "issue_123", "extra"],
     ] {
-        let error = parse_command(args.iter().copied()).expect_err("extra copied id help arg");
-        let mut output = Vec::new();
-
-        write_cli_error(&error, false, &mut output).expect("error writes");
-
-        let text = String::from_utf8(output).expect("utf8 output");
-        assert_eq!(
-            text,
-            "unexpected argument for help: extra\nNext: run logbrew --help\n"
-        );
+        assert_human_error(
+            args,
+            "unexpected argument for help: extra",
+            "run logbrew --help",
+        )?;
     }
+    Ok(())
 }
 
 #[test]
-fn rejects_actual_extra_argument_after_copied_explain_help_ids() {
+fn rejects_actual_extra_argument_after_copied_explain_help_ids() -> TestResult {
     for args in [
         &["logbrew", "help", "issue_123", "explain", "extra"][..],
         &["logbrew", "help", "trace_123", "explain", "extra"],
@@ -126,15 +92,11 @@ fn rejects_actual_extra_argument_after_copied_explain_help_ids() {
             "extra",
         ],
     ] {
-        let error = parse_command(args.iter().copied()).expect_err("extra copied explain help arg");
-        let mut output = Vec::new();
-
-        write_cli_error(&error, false, &mut output).expect("error writes");
-
-        let text = String::from_utf8(output).expect("utf8 output");
-        assert_eq!(
-            text,
-            "unexpected argument for help: extra\nNext: run logbrew --help\n"
-        );
+        assert_human_error(
+            args,
+            "unexpected argument for help: extra",
+            "run logbrew --help",
+        )?;
     }
+    Ok(())
 }

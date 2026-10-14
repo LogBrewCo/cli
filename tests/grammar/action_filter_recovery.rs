@@ -3,7 +3,8 @@
 use logbrew_cli::{parse_command, write_cli_error};
 
 #[test]
-fn rejects_filter_words_before_action_name_shortcuts_with_specific_hints() {
+fn rejects_filter_words_before_action_name_shortcuts_with_specific_hints()
+-> Result<(), Box<dyn std::error::Error>> {
     for (args, argument, expected_next) in [
         (
             &["logbrew", "actions", "release", "checkout@1", "--json"][..],
@@ -43,14 +44,14 @@ fn rejects_filter_words_before_action_name_shortcuts_with_specific_hints() {
             "use --service <service_name> or --service-name <service_name>",
         ),
     ] {
-        let error =
-            parse_command(args.iter().copied()).expect_err("filter word before action name fails");
+        let error = parse_command(args.iter().copied())
+            .err()
+            .ok_or("filter word before action name must fail")?;
         let mut output = Vec::new();
 
-        write_cli_error(&error, true, &mut output).expect("error writes");
+        write_cli_error(&error, true, &mut output)?;
 
-        let body: serde_json::Value =
-            serde_json::from_slice(output.as_slice()).expect("valid json");
+        let body: serde_json::Value = serde_json::from_slice(output.as_slice())?;
         assert_eq!(body["ok"], false);
         assert_eq!(body["error"], "unexpected_argument");
         assert_eq!(
@@ -59,4 +60,5 @@ fn rejects_filter_words_before_action_name_shortcuts_with_specific_hints() {
         );
         assert_eq!(body["next"], expected_next);
     }
+    Ok(())
 }

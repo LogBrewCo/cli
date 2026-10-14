@@ -1,9 +1,9 @@
 //! CLI flag recovery tests.
 
-use logbrew_cli::{parse_command, write_cli_error};
+use super::{TestResult, assert_json_error};
 
 #[test]
-fn read_unknown_flags_point_to_resource_help() {
+fn read_unknown_flags_point_to_resource_help() -> TestResult {
     for (args, next) in [
         (
             &["logbrew", "logs", "--sort", "desc", "--json"][..],
@@ -26,22 +26,13 @@ fn read_unknown_flags_point_to_resource_help() {
             "run logbrew read trace --help",
         ),
     ] {
-        let error = parse_command(args.iter().copied()).expect_err("bad flag");
-        let mut output = Vec::new();
-
-        write_cli_error(&error, true, &mut output).expect("error writes");
-
-        let body: serde_json::Value =
-            serde_json::from_slice(output.as_slice()).expect("valid json");
-        assert_eq!(body["ok"], false);
-        assert_eq!(body["error"], "unknown_flag");
-        assert_eq!(body["message"], "unknown flag: --sort");
-        assert_eq!(body["next"], next);
+        assert_json_error(args, "unknown_flag", "unknown flag: --sort", next)?;
     }
+    Ok(())
 }
 
 #[test]
-fn command_unknown_flags_point_to_command_help() {
+fn command_unknown_flags_point_to_command_help() -> TestResult {
     for (args, next) in [
         (
             &["logbrew", "login", "--bogus", "--json"][..],
@@ -60,22 +51,13 @@ fn command_unknown_flags_point_to_command_help() {
             "run logbrew watch --help",
         ),
     ] {
-        let error = parse_command(args.iter().copied()).expect_err("bad flag");
-        let mut output = Vec::new();
-
-        write_cli_error(&error, true, &mut output).expect("error writes");
-
-        let body: serde_json::Value =
-            serde_json::from_slice(output.as_slice()).expect("valid json");
-        assert_eq!(body["ok"], false);
-        assert_eq!(body["error"], "unknown_flag");
-        assert_eq!(body["message"], "unknown flag: --bogus");
-        assert_eq!(body["next"], next);
+        assert_json_error(args, "unknown_flag", "unknown flag: --bogus", next)?;
     }
+    Ok(())
 }
 
 #[test]
-fn issue_status_shortcut_flags_point_to_shortcut_help() {
+fn issue_status_shortcut_flags_point_to_shortcut_help() -> TestResult {
     for (args, error, message, next) in [
         (
             &["logbrew", "resolve", "issue_123", "--bogus", "--json"][..],
@@ -128,22 +110,13 @@ fn issue_status_shortcut_flags_point_to_shortcut_help() {
             "run logbrew open --help",
         ),
     ] {
-        let error_value = parse_command(args.iter().copied()).expect_err("bad shortcut flag");
-        let mut output = Vec::new();
-
-        write_cli_error(&error_value, true, &mut output).expect("error writes");
-
-        let body: serde_json::Value =
-            serde_json::from_slice(output.as_slice()).expect("valid json");
-        assert_eq!(body["ok"], false);
-        assert_eq!(body["error"], error);
-        assert_eq!(body["message"], message);
-        assert_eq!(body["next"], next);
+        assert_json_error(args, error, message, next)?;
     }
+    Ok(())
 }
 
 #[test]
-fn bare_issue_status_flags_point_to_shortcut_help() {
+fn bare_issue_status_flags_point_to_shortcut_help() -> TestResult {
     for (args, error, message, next) in [
         (
             &["logbrew", "open", "--bogus", "--json"][..],
@@ -158,36 +131,23 @@ fn bare_issue_status_flags_point_to_shortcut_help() {
             "run logbrew closed --help",
         ),
     ] {
-        let error_value = parse_command(args.iter().copied()).expect_err("bad status flag");
-        let mut output = Vec::new();
-
-        write_cli_error(&error_value, true, &mut output).expect("error writes");
-
-        let body: serde_json::Value =
-            serde_json::from_slice(output.as_slice()).expect("valid json");
-        assert_eq!(body["ok"], false);
-        assert_eq!(body["error"], error);
-        assert_eq!(body["message"], message);
-        assert_eq!(body["next"], next);
+        assert_json_error(args, error, message, next)?;
     }
+    Ok(())
 }
 
 #[test]
-fn auth_namespace_help_rejects_duplicate_json() {
+fn auth_namespace_help_rejects_duplicate_json() -> TestResult {
     for args in [
         &["logbrew", "auth", "--json", "--json"][..],
         &["logbrew", "auth", "token", "--json", "--json"][..],
     ] {
-        let error = parse_command(args.iter().copied()).expect_err("duplicate json fails");
-        let mut output = Vec::new();
-
-        write_cli_error(&error, true, &mut output).expect("error writes");
-
-        let body: serde_json::Value =
-            serde_json::from_slice(output.as_slice()).expect("valid json");
-        assert_eq!(body["ok"], false);
-        assert_eq!(body["error"], "duplicate_flag");
-        assert_eq!(body["message"], "duplicate flag: --json");
-        assert_eq!(body["next"], "use --json once");
+        assert_json_error(
+            args,
+            "duplicate_flag",
+            "duplicate flag: --json",
+            "use --json once",
+        )?;
     }
+    Ok(())
 }

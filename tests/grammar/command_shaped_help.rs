@@ -3,221 +3,118 @@
 use logbrew_cli::{Command, HelpTopic, parse_command};
 
 #[test]
-fn parses_command_shaped_help_after_detail_and_mutation_ids() {
-    let cases = [
+fn parses_command_shaped_help_after_detail_and_mutation_ids()
+-> Result<(), Box<dyn std::error::Error>> {
+    for (topic, cases) in [
         (
-            vec!["logbrew", "issue", "issue_123", "--help"],
             HelpTopic::ReadIssue,
+            &[
+                &["issue", "issue_123", "--help"][..],
+                &["issue", "issue_123", "help"][..],
+                &["read", "issue", "issue_123", "--help"][..],
+                &["read", "errors", "issue_123", "--help"][..],
+                &["read", "issue", "issue_123", "help"][..],
+                &["get", "issue", "issue_123", "--help"][..],
+                &["show", "errors", "issue_123", "--help"][..],
+                &["get", "exceptions", "issue_123", "help"][..],
+                &["list", "errors", "issue_123", "--help"][..],
+                &["list", "issue", "issue_123", "--help"][..],
+                &["errors", "issue_123", "--help"][..],
+                &["exceptions", "issue_123", "help"][..],
+            ][..],
         ),
         (
-            vec!["logbrew", "issue", "issue_123", "help"],
-            HelpTopic::ReadIssue,
-        ),
-        (
-            vec!["logbrew", "read", "issue", "issue_123", "--help"],
-            HelpTopic::ReadIssue,
-        ),
-        (
-            vec!["logbrew", "read", "errors", "issue_123", "--help"],
-            HelpTopic::ReadIssue,
-        ),
-        (
-            vec!["logbrew", "read", "issue", "issue_123", "help"],
-            HelpTopic::ReadIssue,
-        ),
-        (
-            vec!["logbrew", "get", "issue", "issue_123", "--help"],
-            HelpTopic::ReadIssue,
-        ),
-        (
-            vec!["logbrew", "show", "errors", "issue_123", "--help"],
-            HelpTopic::ReadIssue,
-        ),
-        (
-            vec!["logbrew", "get", "exceptions", "issue_123", "help"],
-            HelpTopic::ReadIssue,
-        ),
-        (
-            vec!["logbrew", "list", "errors", "issue_123", "--help"],
-            HelpTopic::ReadIssue,
-        ),
-        (
-            vec!["logbrew", "list", "issue", "issue_123", "--help"],
-            HelpTopic::ReadIssue,
-        ),
-        (
-            vec!["logbrew", "errors", "issue_123", "--help"],
-            HelpTopic::ReadIssue,
-        ),
-        (
-            vec!["logbrew", "exceptions", "issue_123", "help"],
-            HelpTopic::ReadIssue,
-        ),
-        (
-            vec!["logbrew", "trace", "trace_123", "--help"],
             HelpTopic::ReadTrace,
+            &[
+                &["trace", "trace_123", "--help"][..],
+                &["trace", "trace_123", "help"][..],
+                &["read", "trace", "trace_123", "--help"][..],
+                &["show", "traces", "trace_123", "--help"][..],
+                &["get", "spans", "trace_123", "help"][..],
+                &["list", "traces", "trace_123", "--help"][..],
+            ][..],
         ),
         (
-            vec!["logbrew", "trace", "trace_123", "help"],
-            HelpTopic::ReadTrace,
-        ),
-        (
-            vec!["logbrew", "read", "trace", "trace_123", "--help"],
-            HelpTopic::ReadTrace,
-        ),
-        (
-            vec!["logbrew", "show", "traces", "trace_123", "--help"],
-            HelpTopic::ReadTrace,
-        ),
-        (
-            vec!["logbrew", "get", "spans", "trace_123", "help"],
-            HelpTopic::ReadTrace,
-        ),
-        (
-            vec!["logbrew", "list", "traces", "trace_123", "--help"],
-            HelpTopic::ReadTrace,
-        ),
-        (
-            vec!["logbrew", "explain", "issue", "issue_123", "--help"],
             HelpTopic::Explain,
+            &[
+                &["explain", "issue", "issue_123", "--help"][..],
+                &["explain", "trace", "trace_123", "--help"][..],
+                &["explain", "trace", "trace_123", "help"][..],
+                &["explain", "issue_123", "--help"][..],
+                &["issue", "issue_123", "explain", "--help"][..],
+                &["trace", "trace_123", "explain", "--help"][..],
+                &["issue_123", "explain", "--help"][..],
+                &["trace_123", "explain", "help"][..],
+            ][..],
         ),
         (
-            vec!["logbrew", "explain", "trace", "trace_123", "--help"],
-            HelpTopic::Explain,
-        ),
-        (
-            vec!["logbrew", "explain", "trace", "trace_123", "help"],
-            HelpTopic::Explain,
-        ),
-        (
-            vec!["logbrew", "explain", "issue_123", "--help"],
-            HelpTopic::Explain,
-        ),
-        (
-            vec!["logbrew", "issue", "issue_123", "explain", "--help"],
-            HelpTopic::Explain,
-        ),
-        (
-            vec!["logbrew", "trace", "trace_123", "explain", "--help"],
-            HelpTopic::Explain,
-        ),
-        (
-            vec!["logbrew", "issue_123", "explain", "--help"],
-            HelpTopic::Explain,
-        ),
-        (
-            vec!["logbrew", "trace_123", "explain", "help"],
-            HelpTopic::Explain,
-        ),
-        (
-            vec!["logbrew", "set", "issue", "issue_123", "resolved", "--help"],
             HelpTopic::Set,
+            &[
+                &["set", "issue", "issue_123", "resolved", "--help"][..],
+                &["set", "issue", "issue_123", "resolved", "help"][..],
+                &["resolve", "issue_123", "--help"][..],
+                &["resolve", "issue_123", "help"][..],
+                &["issue", "issue_123", "resolve", "--help"][..],
+                &["issue", "issue_123", "resolve", "help"][..],
+                &["issue", "issue_123", "resolved", "--help"][..],
+                &["issue", "issue_123", "open", "help"][..],
+                &["issue_123", "resolve", "--help"][..],
+                &["issue_123", "close", "help"][..],
+                &["issue_123", "closed", "--help"][..],
+                &["issue_123", "ignored", "help"][..],
+                &["closed", "issue_123", "--help"][..],
+                &["open", "issue_123", "help"][..],
+                &["resolved", "--help"][..],
+                &["closed", "--help"][..],
+                &["ignored", "help"][..],
+                &["open", "help"][..],
+                &["unresolved", "--help"][..],
+            ][..],
         ),
-        (
-            vec!["logbrew", "set", "issue", "issue_123", "resolved", "help"],
-            HelpTopic::Set,
-        ),
-        (
-            vec!["logbrew", "resolve", "issue_123", "--help"],
-            HelpTopic::Set,
-        ),
-        (
-            vec!["logbrew", "resolve", "issue_123", "help"],
-            HelpTopic::Set,
-        ),
-        (
-            vec!["logbrew", "issue", "issue_123", "resolve", "--help"],
-            HelpTopic::Set,
-        ),
-        (
-            vec!["logbrew", "issue", "issue_123", "resolve", "help"],
-            HelpTopic::Set,
-        ),
-        (
-            vec!["logbrew", "issue", "issue_123", "resolved", "--help"],
-            HelpTopic::Set,
-        ),
-        (
-            vec!["logbrew", "issue", "issue_123", "open", "help"],
-            HelpTopic::Set,
-        ),
-        (
-            vec!["logbrew", "issue_123", "resolve", "--help"],
-            HelpTopic::Set,
-        ),
-        (
-            vec!["logbrew", "issue_123", "close", "help"],
-            HelpTopic::Set,
-        ),
-        (
-            vec!["logbrew", "issue_123", "closed", "--help"],
-            HelpTopic::Set,
-        ),
-        (
-            vec!["logbrew", "issue_123", "ignored", "help"],
-            HelpTopic::Set,
-        ),
-        (
-            vec!["logbrew", "closed", "issue_123", "--help"],
-            HelpTopic::Set,
-        ),
-        (vec!["logbrew", "open", "issue_123", "help"], HelpTopic::Set),
-        (vec!["logbrew", "resolved", "--help"], HelpTopic::Set),
-        (vec!["logbrew", "closed", "--help"], HelpTopic::Set),
-        (vec!["logbrew", "ignored", "help"], HelpTopic::Set),
-        (vec!["logbrew", "open", "help"], HelpTopic::Set),
-        (vec!["logbrew", "unresolved", "--help"], HelpTopic::Set),
-    ];
-
-    for (args, topic) in cases {
-        let command = parse_command(args).expect("command-shaped help parses");
-
-        assert_eq!(command, Command::Help { topic, json: false });
+    ] {
+        for args in cases {
+            let command = parse_command(std::iter::once("logbrew").chain(args.iter().copied()))?;
+            assert_eq!(command, Command::Help { topic, json: false });
+        }
     }
-
-    assert_eq!(
-        parse_command(["logbrew", "--json", "issue", "issue_123", "--help"])
-            .expect("global json command-shaped help parses"),
-        Command::Help {
-            topic: HelpTopic::ReadIssue,
-            json: true
-        }
-    );
-    assert_eq!(
-        parse_command([
-            "logbrew",
-            "help",
-            "issue",
-            "issue_123",
-            "resolved",
-            "--json"
-        ])
-        .expect("explicit status-word issue help parses"),
-        Command::Help {
-            topic: HelpTopic::Set,
-            json: true
-        }
-    );
-    assert_eq!(
-        parse_command(["logbrew", "help", "issue_123", "ignored", "--json"])
-            .expect("explicit pasted status-word issue help parses"),
-        Command::Help {
-            topic: HelpTopic::Set,
-            json: true
-        }
-    );
-    assert_eq!(
-        parse_command(["logbrew", "help", "closed", "issue_123", "--json"])
-            .expect("explicit status-first issue help parses"),
-        Command::Help {
-            topic: HelpTopic::Set,
-            json: true
-        }
-    );
+    Ok(())
 }
 
 #[test]
-fn parses_issue_status_shortcut_help_as_real_user_topics() {
+fn parses_json_help_for_status_and_detail_targets() -> Result<(), Box<dyn std::error::Error>> {
+    for (args, topic) in [
+        (
+            &["logbrew", "--json", "issue", "issue_123", "--help"][..],
+            HelpTopic::ReadIssue,
+        ),
+        (
+            &[
+                "logbrew",
+                "help",
+                "issue",
+                "issue_123",
+                "resolved",
+                "--json",
+            ],
+            HelpTopic::Set,
+        ),
+        (
+            &["logbrew", "help", "issue_123", "ignored", "--json"],
+            HelpTopic::Set,
+        ),
+        (
+            &["logbrew", "help", "closed", "issue_123", "--json"],
+            HelpTopic::Set,
+        ),
+    ] {
+        assert_eq!(parse_command(args)?, Command::Help { topic, json: true });
+    }
+    Ok(())
+}
+
+#[test]
+fn parses_issue_status_shortcut_help_as_real_user_topics() -> Result<(), Box<dyn std::error::Error>>
+{
     for args in [
         &["logbrew", "issues", "open", "--help"][..],
         &["logbrew", "open", "issues", "--help"],
@@ -241,7 +138,7 @@ fn parses_issue_status_shortcut_help_as_real_user_topics() {
         &["logbrew", "help", "last", "5", "closed", "issue"],
         &["logbrew", "show", "issue", "ignored", "--help"],
     ] {
-        let command = parse_command(args).expect("issue status shortcut help parses");
+        let command = parse_command(args)?;
 
         assert_eq!(
             command,
@@ -251,10 +148,12 @@ fn parses_issue_status_shortcut_help_as_real_user_topics() {
             }
         );
     }
+    Ok(())
 }
 
 #[test]
-fn parses_read_prefixed_shortcut_help_as_real_user_topics() {
+fn parses_read_prefixed_shortcut_help_as_real_user_topics() -> Result<(), Box<dyn std::error::Error>>
+{
     for (args, topic) in [
         (
             &["logbrew", "read", "log", "--help"][..],
@@ -305,14 +204,15 @@ fn parses_read_prefixed_shortcut_help_as_real_user_topics() {
             HelpTopic::ReadIssues,
         ),
     ] {
-        let command = parse_command(args).expect("read-prefixed shortcut help parses");
+        let command = parse_command(args)?;
 
         assert_eq!(command, Command::Help { topic, json: false });
     }
+    Ok(())
 }
 
 #[test]
-fn parses_log_shortcut_help_as_real_user_topics() {
+fn parses_log_shortcut_help_as_real_user_topics() -> Result<(), Box<dyn std::error::Error>> {
     for args in [
         &["logbrew", "logs", "error", "--help"][..],
         &["logbrew", "logs", "warning", "checkout", "failed", "--help"],
@@ -325,7 +225,7 @@ fn parses_log_shortcut_help_as_real_user_topics() {
             "logbrew", "help", "read", "logs", "warning", "checkout", "failed",
         ],
     ] {
-        let command = parse_command(args).expect("log shortcut help parses");
+        let command = parse_command(args)?;
 
         assert_eq!(
             command,
@@ -335,10 +235,11 @@ fn parses_log_shortcut_help_as_real_user_topics() {
             }
         );
     }
+    Ok(())
 }
 
 #[test]
-fn parses_explicit_help_for_detail_read_aliases() {
+fn parses_explicit_help_for_detail_read_aliases() -> Result<(), Box<dyn std::error::Error>> {
     let cases = [
         (
             vec!["logbrew", "help", "read", "errors", "issue_123", "--json"],
@@ -409,8 +310,9 @@ fn parses_explicit_help_for_detail_read_aliases() {
     ];
 
     for (args, topic) in cases {
-        let command = parse_command(args).expect("explicit detail help parses");
+        let command = parse_command(args)?;
 
         assert_eq!(command, Command::Help { topic, json: true });
     }
+    Ok(())
 }

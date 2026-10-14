@@ -1,29 +1,16 @@
 //! CLI command grammar tests.
 
+use super::{assert_command, assert_help, assert_path};
 use logbrew_cli::{
     Command, HelpTopic, LoginProvider, ProjectSetupSeenOptions, ReadOptions, ReadTarget, SetTarget,
     help, parse_command,
 };
 
-fn assert_command(args: &[&str], expected: Command) {
-    assert_eq!(
-        parse_command(args.iter().copied()),
-        Ok(expected),
-        "unexpected command for {args:?}"
-    );
-}
-
-fn assert_help(args: &[&str], topic: HelpTopic, json: bool) {
-    assert_command(args, Command::Help { topic, json });
-}
-
-fn assert_path(args: &[&str], expected: &str) {
-    let command = parse_command(args.iter().copied()).expect("command parses");
-    assert_eq!(
-        command.http_path().expect("command has endpoint"),
-        expected,
-        "unexpected endpoint for {args:?}"
-    );
+macro_rules! assert_help {
+    ($topic:expr; $($expected:literal),+ $(,)?) => {
+        let text = help::help_text($topic);
+        $(assert!(text.contains($expected), "{}: {}", stringify!($topic), $expected);)+
+    };
 }
 
 fn read_command(target: ReadTarget, options: ReadOptions, json: bool) -> Command {
@@ -35,11 +22,11 @@ fn read_command(target: ReadTarget, options: ReadOptions, json: bool) -> Command
 }
 
 fn assert_command_path(args: &[&str], expected: Command, path: &str) {
-    let command = parse_command(args.iter().copied()).expect("command parses");
-    assert_eq!(command, expected, "unexpected command for {args:?}");
+    let command = parse_command(args.iter().copied());
+    assert_eq!(command, Ok(expected), "unexpected command for {args:?}");
     assert_eq!(
-        command.http_path().expect("command has endpoint"),
-        path,
+        command.map(|command| command.http_path()),
+        Ok(Some(path.to_owned())),
         "unexpected endpoint for {args:?}"
     );
 }
@@ -199,12 +186,6 @@ fn parses_whoami_and_me_as_authenticated_identity_reads() {
 
 #[test]
 fn help_keeps_agent_auth_watch_and_investigation_contracts() {
-    macro_rules! assert_help {
-        ($topic:expr; $($expected:literal),+ $(,)?) => {
-            let text = help::help_text($topic);
-            $(assert!(text.contains($expected), "{}: {}", stringify!($topic), $expected);)+
-        };
-    }
     assert_help!(HelpTopic::Status;
         "logbrew whoami [--json]",
         "logbrew me [--json]",
@@ -293,121 +274,49 @@ fn parses_list_singular_collection_help_as_list_help() {
 
 #[test]
 fn parses_common_help_terms_as_real_user_topics() {
-    for (args, topic, json) in [
+    for (terms, topic) in [
+        (&["traces", "spans"][..], HelpTopic::ReadTraces),
+        (&["errors"][..], HelpTopic::ReadIssues),
+        (&["action", "events"][..], HelpTopic::ReadActions),
         (
-            &["logbrew", "help", "traces", "--json"][..],
-            HelpTopic::ReadTraces,
-            true,
-        ),
-        (
-            &["logbrew", "help", "spans", "--json"][..],
-            HelpTopic::ReadTraces,
-            true,
-        ),
-        (
-            &["logbrew", "help", "errors", "--json"][..],
-            HelpTopic::ReadIssues,
-            true,
-        ),
-        (
-            &["logbrew", "help", "action", "--json"][..],
-            HelpTopic::ReadActions,
-            true,
-        ),
-        (
-            &["logbrew", "help", "events", "--json"][..],
-            HelpTopic::ReadActions,
-            true,
-        ),
-        (
-            &["logbrew", "help", "environments", "--json"][..],
+            &["environments", "filters", "filter", "project-id"][..],
             HelpTopic::Read,
-            true,
         ),
-        (
-            &["logbrew", "help", "filters", "--json"][..],
-            HelpTopic::Read,
-            true,
-        ),
-        (
-            &["logbrew", "help", "filter", "--json"][..],
-            HelpTopic::Read,
-            true,
-        ),
-        (
-            &["logbrew", "help", "project", "--json"][..],
-            HelpTopic::Projects,
-            true,
-        ),
-        (
-            &["logbrew", "help", "projects", "--json"][..],
-            HelpTopic::Projects,
-            true,
-        ),
-        (
-            &["logbrew", "help", "usage", "--json"][..],
-            HelpTopic::Usage,
-            true,
-        ),
-        (
-            &["logbrew", "help", "project-id", "--json"][..],
-            HelpTopic::Read,
-            true,
-        ),
-        (
-            &["logbrew", "action", "--help"][..],
-            HelpTopic::ReadActions,
-            false,
-        ),
-        (
-            &["logbrew", "traces", "--help"][..],
-            HelpTopic::ReadTraces,
-            false,
-        ),
+        (&["project", "projects"][..], HelpTopic::Projects),
+        (&["usage"][..], HelpTopic::Usage),
+    ] {
+        for term in terms {
+            assert_help(&["logbrew", "help", term, "--json"], topic, true);
+        }
+    }
+    for (args, topic) in [
+        (&["logbrew", "action", "--help"][..], HelpTopic::ReadActions),
+        (&["logbrew", "traces", "--help"][..], HelpTopic::ReadTraces),
         (
             &["logbrew", "help", "read", "traces"][..],
             HelpTopic::ReadTraces,
-            false,
         ),
         (
             &["logbrew", "help", "read", "action"][..],
             HelpTopic::ReadActions,
-            false,
         ),
         (
             &["logbrew", "show", "logs", "--help"][..],
             HelpTopic::ReadLogs,
-            false,
         ),
         (
             &["logbrew", "help", "get", "issue"][..],
             HelpTopic::ReadIssue,
-            false,
         ),
-        (
-            &["logbrew", "filters", "--help"][..],
-            HelpTopic::Read,
-            false,
-        ),
-        (
-            &["logbrew", "project", "--help"][..],
-            HelpTopic::Projects,
-            false,
-        ),
-        (
-            &["logbrew", "help", "read", "project"][..],
-            HelpTopic::Read,
-            false,
-        ),
+        (&["logbrew", "filters", "--help"][..], HelpTopic::Read),
+        (&["logbrew", "project", "--help"][..], HelpTopic::Projects),
+        (&["logbrew", "help", "read", "project"][..], HelpTopic::Read),
     ] {
-        assert_help(args, topic, json);
+        assert_help(args, topic, false);
     }
-    assert!(help::help_text(HelpTopic::Read).contains(
-        "Use --environment <environment> with logs, issues, actions, releases, metrics, or traces."
-    ));
-    assert!(help::help_text(HelpTopic::Read).contains(
-        "Filter aliases: --service-name, --env, --project-id, --trace-id, and --distinct-id."
-    ));
+    assert_help!(HelpTopic::Read;
+        "Use --environment <environment> with logs, issues, actions, releases, metrics, or traces.",
+        "Filter aliases: --service-name, --env, --project-id, --trace-id, and --distinct-id.");
 }
 
 #[test]
@@ -432,8 +341,7 @@ fn parses_authenticated_project_and_usage_reads() {
         &["logbrew", "projects", "--json"],
         &["logbrew", "--json", "projects"],
     ] {
-        let command = parse_command(args.iter().copied()).expect("project catalog read parses");
-        assert_eq!(command, Command::Projects { json: true });
+        assert_command(args, Command::Projects { json: true });
     }
 
     for args in [
@@ -441,30 +349,26 @@ fn parses_authenticated_project_and_usage_reads() {
         &["logbrew", "--json", "usage"],
         &["logbrew", "account", "usage", "--json"],
     ] {
-        let command = parse_command(args.iter().copied()).expect("usage read parses");
-        assert_eq!(command, Command::Usage { json: true });
+        assert_command(args, Command::Usage { json: true });
     }
 }
 
 #[test]
 fn parses_project_setup_seen_contract_call() {
-    let command = parse_command([
-        "logbrew",
-        "projects",
-        "setup",
-        "proj_123",
-        "--runtime",
-        "node",
-        "--source",
-        "cli",
-        "--environment",
-        "production",
-        "--json",
-    ])
-    .expect("project setup seen parses");
-
-    assert_eq!(
-        command,
+    assert_command(
+        &[
+            "logbrew",
+            "projects",
+            "setup",
+            "proj_123",
+            "--runtime",
+            "node",
+            "--source",
+            "cli",
+            "--environment",
+            "production",
+            "--json",
+        ],
         Command::ProjectSetupSeen {
             project_id: "proj_123".to_owned(),
             options: ProjectSetupSeenOptions {
@@ -473,18 +377,16 @@ fn parses_project_setup_seen_contract_call() {
                 environment: Some("production".to_owned()),
             },
             json: true,
-        }
+        },
     );
 
-    let global_json = parse_command(["logbrew", "--json", "project", "setup", "proj_123"])
-        .expect("global json project setup parses");
-    assert_eq!(
-        global_json,
+    assert_command(
+        &["logbrew", "--json", "project", "setup", "proj_123"],
         Command::ProjectSetupSeen {
             project_id: "proj_123".to_owned(),
             options: ProjectSetupSeenOptions::default(),
             json: true,
-        }
+        },
     );
 }
 
@@ -494,15 +396,7 @@ fn parses_bare_trace_terms_by_singular_or_plural_meaning() {
         &["logbrew", "trace", "--json"][..],
         &["logbrew", "span", "--json"],
     ] {
-        let command = parse_command(args.iter().copied()).expect("trace detail help parses");
-
-        assert_eq!(
-            command,
-            Command::Help {
-                topic: HelpTopic::ReadTrace,
-                json: args.contains(&"--json")
-            }
-        );
+        assert_help(args, HelpTopic::ReadTrace, args.contains(&"--json"));
     }
     for args in [
         &["logbrew", "traces", "--json"][..],
@@ -550,18 +444,18 @@ fn parses_auth_help_as_real_user_topic() {
         assert_help(args, HelpTopic::Auth, false);
     }
 
-    let text = help::help_text(HelpTopic::Auth);
-    assert!(text.contains("logbrew login"));
-    assert!(text.contains("logbrew auth login"));
-    assert!(text.contains("logbrew status"));
-    assert!(text.contains("logbrew auth status"));
-    assert!(text.contains("logbrew auth whoami"));
-    assert!(text.contains("logbrew auth me"));
-    assert!(text.contains("logbrew whoami"));
-    assert!(text.contains("logbrew me"));
-    assert!(text.contains("logbrew logout"));
-    assert!(text.contains("logbrew auth logout"));
-    assert!(text.contains("Use --json for agent-readable auth checks."));
+    assert_help!(HelpTopic::Auth;
+        "logbrew login",
+        "logbrew auth login",
+        "logbrew status",
+        "logbrew auth status",
+        "logbrew auth whoami",
+        "logbrew auth me",
+        "logbrew whoami",
+        "logbrew me",
+        "logbrew logout",
+        "logbrew auth logout",
+        "Use --json for agent-readable auth checks.");
 
     for args in [
         &["logbrew", "auth", "--json"][..],
@@ -668,11 +562,11 @@ fn parses_json_help_as_agent_output_topic() {
         assert_help(args, HelpTopic::Json, false);
     }
 
-    let text = help::help_text(HelpTopic::Json);
-    assert!(text.contains("logbrew --json status"));
-    assert!(text.contains("logbrew status --json"));
-    assert!(text.contains("Stable JSON keeps server response shapes"));
-    assert!(text.contains("Errors include ok, error, message, and next."));
+    assert_help!(HelpTopic::Json;
+        "logbrew --json status",
+        "logbrew status --json",
+        "Stable JSON keeps server response shapes",
+        "Errors include ok, error, message, and next.");
 
     assert_help(
         &["logbrew", "--json", "help", "json"],
@@ -910,21 +804,20 @@ fn parses_login_provider_in_separate_or_inline_form() {
             LoginProvider::GitLab,
         ),
     ] {
-        let command = parse_command(args.iter().copied()).expect("provider login parses");
-
-        assert_eq!(
-            command,
+        assert_command(
+            args,
             Command::Login {
                 provider,
                 open_browser: !args.contains(&"--no-open") && !args.contains(&"--json"),
                 json: args.contains(&"--json"),
-            }
+            },
         );
     }
 }
 
 #[test]
-fn rejects_invalid_missing_or_duplicate_login_provider_without_echoing_values() {
+fn rejects_invalid_missing_or_duplicate_login_provider_without_echoing_values()
+-> Result<(), Box<dyn std::error::Error>> {
     for args in [
         &["logbrew", "login", "--provider", "hostile\nsecret"][..],
         &["logbrew", "login", "--provider="],
@@ -937,14 +830,23 @@ fn rejects_invalid_missing_or_duplicate_login_provider_without_echoing_values() 
             "--provider=gitlab",
         ],
     ] {
-        let error = parse_command(args.iter().copied()).expect_err("invalid provider fails closed");
+        let error = parse_command(args.iter().copied())
+            .err()
+            .ok_or("invalid provider must fail closed")?;
         let mut output = Vec::new();
-        logbrew_cli::write_cli_error(&error, true, &mut output).expect("parse error writes");
-        let text = String::from_utf8(output).expect("utf8 parse error");
+        logbrew_cli::write_cli_error(&error, true, &mut output)?;
+        let text = String::from_utf8(output)?;
 
-        assert!(!text.contains("hostile"));
-        assert!(!text.contains("secret"));
+        assert!(
+            !text.contains("hostile"),
+            "provider input must not be echoed"
+        );
+        assert!(
+            !text.contains("secret"),
+            "provider input must not be echoed"
+        );
     }
+    Ok(())
 }
 
 #[test]
@@ -974,7 +876,8 @@ fn parses_agent_friendly_read_actions() {
 }
 
 #[test]
-fn parses_common_incident_scope_filters_for_collection_reads() {
+fn parses_common_incident_scope_filters_for_collection_reads()
+-> Result<(), Box<dyn std::error::Error>> {
     for (resource, expected_path) in [
         ("logs", "/api/logs?service_name=checkout-api&since=24h"),
         (
@@ -990,36 +893,31 @@ fn parses_common_incident_scope_filters_for_collection_reads() {
             "/api/telemetry/releases?service_name=checkout-api&since=24h",
         ),
     ] {
-        let command = parse_command([
-            "logbrew",
-            resource,
-            "--service",
-            "checkout-api",
-            "--since",
-            "24h",
-            "--json",
-        ])
-        .expect("incident scope filters parse");
-
-        assert_eq!(
-            command.http_path().expect("collection read has endpoint"),
-            expected_path
+        assert_path(
+            &[
+                "logbrew",
+                resource,
+                "--service",
+                "checkout-api",
+                "--since",
+                "24h",
+                "--json",
+            ],
+            expected_path,
         );
     }
 
-    let alias = parse_command([
-        "logbrew",
-        "issues",
-        "--service-name",
-        "checkout-api",
-        "--since",
-        "2026-05-01T00:00:00Z",
-        "--json",
-    ])
-    .expect("backend-aligned service alias parses");
-    assert_eq!(
-        alias.http_path().expect("issue read has endpoint"),
-        "/api/telemetry/issues?service_name=checkout-api&since=2026-05-01T00%3A00%3A00Z"
+    assert_path(
+        &[
+            "logbrew",
+            "issues",
+            "--service-name",
+            "checkout-api",
+            "--since",
+            "2026-05-01T00:00:00Z",
+            "--json",
+        ],
+        "/api/telemetry/issues?service_name=checkout-api&since=2026-05-01T00%3A00%3A00Z",
     );
 
     let duplicate = parse_command([
@@ -1030,8 +928,10 @@ fn parses_common_incident_scope_filters_for_collection_reads() {
         "--service-name",
         "payments-api",
     ])
-    .expect_err("service aliases are one canonical filter");
+    .err()
+    .ok_or("service aliases must be one canonical filter")?;
     assert_eq!(duplicate.to_string(), "duplicate flag: --service");
+    Ok(())
 }
 
 #[test]
@@ -1043,10 +943,7 @@ fn collection_help_documents_incident_scope_forms() {
         HelpTopic::ReadReleases,
         HelpTopic::ReadMetrics,
     ] {
-        let text = help::help_text(topic);
-
-        assert!(text.contains("--service <service_name>"));
-        assert!(text.contains("--service-name <service_name>"));
+        assert_help!(topic; "--service <service_name>", "--service-name <service_name>");
     }
 
     for topic in [
@@ -1054,10 +951,7 @@ fn collection_help_documents_incident_scope_forms() {
         HelpTopic::ReadReleases,
         HelpTopic::ReadMetrics,
     ] {
-        let text = help::help_text(topic);
-
-        assert!(text.contains("--since <24h|7d|RFC3339>"));
-        assert!(text.contains("2026-05-01T00:00:00Z"));
+        assert_help!(topic; "--since <24h|7d|RFC3339>", "2026-05-01T00:00:00Z");
     }
 }
 
@@ -1069,15 +963,7 @@ fn parses_action_name_shortcut_help_as_actions_help() {
         &["logbrew", "read", "events", "checkout_failed", "--help"],
         &["logbrew", "read", "action", "checkout_failed", "--help"],
     ] {
-        let command = parse_command(args.iter().copied()).expect("action name help parses");
-
-        assert_eq!(
-            command,
-            Command::Help {
-                topic: HelpTopic::ReadActions,
-                json: false
-            }
-        );
+        assert_help(args, HelpTopic::ReadActions, false);
     }
 
     for args in [
@@ -1108,16 +994,7 @@ fn parses_action_name_shortcut_help_as_actions_help() {
             "--json",
         ],
     ] {
-        let command =
-            parse_command(args.iter().copied()).expect("action name explicit help parses");
-
-        assert_eq!(
-            command,
-            Command::Help {
-                topic: HelpTopic::ReadActions,
-                json: true
-            }
-        );
+        assert_help(args, HelpTopic::ReadActions, true);
     }
 }
 
@@ -1321,80 +1198,66 @@ fn parses_json_before_read_resource_and_detail_id() {
 
 #[test]
 fn parses_explain_trace_for_agent_context() {
-    let command =
-        parse_command(["logbrew", "explain", "trace", "trace-123", "--json"]).expect("command");
-
-    assert_eq!(
-        command,
+    assert_command_path(
+        &["logbrew", "explain", "trace", "trace-123", "--json"],
         Command::Explain {
             target: logbrew_cli::ExplainTarget::Trace("trace-123".to_owned()),
             json: true,
-        }
-    );
-    assert_eq!(
-        command.http_path().expect("explain trace has endpoint"),
-        "/api/telemetry/traces/trace-123/investigation?response_version=3"
+        },
+        "/api/telemetry/traces/trace-123/investigation?response_version=3",
     );
 }
 
 #[test]
 fn parses_log_release_and_metric_explanations() {
-    let log = parse_command([
-        "logbrew",
-        "explain",
-        "log",
-        "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
-        "--json",
-    ])
-    .expect("log explanation parses");
-    assert_eq!(
-        log.http_path().expect("log explanation has endpoint"),
-        "/api/logs/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/investigation"
+    assert_path(
+        &[
+            "logbrew",
+            "explain",
+            "log",
+            "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            "--json",
+        ],
+        "/api/logs/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/investigation",
     );
 
-    let release = parse_command([
-        "logbrew",
-        "explain",
-        "release",
-        "checkout@1.2.3",
-        "--project",
-        "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA",
-        "--environment",
-        "production",
-        "--service",
-        "checkout-api",
-    ])
-    .expect("release explanation parses");
-    assert_eq!(
-        release
-            .http_path()
-            .expect("release explanation has endpoint"),
-        "/api/telemetry/releases/investigation?project_id=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa&release=checkout%401.2.3&environment=production&service_name=checkout-api&response_version=4"
+    assert_path(
+        &[
+            "logbrew",
+            "explain",
+            "release",
+            "checkout@1.2.3",
+            "--project",
+            "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA",
+            "--environment",
+            "production",
+            "--service",
+            "checkout-api",
+        ],
+        "/api/telemetry/releases/investigation?project_id=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa&release=checkout%401.2.3&environment=production&service_name=checkout-api&response_version=4",
     );
 
-    let metric = parse_command([
-        "logbrew",
-        "explain",
-        "metric",
-        "http.server.duration",
-        "--project",
-        "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
-        "--since",
-        "24h",
-        "--interval",
-        "5m",
-        "--group-by",
-        "service",
-        "--environment",
-        "production",
-        "--series-limit",
-        "12",
-        "--json",
-    ])
-    .expect("metric explanation parses");
-    assert_eq!(
-        metric.http_path().expect("metric explanation has endpoint"),
-        "/api/telemetry/metrics/investigation?project_id=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa&name=http.server.duration&since=24h&interval=5m&group_by=service_name&environment=production&series_limit=12&response_version=2"
+    assert_path(
+        &[
+            "logbrew",
+            "explain",
+            "metric",
+            "http.server.duration",
+            "--project",
+            "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            "--since",
+            "24h",
+            "--interval",
+            "5m",
+            "--group-by",
+            "service",
+            "--environment",
+            "production",
+            "--series-limit",
+            "12",
+            "--json",
+        ],
+        "/api/telemetry/metrics/investigation?project_id=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa&name=http.server.duration&since=24h&interval=5m&group_by=service_name&environment=production&series_limit=12&response_version=2",
     );
 }
 
@@ -1414,62 +1277,49 @@ fn rejects_malformed_explicit_explanation_identifiers_before_network_use() {
 
 #[test]
 fn parses_json_before_explain_resource_and_id() {
-    let inferred =
-        parse_command(["logbrew", "explain", "--json", "issue_123"]).expect("inferred explain");
-    assert_eq!(
-        inferred,
+    assert_command(
+        &["logbrew", "explain", "--json", "issue_123"],
         Command::Explain {
             target: logbrew_cli::ExplainTarget::Issue {
                 id: "issue_123".to_owned(),
                 occurrence: logbrew_cli::IssueOccurrenceSelection::Recommended,
             },
             json: true,
-        }
+        },
     );
 
-    let trace =
-        parse_command(["logbrew", "explain", "trace", "--json", "trace-123"]).expect("trace");
-    assert_eq!(
-        trace,
+    assert_command(
+        &["logbrew", "explain", "trace", "--json", "trace-123"],
         Command::Explain {
             target: logbrew_cli::ExplainTarget::Trace("trace-123".to_owned()),
             json: true,
-        }
+        },
     );
 }
 
 #[test]
 fn parses_issue_status_mutation() {
-    let command = parse_command(["logbrew", "set", "issue", "issue-123", "RESOLVED", "--json"])
-        .expect("command parses");
-
-    assert_eq!(
-        command,
+    assert_command_path(
+        &["logbrew", "set", "issue", "issue-123", "RESOLVED", "--json"],
         Command::Set {
             target: SetTarget::IssueStatus {
                 id: "issue-123".to_owned(),
                 status: "resolved".to_owned(),
             },
             json: true,
-        }
-    );
-    assert_eq!(
-        command.http_path().expect("set issue has endpoint"),
-        "/api/telemetry/issues/issue-123"
+        },
+        "/api/telemetry/issues/issue-123",
     );
 
-    let closed = parse_command(["logbrew", "set", "issue", "issue-123", "closed", "--json"])
-        .expect("closed status alias parses");
-
-    assert_eq!(
-        closed,
+    assert_command(
+        &["logbrew", "set", "issue", "issue-123", "closed", "--json"],
         Command::Set {
             target: SetTarget::IssueStatus {
                 id: "issue-123".to_owned(),
                 status: "resolved".to_owned(),
             },
             json: true,
-        }
+        },
     );
 }
 
@@ -1480,33 +1330,30 @@ fn parses_json_before_set_resource_id_and_status() {
         ["logbrew", "set", "issue", "--json", "issue-123", "resolved"],
         ["logbrew", "set", "issue", "issue-123", "--json", "resolved"],
     ] {
-        let command = parse_command(args).expect("set parses");
-
-        assert_eq!(
-            command,
+        assert_command(
+            &args,
             Command::Set {
                 target: SetTarget::IssueStatus {
                     id: "issue-123".to_owned(),
                     status: "resolved".to_owned(),
                 },
                 json: true,
-            }
+            },
         );
     }
 }
 
 #[test]
 fn parses_setup_auto_yes() {
-    let command =
-        parse_command(["logbrew", "setup", "--auto", "--yes", "--json"]).expect("command");
+    let command = parse_command(["logbrew", "setup", "--auto", "--yes", "--json"]);
 
     assert_eq!(
         command,
-        Command::Setup {
+        Ok(Command::Setup {
             auto: true,
             yes: true,
             json: true
-        }
+        })
     );
-    assert!(command.http_path().is_none());
+    assert_eq!(command.map(|command| command.http_path()), Ok(None));
 }
