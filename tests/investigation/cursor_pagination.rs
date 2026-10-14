@@ -133,8 +133,8 @@ fn cursor_flags_and_help_are_resource_specific() {
 
 async_test!(json_preserves_legacy_arrays_and_cursor_envelopes -> Result<(), Box<dyn std::error::Error>>, {
     for spec in SPECS {
-        let legacy_server = MockServer::start().await;
-        let cursor_server = MockServer::start().await;
+        let legacy_server = MockServer::start().await.expect("loopback server starts");
+        let cursor_server = MockServer::start().await.expect("loopback server starts");
         let row = row_value(spec);
         let envelope = page_value(spec, row.clone(), Some(cursor_value(spec)));
         Mock::auth("GET", spec.path, "test-token")
@@ -175,7 +175,7 @@ async_test!(json_preserves_legacy_arrays_and_cursor_envelopes -> Result<(), Box<
 
 async_test!(human_pages_keep_rows_receipts_and_retryable_continuations -> Result<(), Box<dyn std::error::Error>>, {
     for spec in SPECS {
-        let server = MockServer::start().await;
+        let server = MockServer::start().await.expect("loopback server starts");
         Mock::route("GET", spec.path)
             .and(query_param("pagination", "cursor"))
             .and(query_param("limit", "1"))
@@ -227,7 +227,7 @@ async_test!(human_pages_keep_rows_receipts_and_retryable_continuations -> Result
 
 async_test!(terminal_pages_and_replaced_continuations_are_explicit -> Result<(), Box<dyn std::error::Error>>, {
     for spec in SPECS {
-        let terminal = MockServer::start().await;
+        let terminal = MockServer::start().await.expect("loopback server starts");
         Mock::route("GET", spec.path)
             .and(query_param("pagination", "cursor"))
             .and(query_param("cursor_time", CURSOR_TIME))
@@ -266,7 +266,7 @@ async_test!(terminal_pages_and_replaced_continuations_are_explicit -> Result<(),
     }
 
     let spec = SPECS[2];
-    let server = MockServer::start().await;
+    let server = MockServer::start().await.expect("loopback server starts");
     let next_time = "2026-07-12T07:00:00.250+00:00";
     let next_id = "b7d388c7-c486-420b-970f-0126b7e649cb";
     Mock::route("GET", spec.path)
@@ -304,7 +304,7 @@ async_test!(terminal_pages_and_replaced_continuations_are_explicit -> Result<(),
 async_test!(every_cursor_resource_hides_malformed_or_non_json_successes -> Result<(), Box<dyn std::error::Error>>, {
     for spec in SPECS {
         for (suffix, body) in [("missing", Some(wrapper_only(spec))), ("text", None)] {
-            let server = MockServer::start().await;
+            let server = MockServer::start().await.expect("loopback server starts");
             let response = body.map_or_else(
                 || {
                     ResponseTemplate::new(200)
@@ -362,7 +362,7 @@ async_test!(metric_human_output_never_falls_back_to_attributes -> Result<(), Box
         (false, json!([malformed.clone()])),
         (true, page_value(spec, malformed, None)),
     ] {
-        let server = MockServer::start().await;
+        let server = MockServer::start().await.expect("loopback server starts");
         Mock::route("GET", spec.path)
             .respond_with(ResponseTemplate::new(200).set_body_json(body))
             .mount(&server);
@@ -393,7 +393,7 @@ async_test!(metric_human_output_never_falls_back_to_attributes -> Result<(), Box
 
 async_test!(trace_naming_receipt_is_exact_and_actionable -> Result<(), Box<dyn std::error::Error>>, {
     let spec = SPECS[4];
-    let server = MockServer::start().await;
+    let server = MockServer::start().await.expect("loopback server starts");
     let mut weak_trace = row_value(spec);
     weak_trace["root_span_name"] = json!("GET unmatched");
     weak_trace["root_operation"] = json!("sdk.span");
@@ -428,7 +428,7 @@ async_test!(trace_naming_receipt_is_exact_and_actionable -> Result<(), Box<dyn s
 
 async_test!(backend_cursor_validation_is_preserved_without_echoing_values -> Result<(), Box<dyn std::error::Error>>, {
     let spec = SPECS[3];
-    let server = MockServer::start().await;
+    let server = MockServer::start().await.expect("loopback server starts");
     Mock::route("GET", spec.path)
         .and(query_param("pagination", "cursor"))
         .and(query_param("cursor_time", "not-a-time"))
@@ -608,7 +608,7 @@ async fn assert_invalid_page(
     spec: CursorSpec,
     body: Value,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await.expect("loopback server starts");
     Mock::route("GET", spec.path)
         .and(query_param("pagination", "cursor"))
         .respond_with(ResponseTemplate::new(200).set_body_json(body))

@@ -1,19 +1,17 @@
-//! Shared current-thread executor for asynchronous test contracts.
+//! Asynchronous contracts using the test target's current-thread executor.
 
-/// Runs one boxed asynchronous test without a procedural macro expansion.
-pub(crate) fn run_async<T>(future: std::pin::Pin<Box<dyn Future<Output = T>>>) -> T {
-    tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .expect("test runtime builds")
-        .block_on(future)
-}
-
+/// Runs each test on its own runtime and propagates runtime-creation failures.
 macro_rules! async_test {
-    ($name:ident $(-> $output:ty)?, $body:block) => {
+    ($name:ident, $body:block) => {
         #[test]
-        fn $name() $(-> $output)? {
+        fn $name() -> Result<(), std::io::Error> {
             crate::run_async(Box::pin(async $body))
+        }
+    };
+    ($name:ident -> $output:ty, $body:block) => {
+        #[test]
+        fn $name() -> $output {
+            crate::run_async(Box::pin(async $body))?
         }
     };
 }

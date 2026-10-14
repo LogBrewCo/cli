@@ -32,4 +32,4 @@ mod trace_discovery;
 mod usage;
 mod whoami;
 
-pub(crate) use crate::support::*;
+use crate::support::*;

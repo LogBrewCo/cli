@@ -2,7 +2,7 @@
 
 use crate::matchers::query_param;
 use crate::{Mock, MockServer, ResponseTemplate};
-use logbrew_cli::{Command, HelpTopic, HttpMethod, help, parse_command};
+use logbrew_cli::{HelpTopic, HttpMethod, help, parse_command};
 
 const PROJECT_ID: &str = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
 
@@ -12,16 +12,10 @@ fn public_grammar_help_and_get_model_stay_aligned() -> Result<(), Box<dyn std::e
         vec!["logbrew", "analytics", "overview", "--help"],
         vec!["logbrew", "help", "analytics", "overview"],
     ] {
-        assert_eq!(
-            parse_command(args)?,
-            Command::Help {
-                topic: HelpTopic::AnalyticsOverview,
-                json: false,
-            }
-        );
+        crate::assert_help(&args, HelpTopic::AnalyticsOverview, false);
     }
 
-    let command = overview_command(true)?;
+    let command = parse_command(std::iter::once("logbrew").chain(overview_args(true)))?;
     assert_eq!(command.http_method(), Some(HttpMethod::Get));
     assert!(command.wants_json());
     assert!(command.request_body().is_none());
@@ -57,7 +51,7 @@ fn public_grammar_help_and_get_model_stay_aligned() -> Result<(), Box<dyn std::e
 }
 
 async_test!(built_binary_gets_exact_scope_and_preserves_validated_json -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await?;
     let response = overview_response();
     let response_body = serde_json::to_string(&response)?;
     Mock::auth("GET", "/api/telemetry/analytics/overview", "account-token")
@@ -73,7 +67,7 @@ async_test!(built_binary_gets_exact_scope_and_preserves_validated_json -> Result
         .expect(1)
         .mount(&server);
 
-    let process = run_binary(&server, true).await?;
+    let process = super::run_cli(&server, &overview_args(true)).await?;
 
     super::assert_cli_success(&process);
     let actual = String::from_utf8(process.stdout)?;
@@ -82,15 +76,15 @@ async_test!(built_binary_gets_exact_scope_and_preserves_validated_json -> Result
 });
 
 async_test!(built_binary_human_output_explains_activity_coverage_and_next_step -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await?;
     let mut response = overview_response();
     response["top_actions"][0]["name"] = "checkout\u{202e}started".into();
     Mock::route("GET", "/api/telemetry/analytics/overview")
-        .respond_with(ResponseTemplate::new(200).set_body_json(response))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&response))
         .expect(1)
         .mount(&server);
 
-    let process = run_binary(&server, false).await?;
+    let process = super::run_cli(&server, &overview_args(false)).await?;
 
     super::assert_cli_success(&process);
     let text = String::from_utf8(process.stdout)?;
@@ -127,93 +121,52 @@ async_test!(built_binary_human_output_explains_activity_coverage_and_next_step -
 });
 
 async_test!(built_binary_fails_closed_on_unknown_identity_fields_without_reflection -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await?;
     let mut response = overview_response();
     response["query"]["user_id"] = "hostile-user-marker".into();
     Mock::route("GET", "/api/telemetry/analytics/overview")
-        .respond_with(ResponseTemplate::new(200).set_body_json(response))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&response))
         .expect(1)
         .mount(&server);
 
-    let process = run_binary(&server, true).await?;
+    let process = super::run_cli(&server, &overview_args(true)).await?;
 
-    assert!(!process.status.success());
-    assert!(process.stdout.is_empty());
-    let text = String::from_utf8(process.stderr)?;
-    let error: serde_json::Value = serde_json::from_str(text.as_str())?;
-    assert_eq!(error["error"], "analytics_overview_response_invalid");
+    let text = super::cli_json_error(process, "analytics_overview_response_invalid")?;
     assert!(!text.contains("hostile-user-marker"));
     Ok(())
 });
 
-async_test!(built_binary_fails_closed_on_contradictory_coverage -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+async_test!(built_binary_fails_closed_on_contradictory_coverage -> crate::TestResult, {
+    reject_human_response("/coverage/subject_coverage/legacy_unknown_kind_events", 6, "contradictory-response-marker").await
+});
+async_test!(built_binary_fails_closed_on_impossible_anonymous_cardinality -> crate::TestResult, {
+    reject_human_response("/summary/active_anonymous_subjects", 9, "impossible-cardinality-marker").await
+});
+async fn reject_human_response(pointer: &str, replacement: u64, marker: &str) -> crate::TestResult {
+    let server = MockServer::start().await?;
     let mut response = overview_response();
-    response["coverage"]["subject_coverage"]["legacy_unknown_kind_events"] = 6.into();
-    response["next_action"]["reason"] = "contradictory-response-marker".into();
+    *response
+        .pointer_mut(pointer)
+        .ok_or("missing fixture field")? = replacement.into();
+    response["next_action"]["reason"] = marker.into();
     Mock::route("GET", "/api/telemetry/analytics/overview")
-        .respond_with(ResponseTemplate::new(200).set_body_json(response))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&response))
         .expect(1)
         .mount(&server);
-
-    let process = run_binary(&server, false).await?;
-
-    assert!(!process.status.success());
-    assert!(process.stdout.is_empty());
+    let process = super::run_cli(&server, &overview_args(false)).await?;
+    assert!(!process.status.success(), "invalid overview succeeded");
+    assert!(process.stdout.is_empty(), "invalid overview emitted output");
     let text = String::from_utf8(process.stderr)?;
-    assert!(text.contains("product analytics overview response is invalid"));
-    assert!(!text.contains("contradictory-response-marker"));
+    assert!(
+        text.contains("product analytics overview response is invalid"),
+        "wrong error"
+    );
+    assert!(!text.contains(marker), "invalid overview leaked its marker");
     Ok(())
-});
-
-async_test!(built_binary_fails_closed_on_impossible_anonymous_cardinality -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
-    let mut response = overview_response();
-    response["summary"]["active_anonymous_subjects"] = 9.into();
-    response["next_action"]["reason"] = "impossible-cardinality-marker".into();
-    Mock::route("GET", "/api/telemetry/analytics/overview")
-        .respond_with(ResponseTemplate::new(200).set_body_json(response))
-        .expect(1)
-        .mount(&server);
-
-    let process = run_binary(&server, false).await?;
-
-    assert!(!process.status.success());
-    assert!(process.stdout.is_empty());
-    let text = String::from_utf8(process.stderr)?;
-    assert!(text.contains("product analytics overview response is invalid"));
-    assert!(!text.contains("impossible-cardinality-marker"));
-    Ok(())
-});
-
-/// Parses the representative public command shape.
-fn overview_command(json: bool) -> Result<Command, logbrew_cli::CliError> {
-    let mut args = vec![
-        "logbrew",
-        "analytics",
-        "overview",
-        "--project",
-        PROJECT_ID,
-        "--since",
-        "24h",
-        "--interval",
-        "5m",
-        "--environment",
-        "production",
-        "--top-limit",
-        "2",
-    ];
-    if json {
-        args.push("--json");
-    }
-    parse_command(args)
 }
 
-/// Runs the actual CLI process while the async loopback server remains responsive.
-async fn run_binary(
-    server: &MockServer,
-    json: bool,
-) -> Result<std::process::Output, Box<dyn std::error::Error>> {
+/// Shared arguments for parser and built-binary coverage.
+fn overview_args(json: bool) -> Vec<&'static str> {
     let mut args = vec![
         "analytics",
         "overview",
@@ -231,7 +184,7 @@ async fn run_binary(
     if json {
         args.push("--json");
     }
-    super::run_cli(server, args.as_slice()).await
+    args
 }
 
 /// Stable schema-version-2 fixture matching the public API contract.
@@ -325,120 +278,128 @@ fn overview_response() -> serde_json::Value {
                 "share_of_actions": 0.25
             }
         ],
-        "classified_activity": {
-            "summary": {
-                "events": 110,
-                "page_views": 50,
-                "screen_views": 20,
-                "interactions": 40,
-                "distinct_surfaces": 4,
-                "distinct_event_names": 5,
-                "active_identified_users": 17,
-                "active_anonymous_subjects": 6,
-                "sessions": 23
-            },
-            "coverage": {
-                "classified_actions": 60,
-                "unclassified_actions": 60,
-                "action_classification_rate": 0.5,
-                "surfaced_events": 100,
-                "named_events": 105,
-                "identified_events": 90,
-                "subject_coverage": {
-                    "index_version": 1,
-                    "identified_user_events": 90,
-                    "anonymous_subject_events": 8,
-                    "legacy_unknown_kind_events": 5,
-                    "missing_subject_events": 4,
-                    "historical_unindexed_events": 3
-                },
-                "sessionized_events": 80,
-                "traced_events": 95,
-                "surface_rate": 100.0 / 110.0,
-                "event_name_rate": 105.0 / 110.0,
-                "identification_rate": 90.0 / 110.0,
-                "sessionization_rate": 80.0 / 110.0,
-                "trace_link_rate": 95.0 / 110.0,
-                "expected_buckets": 2,
-                "returned_points": 2,
-                "returned_top_surfaces": 2,
-                "returned_top_events": 2,
-                "top_surfaces_truncated": true,
-                "top_events_truncated": true,
-                "first_seen_at": "2026-08-02T00:00:20Z",
-                "last_seen_at": "2026-08-02T00:09:40Z",
-                "limitations": [
-                    "Versioned classification scope.",
-                    "Unclassified action coverage.",
-                    "Surface coverage.",
-                    "Event-name coverage.",
-                    "Anonymous-subject coverage.",
-                    "Legacy subject-kind coverage.",
-                    "Missing subject coverage.",
-                    "Historical subject-index coverage.",
-                    "Session coverage.",
-                    "Trace coverage."
-                ]
-            },
-            "series": [
-                {
-                    "bucket_start": "2026-08-02T00:00:00Z",
-                    "bucket_end": "2026-08-02T00:05:00Z",
-                    "events": 45,
-                    "page_views": 20,
-                    "screen_views": 10,
-                    "interactions": 15
-                },
-                {
-                    "bucket_start": "2026-08-02T00:05:00Z",
-                    "bucket_end": "2026-08-02T00:10:00Z",
-                    "events": 65,
-                    "page_views": 30,
-                    "screen_views": 10,
-                    "interactions": 25
-                }
-            ],
-            "top_surfaces": [
-                {
-                    "kind": "page_view",
-                    "surface": "/checkout/:step",
-                    "events": 40,
-                    "active_identified_users": 12,
-                    "sessions": 14,
-                    "share_of_classified_events": 40.0 / 110.0
-                },
-                {
-                    "kind": "screen_view",
-                    "surface": "Checkout",
-                    "events": 25,
-                    "active_identified_users": 9,
-                    "sessions": 10,
-                    "share_of_classified_events": 25.0 / 110.0
-                }
-            ],
-            "top_events": [
-                {
-                    "kind": "page_view",
-                    "event_name": "/pricing",
-                    "events": 45,
-                    "active_identified_users": 13,
-                    "sessions": 15,
-                    "share_of_classified_events": 45.0 / 110.0
-                },
-                {
-                    "kind": "interaction",
-                    "event_name": "signup_started",
-                    "events": 30,
-                    "active_identified_users": 10,
-                    "sessions": 12,
-                    "share_of_classified_events": 30.0 / 110.0
-                }
-            ]
-        },
+        "classified_activity": classified_activity(),
         "next_action": {
             "code": "build_product_funnel",
             "target": "/api/telemetry/analytics/funnel",
             "reason": "Use this server-authored reason verbatim."
         }
+    })
+}
+
+fn classified_activity() -> serde_json::Value {
+    serde_json::json!({
+        "summary": {
+            "events": 110,
+            "page_views": 50,
+            "screen_views": 20,
+            "interactions": 40,
+            "distinct_surfaces": 4,
+            "distinct_event_names": 5,
+            "active_identified_users": 17,
+            "active_anonymous_subjects": 6,
+            "sessions": 23
+        },
+        "coverage": classified_activity_coverage(),
+        "series": [
+            {
+                "bucket_start": "2026-08-02T00:00:00Z",
+                "bucket_end": "2026-08-02T00:05:00Z",
+                "events": 45,
+                "page_views": 20,
+                "screen_views": 10,
+                "interactions": 15
+            },
+            {
+                "bucket_start": "2026-08-02T00:05:00Z",
+                "bucket_end": "2026-08-02T00:10:00Z",
+                "events": 65,
+                "page_views": 30,
+                "screen_views": 10,
+                "interactions": 25
+            }
+        ],
+        "top_surfaces": [
+            {
+                "kind": "page_view",
+                "surface": "/checkout/:step",
+                "events": 40,
+                "active_identified_users": 12,
+                "sessions": 14,
+                "share_of_classified_events": 40.0 / 110.0
+            },
+            {
+                "kind": "screen_view",
+                "surface": "Checkout",
+                "events": 25,
+                "active_identified_users": 9,
+                "sessions": 10,
+                "share_of_classified_events": 25.0 / 110.0
+            }
+        ],
+        "top_events": [
+            {
+                "kind": "page_view",
+                "event_name": "/pricing",
+                "events": 45,
+                "active_identified_users": 13,
+                "sessions": 15,
+                "share_of_classified_events": 45.0 / 110.0
+            },
+            {
+                "kind": "interaction",
+                "event_name": "signup_started",
+                "events": 30,
+                "active_identified_users": 10,
+                "sessions": 12,
+                "share_of_classified_events": 30.0 / 110.0
+            }
+        ]
+    })
+}
+
+fn classified_activity_coverage() -> serde_json::Value {
+    serde_json::json!({
+        "classified_actions": 60,
+        "unclassified_actions": 60,
+        "action_classification_rate": 0.5,
+        "surfaced_events": 100,
+        "named_events": 105,
+        "identified_events": 90,
+        "subject_coverage": {
+            "index_version": 1,
+            "identified_user_events": 90,
+            "anonymous_subject_events": 8,
+            "legacy_unknown_kind_events": 5,
+            "missing_subject_events": 4,
+            "historical_unindexed_events": 3
+        },
+        "sessionized_events": 80,
+        "traced_events": 95,
+        "surface_rate": 100.0 / 110.0,
+        "event_name_rate": 105.0 / 110.0,
+        "identification_rate": 90.0 / 110.0,
+        "sessionization_rate": 80.0 / 110.0,
+        "trace_link_rate": 95.0 / 110.0,
+        "expected_buckets": 2,
+        "returned_points": 2,
+        "returned_top_surfaces": 2,
+        "returned_top_events": 2,
+        "top_surfaces_truncated": true,
+        "top_events_truncated": true,
+        "first_seen_at": "2026-08-02T00:00:20Z",
+        "last_seen_at": "2026-08-02T00:09:40Z",
+        "limitations": [
+            "Versioned classification scope.",
+            "Unclassified action coverage.",
+            "Surface coverage.",
+            "Event-name coverage.",
+            "Anonymous-subject coverage.",
+            "Legacy subject-kind coverage.",
+            "Missing subject coverage.",
+            "Historical subject-index coverage.",
+            "Session coverage.",
+            "Trace coverage."
+        ]
     })
 }

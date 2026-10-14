@@ -2,8 +2,8 @@
 
 use super::{authenticated_env, run_command};
 use crate::matchers::{body_json, header, query_param};
-use crate::{Mock, MockServer, ResponseTemplate, execute_command};
-use logbrew_cli::{Command, HttpMethod, help, parse_command, write_cli_error, write_runtime_error};
+use crate::{Mock, MockServer, ResponseTemplate, TestResult, execute_command, rendered_json_error};
+use logbrew_cli::{Command, HttpMethod, help, parse_command, write_runtime_error};
 use std::collections::BTreeMap;
 
 const PROJECT_ID: &str = "123e4567-e89b-12d3-a456-426614174000";
@@ -13,7 +13,7 @@ const CREATED_AT: &str = "2026-07-14T07:00:00Z";
 const CURSOR_RECOVERY: &str = "use --pagination cursor alone for the first page, then use --cursor-time and --cursor-id together from next_cursor";
 
 #[test]
-fn support_create_builds_exact_safe_request() {
+fn support_create_builds_exact_safe_request() -> TestResult {
     let command = parse_command([
         "logbrew",
         "support",
@@ -44,12 +44,11 @@ fn support_create_builds_exact_safe_request() {
         "event_456",
         "--diagnostics",
         "--json",
-    ])
-    .expect("support create parses");
+    ])?;
 
     assert_eq!(command.http_method(), Some(HttpMethod::Post));
     assert_eq!(command.http_path().as_deref(), Some("/api/support/tickets"));
-    let body = command.request_body().expect("create has a body");
+    let body = command.request_body().ok_or("create has a body")?;
     assert_eq!(body["source"], "cli");
     assert_eq!(body["category"], "cli_issue");
     assert_eq!(body["title"], "Cursor output is unclear");
@@ -87,10 +86,12 @@ fn support_create_builds_exact_safe_request() {
     ] {
         assert!(!diagnostics.contains(sensitive));
     }
+    Ok(())
 }
 
 #[test]
-fn support_create_requires_fields_and_rejects_unknown_categories_without_echoing_values() {
+fn support_create_requires_fields_and_rejects_unknown_categories_without_echoing_values()
+-> TestResult {
     for (args, error, message, next) in [
         (
             vec![
@@ -155,19 +156,17 @@ fn support_create_requires_fields_and_rejects_unknown_categories_without_echoing
             "use sdk_install_failure, ingest_failure, auth_failure, project_setup, dashboard_issue, docs_confusion, cli_issue, mobile_issue, billing_question, or other",
         ),
     ] {
-        let parse_error = parse_command(args).expect_err("invalid create fails");
-        let mut output = Vec::new();
-        write_cli_error(&parse_error, true, &mut output).expect("error writes");
-        let body: serde_json::Value = serde_json::from_slice(&output).expect("valid JSON");
+        let (body, text) = rendered_json_error(&args)?;
         assert_eq!(body["error"], error);
         assert_eq!(body["message"], message);
         assert_eq!(body["next"], next);
-        assert!(!String::from_utf8_lossy(&output).contains("secret-category-sentinel"));
+        assert!(!text.contains("secret-category-sentinel"));
     }
+    Ok(())
 }
 
 #[test]
-fn support_create_accepts_every_public_category() {
+fn support_create_accepts_every_public_category() -> TestResult {
     for category in [
         "sdk_install_failure",
         "ingest_failure",
@@ -190,14 +189,14 @@ fn support_create_accepts_every_public_category() {
             "Title",
             "--description",
             "Description",
-        ])
-        .expect("public category parses");
-        assert_eq!(command.request_body().expect("body")["category"], category);
+        ])?;
+        assert_eq!(command.request_body().ok_or("body")?["category"], category);
     }
+    Ok(())
 }
 
 #[test]
-fn support_list_repeats_exact_active_filters_for_cursor_pages() {
+fn support_list_repeats_exact_active_filters_for_cursor_pages() -> TestResult {
     let first = parse_command([
         "logbrew",
         "support",
@@ -217,8 +216,7 @@ fn support_list_repeats_exact_active_filters_for_cursor_pages() {
         "--limit",
         "2",
         "--json",
-    ])
-    .expect("first page parses");
+    ])?;
     assert_support_query(
         &first,
         &[
@@ -230,7 +228,7 @@ fn support_list_repeats_exact_active_filters_for_cursor_pages() {
             ("limit", "2"),
             ("pagination", "cursor"),
         ],
-    );
+    )?;
 
     let continuation = parse_command([
         "logbrew",
@@ -255,8 +253,7 @@ fn support_list_repeats_exact_active_filters_for_cursor_pages() {
         "--limit",
         "2",
         "--json",
-    ])
-    .expect("continuation parses");
+    ])?;
     assert_support_query(
         &continuation,
         &[
@@ -270,11 +267,12 @@ fn support_list_repeats_exact_active_filters_for_cursor_pages() {
             ("cursor_time", CURSOR_TIME),
             ("cursor_id", TICKET_ID),
         ],
-    );
+    )?;
+    Ok(())
 }
 
 #[test]
-fn support_cursor_flags_fail_closed_and_followups_are_not_implemented() {
+fn support_cursor_flags_fail_closed_and_followups_are_not_implemented() -> TestResult {
     for args in [
         vec![
             "logbrew",
@@ -297,29 +295,21 @@ fn support_cursor_flags_fail_closed_and_followups_are_not_implemented() {
             "--json",
         ],
     ] {
-        let error = parse_command(args).expect_err("invalid cursor fails");
-        let mut output = Vec::new();
-        write_cli_error(&error, true, &mut output).expect("error writes");
-        let body: serde_json::Value = serde_json::from_slice(&output).expect("valid JSON");
+        let (body, _) = rendered_json_error(&args)?;
         assert_eq!(body["error"], "invalid_support_cursor");
         assert_eq!(body["next"], CURSOR_RECOVERY);
     }
 
-    let error = parse_command(["logbrew", "support", "message", TICKET_ID, "hello"])
-        .expect_err("unapproved message API stays unavailable");
-    let mut output = Vec::new();
-    write_cli_error(&error, true, &mut output).expect("error writes");
-    let body: serde_json::Value = serde_json::from_slice(&output).expect("valid JSON");
+    let (body, _) = rendered_json_error(&["logbrew", "support", "message", TICKET_ID, "hello"])?;
     assert_eq!(body["error"], "unknown_resource");
     assert_eq!(body["next"], "run logbrew support --help");
+    Ok(())
 }
 
 #[test]
-fn support_help_documents_context_reply_and_safe_diagnostics() {
-    let Command::Help { topic, .. } =
-        parse_command(["logbrew", "support", "--help"]).expect("support help parses")
-    else {
-        panic!("support help should resolve");
+fn support_help_documents_context_reply_and_safe_diagnostics() -> TestResult {
+    let Command::Help { topic, .. } = parse_command(["logbrew", "support", "--help"])? else {
+        return Err("support help should resolve".into());
     };
     let text = help::help_text(topic);
     assert!(text.contains("support create"));
@@ -336,13 +326,13 @@ fn support_help_documents_context_reply_and_safe_diagnostics() {
     assert!(text.contains("--retry-key <key>"));
     assert!(!text.contains("support message"));
     assert!(text.contains("Chat, messages, and internal notes are not part"));
+    Ok(())
 }
 
 #[test]
-fn support_lifecycle_builds_exact_patch_and_rejects_non_public_ids() {
+fn support_lifecycle_builds_exact_patch_and_rejects_non_public_ids() -> TestResult {
     for (action, status) in [("close", "closed"), ("reopen", "open")] {
-        let command = parse_command(["logbrew", "support", action, TICKET_ID, "--json"])
-            .expect("support lifecycle parses");
+        let command = parse_command(["logbrew", "support", action, TICKET_ID, "--json"])?;
         assert_eq!(command.http_method(), Some(HttpMethod::Patch));
         assert_eq!(
             command.http_path().as_deref(),
@@ -362,12 +352,8 @@ fn support_lifecycle_builds_exact_patch_and_rejects_non_public_ids() {
             "sup_9b2b4b3abd4e4f85a0f648118f037c17?admin=true",
             "non-public-ticket-id-proof",
         ] {
-            let error = parse_command(["logbrew", "support", action, invalid, "--json"])
-                .expect_err("non-public ticket id fails locally");
-            let mut output = Vec::new();
-            write_cli_error(&error, true, &mut output).expect("error writes");
-            let text = String::from_utf8(output).expect("UTF-8");
-            let body: serde_json::Value = serde_json::from_str(&text).expect("JSON");
+            let (body, text) =
+                rendered_json_error(&["logbrew", "support", action, invalid, "--json"])?;
             assert_eq!(body["error"], "invalid_support_ticket_id");
             assert_eq!(body["message"], "invalid support ticket id");
             assert_eq!(
@@ -377,10 +363,11 @@ fn support_lifecycle_builds_exact_patch_and_rejects_non_public_ids() {
             assert!(!text.contains(invalid));
         }
     }
+    Ok(())
 }
 
 #[test]
-fn support_detail_and_cursor_reject_non_public_ids() {
+fn support_detail_and_cursor_reject_non_public_ids() -> TestResult {
     for args in [
         vec![
             "logbrew",
@@ -400,21 +387,18 @@ fn support_detail_and_cursor_reject_non_public_ids() {
             "sup_9B2B4B3ABD4E4F85A0F648118F037C17",
         ],
     ] {
-        let error = parse_command(args).expect_err("non-public support id fails locally");
-        let mut output = Vec::new();
-        write_cli_error(&error, true, &mut output).expect("error writes");
-        let body: serde_json::Value =
-            serde_json::from_slice(&output).expect("safe JSON error is returned");
+        let (body, _) = rendered_json_error(&args)?;
         assert_eq!(body["error"], "invalid_support_ticket_id");
         assert_eq!(
             body["next"],
             "use the ticket_id returned by logbrew support create or list"
         );
     }
+    Ok(())
 }
 
-async_test!(support_lifecycle_preserves_json_and_exact_retry_is_stable -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+async_test!(support_lifecycle_preserves_json_and_exact_retry_is_stable -> TestResult, {
+    let server = MockServer::start().await?;
     let mut closed = ticket_value();
     closed["status"] = serde_json::Value::String(String::from("closed"));
     let reopened = ticket_value();
@@ -424,7 +408,7 @@ async_test!(support_lifecycle_preserves_json_and_exact_retry_is_stable -> Result
         "test-token",
     )
     .and(body_json(serde_json::json!({"status": "closed"})))
-    .respond_with(ResponseTemplate::new(200).set_body_json(closed.clone()))
+    .respond_with(ResponseTemplate::new(200).set_body_json(&closed))
     .expect(2)
     .mount(&server);
     Mock::auth(
@@ -433,7 +417,7 @@ async_test!(support_lifecycle_preserves_json_and_exact_retry_is_stable -> Result
         "test-token",
     )
     .and(body_json(serde_json::json!({"status": "open"})))
-    .respond_with(ResponseTemplate::new(200).set_body_json(reopened.clone()))
+    .respond_with(ResponseTemplate::new(200).set_body_json(&reopened))
     .expect(1)
     .mount(&server);
 
@@ -464,7 +448,7 @@ async_test!(support_lifecycle_preserves_json_and_exact_retry_is_stable -> Result
     Ok(())
 });
 
-async_test!(support_lifecycle_uses_local_safe_404_and_422_recovery -> Result<(), Box<dyn std::error::Error>>, {
+async_test!(support_lifecycle_uses_local_safe_404_and_422_recovery -> TestResult, {
     for (status, action, api_code, api_error, next) in [
         (
             404,
@@ -481,10 +465,10 @@ async_test!(support_lifecycle_uses_local_safe_404_and_422_recovery -> Result<(),
             "check support command flags and retry",
         ),
     ] {
-        let server = MockServer::start().await;
+        let server = MockServer::start().await?;
         Mock::route("PATCH", format!("/api/support/tickets/{TICKET_ID}"))
             .respond_with(
-                ResponseTemplate::new(status).set_body_json(serde_json::json!({
+                ResponseTemplate::new(status).set_body_json(&serde_json::json!({
                     "error": "private backend error proof",
                     "code": "private_code_proof",
                     "next": "private backend recovery proof",
@@ -497,7 +481,8 @@ async_test!(support_lifecycle_uses_local_safe_404_and_422_recovery -> Result<(),
         let mut output = Vec::new();
         let error = execute_command(&command, &env, &mut output)
             .await
-            .expect_err("support lifecycle error fails");
+            .err()
+            .ok_or("support lifecycle error fails")?;
         write_runtime_error(&error, true, &mut output)?;
         let text = String::from_utf8(output)?;
         let body: serde_json::Value = serde_json::from_str(&text)?;
@@ -517,7 +502,7 @@ async_test!(support_lifecycle_uses_local_safe_404_and_422_recovery -> Result<(),
     Ok(())
 });
 
-async_test!(support_create_preserves_json_and_renders_concise_human_output -> Result<(), Box<dyn std::error::Error>>, {
+async_test!(support_create_preserves_json_and_renders_concise_human_output -> TestResult, {
     let response = serde_json::json!({
         "ticket_id": TICKET_ID,
         "status": "open",
@@ -525,7 +510,7 @@ async_test!(support_create_preserves_json_and_renders_concise_human_output -> Re
         "next": "track this ticket with logbrew support show",
         "next_action": {"code": "inspect_support_ticket", "target": "support_ticket"}
     });
-    let server = MockServer::start().await;
+    let server = MockServer::start().await?;
     Mock::auth("POST", "/api/support/tickets", "test-token")
         .and(body_json(serde_json::json!({
             "source": "cli",
@@ -533,7 +518,7 @@ async_test!(support_create_preserves_json_and_renders_concise_human_output -> Re
             "title": "Cursor output is unclear",
             "description": "Continuation guidance is incomplete"
         })))
-        .respond_with(ResponseTemplate::new(200).set_body_json(response.clone()))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&response))
         .expect(2)
         .mount(&server);
 
@@ -576,9 +561,9 @@ async_test!(support_create_preserves_json_and_renders_concise_human_output -> Re
     Ok(())
 });
 
-async_test!(support_list_preserves_legacy_and_cursor_envelopes -> Result<(), Box<dyn std::error::Error>>, {
-    let legacy_server = MockServer::start().await;
-    let cursor_server = MockServer::start().await;
+async_test!(support_list_preserves_legacy_and_cursor_envelopes -> TestResult, {
+    let legacy_server = MockServer::start().await?;
+    let cursor_server = MockServer::start().await?;
     let ticket = ticket_value();
     let legacy = serde_json::json!({
         "tickets": [ticket.clone()],
@@ -592,12 +577,12 @@ async_test!(support_list_preserves_legacy_and_cursor_envelopes -> Result<(), Box
         "next_action": {"code": "continue_support_tickets", "target": "support_tickets"}
     });
     Mock::auth("GET", "/api/support/tickets", "test-token")
-        .respond_with(ResponseTemplate::new(200).set_body_json(legacy.clone()))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&legacy))
         .mount(&legacy_server);
     Mock::route("GET", "/api/support/tickets")
         .and(query_param("pagination", "cursor"))
         .and(header("authorization", "Bearer test-token"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(cursor.clone()))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&cursor))
         .mount(&cursor_server);
 
     let legacy_output = run_command(
@@ -630,12 +615,12 @@ async_test!(support_list_preserves_legacy_and_cursor_envelopes -> Result<(), Box
     Ok(())
 });
 
-async_test!(support_list_human_output_is_bounded_and_cursor_recovery_keeps_rows -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+async_test!(support_list_human_output_is_bounded_and_cursor_recovery_keeps_rows -> TestResult, {
+    let server = MockServer::start().await?;
     Mock::route("GET", "/api/support/tickets")
         .and(query_param("pagination", "cursor"))
         .and(header("authorization", "Bearer test-token"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+        .respond_with(ResponseTemplate::new(200).set_body_json(&serde_json::json!({
             "tickets": [ticket_value()],
             "next_cursor": {"time": CURSOR_TIME, "id": TICKET_ID},
             "next": "continue support ticket history",
@@ -670,12 +655,12 @@ async_test!(support_list_human_output_is_bounded_and_cursor_recovery_keeps_rows 
     Ok(())
 });
 
-async_test!(support_human_output_rejects_controls_and_caps_visible_rows -> Result<(), Box<dyn std::error::Error>>, {
-    let unsafe_server = MockServer::start().await;
+async_test!(support_human_output_rejects_controls_and_caps_visible_rows -> TestResult, {
+    let unsafe_server = MockServer::start().await?;
     let mut unsafe_ticket = ticket_value();
     unsafe_ticket["status"] = serde_json::Value::String(String::from("open\u{1b}[31m"));
     Mock::route("GET", "/api/support/tickets")
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+        .respond_with(ResponseTemplate::new(200).set_body_json(&serde_json::json!({
             "tickets": [unsafe_ticket],
             "next": "inspect a ticket by id",
             "next_action": {"code": "inspect_support_ticket", "target": "support_ticket"}
@@ -693,9 +678,9 @@ async_test!(support_human_output_rejects_controls_and_caps_visible_rows -> Resul
     );
     assert!(!unsafe_output.contains('\u{1b}'));
 
-    let unsafe_create_server = MockServer::start().await;
+    let unsafe_create_server = MockServer::start().await?;
     Mock::route("POST", "/api/support/tickets")
-        .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({
+        .respond_with(ResponseTemplate::new(201).set_body_json(&serde_json::json!({
             "ticket_id": TICKET_ID,
             "status": "open\u{1b}[31m",
             "created_at": CREATED_AT,
@@ -724,12 +709,12 @@ async_test!(support_human_output_rejects_controls_and_caps_visible_rows -> Resul
         "Support response could not be rendered safely.\nNext: retry the same command with --json and inspect the public response shape.\n"
     );
 
-    let long_time_server = MockServer::start().await;
+    let long_time_server = MockServer::start().await?;
     let mut long_time_ticket = ticket_value();
     long_time_ticket["created_at"] =
         serde_json::Value::String(format!("2026-07-14T07:00:00.{}Z", "1".repeat(256)));
     Mock::route("GET", "/api/support/tickets")
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+        .respond_with(ResponseTemplate::new(200).set_body_json(&serde_json::json!({
             "tickets": [long_time_ticket],
             "next": "inspect a ticket by id",
             "next_action": {"code": "inspect_support_ticket", "target": "support_ticket"}
@@ -746,10 +731,10 @@ async_test!(support_human_output_rejects_controls_and_caps_visible_rows -> Resul
         "Support response could not be rendered safely.\nNext: retry the same command with --json and inspect the public response shape.\n"
     );
 
-    let bounded_server = MockServer::start().await;
+    let bounded_server = MockServer::start().await?;
     let tickets = vec![ticket_value(); 101];
     Mock::route("GET", "/api/support/tickets")
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+        .respond_with(ResponseTemplate::new(200).set_body_json(&serde_json::json!({
             "tickets": tickets,
             "next": "inspect a ticket by id",
             "next_action": {"code": "inspect_support_ticket", "target": "support_ticket"}
@@ -766,15 +751,15 @@ async_test!(support_human_output_rejects_controls_and_caps_visible_rows -> Resul
     Ok(())
 });
 
-async_test!(support_terminal_cursor_and_detail_are_explicit_and_json_exact -> Result<(), Box<dyn std::error::Error>>, {
-    let list_server = MockServer::start().await;
-    let detail_server = MockServer::start().await;
+async_test!(support_terminal_cursor_and_detail_are_explicit_and_json_exact -> TestResult, {
+    let list_server = MockServer::start().await?;
+    let detail_server = MockServer::start().await?;
     let detail = ticket_value();
     Mock::route("GET", "/api/support/tickets")
         .and(query_param("pagination", "cursor"))
         .and(query_param("cursor_time", CURSOR_TIME))
         .and(query_param("cursor_id", TICKET_ID))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+        .respond_with(ResponseTemplate::new(200).set_body_json(&serde_json::json!({
             "tickets": [ticket_value()],
             "next_cursor": null,
             "next": "inspect a ticket by id",
@@ -782,7 +767,7 @@ async_test!(support_terminal_cursor_and_detail_are_explicit_and_json_exact -> Re
         })))
         .mount(&list_server);
     Mock::route("GET", format!("/api/support/tickets/{TICKET_ID}"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(detail.clone()))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&detail))
         .expect(2)
         .mount(&detail_server);
 
@@ -826,8 +811,8 @@ async_test!(support_terminal_cursor_and_detail_are_explicit_and_json_exact -> Re
     Ok(())
 });
 
-async_test!(support_errors_never_print_raw_backend_bodies_or_sensitive_fields -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+async_test!(support_errors_never_print_raw_backend_bodies_or_sensitive_fields -> TestResult, {
+    let server = MockServer::start().await?;
     let auth_key = ["author", "ization"].concat();
     let auth_value = ["Bear", "er auth-proof-sentinel"].concat();
     let cookie_key = ["coo", "kie"].concat();
@@ -839,18 +824,19 @@ async_test!(support_errors_never_print_raw_backend_bodies_or_sensitive_fields ->
         "next_action": {"code": "fix_request", "target": "request"},
         "internal": {"description": "backend-body-proof-sentinel"}
     });
-    let response_object = response.as_object_mut().expect("response object");
+    let response_object = response.as_object_mut().ok_or("response object")?;
     drop(response_object.insert(auth_key.clone(), auth_value.clone().into()));
     drop(response_object.insert(cookie_key.clone(), cookie_value.into()));
     Mock::route("GET", "/api/support/tickets")
-        .respond_with(ResponseTemplate::new(422).set_body_json(response))
+        .respond_with(ResponseTemplate::new(422).set_body_json(&response))
         .mount(&server);
     let command = parse_command(["logbrew", "support", "list", "--json"])?;
     let env = authenticated_env(&server, "test-token", Some("support-error"));
     let mut output = Vec::new();
     let error = execute_command(&command, &env, &mut output)
         .await
-        .expect_err("backend error fails");
+        .err()
+        .ok_or("backend error fails")?;
     write_runtime_error(&error, true, &mut output)?;
     let text = String::from_utf8(output)?;
     let body: serde_json::Value = serde_json::from_str(&text)?;
@@ -873,7 +859,7 @@ async_test!(support_errors_never_print_raw_backend_bodies_or_sensitive_fields ->
     Ok(())
 });
 
-async_test!(malformed_support_success_responses_use_value_safe_human_recovery -> Result<(), Box<dyn std::error::Error>>, {
+async_test!(malformed_support_success_responses_use_value_safe_human_recovery -> TestResult, {
     for body in [
         serde_json::json!({
             "tickets": [ticket_value()],
@@ -887,10 +873,10 @@ async_test!(malformed_support_success_responses_use_value_safe_human_recovery ->
             "next_action": {"code": "continue_support_tickets", "target": "support_tickets"}
         }),
     ] {
-        let server = MockServer::start().await;
+        let server = MockServer::start().await?;
         Mock::route("GET", "/api/support/tickets")
             .and(query_param("pagination", "cursor"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(body))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&body))
             .mount(&server);
         let human = run_command(
             &server,
@@ -907,8 +893,8 @@ async_test!(malformed_support_success_responses_use_value_safe_human_recovery ->
     Ok(())
 });
 
-async_test!(non_json_support_errors_are_replaced_instead_of_printed -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+async_test!(non_json_support_errors_are_replaced_instead_of_printed -> TestResult, {
+    let server = MockServer::start().await?;
     Mock::route("GET", "/api/support/tickets")
         .respond_with(ResponseTemplate::new(500).set_body_raw(
             "private-backend-body-sentinel\nauthorization: Bearer private-value",
@@ -920,7 +906,8 @@ async_test!(non_json_support_errors_are_replaced_instead_of_printed -> Result<()
     let mut output = Vec::new();
     let error = execute_command(&command, &env, &mut output)
         .await
-        .expect_err("backend error fails");
+        .err()
+        .ok_or("backend error fails")?;
     write_runtime_error(&error, true, &mut output)?;
     let text = String::from_utf8(output)?;
     let body: serde_json::Value = serde_json::from_str(&text)?;
@@ -933,10 +920,9 @@ async_test!(non_json_support_errors_are_replaced_instead_of_printed -> Result<()
     Ok(())
 });
 
-fn assert_support_query(command: &Command, expected: &[(&str, &str)]) {
-    let path = command.http_path().expect("support list has endpoint");
-    let url = reqwest::Url::parse(format!("https://example.test{path}").as_str())
-        .expect("support path is valid");
+fn assert_support_query(command: &Command, expected: &[(&str, &str)]) -> TestResult {
+    let path = command.http_path().ok_or("support list has endpoint")?;
+    let url = reqwest::Url::parse(format!("https://example.test{path}").as_str())?;
     let pairs = url
         .query_pairs()
         .map(|(key, value)| (key.into_owned(), value.into_owned()))
@@ -947,8 +933,13 @@ fn assert_support_query(command: &Command, expected: &[(&str, &str)]) {
         .map(|(key, value)| ((*key).to_owned(), (*value).to_owned()))
         .collect::<BTreeMap<_, _>>();
     assert_eq!(pairs.len(), actual.len(), "query keys must not repeat");
-    assert_eq!(url.path(), "/api/support/tickets");
-    assert_eq!(actual, expected);
+    assert_eq!(
+        url.path(),
+        "/api/support/tickets",
+        "wrong support list route"
+    );
+    assert_eq!(actual, expected, "support query must preserve every filter");
+    Ok(())
 }
 
 fn ticket_value() -> serde_json::Value {

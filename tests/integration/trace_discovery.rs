@@ -2,13 +2,13 @@
 
 use super::{authenticated_env, run_command};
 use crate::matchers::{header, query_param};
-use crate::{Mock, MockServer, ResponseTemplate, execute_command};
-use logbrew_cli::{Command, help, parse_command, write_cli_error, write_runtime_error};
+use crate::{Mock, MockServer, ResponseTemplate, TestResult, execute_command, rendered_json_error};
+use logbrew_cli::{Command, help, parse_command, write_runtime_error};
 
 const PROJECT_ID: &str = "123e4567-e89b-12d3-a456-426614174000";
 
 #[test]
-fn parses_recent_trace_discovery_with_exact_query_keys() {
+fn parses_recent_trace_discovery_with_exact_query_keys() -> TestResult {
     let command = parse_command([
         "logbrew",
         "traces",
@@ -29,11 +29,10 @@ fn parses_recent_trace_discovery_with_exact_query_keys() {
         "--limit",
         "25",
         "--json",
-    ])
-    .expect("trace discovery parses");
+    ])?;
 
     assert_eq!(
-        command.http_path().expect("trace discovery has endpoint"),
+        command.http_path().ok_or("trace discovery has endpoint")?,
         "/api/telemetry/traces?project_id=123e4567-e89b-12d3-a456-426614174000&service_name=checkout-api&release=checkout%401.2.3&environment=production&status=error&since=24h&min_duration_ms=500&limit=25"
     );
 
@@ -49,8 +48,8 @@ fn parses_recent_trace_discovery_with_exact_query_keys() {
         &["logbrew", "spans", "--min-duration-ms=0", "--json"],
         &["logbrew", "latest", "5", "traces", "--json"],
     ] {
-        let command = parse_command(args.iter().copied()).expect("trace alias parses");
-        let path = command.http_path().expect("trace alias has endpoint");
+        let command = parse_command(args.iter().copied())?;
+        let path = command.http_path().ok_or("trace alias has endpoint")?;
 
         assert!(path.starts_with("/api/telemetry/traces"));
     }
@@ -62,38 +61,39 @@ fn parses_recent_trace_discovery_with_exact_query_keys() {
         "--since",
         "2026-05-01T00:00:00Z",
         "--json",
-    ])
-    .expect("RFC3339 trace discovery parses");
+    ])?;
     assert_eq!(
-        timestamp.http_path().expect("trace discovery has endpoint"),
+        timestamp
+            .http_path()
+            .ok_or("trace discovery has endpoint")?,
         "/api/telemetry/traces?since=2026-05-01T00%3A00%3A00Z"
     );
 
-    let recent = parse_command(["logbrew", "latest", "5", "traces", "--json"])
-        .expect("recency trace discovery parses");
+    let recent = parse_command(["logbrew", "latest", "5", "traces", "--json"])?;
     assert_eq!(
-        recent.http_path().expect("trace discovery has endpoint"),
+        recent.http_path().ok_or("trace discovery has endpoint")?,
         "/api/telemetry/traces?limit=5"
     );
+    Ok(())
 }
 
 #[test]
-fn trace_discovery_help_is_distinct_from_trace_detail_help() {
-    let list = parse_command(["logbrew", "traces", "--help"]).expect("trace list help parses");
-    let detail = parse_command(["logbrew", "trace", "--help"]).expect("trace detail help parses");
+fn trace_discovery_help_is_distinct_from_trace_detail_help() -> TestResult {
+    let list = parse_command(["logbrew", "traces", "--help"])?;
+    let detail = parse_command(["logbrew", "trace", "--help"])?;
 
     let Command::Help {
         topic: list_topic, ..
     } = list
     else {
-        panic!("plural traces should open list help");
+        return Err("plural traces should open list help".into());
     };
     let Command::Help {
         topic: detail_topic,
         ..
     } = detail
     else {
-        panic!("singular trace should open detail help");
+        return Err("singular trace should open detail help".into());
     };
     let list_text = help::help_text(list_topic);
     let detail_text = help::help_text(detail_topic);
@@ -104,25 +104,25 @@ fn trace_discovery_help_is_distinct_from_trace_detail_help() {
     assert!(list_text.contains("--since <24h|7d|RFC3339>"));
     assert!(detail_text.contains("logbrew trace <trace_id>"));
     assert!(!detail_text.contains("--min-duration-ms"));
+    Ok(())
 }
 
 #[test]
-fn plural_trace_help_routes_non_ids_to_discovery_guidance() {
+fn plural_trace_help_routes_non_ids_to_discovery_guidance() -> TestResult {
     for args in [
         &["logbrew", "traces", "checkout-api", "--help"][..],
         &["logbrew", "read", "traces", "checkout-api", "--help"],
         &["logbrew", "show", "traces", "checkout-api", "--help"],
     ] {
-        let command = parse_command(args.iter().copied()).expect("trace list help parses");
+        let command = parse_command(args.iter().copied())?;
         let Command::Help { topic, .. } = command else {
-            panic!("non-id plural trace help should remain discovery help");
+            return Err("non-id plural trace help should remain discovery help".into());
         };
 
         assert_eq!(topic, logbrew_cli::HelpTopic::ReadTraces);
     }
 
-    let copied_id = parse_command(["logbrew", "traces", "trace_123", "--help"])
-        .expect("copied trace id help parses");
+    let copied_id = parse_command(["logbrew", "traces", "trace_123", "--help"])?;
     assert_eq!(
         copied_id,
         Command::Help {
@@ -130,10 +130,11 @@ fn plural_trace_help_routes_non_ids_to_discovery_guidance() {
             json: false,
         }
     );
+    Ok(())
 }
 
-async_test!(trace_discovery_preserves_bare_json_and_renders_human_triage -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+async_test!(trace_discovery_preserves_bare_json_and_renders_human_triage -> TestResult, {
+    let server = MockServer::start().await?;
     let response = serde_json::json!([{
         "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
         "project_ids": [PROJECT_ID],
@@ -159,7 +160,7 @@ async_test!(trace_discovery_preserves_bare_json_and_renders_human_triage -> Resu
         .and(query_param("since", "24h"))
         .and(query_param("min_duration_ms", "500"))
         .and(header("authorization", "Bearer test-token"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(response.clone()))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&response))
         .mount(&server);
     let args = [
         "logbrew",
@@ -209,12 +210,12 @@ async_test!(trace_discovery_preserves_bare_json_and_renders_human_triage -> Resu
     Ok(())
 });
 
-async_test!(empty_trace_discovery_has_a_concrete_human_next_step -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+async_test!(empty_trace_discovery_has_a_concrete_human_next_step -> TestResult, {
+    let server = MockServer::start().await?;
     Mock::route("GET", "/api/telemetry/traces")
         .and(query_param("min_duration_ms", "999999"))
         .and(header("authorization", "Bearer test-token"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&serde_json::json!([])))
         .mount(&server);
 
     let human = run_command(
@@ -232,7 +233,7 @@ async_test!(empty_trace_discovery_has_a_concrete_human_next_step -> Result<(), B
 });
 
 #[test]
-fn trace_discovery_validation_is_agent_actionable() {
+fn trace_discovery_validation_is_agent_actionable() -> TestResult {
     for (args, error, message, next) in [
         (
             &["logbrew", "traces", "--status", "degraded", "--json"][..],
@@ -289,33 +290,22 @@ fn trace_discovery_validation_is_agent_actionable() {
             "run logbrew read trace --help",
         ),
     ] {
-        let parse_error = parse_command(args.iter().copied()).expect_err("command fails");
-        let mut output = Vec::new();
-
-        write_cli_error(&parse_error, true, &mut output).expect("error writes");
-
-        let body: serde_json::Value =
-            serde_json::from_slice(output.as_slice()).expect("valid JSON");
+        let (body, _) = rendered_json_error(args)?;
         assert_eq!(body["ok"], false);
         assert_eq!(body["error"], error);
         assert_eq!(body["message"], message);
         assert_eq!(body["next"], next);
     }
+    Ok(())
 }
 
 #[test]
-fn plural_trace_discovery_rejects_non_id_positionals() {
+fn plural_trace_discovery_rejects_non_id_positionals() -> TestResult {
     for args in [
         &["logbrew", "traces", "checkout-api", "--json"][..],
         &["logbrew", "read", "traces", "checkout-api", "--json"],
     ] {
-        let parse_error = parse_command(args.iter().copied()).expect_err("positional fails closed");
-        let mut output = Vec::new();
-
-        write_cli_error(&parse_error, true, &mut output).expect("error writes");
-
-        let body: serde_json::Value =
-            serde_json::from_slice(output.as_slice()).expect("valid JSON");
+        let (body, _) = rendered_json_error(args)?;
         assert_eq!(body["error"], "unexpected_argument");
         assert_eq!(
             body["message"],
@@ -324,37 +314,32 @@ fn plural_trace_discovery_rejects_non_id_positionals() {
         assert_eq!(body["next"], "run logbrew read traces --help");
     }
 
-    let detail = parse_command(["logbrew", "traces", "trace_123", "--json"])
-        .expect("obvious copied trace id remains a detail shortcut");
+    let detail = parse_command(["logbrew", "traces", "trace_123", "--json"])?;
     assert_eq!(
-        detail.http_path().expect("trace detail has endpoint"),
+        detail.http_path().ok_or("trace detail has endpoint")?,
         "/api/telemetry/traces/trace_123"
     );
+    Ok(())
 }
 
 #[test]
-fn watch_traces_recovers_to_historical_discovery() {
-    let error = parse_command(["logbrew", "watch", "traces", "--json"])
-        .expect_err("live trace discovery remains unsupported");
-    let mut output = Vec::new();
-
-    write_cli_error(&error, true, &mut output).expect("error writes");
-
-    let body: serde_json::Value = serde_json::from_slice(output.as_slice()).expect("valid JSON");
+fn watch_traces_recovers_to_historical_discovery() -> TestResult {
+    let (body, _) = rendered_json_error(&["logbrew", "watch", "traces", "--json"])?;
     assert_eq!(body["error"], "unknown_resource");
     assert_eq!(body["message"], "unknown resource: traces");
     assert_eq!(
         body["next"],
         "use logbrew traces for recent traces, or logbrew trace <trace_id> for one trace"
     );
+    Ok(())
 }
 
-async_test!(trace_discovery_preserves_backend_validation_recovery -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+async_test!(trace_discovery_preserves_backend_validation_recovery -> TestResult, {
+    let server = MockServer::start().await?;
     Mock::route("GET", "/api/telemetry/traces")
         .and(query_param("since", "0h"))
         .and(header("authorization", "Bearer test-token"))
-        .respond_with(ResponseTemplate::new(422).set_body_json(serde_json::json!({
+        .respond_with(ResponseTemplate::new(422).set_body_json(&serde_json::json!({
             "error": "invalid since value",
             "code": "validation_failed",
             "next": "use since=24h, since=7d, or an RFC3339 timestamp",
@@ -370,7 +355,8 @@ async_test!(trace_discovery_preserves_backend_validation_recovery -> Result<(), 
 
     let error = execute_command(&command, &env, &mut output)
         .await
-        .expect_err("invalid since fails");
+        .err()
+        .ok_or("invalid since fails")?;
     write_runtime_error(&error, true, &mut output)?;
 
     let body: serde_json::Value = serde_json::from_slice(output.as_slice())?;
@@ -384,7 +370,7 @@ async_test!(trace_discovery_preserves_backend_validation_recovery -> Result<(), 
     let backend_body: serde_json::Value = serde_json::from_str(
         body["body"]
             .as_str()
-            .expect("backend validation body remains available"),
+            .ok_or("backend validation body remains available")?,
     )?;
     assert_eq!(backend_body["next_action"]["code"], "fix_request");
     assert_eq!(backend_body["next_action"]["target"], "request");

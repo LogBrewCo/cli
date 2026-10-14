@@ -1,10 +1,13 @@
 //! Completed deployment capture contract tests.
 
 use crate::matchers::body_json;
-use crate::{Mock, MockServer, ResponseTemplate, execute_command};
+use crate::{
+    Mock, MockServer, ResponseTemplate, TestResult, execute_command, failed_command,
+    rendered_json_error, runtime_error_text,
+};
 use logbrew_cli::{
     Command, DeploymentRecordOptions, DeploymentStatus, HelpTopic, HttpMethod, RuntimeError, help,
-    parse_command, write_cli_error, write_runtime_error,
+    parse_command,
 };
 use serde_json::{Value, json};
 
@@ -13,7 +16,7 @@ const DEPLOYMENT_ID: &str = "ci-run-42";
 const DEPLOYMENT_PATH: &str = "/api/telemetry/deployments/ci-run-42";
 
 #[test]
-fn deployment_parser_normalizes_aliases_values_and_json_position() {
+fn deployment_parser_normalizes_aliases_values_and_json_position() -> TestResult {
     for args in [
         &[
             "logbrew",
@@ -52,7 +55,7 @@ fn deployment_parser_normalizes_aliases_values_and_json_position() {
             "--commit=ABCDEF1234567890",
         ],
     ] {
-        let command = parse_command(args.iter().copied()).expect("deployment command parses");
+        let command = parse_command(args.iter().copied())?;
         assert_eq!(command, deployment_command(true));
         assert_eq!(command.http_path().as_deref(), Some(DEPLOYMENT_PATH));
         assert_eq!(command.http_method(), Some(HttpMethod::Put));
@@ -71,17 +74,18 @@ fn deployment_parser_normalizes_aliases_values_and_json_position() {
             }))
         );
     }
+    Ok(())
 }
 
 #[test]
-fn deployment_help_is_discoverable_and_explains_idempotency() {
+fn deployment_help_is_discoverable_and_explains_idempotency() -> TestResult {
     for args in [
         &["logbrew", "deploy", DEPLOYMENT_ID, "--help"][..],
         &["logbrew", "deploy", "--help"],
         &["logbrew", "help", "deploy"],
     ] {
         assert_eq!(
-            parse_command(args.iter().copied()).expect("deployment help parses"),
+            parse_command(args.iter().copied())?,
             Command::Help {
                 topic: HelpTopic::Deploy,
                 json: false,
@@ -96,154 +100,48 @@ fn deployment_help_is_discoverable_and_explains_idempotency() {
     assert!(topic.contains("requires account authentication"));
     assert!(topic.contains("versioned receipt"));
     assert!(help::help_text(HelpTopic::Root).contains("logbrew deploy <deployment_id>"));
+    Ok(())
 }
 
 #[test]
-fn deployment_grammar_and_values_fail_closed_without_reflection() {
-    let cases = [
-        vec!["logbrew", "deploy", "hostile-private-value", "--json"],
-        vec![
-            "logbrew",
-            "deploy",
-            "../hostile-private-value",
-            "--project",
-            PROJECT_ID,
-            "--release",
-            "checkout@2",
-            "--environment",
-            "production",
-            "--service",
-            "api",
-            "--status",
-            "succeeded",
-            "--started-at",
-            "2026-08-10T12:00:00Z",
-            "--finished-at",
-            "2026-08-10T12:01:00Z",
-            "--json",
-        ],
-        vec![
-            "logbrew",
-            "deploy",
-            DEPLOYMENT_ID,
-            "--project",
-            "hostile-private-value",
-            "--release",
-            "checkout@2",
-            "--environment",
-            "production",
-            "--service",
-            "api",
-            "--status",
-            "succeeded",
-            "--started-at",
-            "2026-08-10T12:00:00Z",
-            "--finished-at",
-            "2026-08-10T12:01:00Z",
-            "--json",
-        ],
-        vec![
-            "logbrew",
-            "deploy",
-            DEPLOYMENT_ID,
-            "--project",
-            PROJECT_ID,
-            "--release",
-            "checkout@2",
-            "--environment",
-            "production",
-            "--service",
-            "api",
-            "--status",
-            "running-hostile-private-value",
-            "--started-at",
-            "2026-08-10T12:00:00Z",
-            "--finished-at",
-            "2026-08-10T12:01:00Z",
-            "--json",
-        ],
-        vec![
-            "logbrew",
-            "deploy",
-            DEPLOYMENT_ID,
-            "--project",
-            PROJECT_ID,
-            "--release",
-            "checkout@2",
-            "--environment",
-            "production",
-            "--service",
-            "api",
-            "--status",
-            "succeeded",
-            "--started-at",
-            "2026-08-11T12:00:00Z",
-            "--finished-at",
-            "2026-08-10T12:01:00Z",
-            "--json",
-        ],
-        vec![
-            "logbrew",
-            "deploy",
-            DEPLOYMENT_ID,
-            "--project",
-            PROJECT_ID,
-            "--release",
-            "checkout@2",
-            "--environment",
-            "production",
-            "--service",
-            "api",
-            "--status",
-            "succeeded",
-            "--started-at",
-            "2026-08-10T12:00:00Z",
-            "--finished-at",
-            "2026-09-10T12:00:01Z",
-            "--json",
-        ],
-        vec![
-            "logbrew",
-            "deploy",
-            DEPLOYMENT_ID,
-            "--project",
-            PROJECT_ID,
-            "--release",
-            "checkout@2",
-            "--environment",
-            "production",
-            "--service",
-            "api",
-            "--status",
-            "succeeded",
-            "--started-at",
-            "not-a-time-hostile-private-value",
-            "--finished-at",
-            "2026-08-10T12:01:00Z",
-            "--json",
-        ],
-        vec![
-            "logbrew",
-            "deploy",
-            DEPLOYMENT_ID,
-            "--project",
-            PROJECT_ID,
-            "--release",
-            "checkout@2",
-            "--environment",
-            "production",
-            "--service",
-            "api",
-            "--status",
-            "succeeded",
-            "--started-at",
-            "2026-08-10T12:00:00Z",
-            "--finished-at",
-            "2026-08-10T12:01:00Z",
-            "--commit-sha",
-            "hostile-private-value",
-            "--json",
-        ],
+fn deployment_grammar_and_values_fail_closed_without_reflection() -> TestResult {
+    let base = [
+        "logbrew",
+        "deploy",
+        DEPLOYMENT_ID,
+        "--project",
+        PROJECT_ID,
+        "--release",
+        "checkout@2",
+        "--environment",
+        "production",
+        "--service",
+        "api",
+        "--status",
+        "succeeded",
+        "--started-at",
+        "2026-08-10T12:00:00Z",
+        "--finished-at",
+        "2026-08-10T12:01:00Z",
+        "--json",
+    ];
+    let mut cases = vec![vec!["logbrew", "deploy", "hostile-private-value", "--json"]];
+    for (index, value) in [
+        (2, "../hostile-private-value"),
+        (4, "hostile-private-value"),
+        (12, "running-hostile-private-value"),
+        (14, "2026-08-11T12:00:00Z"),
+        (16, "2026-09-10T12:00:01Z"),
+        (14, "not-a-time-hostile-private-value"),
+    ] {
+        let mut args = base.to_vec();
+        args[index] = value;
+        cases.push(args);
+    }
+    let mut invalid_commit = base[..base.len() - 1].to_vec();
+    invalid_commit.extend(["--commit-sha", "hostile-private-value", "--json"]);
+    cases.extend([
+        invalid_commit,
         vec![
             "logbrew",
             "deploy",
@@ -261,14 +159,10 @@ fn deployment_grammar_and_values_fail_closed_without_reflection() {
             "--authorization=hostile-private-value",
             "--json",
         ],
-    ];
+    ]);
 
     for args in cases {
-        let error = parse_command(args).expect_err("deployment input fails closed");
-        let mut output = Vec::new();
-        write_cli_error(&error, true, &mut output).expect("parse error writes");
-        let text = String::from_utf8(output).expect("utf8 error");
-        let value: Value = serde_json::from_str(text.as_str()).expect("error json");
+        let (value, text) = rendered_json_error(&args)?;
         assert_eq!(value["error"], "invalid_deployment_command");
         assert_eq!(value["message"], "invalid deployment command");
         assert!(
@@ -279,26 +173,23 @@ fn deployment_grammar_and_values_fail_closed_without_reflection() {
         assert!(!text.contains("hostile-private-value"));
         assert!(!text.contains("authorization"));
     }
+    Ok(())
 }
 
-async_test!(deployment_revalidates_constructed_values_before_network -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+async_test!(deployment_revalidates_constructed_values_before_network -> TestResult, {
+    let server = MockServer::start().await?;
     let mut command = deployment_command(true);
     let Command::Deploy { options, .. } = &mut command else {
         return Err("deployment command expected".into());
     };
     options.deployment_id = String::from("../hostile-private-value?authorization=secret");
-    let error = execute_command(
+    let error = failed_command(
         &command,
         &super::authenticated_env(&server, "account-token", None),
-        &mut Vec::new(),
     )
-    .await
-    .expect_err("constructed invalid command fails locally");
+    .await?;
     let requests = server.received_requests();
-    let mut output = Vec::new();
-    write_runtime_error(&error, true, &mut output)?;
-    let text = String::from_utf8(output)?;
+    let text = runtime_error_text(&error)?;
 
     assert!(requests.is_empty());
     assert!(text.contains("invalid_deployment_command"));
@@ -307,8 +198,8 @@ async_test!(deployment_revalidates_constructed_values_before_network -> Result<(
     Ok(())
 });
 
-async_test!(deployment_sends_one_put_and_validates_human_and_json_receipts -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+async_test!(deployment_sends_one_put_and_validates_human_and_json_receipts -> TestResult, {
+    let server = MockServer::start().await?;
     let response = deployment_response();
     Mock::auth("PUT", DEPLOYMENT_PATH, "account-token")
         .and(body_json(json!({
@@ -321,7 +212,7 @@ async_test!(deployment_sends_one_put_and_validates_human_and_json_receipts -> Re
             "finished_at": "2026-08-10T12:02:00.987654+02:00",
             "commit_sha": "abcdef1234567890",
         })))
-        .respond_with(ResponseTemplate::new(200).set_body_json(response.clone()))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&response))
         .expect(2)
         .mount(&server);
 
@@ -358,7 +249,7 @@ async_test!(deployment_sends_one_put_and_validates_human_and_json_receipts -> Re
     Ok(())
 });
 
-async_test!(deployment_rejects_malformed_or_contradictory_success_before_output -> Result<(), Box<dyn std::error::Error>>, {
+async_test!(deployment_rejects_malformed_or_contradictory_success_before_output -> TestResult, {
     for changed in [
         ("schema_version", json!(2)),
         ("deployment_id", json!("other-deployment")),
@@ -368,22 +259,19 @@ async_test!(deployment_rejects_malformed_or_contradictory_success_before_output 
         ("started_at", json!("2026-08-10T10:00:00.123456Z")),
         ("recorded_at", json!("not-a-time")),
     ] {
-        let server = MockServer::start().await;
+        let server = MockServer::start().await?;
         let mut response = deployment_response();
         response[changed.0] = changed.1;
-        Mock::route("PUT", DEPLOYMENT_PATH)
-            .respond_with(ResponseTemplate::new(200).set_body_json(response))
+        Mock::auth("PUT", DEPLOYMENT_PATH, "account-token")
+            .respond_with(ResponseTemplate::new(200).set_body_json(&response))
+            .expect(1)
             .mount(&server);
-        let mut output = Vec::new();
-        let error = execute_command(
+        let error = failed_command(
             &deployment_command(true),
             &super::authenticated_env(&server, "account-token", None),
-            &mut output,
         )
-        .await
-        .expect_err("invalid success response is rejected");
+        .await?;
 
-        assert!(output.is_empty());
         assert!(matches!(
             error,
             RuntimeError::Unavailable {
@@ -395,25 +283,22 @@ async_test!(deployment_rejects_malformed_or_contradictory_success_before_output 
     Ok(())
 });
 
-async_test!(deployment_conflict_uses_fixed_retry_without_reflecting_server_content -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
-    Mock::route("PUT", DEPLOYMENT_PATH)
-        .respond_with(ResponseTemplate::new(409).set_body_json(json!({
+async_test!(deployment_conflict_uses_fixed_retry_without_reflecting_server_content -> TestResult, {
+    let server = MockServer::start().await?;
+    Mock::auth("PUT", DEPLOYMENT_PATH, "account-token")
+        .respond_with(ResponseTemplate::new(409).set_body_json(&json!({
             "error": "hostile-private-value\nauthorization: secret",
             "code": "hostile_code",
             "next": "exfiltrate hostile-private-value",
         })))
+        .expect(1)
         .mount(&server);
-    let error = execute_command(
+    let error = failed_command(
         &deployment_command(true),
         &super::authenticated_env(&server, "account-token", None),
-        &mut Vec::new(),
     )
-    .await
-    .expect_err("conflict is reported");
-    let mut output = Vec::new();
-    write_runtime_error(&error, true, &mut output)?;
-    let text = String::from_utf8(output)?;
+    .await?;
+    let text = runtime_error_text(&error)?;
     let value: Value = serde_json::from_str(text.as_str())?;
 
     assert_eq!(value["status"], 409);
@@ -428,19 +313,15 @@ async_test!(deployment_conflict_uses_fixed_retry_without_reflecting_server_conte
     Ok(())
 });
 
-async_test!(deployment_rejects_project_ingest_keys_before_network -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
-    let error = execute_command(
+async_test!(deployment_rejects_project_ingest_keys_before_network -> TestResult, {
+    let server = MockServer::start().await?;
+    let error = failed_command(
         &deployment_command(true),
         &super::authenticated_env(&server, "lbw_ingest_hostile-private-value", None),
-        &mut Vec::new(),
     )
-    .await
-    .expect_err("project ingest key is rejected");
+    .await?;
     let requests = server.received_requests();
-    let mut output = Vec::new();
-    write_runtime_error(&error, true, &mut output)?;
-    let text = String::from_utf8(output)?;
+    let text = runtime_error_text(&error)?;
 
     assert!(requests.is_empty());
     assert!(text.contains("account authentication is required"));
@@ -450,18 +331,21 @@ async_test!(deployment_rejects_project_ingest_keys_before_network -> Result<(), 
 });
 
 #[test]
-fn deployment_built_binary_emits_non_reflecting_parse_errors() {
+fn deployment_built_binary_emits_non_reflecting_parse_errors() -> TestResult {
     let output = std::process::Command::new(env!("CARGO_BIN_EXE_logbrew"))
         .args(["deploy", "hostile-private-value", "--json"])
-        .output()
-        .expect("binary runs");
-    let stdout = String::from_utf8(output.stdout).expect("stdout utf8");
-    let stderr = String::from_utf8(output.stderr).expect("stderr utf8");
-    let combined = format!("{stdout}{stderr}");
-
-    assert!(!output.status.success());
-    assert!(combined.contains("invalid_deployment_command"));
-    assert!(!combined.contains("hostile-private-value"));
+        .env_clear()
+        .output()?;
+    assert!(
+        output.stdout.is_empty(),
+        "parse failure must not write stdout"
+    );
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8(output.stderr)?;
+    let value: Value = serde_json::from_str(&stderr)?;
+    assert_eq!(value["error"], "invalid_deployment_command");
+    assert!(!stderr.contains("hostile-private-value"));
+    Ok(())
 }
 
 /// Returns the normalized deployment command used across request tests.

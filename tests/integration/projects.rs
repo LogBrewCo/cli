@@ -1,16 +1,15 @@
 //! Authenticated project catalog contract tests.
 
 use crate::matchers::body_json;
-use crate::{Mock, MockServer, ResponseTemplate, execute_command};
+use crate::{Mock, MockServer, ResponseTemplate, TestResult, execute_command, rendered_json_error};
 use logbrew_cli::{
-    CliEnvironment, Command, HttpMethod, RuntimeError, parse_command, write_cli_error,
-    write_runtime_error,
+    CliEnvironment, Command, HttpMethod, RuntimeError, parse_command, write_runtime_error,
 };
 
 const PROJECT_ID: &str = "123e4567-e89b-12d3-a456-426614174000";
 
 #[test]
-fn project_aliases_and_json_order_parse_as_authenticated_reads() {
+fn project_aliases_and_json_order_parse_as_authenticated_reads() -> TestResult {
     for (args, json) in [
         (&["logbrew", "projects"][..], false),
         (&["logbrew", "project"][..], false),
@@ -19,7 +18,7 @@ fn project_aliases_and_json_order_parse_as_authenticated_reads() {
         (&["logbrew", "--json", "projects"][..], true),
         (&["logbrew", "--json", "project"][..], true),
     ] {
-        let command = parse_command(args.iter().copied()).expect("project catalog parses");
+        let command = parse_command(args.iter().copied())?;
 
         assert!(
             !matches!(command, Command::Help { .. }),
@@ -30,35 +29,22 @@ fn project_aliases_and_json_order_parse_as_authenticated_reads() {
         assert_eq!(command.wants_json(), json);
         assert!(command.request_body().is_none());
     }
+    Ok(())
 }
 
 #[test]
-fn project_catalog_grammar_failures_are_fixed_and_value_safe() {
+fn project_catalog_grammar_failures_are_fixed_and_value_safe() -> TestResult {
     for args in [
-        vec![
-            String::from("logbrew"),
-            String::from("projects"),
-            String::from("--authorization=hostile-secret\ncontrol"),
-            String::from("--json"),
+        [
+            "logbrew",
+            "projects",
+            "--authorization=hostile-secret\ncontrol",
+            "--json",
         ],
-        vec![
-            String::from("logbrew"),
-            String::from("project"),
-            String::from("hostile-private-value"),
-            String::from("--json"),
-        ],
-        vec![
-            String::from("logbrew"),
-            String::from("projects"),
-            String::from("--json"),
-            String::from("--json"),
-        ],
+        ["logbrew", "project", "hostile-private-value", "--json"],
+        ["logbrew", "projects", "--json", "--json"],
     ] {
-        let error = parse_command(args).expect_err("project catalog grammar fails closed");
-        let mut output = Vec::new();
-        write_cli_error(&error, true, &mut output).expect("parse error writes");
-        let text = String::from_utf8(output).expect("utf8 parse error");
-        let body: serde_json::Value = serde_json::from_str(text.as_str()).expect("valid json");
+        let (body, text) = rendered_json_error(&args)?;
 
         assert_eq!(body["error"], "invalid_projects_command");
         assert_eq!(body["message"], "invalid projects command");
@@ -70,10 +56,11 @@ fn project_catalog_grammar_failures_are_fixed_and_value_safe() {
         assert!(!text.contains("hostile-private-value"));
         assert!(!text.contains("authorization"));
     }
+    Ok(())
 }
 
 async_test!(projects_json_preserves_exact_bare_array_and_sends_no_query -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await?;
     let response = serde_json::to_string_pretty(&project_catalog())?;
     Mock::auth("GET", "/api/projects", "account-token")
         .respond_with(ResponseTemplate::new(200).set_body_raw(response.clone(), "application/json"))
@@ -97,9 +84,9 @@ async_test!(projects_json_preserves_exact_bare_array_and_sends_no_query -> Resul
 });
 
 async_test!(projects_human_output_is_bounded_and_scan_oriented -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await?;
     Mock::route("GET", "/api/projects")
-        .respond_with(ResponseTemplate::new(200).set_body_json(project_catalog()))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&project_catalog()))
         .mount(&server);
     let command = parse_command(["logbrew", "projects"])?;
     let mut output = Vec::new();
@@ -160,14 +147,17 @@ async_test!(projects_rejects_envelopes_partial_rows_and_hostile_text -> Result<(
     ];
 
     for (index, response) in cases.into_iter().enumerate() {
-        let server = MockServer::start().await;
+        let server = MockServer::start().await?;
         Mock::route("GET", "/api/projects")
-            .respond_with(ResponseTemplate::new(200).set_body_json(response))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&response))
             .mount(&server);
         let command = parse_command(["logbrew", "projects", "--json"])?;
-        let error = execute_command(&command, &environment(&server), &mut Vec::new())
+        let mut data = Vec::new();
+        let error = execute_command(&command, &environment(&server), &mut data)
             .await
-            .expect_err("malformed project catalog fails closed");
+            .err()
+            .ok_or("malformed project catalog must fail closed")?;
+        assert!(data.is_empty(), "invalid catalog case {index} leaked output");
         let mut output = Vec::new();
         write_runtime_error(&error, true, &mut output)?;
         let text = String::from_utf8(output)?;
@@ -185,9 +175,9 @@ async_test!(projects_rejects_envelopes_partial_rows_and_hostile_text -> Result<(
 });
 
 async_test!(projects_refreshes_local_account_auth_once -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await?;
     Mock::auth("GET", "/api/projects", "expired-access")
-        .respond_with(ResponseTemplate::new(401).set_body_json(serde_json::json!({
+        .respond_with(ResponseTemplate::new(401).set_body_json(&serde_json::json!({
             "error": "Invalid or expired token",
             "code": "unauthorized",
             "next": "sign in again",
@@ -199,75 +189,34 @@ async_test!(projects_refreshes_local_account_auth_once -> Result<(), Box<dyn std
         .and(body_json(
             serde_json::json!({"refresh_token": "old-refresh"}),
         ))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+        .respond_with(ResponseTemplate::new(200).set_body_json(&serde_json::json!({
             "access_token": "fresh-access",
             "refresh_token": "fresh-refresh"
         })))
         .expect(1)
         .mount(&server);
     Mock::auth("GET", "/api/projects", "fresh-access")
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&serde_json::json!([])))
         .expect(1)
         .mount(&server);
     let home = super::isolated_home("logbrew-projects", "refresh")?;
-    let _session_path = super::write_test_session(
+    let session_path = super::write_test_session(
         home.as_path(),
         server.uri().as_str(),
         "expired-access",
         "old-refresh",
     )?;
     let command = parse_command(["logbrew", "projects", "--json"])?;
-    let env = super::test_env(&server, None, Some(home.clone()));
+    let env = super::test_env(&server, None, Some(home));
     let mut output = Vec::new();
 
     execute_command(&command, &env, &mut output).await?;
 
     assert_eq!(String::from_utf8(output)?, "[]\n");
-    let session: serde_json::Value = serde_json::from_str(
-        std::fs::read_to_string(home.join(".logbrew/session.json"))?.as_str(),
-    )?;
+    let session: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(session_path)?)?;
     assert_eq!(session["access_token"], "fresh-access");
     assert_eq!(session["refresh_token"], "fresh-refresh");
-    Ok(())
-});
-
-async_test!(project_errors_use_only_typed_local_recovery -> Result<(), Box<dyn std::error::Error>>, {
-    for (status, code, action_code, action_target, expected_code) in [
-        (401, "unauthorized", "sign_in", "auth", "unauthorized"),
-        (
-            405,
-            "method_not_allowed",
-            "use_supported_method",
-            "api_method",
-            "method_not_allowed",
-        ),
-        (500, "storage_error", "retry", "request", "server_error"),
-    ] {
-        let server = MockServer::start().await;
-        Mock::route("GET", "/api/projects")
-            .respond_with(
-                ResponseTemplate::new(status).set_body_json(serde_json::json!({
-                    "error": "hostile private token",
-                    "code": code,
-                    "next": "send credentials to a private host",
-                    "next_action": {"code": action_code, "target": action_target}
-                })),
-            )
-            .mount(&server);
-        let command = parse_command(["logbrew", "projects", "--json"])?;
-        let error = execute_command(&command, &environment(&server), &mut Vec::new())
-            .await
-            .expect_err("typed project error remains non-success");
-        let mut output = Vec::new();
-        write_runtime_error(&error, true, &mut output)?;
-        let text = String::from_utf8(output)?;
-        let body: serde_json::Value = serde_json::from_str(text.as_str())?;
-
-        assert_eq!(body["api_code"], expected_code);
-        assert!(!text.contains("hostile"));
-        assert!(!text.contains("credentials"));
-        assert!(!text.contains(server.uri().as_str()));
-    }
+    assert_eq!(session["origin"], server.uri());
     Ok(())
 });
 

@@ -1,12 +1,8 @@
 //! Account-owned project lifecycle contract tests.
 
 use crate::matchers::{body_json, header};
-use crate::{Mock, MockServer, ResponseTemplate, execute_command};
-use logbrew_cli::{
-    Command, HttpMethod, RuntimeError, parse_command, write_cli_error, write_runtime_error,
-};
-
-type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
+use crate::{Mock, MockServer, ResponseTemplate, TestResult, execute_command, rendered_json_error};
+use logbrew_cli::{Command, HttpMethod, RuntimeError, parse_command, write_runtime_error};
 
 const ID: &str = "123e4567-e89b-12d3-a456-426614174000";
 const ARCHIVE: &str = "logbrew projects archive 123e4567-e89b-12d3-a456-426614174000 --yes --json";
@@ -81,6 +77,11 @@ fn lifecycle_grammar_is_closed_explicit_and_introspectable() -> TestResult {
         }
     );
 
+    Ok(())
+}
+
+#[test]
+fn lifecycle_grammar_rejects_invalid_and_sensitive_values() -> TestResult {
     for (line, deletion) in [
         (
             "logbrew projects archive 123e4567-e89b-12d3-a456-426614174000",
@@ -120,8 +121,7 @@ fn lifecycle_grammar_is_closed_explicit_and_introspectable() -> TestResult {
             true,
         ),
     ] {
-        let error = parse(line).expect_err("invalid lifecycle grammar fails closed");
-        let body = cli_error(&error)?;
+        let (body, text) = rendered_json_error(&line.split_whitespace().collect::<Vec<_>>())?;
         let prefix = if deletion { "deletion" } else { "archive" };
         assert_eq!(body["error"], format!("invalid_project_{prefix}_command"));
         assert_eq!(body["message"], format!("invalid project {prefix} command"));
@@ -131,7 +131,6 @@ fn lifecycle_grammar_is_closed_explicit_and_introspectable() -> TestResult {
             "use logbrew projects archive <project_id> --yes with optional --json"
         };
         assert_eq!(body["next"], next);
-        let text = body.to_string();
         assert!(
             !["hostile-secret", "hostile-private-value", "authorization"]
                 .iter()
@@ -142,7 +141,7 @@ fn lifecycle_grammar_is_closed_explicit_and_introspectable() -> TestResult {
 }
 
 async_test!(lifecycle_revalidates_public_values_and_rejects_ingest_keys -> TestResult, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await?;
     for command in [
         Command::ProjectArchive {
             project_id: "../hostile-secret?authorization=private".into(),
@@ -159,7 +158,8 @@ async_test!(lifecycle_revalidates_public_values_and_rejects_ingest_keys -> TestR
             &mut Vec::new(),
         )
         .await
-        .expect_err("invalid public value fails locally");
+        .err()
+        .ok_or("invalid public value must fail locally")?;
         let text = runtime_error(&error)?;
         assert!(!text.contains("hostile-secret") && !text.contains("authorization"));
     }
@@ -170,7 +170,8 @@ async_test!(lifecycle_revalidates_public_values_and_rejects_ingest_keys -> TestR
             &mut Vec::new(),
         )
         .await
-        .expect_err("ingest key cannot mutate lifecycle");
+        .err()
+        .ok_or("ingest key cannot mutate lifecycle")?;
         let text = runtime_error(&error)?;
         assert!(text.contains("account authentication is required"));
         assert!(text.contains(if line == ARCHIVE {
@@ -185,7 +186,7 @@ async_test!(lifecycle_revalidates_public_values_and_rejects_ingest_keys -> TestR
 });
 
 async_test!(archive_and_delete_send_exact_requests_and_local_receipts -> TestResult, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await?;
     Mock::auth("DELETE", format!("/api/projects/{ID}"), "account-token")
         .respond_with(ResponseTemplate::new(204))
         .expect(2)
@@ -247,7 +248,7 @@ async_test!(archive_and_delete_send_exact_requests_and_local_receipts -> TestRes
 });
 
 async_test!(built_binary_deletes_over_loopback_with_a_local_receipt -> TestResult, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await?;
     mount_delete(
         &server,
         ResponseTemplate::new(200).set_body_raw(RECEIPT, "application/json"),
@@ -281,12 +282,12 @@ async_test!(success_contracts_reject_wrong_status_redirects_and_hostile_bodies -
         ResponseTemplate::new(404).set_body_string(r#"{"error":"hostile-secret\ncontrol","code":"not_found","next":"hostile-private-path","next_action":{"code":"check_resource","target":"resource"}}"#),
         ResponseTemplate::new(404).set_body_string("hostile-secret".repeat(70_000)),
     ] {
-        let server = MockServer::start().await;
+        let server = MockServer::start().await?;
         Mock::route("DELETE", format!("/api/projects/{ID}"))
             .respond_with(response)
             .expect(1)
             .mount(&server);
-        let error = run_error(&server, ARCHIVE).await;
+        let error = run_error(&server, ARCHIVE).await?;
         assert!(matches!(error, RuntimeError::Unavailable { .. }));
         let text = runtime_error(&error)?;
         assert!(text.contains("project archive response was invalid"));
@@ -298,12 +299,12 @@ async_test!(success_contracts_reject_wrong_status_redirects_and_hostile_bodies -
         ResponseTemplate::new(201).set_body_raw(RECEIPT, "application/json"),
         ResponseTemplate::new(307).insert_header("Location", "/private-target"),
         ResponseTemplate::new(200).set_body_string("not-json-hostile-secret"),
-        ResponseTemplate::new(200).set_body_json(invalid_receipt()),
+        ResponseTemplate::new(200).set_body_json(&invalid_receipt()?),
         ResponseTemplate::new(200).set_body_string("x".repeat(70_000)),
     ] {
-        let server = MockServer::start().await;
+        let server = MockServer::start().await?;
         mount_delete(&server, response, 1);
-        let error = run_error(&server, DELETE_JSON).await;
+        let error = run_error(&server, DELETE_JSON).await?;
         let text = runtime_error(&error)?;
         assert!(matches!(
             error,
@@ -335,13 +336,13 @@ async_test!(errors_are_typed_local_and_never_echo_backend_text -> TestResult, {
             "server_error",
         ),
     ] {
-        let server = MockServer::start().await;
+        let server = MockServer::start().await?;
         Mock::route("DELETE", format!("/api/projects/{ID}"))
             .respond_with(
-                ResponseTemplate::new(status).set_body_json(archive_error(code, action, target)),
+                ResponseTemplate::new(status).set_body_json(&archive_error(code, action, target)),
             )
             .mount(&server);
-        let text = runtime_error(&run_error(&server, ARCHIVE).await)?;
+        let text = runtime_error(&run_error(&server, ARCHIVE).await?)?;
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&text)?["api_code"],
             expected
@@ -349,13 +350,13 @@ async_test!(errors_are_typed_local_and_never_echo_backend_text -> TestResult, {
         assert_private_text_absent(&text, &server);
     }
     for status in [401, 403, 404, 409, 422, 500] {
-        let server = MockServer::start().await;
+        let server = MockServer::start().await?;
         mount_delete(
             &server,
             ResponseTemplate::new(status).set_body_string("hostile-secret https://private.example"),
             1,
         );
-        let text = runtime_error(&run_error(&server, DELETE_JSON).await)?;
+        let text = runtime_error(&run_error(&server, DELETE_JSON).await?)?;
         assert!(serde_json::from_str::<serde_json::Value>(&text)?["api_code"].is_string());
         assert_private_text_absent(&text, &server);
     }
@@ -379,7 +380,7 @@ async_test!(lifecycle_mutations_refresh_account_auth_once -> TestResult, {
             "deletion_scheduled",
         ),
     ] {
-        let server = MockServer::start().await;
+        let server = MockServer::start().await?;
         for (token, response) in [
             ("expired-access", ResponseTemplate::new(401)),
             ("fresh-access", success),
@@ -393,7 +394,7 @@ async_test!(lifecycle_mutations_refresh_account_auth_once -> TestResult, {
             .and(body_json(
                 serde_json::json!({"refresh_token": "old-refresh"}),
             ))
-            .respond_with(ResponseTemplate::new(200).set_body_json(
+            .respond_with(ResponseTemplate::new(200).set_body_json(&
                 serde_json::json!({"access_token":"fresh-access","refresh_token":"fresh-refresh"}),
             ))
             .expect(1)
@@ -406,23 +407,22 @@ async_test!(lifecycle_mutations_refresh_account_auth_once -> TestResult, {
                 "delete-refresh"
             },
         )?;
-        let _session_path = super::write_test_session(
+        let session_path = super::write_test_session(
             home.as_path(),
             server.uri().as_str(),
             "expired-access",
             "old-refresh",
         )?;
-        let env = super::test_env(&server, None, Some(home.clone()));
+        let env = super::test_env(&server, None, Some(home));
         let mut output = Vec::new();
 
         execute_command(&parse(line)?, &env, &mut output).await?;
 
         assert!(String::from_utf8(output)?.contains(marker));
-        let session: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(
-            home.join(".logbrew/session.json"),
-        )?)?;
+        let session: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(session_path)?)?;
         assert_eq!(session["access_token"], "fresh-access");
         assert_eq!(session["refresh_token"], "fresh-refresh");
+        assert_eq!(session["origin"], server.uri());
     }
     Ok(())
 });
@@ -435,10 +435,10 @@ fn deletion_body() -> serde_json::Value {
     serde_json::json!({"source":"cli","category":"project_deletion","project_id":ID,"title":"Permanent project deletion request","description":"Permanent project deletion requested from LogBrew CLI."})
 }
 
-fn invalid_receipt() -> serde_json::Value {
-    let mut value: serde_json::Value = serde_json::from_str(RECEIPT).expect("fixture parses");
+fn invalid_receipt() -> TestResult<serde_json::Value> {
+    let mut value: serde_json::Value = serde_json::from_str(RECEIPT)?;
     value["private_token"] = "hostile-secret".into();
-    value
+    Ok(value)
 }
 
 fn archive_error(code: &str, action: &str, target: &str) -> serde_json::Value {
@@ -456,14 +456,18 @@ async fn run(server: &MockServer, line: &str) -> TestResult<String> {
     Ok(String::from_utf8(output)?)
 }
 
-async fn run_error(server: &MockServer, line: &str) -> RuntimeError {
-    execute_command(
-        &parse(line).expect("command parses"),
+async fn run_error(server: &MockServer, line: &str) -> TestResult<RuntimeError> {
+    let mut output = Vec::new();
+    let error = execute_command(
+        &parse(line)?,
         &super::authenticated_env(server, "account-token", None),
-        &mut Vec::new(),
+        &mut output,
     )
     .await
-    .expect_err("request fails")
+    .err()
+    .ok_or("request must fail")?;
+    assert!(output.is_empty(), "failed lifecycle request leaked output");
+    Ok(error)
 }
 
 fn mount_delete(server: &MockServer, response: ResponseTemplate, expected: u64) {
@@ -473,12 +477,6 @@ fn mount_delete(server: &MockServer, response: ResponseTemplate, expected: u64) 
         .respond_with(response)
         .expect(expected)
         .mount(server);
-}
-
-fn cli_error(error: &logbrew_cli::CliError) -> TestResult<serde_json::Value> {
-    let mut output = Vec::new();
-    write_cli_error(error, true, &mut output)?;
-    Ok(serde_json::from_slice(&output)?)
 }
 
 fn runtime_error(error: &RuntimeError) -> TestResult<String> {
@@ -495,6 +493,9 @@ fn assert_private_text_absent(text: &str, server: &MockServer) {
         "lbw_ingest",
         server.uri().as_str(),
     ] {
-        assert!(!text.contains(private));
+        assert!(
+            !text.contains(private),
+            "lifecycle output leaked private text"
+        );
     }
 }

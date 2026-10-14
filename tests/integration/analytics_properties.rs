@@ -2,7 +2,7 @@
 
 use crate::matchers::query_param;
 use crate::{Mock, MockServer, ResponseTemplate};
-use logbrew_cli::{Command, HelpTopic, HttpMethod, help, parse_command};
+use logbrew_cli::{HelpTopic, HttpMethod, help, parse_command};
 
 const PROJECT_ID: &str = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
 
@@ -13,16 +13,10 @@ fn public_grammar_help_and_get_model_stay_aligned() -> Result<(), Box<dyn std::e
         vec!["logbrew", "help", "analytics", "property"],
         vec!["logbrew", "analytics", "dimensions", "--help"],
     ] {
-        assert_eq!(
-            parse_command(args)?,
-            Command::Help {
-                topic: HelpTopic::AnalyticsProperties,
-                json: false,
-            }
-        );
+        crate::assert_help(&args, HelpTopic::AnalyticsProperties, false);
     }
 
-    let command = properties_command(true)?;
+    let command = parse_command(std::iter::once("logbrew").chain(properties_args(true)))?;
     assert_eq!(command.http_method(), Some(HttpMethod::Get));
     assert!(command.wants_json());
     assert!(command.request_body().is_none());
@@ -53,7 +47,7 @@ fn public_grammar_help_and_get_model_stay_aligned() -> Result<(), Box<dyn std::e
 }
 
 async_test!(built_binary_gets_exact_scope_and_preserves_validated_json -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await?;
     let response = property_response();
     let response_body = serde_json::to_string(&response)?;
     Mock::auth(
@@ -71,7 +65,7 @@ async_test!(built_binary_gets_exact_scope_and_preserves_validated_json -> Result
     .expect(1)
     .mount(&server);
 
-    let process = run_binary(&server, true).await?;
+    let process = super::run_cli(&server, &properties_args(true)).await?;
 
     super::assert_cli_success(&process);
     assert_eq!(String::from_utf8(process.stdout)?.trim_end(), response_body);
@@ -79,13 +73,13 @@ async_test!(built_binary_gets_exact_scope_and_preserves_validated_json -> Result
 });
 
 async_test!(built_binary_human_output_separates_capture_privacy_and_truncation -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await?;
     Mock::route("GET", "/api/telemetry/analytics/properties")
-        .respond_with(ResponseTemplate::new(200).set_body_json(property_response()))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&property_response()))
         .expect(1)
         .mount(&server);
 
-    let process = run_binary(&server, false).await?;
+    let process = super::run_cli(&server, &properties_args(false)).await?;
 
     super::assert_cli_success(&process);
     let text = String::from_utf8(process.stdout)?;
@@ -118,52 +112,24 @@ async_test!(built_binary_fails_closed_on_values_sensitive_keys_and_contradictory
         },
     ];
     for mutate in mutations {
-        let server = MockServer::start().await;
+        let server = MockServer::start().await?;
         let mut response = property_response();
         mutate(&mut response);
         Mock::route("GET", "/api/telemetry/analytics/properties")
-            .respond_with(ResponseTemplate::new(200).set_body_json(response))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&response))
             .expect(1)
             .mount(&server);
 
-        let process = run_binary(&server, true).await?;
+        let process = super::run_cli(&server, &properties_args(true)).await?;
 
-        assert!(!process.status.success());
-        assert!(process.stdout.is_empty());
-        let text = String::from_utf8(process.stderr)?;
-        let error: serde_json::Value = serde_json::from_str(text.as_str())?;
-        assert_eq!(error["error"], "analytics_properties_response_invalid");
+        let text = super::cli_json_error(process, "analytics_properties_response_invalid")?;
         assert!(!text.contains("secret-marker"));
     }
     Ok(())
 });
 
-/// Parses the representative public command shape.
-fn properties_command(json: bool) -> Result<Command, logbrew_cli::CliError> {
-    let mut args = vec![
-        "logbrew",
-        "analytics",
-        "properties",
-        "--project",
-        PROJECT_ID,
-        "--since",
-        "24h",
-        "--environment",
-        "production",
-        "--limit",
-        "2",
-    ];
-    if json {
-        args.push("--json");
-    }
-    parse_command(args)
-}
-
-/// Runs the actual CLI process while the async loopback server remains responsive.
-async fn run_binary(
-    server: &MockServer,
-    json: bool,
-) -> Result<std::process::Output, Box<dyn std::error::Error>> {
+/// Shared arguments for parser and built-binary coverage.
+fn properties_args(json: bool) -> Vec<&'static str> {
     let mut args = vec![
         "analytics",
         "properties",
@@ -179,7 +145,7 @@ async fn run_binary(
     if json {
         args.push("--json");
     }
-    super::run_cli(server, args.as_slice()).await
+    args
 }
 
 /// Stable schema-version-1 fixture matching the private API contract.

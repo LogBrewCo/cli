@@ -152,7 +152,7 @@ fn parses_repository_discovery_and_component_aware_project_creation() {
 }
 
 async_test!(repository_catalog_is_bounded_and_rejects_external_authorization_paths -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await.expect("loopback server starts");
     Mock::auth("GET", "/api/projects/repositories", "account-token")
         .respond_with(ResponseTemplate::new(200).set_body_json(repository_catalog()))
         .mount(&server);
@@ -179,7 +179,7 @@ async_test!(repository_catalog_is_bounded_and_rejects_external_authorization_pat
 });
 
 async_test!(repository_discovery_posts_exact_scope_and_fails_closed_on_contradiction -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await.expect("loopback server starts");
     Mock::auth(
         "POST",
         "/api/projects/repositories/components/discover",
@@ -365,7 +365,7 @@ fn projects_help_documents_secure_bootstrap_and_retry() {
 
 #[cfg(unix)]
 async_test!(project_create_posts_exact_request_then_persists_before_safe_json -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await.expect("loopback server starts");
     Mock::auth("POST", "/api/projects", "account-token")
         .and(header("content-type", "application/json"))
         .and(body_json(serde_json::json!({
@@ -416,7 +416,7 @@ async_test!(project_create_posts_exact_request_then_persists_before_safe_json ->
 
 #[cfg(target_os = "macos")]
 async_test!(built_binary_accepts_private_destination_below_system_tmp_symlink -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await.expect("loopback server starts");
     Mock::route("POST", "/api/projects")
         .respond_with(ResponseTemplate::new(200).set_body_json(success_response()))
         .mount(&server);
@@ -458,7 +458,7 @@ async_test!(built_binary_accepts_private_destination_below_system_tmp_symlink ->
 
 #[cfg(unix)]
 async_test!(exact_retry_reuses_persisted_body_and_idempotency_key -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await.expect("loopback server starts");
     let mut replayed = success_response();
     replayed["ingest"]["expires_at"] = serde_json::Value::Null;
     let responder = retry_then(replayed);
@@ -503,7 +503,7 @@ async_test!(exact_retry_reuses_persisted_body_and_idempotency_key -> Result<(), 
 
 #[cfg(unix)]
 async_test!(changed_retry_fails_closed_until_explicit_abandonment -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await.expect("loopback server starts");
     let responder = retry_then(success_response_with_name("Changed API"));
     Mock::route("POST", "/api/projects")
         .respond_with(responder)
@@ -544,7 +544,7 @@ async_test!(changed_retry_fails_closed_until_explicit_abandonment -> Result<(), 
 
 #[cfg(unix)]
 async_test!(retry_state_path_is_rejected_as_an_ingest_key_destination -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await.expect("loopback server starts");
     let fixture = Fixture::new("reserved-retry-target")?;
     let private_dir = fixture.home.join(".logbrew");
     std::fs::create_dir(private_dir.as_path())?;
@@ -571,7 +571,7 @@ async_test!(retry_state_path_is_rejected_as_an_ingest_key_destination -> Result<
 
 #[cfg(unix)]
 async_test!(reserved_state_aliases_do_not_abandon_a_pending_retry -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await.expect("loopback server starts");
     Mock::route("POST", "/api/projects")
         .respond_with(ResponseTemplate::new(500).set_body_json(serde_json::json!({
             "error": "Internal error",
@@ -662,7 +662,7 @@ async_test!(project_create_errors_use_only_allowlisted_local_recovery -> Result<
     ];
 
     for (status, server_code, expected_code, expected_next) in cases {
-        let server = MockServer::start().await;
+        let server = MockServer::start().await.expect("loopback server starts");
         Mock::route("POST", "/api/projects")
             .respond_with(
                 ResponseTemplate::new(status).set_body_json(serde_json::json!({
@@ -699,7 +699,7 @@ async_test!(project_create_errors_use_only_allowlisted_local_recovery -> Result<
 
 #[cfg(unix)]
 async_test!(missing_auth_points_to_login_without_contacting_the_api -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await.expect("loopback server starts");
     let fixture = Fixture::new("missing-auth")?;
     let command = parse_command(fixture.args("Checkout API", false))?;
     let mut env = fixture.env(&server);
@@ -751,7 +751,7 @@ async_test!(malformed_typed_errors_fail_closed_without_reflection -> Result<(), 
     ];
 
     for (label, status, response) in cases {
-        let server = MockServer::start().await;
+        let server = MockServer::start().await.expect("loopback server starts");
         Mock::route("POST", "/api/projects")
             .respond_with(ResponseTemplate::new(status).set_body_string(response))
             .mount(&server);
@@ -805,7 +805,7 @@ async_test!(malformed_or_hostile_success_never_writes_or_echoes_token -> Result<
         ("missing-expiry", missing_expiry),
         ("invalid-expiry", invalid_expiry),
     ] {
-        let server = MockServer::start().await;
+        let server = MockServer::start().await.expect("loopback server starts");
         Mock::route("POST", "/api/projects")
             .respond_with(ResponseTemplate::new(200).set_body_json(response))
             .mount(&server);
@@ -831,7 +831,7 @@ async_test!(malformed_or_hostile_success_never_writes_or_echoes_token -> Result<
 
 #[cfg(unix)]
 async_test!(unsafe_or_existing_key_destinations_fail_before_network -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await.expect("loopback server starts");
     let existing = Fixture::new("existing-target")?;
     std::fs::write(existing.key_file.as_path(), "existing-private-value")?;
     set_private_file_mode(existing.key_file.as_path())?;
@@ -872,7 +872,7 @@ async_test!(unsafe_or_existing_key_destinations_fail_before_network -> Result<()
 
 #[cfg(unix)]
 async_test!(exact_retry_can_confirm_an_already_persisted_matching_token -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await.expect("loopback server starts");
     Mock::route("POST", "/api/projects")
         .respond_with(retry_then(success_response()))
         .mount(&server);
@@ -904,7 +904,7 @@ async_test!(exact_retry_can_confirm_an_already_persisted_matching_token -> Resul
 
 #[cfg(unix)]
 async_test!(concurrent_project_create_serializes_to_one_persisted_key -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await.expect("loopback server starts");
     Mock::route("POST", "/api/projects")
         .respond_with(ResponseTemplate::new(200).set_body_json(success_response()))
         .mount(&server);
@@ -939,7 +939,7 @@ async_test!(concurrent_project_create_serializes_to_one_persisted_key -> Result<
 
 #[cfg(unix)]
 async_test!(human_project_create_is_bounded_and_path_free -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await.expect("loopback server starts");
     Mock::route("POST", "/api/projects")
         .respond_with(ResponseTemplate::new(200).set_body_json(success_response()))
         .mount(&server);
@@ -964,7 +964,7 @@ async_test!(human_project_create_is_bounded_and_path_free -> Result<(), Box<dyn 
 
 #[cfg(not(unix))]
 async_test!(project_create_fails_before_network_without_provable_owner_only_storage -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await.expect("loopback server starts");
     let fixture = Fixture::new("unsupported-private-storage")?;
     let command = parse_command(fixture.args("Checkout API", false))?;
     let error = execute_command(&command, &fixture.env(&server), &mut Vec::new())

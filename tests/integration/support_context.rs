@@ -2,10 +2,8 @@
 
 use super::{authenticated_env, run_command};
 use crate::matchers::{body_json, header};
-use crate::{Mock, MockServer, ResponseTemplate, execute_command};
-use logbrew_cli::{
-    CliEnvironment, HttpMethod, parse_command, write_cli_error, write_runtime_error,
-};
+use crate::{Mock, MockServer, ResponseTemplate, TestResult, execute_command};
+use logbrew_cli::{CliEnvironment, HttpMethod, parse_command, write_runtime_error};
 
 const TICKET_ID: &str = "sup_9b2b4b3abd4e4f85a0f648118f037c17";
 const CONTEXT_ID: &str = "ctx_4b2b4b3abd4e4f85a0f648118f037c29";
@@ -16,9 +14,8 @@ const CONTEXT_TEXT: &str = "The CLI stopped after the second request";
 const CONTEXT_INPUT: &str = "  The CLI stopped after the second request\n";
 
 #[test]
-fn support_context_parser_builds_exact_paths_bodies_and_closed_grammar() {
-    let history = parse_command(["logbrew", "support", "context", TICKET_ID, "--json"])
-        .expect("support context history parses");
+fn support_context_parser_builds_exact_paths_bodies_and_closed_grammar() -> TestResult {
+    let history = parse_command(["logbrew", "support", "context", TICKET_ID, "--json"])?;
     assert_eq!(history.http_method(), Some(HttpMethod::Get));
     assert_eq!(
         history.http_path().as_deref(),
@@ -37,8 +34,7 @@ fn support_context_parser_builds_exact_paths_bodies_and_closed_grammar() {
         RETRY_KEY,
         "--diagnostics",
         "--json",
-    ])
-    .expect("support context reply parses");
+    ])?;
     assert_eq!(reply.http_method(), Some(HttpMethod::Post));
     assert_eq!(
         reply.http_path().as_deref(),
@@ -64,24 +60,27 @@ fn support_context_parser_builds_exact_paths_bodies_and_closed_grammar() {
         TICKET_ID,
         "--context=- second request failed",
         "--retry-key=-retry-1",
-    ])
-    .expect("leading hyphen values remain valid");
+    ])?;
     assert_eq!(
         hyphen_values.request_body(),
         Some(serde_json::json!({"context": "- second request failed"}))
     );
 
+    Ok(())
+}
+
+#[test]
+fn support_context_rejects_non_public_ids_closed_operations_and_missing_fields() -> TestResult {
     for action in ["context", "reply"] {
-        let error = parse_command([
-            "logbrew",
-            "support",
-            action,
-            "sup_9B2B4B3ABD4E4F85A0F648118F037C17",
-        ])
-        .expect_err("non-public support id fails locally");
-        let mut output = Vec::new();
-        write_cli_error(&error, true, &mut output).expect("error writes");
-        let text = String::from_utf8(output).expect("UTF-8");
+        let text = crate::render_error(
+            &[
+                "logbrew",
+                "support",
+                action,
+                "sup_9B2B4B3ABD4E4F85A0F648118F037C17",
+            ],
+            true,
+        )?;
         assert!(text.contains("invalid_support_ticket_id"));
         assert!(!text.contains("9B2B4B3A"));
     }
@@ -114,44 +113,52 @@ fn support_context_parser_builds_exact_paths_bodies_and_closed_grammar() {
         assert!(parse_command(args).is_err(), "reply fields are required");
     }
 
-    let error = parse_command([
-        "logbrew",
-        "support",
-        "reply",
-        TICKET_ID,
-        "--context",
-        CONTEXT_TEXT,
-        "--retry-key",
-        "unsafe-key\nsecret-token",
-        "--json",
-    ])
-    .expect_err("unsafe retry key fails locally");
-    let mut output = Vec::new();
-    write_cli_error(&error, true, &mut output).expect("error writes");
-    let text = String::from_utf8(output).expect("UTF-8");
+    Ok(())
+}
+
+#[test]
+fn support_context_rejects_unsafe_retry_keys_and_extra_reply_syntax() -> TestResult {
+    let text = crate::render_error(
+        &[
+            "logbrew",
+            "support",
+            "reply",
+            TICKET_ID,
+            "--context",
+            CONTEXT_TEXT,
+            "--retry-key",
+            "unsafe-key\nsecret-token",
+            "--json",
+        ],
+        true,
+    )?;
     assert!(text.contains("invalid_support_retry_key"));
     assert!(!text.contains("unsafe-key"));
     assert!(!text.contains("secret-token"));
 
-    let error = parse_command([
-        "logbrew",
-        "support",
-        "reply",
-        TICKET_ID,
-        "--context",
-        CONTEXT_TEXT,
-        "--retry-key",
-        RETRY_KEY,
-        "private-host-and-token-proof",
-        "--json",
-    ])
-    .expect_err("unexpected reply syntax fails safely");
-    let mut output = Vec::new();
-    write_cli_error(&error, true, &mut output).expect("error writes");
-    let text = String::from_utf8(output).expect("UTF-8");
+    let text = crate::render_error(
+        &[
+            "logbrew",
+            "support",
+            "reply",
+            TICKET_ID,
+            "--context",
+            CONTEXT_TEXT,
+            "--retry-key",
+            RETRY_KEY,
+            "private-host-and-token-proof",
+            "--json",
+        ],
+        true,
+    )?;
     assert!(text.contains("invalid_support_context_reply"));
     assert!(!text.contains("private-host-and-token-proof"));
 
+    Ok(())
+}
+
+#[test]
+fn support_context_bounds_values_and_hides_invalid_history_arguments() -> TestResult {
     for (value, expected_error, hidden) in [
         (
             "x".repeat(129),
@@ -164,73 +171,60 @@ fn support_context_parser_builds_exact_paths_bodies_and_closed_grammar() {
             "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
         ),
     ] {
-        let args = if expected_error == "invalid_support_retry_key" {
-            vec![
-                String::from("logbrew"),
-                String::from("support"),
-                String::from("reply"),
-                String::from(TICKET_ID),
-                String::from("--context"),
-                String::from(CONTEXT_TEXT),
-                String::from("--retry-key"),
-                value,
-                String::from("--json"),
-            ]
+        let (context, retry_key) = if expected_error == "invalid_support_retry_key" {
+            (CONTEXT_TEXT, value.as_str())
         } else {
-            vec![
-                String::from("logbrew"),
-                String::from("support"),
-                String::from("reply"),
-                String::from(TICKET_ID),
-                String::from("--context"),
-                value,
-                String::from("--retry-key"),
-                String::from(RETRY_KEY),
-                String::from("--json"),
-            ]
+            (value.as_str(), RETRY_KEY)
         };
-        let error = parse_command(args).expect_err("oversized support value fails locally");
-        let mut output = Vec::new();
-        write_cli_error(&error, true, &mut output).expect("error writes");
-        let text = String::from_utf8(output).expect("UTF-8");
+        let args = [
+            "logbrew",
+            "support",
+            "reply",
+            TICKET_ID,
+            "--context",
+            context,
+            "--retry-key",
+            retry_key,
+            "--json",
+        ];
+        let text = crate::render_error(&args, true)?;
         assert!(text.contains(expected_error));
         assert!(!text.contains(hidden));
     }
 
-    let error = parse_command([
-        "logbrew",
-        "support",
-        "reply",
-        TICKET_ID,
-        "--context",
-        " \n ",
-        "--retry-key",
-        RETRY_KEY,
-        "--json",
-    ])
-    .expect_err("blank trimmed context fails locally");
-    let mut output = Vec::new();
-    write_cli_error(&error, true, &mut output).expect("error writes");
-    let text = String::from_utf8(output).expect("UTF-8");
+    let text = crate::render_error(
+        &[
+            "logbrew",
+            "support",
+            "reply",
+            TICKET_ID,
+            "--context",
+            " \n ",
+            "--retry-key",
+            RETRY_KEY,
+            "--json",
+        ],
+        true,
+    )?;
     assert!(text.contains("invalid_support_context"));
 
     for hostile in [
         "--authorization=private-value-proof",
         "private-positional-value-proof",
     ] {
-        let error = parse_command(["logbrew", "support", "context", TICKET_ID, hostile])
-            .expect_err("unexpected context history syntax fails safely");
-        let mut output = Vec::new();
-        write_cli_error(&error, false, &mut output).expect("error writes");
-        let text = String::from_utf8(output).expect("UTF-8");
+        let text = crate::render_error(
+            &["logbrew", "support", "context", TICKET_ID, hostile],
+            false,
+        )?;
         assert!(text.contains("invalid support context command"));
         assert!(!text.contains("authorization"));
         assert!(!text.contains("private-value-proof"));
         assert!(!text.contains("private-positional-value-proof"));
     }
+    Ok(())
 }
 
-async_test!(support_context_history_preserves_json_and_hides_context_payloads -> Result<(), Box<dyn std::error::Error>>, {
+async_test!(support_context_history_preserves_json_and_hides_context_payloads -> TestResult, {
     let response = serde_json::json!({
         "ticket_id": TICKET_ID,
         "status": "waiting_on_user",
@@ -255,7 +249,7 @@ async_test!(support_context_history_preserves_json_and_hides_context_payloads ->
         "next_action": {"code": "provide_context", "target": "support_ticket"}
     });
     let response_text = serde_json::to_string_pretty(&response)?;
-    let server = MockServer::start().await;
+    let server = MockServer::start().await?;
     Mock::auth(
         "GET",
         format!("/api/support/tickets/{TICKET_ID}/context"),
@@ -304,7 +298,7 @@ async_test!(support_context_history_preserves_json_and_hides_context_payloads ->
     Ok(())
 });
 
-async_test!(support_context_reply_sends_retry_header_and_exact_retry_is_stable -> Result<(), Box<dyn std::error::Error>>, {
+async_test!(support_context_reply_sends_retry_header_and_exact_retry_is_stable -> TestResult, {
     let response = serde_json::json!({
         "ticket_id": TICKET_ID,
         "context_id": CONTEXT_ID,
@@ -313,7 +307,7 @@ async_test!(support_context_reply_sends_retry_header_and_exact_retry_is_stable -
         "next": "visit https://private.invalid with secret-token",
         "next_action": {"code": "await_owner_update", "target": "support_ticket"}
     });
-    let server = MockServer::start().await;
+    let server = MockServer::start().await?;
     Mock::auth(
         "POST",
         format!("/api/support/tickets/{TICKET_ID}/context"),
@@ -321,7 +315,7 @@ async_test!(support_context_reply_sends_retry_header_and_exact_retry_is_stable -
     )
     .and(header("idempotency-key", RETRY_KEY))
     .and(body_json(serde_json::json!({"context": CONTEXT_TEXT})))
-    .respond_with(ResponseTemplate::new(200).set_body_json(response.clone()))
+    .respond_with(ResponseTemplate::new(200).set_body_json(&response))
     .expect(3)
     .mount(&server);
 
@@ -368,14 +362,14 @@ async_test!(support_context_reply_sends_retry_header_and_exact_retry_is_stable -
     Ok(())
 });
 
-async_test!(support_context_conflicts_use_local_recovery_without_backend_text -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+async_test!(support_context_conflicts_use_local_recovery_without_backend_text -> TestResult, {
+    let server = MockServer::start().await?;
     Mock::route("POST", format!("/api/support/tickets/{TICKET_ID}/context"))
         .and(header("idempotency-key", RETRY_KEY))
         .and(body_json(serde_json::json!({
             "context": "changed body secret-token https://private.invalid/private/path"
         })))
-        .respond_with(ResponseTemplate::new(409).set_body_json(serde_json::json!({
+        .respond_with(ResponseTemplate::new(409).set_body_json(&serde_json::json!({
             "error": "private idempotency backend text",
             "code": "private_conflict_code",
             "next": "send private token to private host",
@@ -397,7 +391,8 @@ async_test!(support_context_conflicts_use_local_recovery_without_backend_text ->
     let mut output = Vec::new();
     let error = execute_command(&command, &env, &mut output)
         .await
-        .expect_err("conflict fails safely");
+        .err()
+        .ok_or("conflict fails safely")?;
     write_runtime_error(&error, true, &mut output)?;
     let text = String::from_utf8(output)?;
     let body: serde_json::Value = serde_json::from_str(&text)?;
@@ -422,7 +417,7 @@ async_test!(support_context_conflicts_use_local_recovery_without_backend_text ->
     Ok(())
 });
 
-async_test!(support_context_human_rendering_fails_closed_on_malformed_success -> Result<(), Box<dyn std::error::Error>>, {
+async_test!(support_context_human_rendering_fails_closed_on_malformed_success -> TestResult, {
     let mut contexts_with_hidden_invalid_tail = (0..100)
         .map(|_| {
             serde_json::json!({
@@ -514,7 +509,7 @@ async_test!(support_context_human_rendering_fails_closed_on_malformed_success ->
             "next_action": {"code": "provide_context", "target": "support_ticket"}
         }),
     ] {
-        let server = MockServer::start().await;
+        let server = MockServer::start().await?;
         let is_history = response.get("contexts").is_some();
         let is_oversized_context = response
             .get("contexts")
@@ -527,7 +522,7 @@ async_test!(support_context_human_rendering_fails_closed_on_malformed_success ->
             if is_history { "GET" } else { "POST" },
             format!("/api/support/tickets/{TICKET_ID}/context"),
         )
-        .respond_with(ResponseTemplate::new(200).set_body_json(response.clone()))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&response))
         .mount(&server);
         let output = if is_history {
             run_command(
@@ -572,7 +567,7 @@ async_test!(support_context_human_rendering_fails_closed_on_malformed_success ->
     Ok(())
 });
 
-async_test!(support_context_transport_errors_are_fixed_and_value_safe -> Result<(), Box<dyn std::error::Error>>, {
+async_test!(support_context_transport_errors_are_fixed_and_value_safe -> TestResult, {
     let command = parse_command(["logbrew", "support", "context", TICKET_ID])?;
     let env = CliEnvironment {
         base_url: String::from("http://127.0.0.1:1/private-host-proof"),
@@ -583,7 +578,8 @@ async_test!(support_context_transport_errors_are_fixed_and_value_safe -> Result<
     let mut output = Vec::new();
     let error = execute_command(&command, &env, &mut output)
         .await
-        .expect_err("transport failure is local and safe");
+        .err()
+        .ok_or("transport failure is local and safe")?;
     write_runtime_error(&error, false, &mut output)?;
     let text = String::from_utf8(output)?;
     assert_eq!(

@@ -2,10 +2,10 @@
 
 use super::support::{Fixture, macho64, uuid_bytes};
 
-pub(crate) const RESUMABLE_CHUNK_SIZE: usize = 4 * 1024 * 1024;
-pub(crate) const RESUMABLE_SESSION_ID: &str =
+pub(in crate::integration) const RESUMABLE_CHUNK_SIZE: usize = 4 * 1024 * 1024;
+pub(in crate::integration) const RESUMABLE_SESSION_ID: &str =
     "nativeupload_1111111111111111111111111111111111111111111111111111111111111111";
-pub(crate) fn start_response(missing_chunks: &[&str]) -> serde_json::Value {
+pub(in crate::integration) fn start_response(missing_chunks: &[&str]) -> serde_json::Value {
     serde_json::json!({
         "session_id": RESUMABLE_SESSION_ID,
         "status": "ready",
@@ -23,7 +23,7 @@ pub(crate) fn start_response(missing_chunks: &[&str]) -> serde_json::Value {
     })
 }
 
-pub(crate) fn chunk_response(digest: &str) -> serde_json::Value {
+pub(in crate::integration) fn chunk_response(digest: &str) -> serde_json::Value {
     serde_json::json!({
         "session_id": RESUMABLE_SESSION_ID,
         "chunk_sha256": digest,
@@ -36,7 +36,7 @@ pub(crate) fn chunk_response(digest: &str) -> serde_json::Value {
     })
 }
 
-pub(crate) fn artifact(
+pub(in crate::integration) fn artifact(
     label: &str,
     size: usize,
 ) -> Result<(Fixture, std::path::PathBuf, Vec<u8>), Box<dyn std::error::Error>> {
@@ -48,7 +48,7 @@ pub(crate) fn artifact(
     Ok((fixture, path, object))
 }
 
-pub(crate) fn error_envelope(
+pub(in crate::integration) fn error_envelope(
     code: &str,
     next: &str,
     action_code: &str,

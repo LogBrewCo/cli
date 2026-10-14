@@ -5,12 +5,34 @@ const HOMEBREW: &str = include_str!("../../.github/workflows/publish-homebrew-ta
 const PUBLISH_BOUNDARY: &str = include_str!("../../scripts/validate-publish-boundary.sh");
 const DIST: &str = include_str!("../../dist-workspace.toml");
 
-fn ordered(text: &str, values: &[&str]) {
-    let _ = values.iter().fold(0, |i, v| i + text[i..].find(v).unwrap());
+fn ordered(text: &str, values: &[&str]) -> bool {
+    values
+        .iter()
+        .try_fold(text, |remaining, value| {
+            remaining.split_once(value).map(|(_, tail)| tail)
+        })
+        .is_some()
 }
 
 #[test]
-fn release_workflows_prebuild_publish_and_recover_safely() {
+fn ordering_requires_distinct_sequential_matches() {
+    for (text, values, expected) in [
+        ("first second", ["first", "second"], true),
+        ("second first", ["first", "second"], false),
+        ("first", ["first", "second"], false),
+        ("first", ["first", "first"], false),
+        ("first first", ["first", "first"], true),
+    ] {
+        assert_eq!(
+            ordered(text, &values),
+            expected,
+            "incorrect ordering: {text}"
+        );
+    }
+}
+
+#[test]
+fn release_workflows_prebuild_publish_and_recover_safely() -> crate::TestResult {
     for required in [
         "workflow_dispatch:",
         "publishing: ${{ github.event_name == 'push' }}",
@@ -46,7 +68,7 @@ fn release_workflows_prebuild_publish_and_recover_safely() {
     let targets = DIST
         .lines()
         .find(|line| line.starts_with("targets = "))
-        .unwrap();
+        .ok_or("distribution targets missing")?;
     for target in targets.split('"').skip(1).step_by(2) {
         assert!(RELEASE.contains(target), "missing {target}");
     }
@@ -61,6 +83,11 @@ fn release_workflows_prebuild_publish_and_recover_safely() {
         .any(|value| RELEASE.contains(value))
     );
 
+    Ok(())
+}
+
+#[test]
+fn publication_requires_verified_source_and_single_upload() {
     for required in [
         "actions: read",
         "--workflow release.yml",
@@ -110,14 +137,17 @@ fn release_workflows_prebuild_publish_and_recover_safely() {
     ] {
         assert!(HOMEBREW.contains(required), "missing {required}");
     }
-    ordered(
-        HOMEBREW,
-        &[
-            "git add Formula/logbrew.rb",
-            "git commit -m \"logbrew ${expected_version}\"",
-            "validate-publish-boundary.sh",
-            "git push",
-        ],
+    assert!(
+        ordered(
+            HOMEBREW,
+            &[
+                "git add Formula/logbrew.rb",
+                "git commit -m \"logbrew ${expected_version}\"",
+                "validate-publish-boundary.sh",
+                "git push",
+            ],
+        ),
+        "formula commit, validation and push must remain ordered"
     );
     assert_eq!(HOMEBREW.matches("secrets.HOMEBREW_TAP_TOKEN").count(), 1);
     assert_eq!(HOMEBREW.matches("uses: actions/checkout@v7").count(), 2);

@@ -1,23 +1,21 @@
 //! CLI status command output tests.
 
 use crate::matchers::body_json;
-use crate::{Mock, MockServer, ResponseTemplate, execute_command};
+use crate::{Mock, MockServer, ResponseTemplate, TestResult, execute_command};
 use logbrew_cli::{CliEnvironment, parse_command, write_runtime_error};
 
-async_test!(status_json_reports_api_and_missing_auth_for_agents, {
-    let server = MockServer::start().await;
+async_test!(status_json_reports_api_and_missing_auth_for_agents -> TestResult, {
+    let server = MockServer::start().await?;
     Mock::route("GET", "/health")
         .respond_with(ResponseTemplate::new(200).set_body_string("ok"))
         .mount(&server);
-    let command = parse_command(["logbrew", "status", "--json"]).expect("command parses");
+    let command = parse_command(["logbrew", "status", "--json"])?;
     let env = environment(&server, None, "json-test");
     let mut output = Vec::new();
 
-    execute_command(&command, &env, &mut output)
-        .await
-        .expect("status succeeds");
+    execute_command(&command, &env, &mut output).await?;
 
-    let body: serde_json::Value = serde_json::from_slice(output.as_slice()).expect("valid json");
+    let body: serde_json::Value = serde_json::from_slice(output.as_slice())?;
     assert_eq!(body["ok"], true);
     assert_eq!(body["status"], "reachable");
     assert_eq!(body["status_code"], 200);
@@ -27,27 +25,26 @@ async_test!(status_json_reports_api_and_missing_auth_for_agents, {
     assert_eq!(body["auth_source"], "missing");
     assert_eq!(body["next"], "run logbrew login");
     assert!(body.get("agent_use").is_none());
+    Ok(())
 });
 
-async_test!(status_json_reports_env_auth_without_exposing_token, {
-    let server = MockServer::start().await;
+async_test!(status_json_reports_env_auth_without_exposing_token -> TestResult, {
+    let server = MockServer::start().await?;
     Mock::route("GET", "/health")
         .respond_with(ResponseTemplate::new(200).set_body_string("ok"))
         .mount(&server);
     Mock::route("GET", "/api/auth/account")
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+        .respond_with(ResponseTemplate::new(200).set_body_json(&serde_json::json!({
             "id": "00000000-0000-4000-8000-000000000001"
         })))
         .mount(&server);
-    let command = parse_command(["logbrew", "status", "--json"]).expect("command parses");
+    let command = parse_command(["logbrew", "status", "--json"])?;
     let env = environment(&server, Some("fixture-token"), "env-auth-test");
     let mut output = Vec::new();
 
-    execute_command(&command, &env, &mut output)
-        .await
-        .expect("status succeeds");
+    execute_command(&command, &env, &mut output).await?;
 
-    let body: serde_json::Value = serde_json::from_slice(output.as_slice()).expect("valid json");
+    let body: serde_json::Value = serde_json::from_slice(output.as_slice())?;
     assert_eq!(body["authenticated"], true);
     assert_eq!(body["auth_source"], "env");
     assert_eq!(
@@ -92,15 +89,16 @@ async_test!(status_json_reports_env_auth_without_exposing_token, {
         "logbrew watch --severity error,critical --json"
     );
     assert!(!body.to_string().contains("fixture-token"));
+    Ok(())
 });
 
-async_test!(status_json_reports_expired_token_as_unauthenticated, {
-    let server = MockServer::start().await;
+async_test!(status_json_reports_expired_token_as_unauthenticated -> TestResult, {
+    let server = MockServer::start().await?;
     Mock::route("GET", "/health")
         .respond_with(ResponseTemplate::new(200).set_body_string("ok"))
         .mount(&server);
     Mock::route("GET", "/api/auth/account")
-        .respond_with(ResponseTemplate::new(401).set_body_json(serde_json::json!({
+        .respond_with(ResponseTemplate::new(401).set_body_json(&serde_json::json!({
             "code": "unauthorized",
             "error": "Invalid or expired token",
             "next_action": {
@@ -109,15 +107,13 @@ async_test!(status_json_reports_expired_token_as_unauthenticated, {
             }
         })))
         .mount(&server);
-    let command = parse_command(["logbrew", "status", "--json"]).expect("command parses");
+    let command = parse_command(["logbrew", "status", "--json"])?;
     let env = environment(&server, Some("expired-token"), "expired-auth-test");
     let mut output = Vec::new();
 
-    execute_command(&command, &env, &mut output)
-        .await
-        .expect("status succeeds");
+    execute_command(&command, &env, &mut output).await?;
 
-    let body: serde_json::Value = serde_json::from_slice(output.as_slice()).expect("valid json");
+    let body: serde_json::Value = serde_json::from_slice(output.as_slice())?;
     assert_eq!(body["ok"], true);
     assert_eq!(body["status"], "reachable");
     assert_eq!(body["authenticated"], false);
@@ -125,10 +121,11 @@ async_test!(status_json_reports_expired_token_as_unauthenticated, {
     assert_eq!(body["next"], "run logbrew login");
     assert!(body.get("agent_use").is_none());
     assert!(!body.to_string().contains("expired-token"));
+    Ok(())
 });
 
-async_test!(status_refreshes_expired_local_auth_before_reporting_authenticated -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+async_test!(status_refreshes_expired_local_auth_before_reporting_authenticated -> TestResult, {
+    let server = MockServer::start().await?;
     Mock::route("GET", "/health")
         .respond_with(ResponseTemplate::new(200).set_body_string("ok"))
         .mount(&server);
@@ -140,30 +137,21 @@ async_test!(status_refreshes_expired_local_auth_before_reporting_authenticated -
         .and(body_json(serde_json::json!({
             "refresh_token": "old-local-refresh"
         })))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+        .respond_with(ResponseTemplate::new(200).set_body_json(&serde_json::json!({
             "access_token": "fresh-local",
             "refresh_token": "fresh-local-refresh"
         })))
         .expect(1)
         .mount(&server);
     Mock::auth("GET", "/api/auth/account", "fresh-local")
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+        .respond_with(ResponseTemplate::new(200).set_body_json(&serde_json::json!({
             "id": "00000000-0000-4000-8000-000000000001"
         })))
         .expect(1)
         .mount(&server);
-    let home = status_home("refresh-local")?;
-    let auth_dir = home.join(".logbrew");
-    std::fs::create_dir_all(auth_dir.as_path())?;
-    std::fs::write(
-        auth_dir.join("session.json"),
-        serde_json::json!({
-            "access_token": "expired-local",
-            "refresh_token": "old-local-refresh",
-            "origin": server.uri(),
-        })
-        .to_string(),
-    )?;
+    let home = crate::isolated_home("logbrew-cli-status", "refresh-local")?;
+    let _session_path =
+        crate::write_test_session(&home, &server.uri(), "expired-local", "old-local-refresh")?;
     let command = parse_command(["logbrew", "status", "--json"])?;
     let env = super::test_env(&server, None, Some(home));
     let mut output = Vec::new();
@@ -185,20 +173,18 @@ async_test!(status_refreshes_expired_local_auth_before_reporting_authenticated -
     Ok(())
 });
 
-async_test!(status_human_output_includes_api_and_auth_next_step, {
-    let server = MockServer::start().await;
+async_test!(status_human_output_includes_api_and_auth_next_step -> TestResult, {
+    let server = MockServer::start().await?;
     Mock::route("GET", "/health")
         .respond_with(ResponseTemplate::new(200).set_body_string("ok"))
         .mount(&server);
-    let command = parse_command(["logbrew", "status"]).expect("command parses");
+    let command = parse_command(["logbrew", "status"])?;
     let env = environment(&server, None, "human-test");
     let mut output = Vec::new();
 
-    execute_command(&command, &env, &mut output)
-        .await
-        .expect("status succeeds");
+    execute_command(&command, &env, &mut output).await?;
 
-    let text = String::from_utf8(output).expect("utf8 output");
+    let text = String::from_utf8(output)?;
     assert_eq!(
         text,
         format!(
@@ -206,41 +192,28 @@ async_test!(status_human_output_includes_api_and_auth_next_step, {
             server.uri()
         )
     );
+    Ok(())
 });
 
-fn status_home(name: &str) -> Result<std::path::PathBuf, std::io::Error> {
-    let home =
-        std::env::temp_dir().join(format!("logbrew-cli-status-{name}-{}", std::process::id()));
-    match std::fs::remove_dir_all(home.as_path()) {
-        Ok(()) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => return Err(error),
-    }
-    std::fs::create_dir_all(home.as_path())?;
-    Ok(home)
-}
-
 async_test!(
-    status_human_authenticated_output_points_to_first_read_without_leaking_token,
+    status_human_authenticated_output_points_to_first_read_without_leaking_token -> TestResult,
     {
-        let server = MockServer::start().await;
+        let server = MockServer::start().await?;
         Mock::route("GET", "/health")
             .respond_with(ResponseTemplate::new(200).set_body_string("ok"))
             .mount(&server);
         Mock::route("GET", "/api/auth/account")
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            .respond_with(ResponseTemplate::new(200).set_body_json(&serde_json::json!({
                 "id": "00000000-0000-4000-8000-000000000001"
             })))
             .mount(&server);
-        let command = parse_command(["logbrew", "status"]).expect("command parses");
+        let command = parse_command(["logbrew", "status"])?;
         let env = environment(&server, Some("fixture-token"), "human-auth-test");
         let mut output = Vec::new();
 
-        execute_command(&command, &env, &mut output)
-            .await
-            .expect("status succeeds");
+        execute_command(&command, &env, &mut output).await?;
 
-        let text = String::from_utf8(output).expect("utf8 output");
+        let text = String::from_utf8(output)?;
         assert_eq!(
             text,
             format!(
@@ -256,27 +229,29 @@ async_test!(
             )
         );
         assert!(!text.contains("fixture-token"));
+        Ok(())
     }
 );
 
 async_test!(
-    status_json_reports_unreachable_api_without_exposing_token,
+    status_json_reports_unreachable_api_without_exposing_token -> TestResult,
     {
-        let server = MockServer::start().await;
+        let server = MockServer::start().await?;
         Mock::route("GET", "/health")
             .respond_with(ResponseTemplate::new(503).set_body_string("maintenance"))
             .mount(&server);
-        let command = parse_command(["logbrew", "status", "--json"]).expect("command parses");
+        let command = parse_command(["logbrew", "status", "--json"])?;
         let env = environment(&server, Some("fixture-token"), "json-down-test");
         let mut output = Vec::new();
 
         let error = execute_command(&command, &env, &mut output)
             .await
-            .expect_err("status fails");
-        write_runtime_error(&error, command.wants_json(), &mut output).expect("error writes");
+            .err()
+            .ok_or("status must fail")?;
+        write_runtime_error(&error, command.wants_json(), &mut output)?;
 
         let body: serde_json::Value =
-            serde_json::from_slice(output.as_slice()).expect("valid json");
+            serde_json::from_slice(output.as_slice())?;
         assert_eq!(body["ok"], false);
         assert_eq!(body["error"], "status_unreachable");
         assert_eq!(body["status"], "unreachable");
@@ -287,24 +262,26 @@ async_test!(
         assert_eq!(body["auth_source"], "env");
         assert_eq!(body["next"], "check LOGBREW_API_URL or network");
         assert!(!body.to_string().contains("fixture-token"));
+        Ok(())
     }
 );
 
-async_test!(status_human_reports_unreachable_api_with_next_step, {
-    let server = MockServer::start().await;
+async_test!(status_human_reports_unreachable_api_with_next_step -> TestResult, {
+    let server = MockServer::start().await?;
     Mock::route("GET", "/health")
         .respond_with(ResponseTemplate::new(503).set_body_string("maintenance"))
         .mount(&server);
-    let command = parse_command(["logbrew", "status"]).expect("command parses");
+    let command = parse_command(["logbrew", "status"])?;
     let env = environment(&server, None, "human-down-test");
     let mut output = Vec::new();
 
     let error = execute_command(&command, &env, &mut output)
         .await
-        .expect_err("status fails");
-    write_runtime_error(&error, command.wants_json(), &mut output).expect("error writes");
+        .err()
+        .ok_or("status must fail")?;
+    write_runtime_error(&error, command.wants_json(), &mut output)?;
 
-    let text = String::from_utf8(output).expect("utf8 output");
+    let text = String::from_utf8(output)?;
     assert_eq!(
         text,
         format!(
@@ -313,6 +290,7 @@ async_test!(status_human_reports_unreachable_api_with_next_step, {
             server.uri()
         )
     );
+    Ok(())
 });
 
 fn environment(server: &MockServer, token: Option<&str>, name: &str) -> CliEnvironment {

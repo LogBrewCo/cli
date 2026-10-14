@@ -11,7 +11,7 @@ const TRACE_ID: &str = "4bf92f3577b34da6a3ce929d0e0e4736";
 const SPAN_ID: &str = "00f067aa0ba902b7";
 
 async_test!(human_release_explanation_connects_health_sdk_and_every_signal -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await.expect("loopback server starts");
     Mock::route("GET", "/api/telemetry/releases/investigation")
         .and(query_param("project_id", PROJECT_ID))
         .and(query_param("release", "checkout@1.2.3"))
@@ -61,7 +61,7 @@ async_test!(human_release_explanation_connects_health_sdk_and_every_signal -> Re
 });
 
 async_test!(built_binary_release_preserves_validated_version_4_json -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await.expect("loopback server starts");
     let response = release_response();
     Mock::route("GET", "/api/telemetry/releases/investigation")
         .and(query_param("response_version", "4"))
@@ -185,7 +185,7 @@ async_test!(release_explanation_rejects_contradictory_or_unversioned_subject_rec
                 .retain(|item| item["kind"] != "release_marker");
         }),
     ] {
-        let server = MockServer::start().await;
+        let server = MockServer::start().await.expect("loopback server starts");
         Mock::route("GET", "/api/telemetry/releases/investigation")
             .respond_with(ResponseTemplate::new(200).set_body_json(response))
             .mount(&server);
@@ -213,7 +213,7 @@ async_test!(release_v4_accepts_exact_capture_retry_and_partial_recovery_states -
         release_without_markers("not_found"),
         release_without_markers("unavailable"),
     ] {
-        let server = MockServer::start().await;
+        let server = MockServer::start().await.expect("loopback server starts");
         Mock::route("GET", "/api/telemetry/releases/investigation")
             .and(query_param("response_version", "4"))
             .respond_with(ResponseTemplate::new(200).set_body_json(response.clone()))
@@ -230,7 +230,7 @@ async_test!(release_v4_accepts_exact_capture_retry_and_partial_recovery_states -
 });
 
 async_test!(metric_explanation_preserves_validated_json_and_exact_scope -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await.expect("loopback server starts");
     let response = metric_response();
     Mock::route("GET", "/api/telemetry/metrics/investigation")
         .and(query_param("project_id", PROJECT_ID))
@@ -256,7 +256,7 @@ async_test!(metric_explanation_preserves_validated_json_and_exact_scope -> Resul
 });
 
 async_test!(built_binary_metric_preserves_validated_version_2_description_json -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await.expect("loopback server starts");
     let response = metric_response();
     Mock::route("GET", "/api/telemetry/metrics/investigation")
         .and(query_param("response_version", "2"))
@@ -294,7 +294,7 @@ async_test!(built_binary_metric_preserves_validated_version_2_description_json -
 });
 
 async_test!(human_metric_explanation_exposes_semantics_coverage_and_trace_follow_up -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await.expect("loopback server starts");
     Mock::route("GET", "/api/telemetry/metrics/investigation")
         .respond_with(ResponseTemplate::new(200).set_body_json(metric_response()))
         .mount(&server);
@@ -335,7 +335,7 @@ async_test!(human_metric_explanation_exposes_semantics_coverage_and_trace_follow
 });
 
 async_test!(metric_latest_sample_preserves_rich_context_and_redaction_receipts -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await.expect("loopback server starts");
     let mut response = metric_response();
     response["latest_sample"]["sample"]["context"] = serde_json::json!({
         "schema_version": 1,
@@ -413,7 +413,7 @@ async_test!(metric_latest_sample_preserves_rich_context_and_redaction_receipts -
 });
 
 async_test!(empty_metric_investigation_stays_truthful_and_actionable -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await.expect("loopback server starts");
     Mock::route("GET", "/api/telemetry/metrics/investigation")
         .respond_with(ResponseTemplate::new(200).set_body_json(empty_metric_response()))
         .mount(&server);
@@ -433,7 +433,7 @@ async_test!(empty_metric_investigation_stays_truthful_and_actionable -> Result<(
 });
 
 async_test!(unavailable_metric_description_stays_explicit_and_valid -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await.expect("loopback server starts");
     let mut response = metric_response();
     response["subject"]["description_status"] = serde_json::json!("unavailable");
     response["subject"]["description"] = serde_json::Value::Null;
@@ -487,7 +487,7 @@ async_test!(unknown_or_duplicate_versions_fail_closed_without_reflection -> Resu
             "hostile-nested-marker",
         ),
     ] {
-        let server = MockServer::start().await;
+        let server = MockServer::start().await.expect("loopback server starts");
         Mock::route("GET", "/api/telemetry/metrics/investigation")
             .respond_with(ResponseTemplate::new(200).set_body_string(body))
             .mount(&server);
@@ -508,7 +508,7 @@ async_test!(unknown_or_duplicate_versions_fail_closed_without_reflection -> Resu
 });
 
 async_test!(explanation_rejects_identity_mismatch_and_hostile_api_errors -> Result<(), Box<dyn std::error::Error>>, {
-    let mismatch = MockServer::start().await;
+    let mismatch = MockServer::start().await.expect("loopback server starts");
     let mut response = metric_response();
     response["query"]["project_id"] = serde_json::json!("cccccccc-cccc-4ccc-8ccc-cccccccccccc");
     Mock::route("GET", "/api/telemetry/metrics/investigation")
@@ -524,7 +524,7 @@ async_test!(explanation_rejects_identity_mismatch_and_hostile_api_errors -> Resu
         logbrew_cli::RuntimeError::ExplainResponseInvalid
     ));
 
-    let rejected = MockServer::start().await;
+    let rejected = MockServer::start().await.expect("loopback server starts");
     Mock::route("GET", "/api/telemetry/metrics/investigation")
         .respond_with(
             ResponseTemplate::new(422)
@@ -625,7 +625,7 @@ async_test!(metric_explanation_rejects_contradictory_semantics_and_group_identit
         oversized_description,
         line_separator_description,
     ] {
-        let server = MockServer::start().await;
+        let server = MockServer::start().await.expect("loopback server starts");
         Mock::route("GET", "/api/telemetry/metrics/investigation")
             .respond_with(ResponseTemplate::new(200).set_body_json(response))
             .mount(&server);
@@ -646,7 +646,7 @@ async_test!(metric_explanation_rejects_contradictory_semantics_and_group_identit
 });
 
 async_test!(redirects_are_not_followed_with_authentication -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await.expect("loopback server starts");
     Mock::route("GET", "/api/telemetry/metrics/investigation")
         .respond_with(
             ResponseTemplate::new(302)
@@ -674,7 +674,7 @@ async_test!(redirects_are_not_followed_with_authentication -> Result<(), Box<dyn
 });
 
 async_test!(human_log_output_marks_and_escapes_untrusted_telemetry -> Result<(), Box<dyn std::error::Error>>, {
-    let server = MockServer::start().await;
+    let server = MockServer::start().await.expect("loopback server starts");
     Mock::route("GET", format!("/api/logs/{LOG_ID}/investigation"))
         .respond_with(ResponseTemplate::new(200).set_body_json(log_response()))
         .mount(&server);
