@@ -172,6 +172,23 @@ impl Grammar {
             .map_or((value, None), |(flag, value)| (flag, Some(value)))
     }
 
+    /// Parses a bounded integer or supplies its public default without trimming.
+    fn bounded_u8(
+        self,
+        value: Option<&str>,
+        default: u8,
+        range: std::ops::RangeInclusive<u8>,
+        error: &'static str,
+    ) -> Result<u8, CliError> {
+        value.map_or(Ok(default), |value| {
+            value
+                .parse::<u8>()
+                .ok()
+                .filter(|value| range.contains(value))
+                .ok_or_else(|| self.invalid_argument(error))
+        })
+    }
+
     /// Returns one value-free deterministic grammar error.
     pub(super) fn invalid_argument(self, argument: &'static str) -> CliError {
         CliError::UnexpectedArgument {
@@ -183,9 +200,12 @@ impl Grammar {
 }
 
 /// Shared project, time, deployment, and output flags for analytics commands.
-#[expect(
-    clippy::missing_docs_in_private_items,
-    reason = "fields directly represent the shared analytics grammar"
+#[cfg_attr(
+    not(test),
+    expect(
+        clippy::missing_docs_in_private_items,
+        reason = "fields directly represent the shared analytics grammar"
+    )
 )]
 #[derive(Default)]
 struct ScopeFlags {
@@ -265,9 +285,12 @@ impl ScopeFlags {
 }
 
 /// Normalized shared analytics request scope.
-#[expect(
-    clippy::missing_docs_in_private_items,
-    reason = "fields mirror normalized analytics request scope"
+#[cfg_attr(
+    not(test),
+    expect(
+        clippy::missing_docs_in_private_items,
+        reason = "fields mirror normalized analytics request scope"
+    )
 )]
 struct AnalyticsScope {
     project_id: String,
@@ -431,9 +454,12 @@ fn parse_path_flags(flags: &[String]) -> Result<ParsedPathFlags, CliError> {
 }
 
 /// Partially parsed flags before required-value and shape validation.
-#[expect(
-    clippy::missing_docs_in_private_items,
-    reason = "fields directly represent the closed analytics path grammar"
+#[cfg_attr(
+    not(test),
+    expect(
+        clippy::missing_docs_in_private_items,
+        reason = "fields directly represent the closed analytics path grammar"
+    )
 )]
 struct ParsedPathFlags {
     scope: ScopeFlags,
@@ -476,8 +502,13 @@ impl ParsedPathFlags {
             "invalid interaction anchor event",
         )?;
         let property_filters = normalize_path_property_filters(self.properties.as_slice())?;
-        let depth = bounded_u8(self.depth.as_deref(), 4, 1, 8, "invalid depth")?;
-        let path_limit = bounded_u8(self.path_limit.as_deref(), 10, 1, 20, "invalid path limit")?;
+        let depth = PATH_GRAMMAR.bounded_u8(self.depth.as_deref(), 4, 1..=8, "invalid depth")?;
+        let path_limit = PATH_GRAMMAR.bounded_u8(
+            self.path_limit.as_deref(),
+            10,
+            1..=20,
+            "invalid path limit",
+        )?;
 
         Ok(AnalyticsPathOptions {
             project_id: scope.project_id,
@@ -545,34 +576,17 @@ fn normalize_text(value: &str, limit: usize) -> Result<String, CliError> {
     PATH_GRAMMAR.normalize_text(value, limit, "invalid analytics path value")
 }
 
-/// Parses a bounded integer or supplies its public default.
-fn bounded_u8(
-    value: Option<&str>,
-    default: u8,
-    minimum: u8,
-    maximum: u8,
-    error: &'static str,
-) -> Result<u8, CliError> {
-    let Some(value) = value else {
-        return Ok(default);
-    };
-    value
-        .parse::<u8>()
-        .ok()
-        .filter(|value| (minimum..=maximum).contains(value))
-        .ok_or_else(|| PATH_GRAMMAR.invalid_argument(error))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn args(values: &[&str]) -> Vec<String> {
+    /// Builds parser-owned arguments without shell behavior.
+    pub(super) fn args(values: &[&str]) -> Vec<String> {
         values.iter().map(|value| (*value).to_owned()).collect()
     }
 
     #[test]
-    fn parses_aliases_into_one_stable_request() {
+    fn parses_aliases_into_one_stable_request() -> Result<(), Box<dyn std::error::Error>> {
         let command = parse_analytics(&args(&[
             "paths",
             "after",
@@ -590,11 +604,10 @@ mod tests {
             "--property=resource.framework.name=React",
             "--keep-repeated",
             "--json",
-        ]))
-        .expect("valid command");
+        ]))?;
 
         let Command::AnalyticsPaths { options, json } = command else {
-            panic!("wrong command");
+            return Err("wrong command".into());
         };
         assert_eq!(options.direction, AnalyticsPathDirection::Following);
         assert_eq!(options.anchor_kind, AnalyticsPathEventKind::PageView);
@@ -607,6 +620,7 @@ mod tests {
         assert_eq!(options.property_filters[1].key, "tag.plan");
         assert!(!options.collapse_repeated);
         assert!(json);
+        Ok(())
     }
 
     #[test]

@@ -99,9 +99,12 @@ pub(super) fn parse_compare(args: &[String]) -> Result<Command, CliError> {
 }
 
 /// Partially parsed flags before required-value and cross-segment validation.
-#[expect(
-    clippy::missing_docs_in_private_items,
-    reason = "fields directly represent the closed analytics comparison grammar"
+#[cfg_attr(
+    not(test),
+    expect(
+        clippy::missing_docs_in_private_items,
+        reason = "fields directly represent the closed analytics comparison grammar"
+    )
 )]
 #[derive(Default)]
 struct ParsedCompareFlags {
@@ -384,13 +387,10 @@ fn push_property_assignment(values: &mut Vec<String>, value: String) -> Result<(
 mod tests {
     use super::*;
 
-    /// Builds parser-owned arguments without shell behavior.
-    fn args(values: &[&str]) -> Vec<String> {
-        values.iter().map(|value| (*value).to_owned()).collect()
-    }
+    use super::super::tests::args;
 
     #[test]
-    fn parses_ordered_segments_and_keyed_filters() {
+    fn parses_ordered_segments_and_keyed_filters() -> Result<(), Box<dyn std::error::Error>> {
         let command = parse_compare(&args(&[
             "--project-id",
             "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA",
@@ -420,11 +420,10 @@ mod tests {
             "--unit",
             "identified-user",
             "--json",
-        ]))
-        .expect("valid command");
+        ]))?;
 
         let Command::AnalyticsCompare { options, json } = command else {
-            panic!("wrong command");
+            return Err("wrong command".into());
         };
         assert_eq!(options.project_id, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
         assert_eq!(options.analysis_unit, AnalyticsSegmentUnit::IdentifiedUser);
@@ -438,6 +437,7 @@ mod tests {
         );
         assert_eq!(options.segments[1].property_filters[1].value, "pro");
         assert!(json);
+        Ok(())
     }
 
     #[test]

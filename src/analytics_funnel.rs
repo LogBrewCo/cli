@@ -1,8 +1,11 @@
 //! Versioned, bounded product-analytics funnel reporting.
 
-#![expect(
-    clippy::missing_docs_in_private_items,
-    reason = "response fields mirror the exact public analytics contract"
+#![cfg_attr(
+    not(test),
+    expect(
+        clippy::missing_docs_in_private_items,
+        reason = "response fields mirror the exact public analytics contract"
+    )
 )]
 
 use serde::Deserialize;
@@ -10,7 +13,8 @@ use serde::Deserialize;
 use crate::analytics_contract::{NextAction, bounded_counts, ratio_matches};
 use crate::analytics_request::{self, Kind, scoped_body, valid_event_name};
 use crate::http::{nonempty_control_safe as bounded_contract_text, terminal_safe as display_text};
-use crate::time::{parse_utc_timestamp, timestamp_nanos};
+use crate::render::percentage;
+use crate::time::parse_utc_timestamp;
 use crate::{
     AnalyticsFunnelEventKind, AnalyticsFunnelOptions, AnalyticsFunnelUnit, CliEnvironment,
     RuntimeError,
@@ -174,18 +178,14 @@ fn validated_response(
     options: &AnalyticsFunnelOptions,
     body: &str,
 ) -> Result<FunnelResponse, RuntimeError> {
-    let response =
-        serde_json::from_str::<FunnelResponse>(body).map_err(|_error| Kind::Funnel.invalid())?;
-    if response.schema_version != SCHEMA_VERSION
-        || !bounded_contract_text(response.purpose.as_str(), 4096)
-        || !valid_query(options, &response.query)
-        || !valid_coverage(&response.coverage)
-        || !valid_summary_and_steps(options, &response)
-        || !valid_next_action(&response)
-    {
-        return Err(Kind::Funnel.invalid());
-    }
-    Ok(response)
+    Kind::Funnel.parse(body, |response: &FunnelResponse| {
+        response.schema_version == SCHEMA_VERSION
+            && bounded_contract_text(response.purpose.as_str(), 4096)
+            && valid_query(options, &response.query)
+            && valid_coverage(&response.coverage)
+            && valid_summary_and_steps(options, response)
+            && valid_next_action(response)
+    })
 }
 
 /// Requires the backend echo to match every exact client-selected scope field.
@@ -196,7 +196,7 @@ fn valid_query(options: &AnalyticsFunnelOptions, query: &FunnelQuery) -> bool {
     ) else {
         return false;
     };
-    let Some(range_nanos) = timestamp_nanos(until).checked_sub(timestamp_nanos(since)) else {
+    let Some(range_nanos) = until.epoch_nanos().checked_sub(since.epoch_nanos()) else {
         return false;
     };
     let Some(range_seconds) = range_nanos
@@ -503,14 +503,6 @@ fn render_coverage(response: &FunnelResponse, output: &mut String) {
     }
 }
 
-/// Formats one optional ratio for compact human output.
-fn percentage(value: Option<f64>) -> String {
-    value.map_or_else(
-        || String::from("n/a"),
-        |value| format!("{:.1}%", value * 100.0),
-    )
-}
-
 /// Maps validated stable action codes to local, value-free human guidance.
 fn next_step(code: &str) -> &'static str {
     match code {
@@ -586,7 +578,7 @@ mod tests {
                 "candidate_units": 60,
                 "entered_units": 50,
                 "completed_units": 15,
-                "entry_rate": 0.8333333333333334,
+                "entry_rate": 0.833_333_333_333_333_4,
                 "overall_conversion_rate": 0.3
             },
             "coverage": {
@@ -598,7 +590,7 @@ mod tests {
                 "usable_selected_step_events": 100,
                 "excluded_selected_step_events": 20,
                 "event_name_rate": 0.9,
-                "selected_unit_coverage_rate": 0.8333333333333334,
+                "selected_unit_coverage_rate": 0.833_333_333_333_333_4,
                 "limitations": ["Only exact named classified events participate."]
             },
             "steps": [
@@ -629,19 +621,19 @@ mod tests {
     }
 
     #[test]
-    fn builds_exact_request_and_validates_every_contract_layer() {
+    fn builds_exact_request_and_validates_every_contract_layer() -> Result<(), RuntimeError> {
         let options = options();
         let body = request_body(&options);
         assert_eq!(body["analysis_unit"], "session");
         assert_eq!(body["conversion_window_seconds"], 3_600);
         assert_eq!(body["steps"].as_array().map(Vec::len), Some(2));
 
-        let response =
-            validated_response(&options, response().to_string().as_str()).expect("valid response");
+        let response = validated_response(&options, response().to_string().as_str())?;
         let human = render_response(&response);
         assert!(human.contains("50 entered of 60 candidates"));
         assert!(human.contains("35 drop before next (70.0%)"));
         assert!(human.contains("raw IDs are not returned"));
+        Ok(())
     }
 
     #[test]
@@ -674,14 +666,16 @@ mod tests {
     }
 
     #[test]
-    fn accepts_typed_user_capture_target_for_identified_user_gap() {
+    fn accepts_typed_user_capture_target_for_identified_user_gap() -> Result<(), serde_json::Error>
+    {
         let mut value = response();
         value["query"]["analysis_unit"] = "identified_user".into();
         value["coverage"]["usable_selected_step_events"] = 0.into();
         value["next_action"]["code"] = "identify_product_users".into();
         value["next_action"]["target"] = "context.subject.kind=user".into();
-        let response: FunnelResponse = serde_json::from_value(value).expect("fixture deserializes");
+        let response: FunnelResponse = serde_json::from_value(value)?;
 
         assert!(valid_next_action(&response));
+        Ok(())
     }
 }

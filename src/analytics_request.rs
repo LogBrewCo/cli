@@ -1,8 +1,11 @@
 //! Shared request, response, and exact-body helpers for product analytics.
 
-#![expect(
-    clippy::missing_docs_in_private_items,
-    reason = "private transport policy names mirror their documented analytics owners"
+#![cfg_attr(
+    not(test),
+    expect(
+        clippy::missing_docs_in_private_items,
+        reason = "private transport policy names mirror their documented analytics owners"
+    )
 )]
 #![expect(
     clippy::redundant_pub_crate,
@@ -56,6 +59,8 @@ impl Kind {
                 "check the exact project, time scope, direction, anchor, property predicates, depth, and path limit",
                 "use the POST-backed logbrew analytics paths command",
                 true,
+                "analytics path request could not be completed",
+                "check network connectivity and retry the same analytics path query",
             ),
             Self::Funnel => ErrorText::new(
                 "analytics funnel",
@@ -63,6 +68,8 @@ impl Kind {
                 "check the exact project, time scope, ordered steps, unit, and conversion window",
                 "use the POST-backed logbrew analytics funnel command",
                 true,
+                "analytics funnel request could not be completed",
+                "check network connectivity and retry the same analytics funnel query",
             ),
             Self::Segments => ErrorText::new(
                 "analytics segment comparison",
@@ -70,6 +77,8 @@ impl Kind {
                 "check the exact project, time scope, target, segments, property filters, interval, and analysis unit",
                 "use the POST-backed logbrew analytics compare command",
                 false,
+                "analytics segment comparison request could not be completed",
+                "check network connectivity and retry the same analytics segment comparison",
             ),
             Self::Lifecycle => ErrorText::new(
                 "analytics lifecycle",
@@ -77,6 +86,8 @@ impl Kind {
                 "check the exact project, time scope, event selector, interval, and history periods",
                 "use the POST-backed logbrew analytics lifecycle command",
                 true,
+                "analytics lifecycle request could not be completed",
+                "check network connectivity and retry the same analytics lifecycle query",
             ),
             Self::Retention => ErrorText::new(
                 "analytics retention",
@@ -84,6 +95,8 @@ impl Kind {
                 "check the exact project, time scope, event selectors, interval, count, mode, and cohort mode",
                 "use the POST-backed logbrew analytics retention command",
                 true,
+                "analytics retention request could not be completed",
+                "check network connectivity and retry the same analytics retention query",
             ),
             Self::Properties => ErrorText::new(
                 "analytics property",
@@ -91,6 +104,8 @@ impl Kind {
                 "check the exact project, time scope, deployment filters, and limit",
                 "use the GET-backed logbrew analytics properties command",
                 true,
+                "analytics property request could not be completed",
+                "check network connectivity and retry the same analytics property query",
             ),
             Self::Overview => ErrorText::new(
                 "analytics overview",
@@ -98,42 +113,30 @@ impl Kind {
                 "check the exact project, time scope, interval, context filters, and top limit",
                 "use the GET-backed logbrew analytics overview command",
                 true,
+                "analytics overview request could not be completed",
+                "check network connectivity and retry the same analytics overview query",
             ),
         }
     }
 
     const fn transport(self) -> RuntimeError {
-        let (message, next) = match self {
-            Self::Paths => (
-                "analytics path request could not be completed",
-                "check network connectivity and retry the same analytics path query",
-            ),
-            Self::Funnel => (
-                "analytics funnel request could not be completed",
-                "check network connectivity and retry the same analytics funnel query",
-            ),
-            Self::Segments => (
-                "analytics segment comparison request could not be completed",
-                "check network connectivity and retry the same analytics segment comparison",
-            ),
-            Self::Lifecycle => (
-                "analytics lifecycle request could not be completed",
-                "check network connectivity and retry the same analytics lifecycle query",
-            ),
-            Self::Retention => (
-                "analytics retention request could not be completed",
-                "check network connectivity and retry the same analytics retention query",
-            ),
-            Self::Properties => (
-                "analytics property request could not be completed",
-                "check network connectivity and retry the same analytics property query",
-            ),
-            Self::Overview => (
-                "analytics overview request could not be completed",
-                "check network connectivity and retry the same analytics overview query",
-            ),
-        };
-        RuntimeError::Unavailable { message, next }
+        let text = self.text();
+        RuntimeError::Unavailable {
+            message: text.transport_message,
+            next: text.transport_next,
+        }
+    }
+
+    /// Parses a typed response and rejects malformed or contradictory evidence alike.
+    pub(crate) fn parse<T: serde::de::DeserializeOwned>(
+        self,
+        body: &str,
+        valid: impl FnOnce(&T) -> bool,
+    ) -> Result<T, RuntimeError> {
+        serde_json::from_str(body)
+            .ok()
+            .filter(valid)
+            .ok_or_else(|| self.invalid())
     }
 
     pub(crate) const fn invalid(self) -> RuntimeError {
@@ -161,6 +164,8 @@ struct ErrorText {
     validation_next: &'static str,
     method_next: &'static str,
     uses_request_word: bool,
+    transport_message: &'static str,
+    transport_next: &'static str,
 }
 
 impl ErrorText {
@@ -170,6 +175,8 @@ impl ErrorText {
         validation_next: &'static str,
         method_next: &'static str,
         uses_request_word: bool,
+        transport_message: &'static str,
+        transport_next: &'static str,
     ) -> Self {
         Self {
             noun,
@@ -177,6 +184,8 @@ impl ErrorText {
             validation_next,
             method_next,
             uses_request_word,
+            transport_message,
+            transport_next,
         }
     }
 }

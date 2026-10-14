@@ -34,6 +34,19 @@ enum SupportContextState {
     Complete,
 }
 
+/// Formats one validated optional fraction as a percentage, preserving absence.
+pub(crate) fn percentage(value: Option<f64>) -> String {
+    value.map_or_else(
+        || "n/a".to_owned(),
+        |value| format!("{:.1}%", value * 100.0),
+    )
+}
+
+/// Returns a terminal-safe exact filter label or wildcard marker.
+pub(crate) fn filter_label(value: Option<&str>) -> String {
+    value.map_or_else(|| "<any>".to_owned(), crate::http::terminal_safe)
+}
+
 /// Writes successful API output for JSON or human command modes.
 pub(crate) fn write_api_success<W: std::io::Write>(
     command: &Command,

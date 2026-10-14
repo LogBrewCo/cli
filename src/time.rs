@@ -109,19 +109,6 @@ pub(crate) fn parse_utc_timestamp(value: &str) -> Option<ParsedTimestamp> {
         .and_then(parse_rfc3339)
 }
 
-/// Adds whole seconds without changing fractional precision.
-pub(crate) fn add_seconds<T: TryInto<i64>>(
-    timestamp: ParsedTimestamp,
-    seconds: T,
-) -> Option<ParsedTimestamp> {
-    timestamp.checked_add_seconds(seconds)
-}
-
-/// Returns one exact timestamp as a nanosecond offset.
-pub(crate) fn timestamp_nanos(timestamp: ParsedTimestamp) -> i128 {
-    timestamp.epoch_nanos()
-}
-
 /// Subtracts whole positive seconds without changing fractional precision.
 pub(crate) fn subtract_seconds(
     timestamp: ParsedTimestamp,

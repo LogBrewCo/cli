@@ -1,8 +1,11 @@
 //! Versioned, bounded product-analytics property catalog reporting.
 
-#![expect(
-    clippy::missing_docs_in_private_items,
-    reason = "response fields mirror the exact public analytics contract"
+#![cfg_attr(
+    not(test),
+    expect(
+        clippy::missing_docs_in_private_items,
+        reason = "response fields mirror the exact public analytics contract"
+    )
 )]
 
 use serde::Deserialize;
@@ -10,6 +13,7 @@ use serde::Deserialize;
 use crate::analytics_contract::{NextAction, bounded_counts, ratio_matches};
 use crate::analytics_request::{self, Kind};
 use crate::http::{nonempty_control_safe as bounded_contract_text, terminal_safe as display_text};
+use crate::render::{filter_label, percentage};
 use crate::{AnalyticsPropertyOptions, CliEnvironment, RuntimeError};
 
 /// Public response version implemented by this CLI.
@@ -184,26 +188,22 @@ fn validated_response(
     options: &AnalyticsPropertyOptions,
     body: &str,
 ) -> Result<PropertyCatalogResponse, RuntimeError> {
-    let response = serde_json::from_str::<PropertyCatalogResponse>(body)
-        .map_err(|_error| Kind::Properties.invalid())?;
-    if response.schema_version != SCHEMA_VERSION
-        || !valid_query(options, &response.query)
-        || !bounded_contract_text(response.purpose.as_str(), 4096)
-        || !valid_summary_and_coverage(&response)
-        || !valid_properties(&response)
-        || !valid_estimation(&response.estimation)
-        || !valid_next_action(&response)
-    {
-        return Err(Kind::Properties.invalid());
-    }
-    Ok(response)
+    Kind::Properties.parse(body, |response: &PropertyCatalogResponse| {
+        response.schema_version == SCHEMA_VERSION
+            && valid_query(options, &response.query)
+            && bounded_contract_text(response.purpose.as_str(), 4096)
+            && valid_summary_and_coverage(response)
+            && valid_properties(response)
+            && valid_estimation(&response.estimation)
+            && valid_next_action(response)
+    })
 }
 
 /// Requires the backend echo to match every exact client-selected scope field.
 fn valid_query(options: &AnalyticsPropertyOptions, query: &PropertyQuery) -> bool {
     query.project_id == options.project_id
-        && bounded_timestamp(query.since.as_str())
-        && bounded_timestamp(query.until.as_str())
+        && crate::time::parse_utc_timestamp(query.since.as_str()).is_some()
+        && crate::time::parse_utc_timestamp(query.until.as_str()).is_some()
         && query.since < query.until
         && query.service_name == options.service_name
         && query.release == options.release
@@ -326,11 +326,6 @@ fn valid_next_action(response: &PropertyCatalogResponse) -> bool {
     response.next_action.matches(expected.0, expected.1, 768)
 }
 
-/// Validates the UTC RFC 3339 shape emitted by the versioned API.
-fn bounded_timestamp(value: &str) -> bool {
-    crate::time::parse_utc_timestamp(value).is_some()
-}
-
 /// Renders a progressive key-only catalog without reflecting backend prose.
 fn render_response(response: &PropertyCatalogResponse) -> String {
     let mut output = String::new();
@@ -398,19 +393,6 @@ fn render_response(response: &PropertyCatalogResponse) -> String {
     output.push_str(next_step(response.next_action.code.as_str()));
     output.push('\n');
     output
-}
-
-/// Returns a terminal-safe exact filter label or wildcard marker.
-fn filter_label(value: Option<&str>) -> String {
-    value.map_or_else(|| "<any>".to_owned(), display_text)
-}
-
-/// Formats one optional fraction as a percentage.
-fn percentage(value: Option<f64>) -> String {
-    value.map_or_else(
-        || "n/a".to_owned(),
-        |value| format!("{:.1}%", value * 100.0),
-    )
 }
 
 /// Maps validated stable action codes to local, value-free human guidance.
@@ -514,26 +496,30 @@ mod tests {
     }
 
     #[test]
-    fn validates_key_only_catalog_and_renders_capture_receipts() {
-        let response = validated_response(&options(), body().as_str()).expect("valid response");
+    fn validates_key_only_catalog_and_renders_capture_receipts() -> Result<(), RuntimeError> {
+        let response = validated_response(&options(), body().as_str())?;
         let rendered = render_response(&response);
 
         assert!(rendered.contains("Privacy and migration: 20 unindexed; 5 incomplete"));
         assert!(rendered.contains("tag.plan [custom tag]: 60 events"));
         assert!(rendered.contains("Values and identities are not returned"));
+        Ok(())
     }
 
     #[test]
-    fn rejects_values_sensitive_keys_and_contradictory_coverage() {
+    fn rejects_values_sensitive_keys_and_contradictory_coverage()
+    -> Result<(), Box<dyn std::error::Error>> {
         for (pointer, value) in [
             ("/coverage/values_returned", serde_json::json!(true)),
             ("/properties/0/key", serde_json::json!("tag.user_id")),
             ("/coverage/unindexed_events", serde_json::json!(19)),
         ] {
-            let mut response: serde_json::Value =
-                serde_json::from_str(body().as_str()).expect("fixture parses");
-            *response.pointer_mut(pointer).expect("pointer exists") = value;
+            let mut response: serde_json::Value = serde_json::from_str(body().as_str())?;
+            *response
+                .pointer_mut(pointer)
+                .ok_or("fixture pointer must exist")? = value;
             assert!(validated_response(&options(), response.to_string().as_str()).is_err());
         }
+        Ok(())
     }
 }
