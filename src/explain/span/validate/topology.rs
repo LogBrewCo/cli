@@ -1,6 +1,6 @@
 //! Validation of selected-branch topology and retained peer baselines.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use serde_json::{Map, Value};
 
@@ -99,7 +99,12 @@ pub(super) fn validate_topology<'a>(
         .iter()
         .map(validate_span_summary_value)
         .collect::<Result<Vec<_>, _>>()?;
-    validate_unique_topology_ids(&ancestors, &children, subject.span_id)?;
+    validate_unique_topology_ids(
+        ancestor_values,
+        child_values,
+        subject.span_id,
+        chain_status == "cycle",
+    )?;
     let immediate_parent_missing =
         status == "available" && chain_status == "missing" && ancestors.is_empty();
     if status == "available" && !immediate_parent_missing {
@@ -297,16 +302,29 @@ fn validate_span_summary_value(value: &Value) -> Result<SpanSummaryFacts<'_>, Ru
         .and_then(validate_span_summary)
 }
 
-/// Rejects duplicate span identities and any accidental subject duplication.
+/// Allows identical ancestor/child evidence only for an explicitly reported cycle.
 fn validate_unique_topology_ids(
-    ancestors: &[SpanSummaryFacts<'_>],
-    children: &[SpanSummaryFacts<'_>],
+    ancestors: &[Value],
+    children: &[Value],
     subject_span_id: &str,
+    cycle: bool,
 ) -> Result<(), RuntimeError> {
-    let mut seen = BTreeSet::new();
-    for span in ancestors.iter().chain(children) {
-        if span.span_id == subject_span_id || !seen.insert(span.span_id) {
-            return Err(invalid_response());
+    let mut seen = BTreeMap::new();
+    for group in [ancestors, children] {
+        let mut ids = BTreeSet::new();
+        for span in group {
+            let id = span
+                .get("span_id")
+                .and_then(Value::as_str)
+                .ok_or_else(invalid_response)?;
+            if id == subject_span_id
+                || !ids.insert(id)
+                || seen
+                    .insert(id, span)
+                    .is_some_and(|previous| !cycle || previous != span)
+            {
+                return Err(invalid_response());
+            }
         }
     }
     Ok(())

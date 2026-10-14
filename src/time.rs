@@ -41,64 +41,71 @@ impl ParsedTimestamp {
 
 /// Parses one RFC 3339 timestamp with a required UTC designator or numeric offset.
 pub(crate) fn parse_rfc3339(value: &str) -> Option<ParsedTimestamp> {
-    let bytes = value.as_bytes();
-    if !(20..=35).contains(&bytes.len())
-        || !bytes.is_ascii()
-        || [(4, b'-'), (7, b'-'), (10, b'T'), (13, b':'), (16, b':')]
-            .into_iter()
-            .any(|(index, expected)| bytes.get(index) != Some(&expected))
-    {
+    if value.starts_with("0000") || value.get(17..19) == Some("60") {
         return None;
     }
-    let [year, month, day, hour, minute, second] =
-        [0..4, 5..7, 8..10, 11..13, 14..16, 17..19].map(|range| decimal(bytes.get(range)?));
-    let [year, month, day, hour, minute, second] = [year?, month?, day?, hour?, minute?, second?];
-    if year == 0
-        || !(1..=12).contains(&month)
-        || day == 0
-        || day > days_in_month(year, month)
-        || hour > 23
-        || minute > 59
-        || second > 59
-    {
-        return None;
-    }
-    let mut index = 19;
-    let nanoseconds = if bytes.get(index) == Some(&b'.') {
-        index += 1;
-        let start = index;
-        while bytes.get(index).is_some_and(u8::is_ascii_digit) {
-            index += 1;
-        }
-        parse_fraction(bytes.get(start..index)?)?
-    } else {
-        0
-    };
-    let offset_seconds = match bytes.get(index) {
-        Some(b'Z') if index + 1 == bytes.len() => 0_i64,
-        Some(sign @ (b'+' | b'-')) if index + 6 == bytes.len() => {
-            if bytes.get(index + 3) != Some(&b':') {
-                return None;
-            }
-            let hour = decimal(bytes.get(index + 1..index + 3)?)?;
-            let minute = decimal(bytes.get(index + 4..index + 6)?)?;
-            if hour > 23 || minute > 59 {
-                return None;
-            }
-            let magnitude = i64::from(hour) * 3_600 + i64::from(minute) * 60;
-            if *sign == b'+' { magnitude } else { -magnitude }
-        }
-        Some(_) | None => return None,
-    };
-    let seconds = days_from_civil(i64::from(year), i64::from(month), i64::from(day))
-        .checked_mul(86_400)?
-        .checked_add(i64::from(hour).checked_mul(3_600)?)?
-        .checked_add(i64::from(minute).checked_mul(60)?)?
-        .checked_add(i64::from(second))?
-        .checked_sub(offset_seconds)?;
+    let timestamp = parse_timestamp(value)?;
     Some(ParsedTimestamp {
-        epoch_seconds: seconds,
-        nanoseconds,
+        epoch_seconds: timestamp.timestamp(),
+        nanoseconds: timestamp.timestamp_subsec_nanos(),
+    })
+}
+
+/// Parses UTC evidence without collapsing a represented leap second into the next minute.
+pub(crate) fn parse_utc_evidence(value: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+    (value.ends_with('Z') || value.ends_with("+00:00"))
+        .then_some(value)
+        .and_then(parse_timestamp)
+}
+
+/// Returns signed elapsed milliseconds, counting only leap seconds represented by an endpoint.
+pub(crate) fn evidence_offset_millis(
+    occurred: chrono::DateTime<chrono::Utc>,
+    started: chrono::DateTime<chrono::Utc>,
+) -> Option<i64> {
+    let seconds = i128::from(occurred.timestamp()) - i128::from(started.timestamp());
+    let start_fraction = started.timestamp_subsec_nanos();
+    let end_fraction = occurred.timestamp_subsec_nanos();
+    let represented_leaps = i128::from(seconds > 0 && start_fraction >= 1_000_000_000)
+        - i128::from(seconds < 0 && end_fraction >= 1_000_000_000);
+    let nanos = (seconds + represented_leaps) * 1_000_000_000 + i128::from(end_fraction)
+        - i128::from(start_fraction);
+    i64::try_from(nanos / 1_000_000).ok()
+}
+
+/// Applies the wire format and precision limits before Gregorian calendar validation.
+fn parse_timestamp(value: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+    let bytes = value.as_bytes();
+    if !(20..=35).contains(&bytes.len()) || !bytes.is_ascii() || !has_calendar_shape(bytes) {
+        return None;
+    }
+    let zone = bytes.len() - if value.ends_with('Z') { 1 } else { 6 };
+    if zone != 19
+        && (!(21..=29).contains(&zone)
+            || bytes[19] != b'.'
+            || !bytes[20..zone].iter().all(u8::is_ascii_digit))
+        || !value.ends_with('Z')
+            && (!matches!(bytes[zone], b'+' | b'-')
+                || bytes[zone + 3] != b':'
+                || !bytes[zone + 1..zone + 3].iter().all(u8::is_ascii_digit)
+                || !bytes[zone + 4..].iter().all(u8::is_ascii_digit))
+    {
+        return None;
+    }
+    chrono::DateTime::parse_from_rfc3339(value)
+        .ok()
+        .map(|timestamp| timestamp.to_utc())
+}
+
+/// Checks the fixed-width date and whole-second prefix without accepting relaxed syntax.
+pub(crate) fn has_calendar_shape(bytes: &[u8]) -> bool {
+    bytes.get(..19).is_some_and(|seconds| {
+        seconds.iter().enumerate().all(|(index, byte)| match index {
+            4 | 7 => *byte == b'-',
+            10 => *byte == b'T',
+            13 | 16 => *byte == b':',
+            _ => byte.is_ascii_digit(),
+        })
     })
 }
 
@@ -126,44 +133,94 @@ pub(crate) fn parse_utc_millis(value: &str) -> Option<i128> {
         .map(ParsedTimestamp::epoch_millis)
 }
 
-/// Parses one fixed-width ASCII decimal field.
-fn decimal(bytes: &[u8]) -> Option<u32> {
-    std::str::from_utf8(bytes).ok()?.parse().ok()
-}
-
-/// Expands one one-to-nine-digit fractional second to nanoseconds.
-fn parse_fraction(bytes: &[u8]) -> Option<u32> {
-    if bytes.is_empty() || bytes.len() > 9 || !bytes.iter().all(u8::is_ascii_digit) {
-        return None;
-    }
-    decimal(bytes)?.checked_mul(10_u32.checked_pow(u32::try_from(9 - bytes.len()).ok()?)?)
-}
-
-/// Returns the valid day count for one Gregorian month.
-const fn days_in_month(year: u32, month: u32) -> u32 {
-    match month {
-        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
-        4 | 6 | 9 | 11 => 30,
-        2 if year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400)) => {
-            29
-        }
-        2 => 28,
-        _ => 0,
-    }
-}
-
-/// Converts one civil date to days relative to the Unix epoch.
-fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
-    let year = year - i64::from(month <= 2);
-    let era = (if year >= 0 { year } else { year - 399 }) / 400;
-    let year_of_era = year - era * 400;
-    let day_of_year = (153 * (month + if month > 2 { -3 } else { 9 }) + 2) / 5 + day - 1;
-    era * 146_097 + year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year - 719_468
-}
-
 #[cfg(test)]
 mod tests {
-    use super::parse_utc_millis;
+    use super::{
+        ParsedTimestamp, evidence_offset_millis, parse_rfc3339, parse_utc_evidence,
+        parse_utc_millis,
+    };
+
+    #[test]
+    fn utc_evidence_preserves_calendar_order_and_signed_offsets() -> Result<(), &'static str> {
+        for (before, after, millis) in [
+            ("0000-01-01T00:00:00Z", "0000-01-01T00:00:00.001Z", 1),
+            ("2000-02-29T23:59:59Z", "2000-03-01T00:00:00Z", 1_000),
+            (
+                "2016-12-31T23:59:59.500Z",
+                "2016-12-31T23:59:60.500Z",
+                1_000,
+            ),
+            ("2016-12-31T23:59:60.500Z", "2017-01-01T00:00:00Z", 500),
+            ("2026-05-31T23:59:59.999999999Z", "2026-06-01T00:00:00Z", 0),
+            (
+                "9999-12-31T23:59:59Z",
+                "9999-12-31T23:59:59.999999999+00:00",
+                999,
+            ),
+        ] {
+            let before = parse_utc_evidence(before).ok_or("before timestamp")?;
+            let after = parse_utc_evidence(after).ok_or("after timestamp")?;
+            assert!(before < after);
+            assert_eq!(evidence_offset_millis(after, before), Some(millis));
+            assert_eq!(evidence_offset_millis(before, after), Some(-millis));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn timestamp_policies_keep_exact_format_precision_and_arithmetic() -> Result<(), &'static str> {
+        for value in [
+            "",
+            "2026-02-29T00:00:00Z",
+            "1900-02-29T00:00:00Z",
+            "2026-01-01t00:00:00Z",
+            "2026-01-01T00:00:00z",
+            "2026-01-01 00:00:00Z",
+            "2026-01-01T00:00:00.Z",
+            "2026-01-01T00:00:00.0000000001Z",
+            "2026-01-01T00:00:00+24:00",
+            "2026-01-01T00:00:00+00:60",
+            "2026-01-01T24:00:00Z",
+            "2026-01-01T00:60:00Z",
+            "2026-01-01T00:00:61Z",
+            "+026-01-01T00:00:00Z",
+            "2026-+1-01T00:00:00Z",
+            "2026-01-01T00:00:00Z ",
+            "2026-01-01T00:00:00é",
+        ] {
+            assert!(parse_rfc3339(value).is_none(), "accepted {value}");
+            assert!(
+                parse_utc_evidence(value).is_none(),
+                "accepted evidence {value}"
+            );
+            assert_eq!(
+                crate::render::is_rfc3339_utc(value),
+                value == "2026-01-01T00:00:00.0000000001Z"
+            );
+        }
+        for value in ["0000-01-01T00:00:00Z", "2016-12-31T23:59:60Z"] {
+            assert!(parse_rfc3339(value).is_none());
+            assert!(parse_utc_evidence(value).is_some());
+            assert!(crate::render::is_rfc3339_utc(value));
+        }
+        for (value, nanos) in [
+            ("1970-01-01T00:00:00.000000001Z", 1),
+            ("1969-12-31T23:59:59.999999999Z", -1),
+            ("1970-01-01T23:59:00+23:59", 0),
+            ("1969-12-31T00:01:00-23:59", 0),
+            ("0001-01-01T00:00:00+00:01", -62_135_596_860_000_000_000),
+        ] {
+            assert_eq!(
+                parse_rfc3339(value).map(ParsedTimestamp::epoch_nanos),
+                Some(nanos)
+            );
+        }
+        let epoch = parse_rfc3339("1970-01-01T00:00:00.123Z").ok_or("epoch")?;
+        let limit = epoch.checked_add_seconds(i64::MAX).ok_or("integer range")?;
+        assert_eq!(limit.nanoseconds, 123_000_000);
+        assert!(limit.checked_add_seconds(1).is_none());
+        Ok(())
+    }
 
     #[test]
     fn utc_parser_preserves_leap_days_and_milliseconds() {

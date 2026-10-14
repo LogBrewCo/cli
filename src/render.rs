@@ -898,70 +898,11 @@ pub(crate) fn is_rfc3339_utc(value: &str) -> bool {
         return false;
     }
 
-    let bytes = seconds.as_bytes();
-    if bytes.len() != 19
-        || bytes[4] != b'-'
-        || bytes[7] != b'-'
-        || bytes[10] != b'T'
-        || bytes[13] != b':'
-        || bytes[16] != b':'
-    {
+    if seconds.len() != 19 || !crate::time::has_calendar_shape(seconds.as_bytes()) {
         return false;
     }
-    for index in [0, 1, 2, 3, 5, 6, 8, 9, 11, 12, 14, 15, 17, 18] {
-        if !bytes[index].is_ascii_digit() {
-            return false;
-        }
-    }
 
-    let Some(year) = ascii_number(&bytes[0..4]) else {
-        return false;
-    };
-    let Some(month) = ascii_number(&bytes[5..7]) else {
-        return false;
-    };
-    let Some(day) = ascii_number(&bytes[8..10]) else {
-        return false;
-    };
-    let Some(hour) = ascii_number(&bytes[11..13]) else {
-        return false;
-    };
-    let Some(minute) = ascii_number(&bytes[14..16]) else {
-        return false;
-    };
-    let Some(second) = ascii_number(&bytes[17..19]) else {
-        return false;
-    };
-
-    (1..=12).contains(&month)
-        && (1..=days_in_month(year, month)).contains(&day)
-        && hour < 24
-        && minute < 60
-        && second <= 60
-}
-
-/// Parses an ASCII decimal field without accepting signs or whitespace.
-fn ascii_number(bytes: &[u8]) -> Option<u32> {
-    bytes.iter().try_fold(0_u32, |value, byte| {
-        byte.is_ascii_digit()
-            .then(|| value * 10 + u32::from(*byte - b'0'))
-    })
-}
-
-/// Returns the number of calendar days in one month.
-const fn days_in_month(year: u32, month: u32) -> u32 {
-    match month {
-        4 | 6 | 9 | 11 => 30,
-        2 if is_leap_year(year) => 29,
-        2 => 28,
-        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
-        _ => 0,
-    }
-}
-
-/// Reports whether a Gregorian year has a leap day.
-const fn is_leap_year(year: u32) -> bool {
-    year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400))
+    chrono::NaiveDateTime::parse_from_str(seconds, "%Y-%m-%dT%H:%M:%S").is_ok()
 }
 
 /// Formats one log list item.

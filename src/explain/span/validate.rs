@@ -13,9 +13,9 @@ use self::topology::{BaselineFacts, TopologyFacts};
 use super::super::context::{self, Expected as ExpectedContext};
 use super::super::projection::{count_scalar_leaves, validate_projection};
 use super::super::{
-    MAX_SAFE_JSON_INTEGER, invalid_response, is_error_status, is_w3c_id, nullable_w3c_id,
-    require_bool, require_exact_fields, require_safe_u64, require_string, require_timestamp,
-    required_object, response_object, validate_schema_version,
+    MAX_SAFE_JSON_INTEGER, exact_response_object, invalid_response, is_error_status, is_w3c_id,
+    nullable_w3c_id, require_bool, require_exact_fields, require_safe_u64, require_string,
+    require_timestamp, required_object, validate_schema_version,
 };
 use crate::ids::is_uuid;
 use crate::{ExplainSpanTarget, RuntimeError};
@@ -71,24 +71,8 @@ pub(super) fn validate_response(
     value: &Value,
     expected: &ExplainSpanTarget,
 ) -> Result<(), RuntimeError> {
-    let response = response_object(
+    let response = exact_response_object(
         value,
-        &[
-            "schema_version",
-            "subject",
-            "context",
-            "payload",
-            "analysis",
-            "topology",
-            "baseline",
-            "correlations",
-            "timeline",
-            "evidence",
-            "next_actions",
-        ],
-    )?;
-    require_exact_fields(
-        response,
         &[
             "schema_version",
             "subject",

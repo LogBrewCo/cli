@@ -60,9 +60,12 @@ struct NormalizedDeployment {
 }
 
 /// Strict version-1 deployment response.
-#[expect(
-    clippy::missing_docs_in_private_items,
-    reason = "field names intentionally mirror the validated public JSON contract"
+#[cfg_attr(
+    not(test),
+    expect(
+        clippy::missing_docs_in_private_items,
+        reason = "field names intentionally mirror the validated public JSON contract"
+    )
 )]
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]

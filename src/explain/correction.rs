@@ -1,8 +1,11 @@
 //! Exact evidence-only verification of one candidate issue correction.
 
-#![expect(
-    clippy::missing_docs_in_private_items,
-    reason = "fields mirror the exact public correction-verification contract"
+#![cfg_attr(
+    not(test),
+    expect(
+        clippy::missing_docs_in_private_items,
+        reason = "fields mirror the exact public correction-verification contract"
+    )
 )]
 
 use serde::Deserialize;
@@ -246,9 +249,6 @@ fn validate_evidence(value: &Evidence, recurrence: bool, trace: bool) -> Result<
 }
 
 fn timestamp(value: &str) -> Result<i128, RuntimeError> {
-    if !crate::render::is_rfc3339_utc(value) {
-        return Err(invalid_response());
-    }
     crate::time::parse_utc_millis(value).ok_or_else(invalid_response)
 }
 

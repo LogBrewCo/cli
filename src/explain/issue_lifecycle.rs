@@ -11,6 +11,7 @@ use super::{
 };
 use crate::RuntimeError;
 use crate::ids::{is_trace_id, is_uuid};
+use crate::time::parse_utc_evidence as timestamp_key;
 
 /// Maximum newest-first status changes accepted from one issue lifecycle response.
 const STATUS_CHANGE_LIMIT: usize = 20;
@@ -376,37 +377,6 @@ fn optional_timestamp<'a>(
     } else {
         Err(invalid_response())
     }
-}
-
-/// Produces an ordering key for a validated UTC RFC 3339 timestamp.
-fn timestamp_key(value: &str) -> Option<(u64, u32)> {
-    if !crate::render::is_rfc3339_utc(value) {
-        return None;
-    }
-    let without_zone = value
-        .strip_suffix('Z')
-        .or_else(|| value.strip_suffix("+00:00"))?;
-    let (seconds, fraction) = without_zone
-        .split_once('.')
-        .map_or((without_zone, ""), |(seconds, fraction)| {
-            (seconds, fraction)
-        });
-    if fraction.len() > 9 {
-        return None;
-    }
-    let whole = seconds
-        .bytes()
-        .filter(u8::is_ascii_digit)
-        .try_fold(0_u64, |value, digit| {
-            value.checked_mul(10)?.checked_add(u64::from(digit - b'0'))
-        })?;
-    let mut nanos = fraction.bytes().try_fold(0_u32, |value, digit| {
-        value.checked_mul(10)?.checked_add(u32::from(digit - b'0'))
-    })?;
-    for _ in fraction.len()..9 {
-        nanos = nanos.checked_mul(10)?;
-    }
-    Some((whole, nanos))
 }
 
 /// Appends bounded status activity and the current server-observed regression assessment.
