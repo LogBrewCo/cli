@@ -37,6 +37,15 @@ powershell -ExecutionPolicy Bypass -c "irm https://github.com/LogBrewCo/cli/rele
 ```
 
 Windows users can also install the latest MSI from the GitHub Release assets.
+
+GitHub Release assets published after CLI 0.1.79 have a signed
+build-provenance attestation. To verify a downloaded asset before you run it,
+use the [GitHub CLI](https://cli.github.com/):
+
+```bash
+gh attestation verify logbrew-cli-x86_64-unknown-linux-gnu.tar.xz --repo LogBrewCo/cli
+```
+
 After any update, compare `logbrew version --json` with the
 [latest public release](https://github.com/LogBrewCo/cli/releases/latest).
 CMake setup planning requires CLI 0.1.39 or newer; correct Objective-C
