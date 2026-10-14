@@ -16,7 +16,7 @@ import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "installed-release-attestations.yml"
-RUNNER_POLICY = ROOT / "scripts" / "check-github-hosted-runners.py"
+RUNNER_POLICY = ROOT / "tests" / "integration" / "hosted_runners.rs"
 
 
 class InstalledReleaseAttestationWorkflowTests(unittest.TestCase):

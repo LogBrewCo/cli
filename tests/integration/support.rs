@@ -35,6 +35,31 @@ pub(crate) async fn run_cli_command(
     Ok(tokio::task::spawn_blocking(move || command.output()).await??)
 }
 
+/// Bounds small trusted native checks, killing and reaping on failure.
+pub(crate) fn run_bounded(
+    command: &mut std::process::Command,
+) -> Result<std::process::Output, std::io::Error> {
+    let mut child = command
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()?;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let error = loop {
+        match child.try_wait() {
+            Ok(Some(_)) => return child.wait_with_output(),
+            Err(error) => break error,
+            Ok(None) if std::time::Instant::now() >= deadline => {
+                break std::io::Error::new(std::io::ErrorKind::TimedOut, "native check timed out");
+            }
+            Ok(None) => std::thread::sleep(std::time::Duration::from_millis(10)),
+        }
+    };
+    child.kill()?;
+    let _status = child.wait()?;
+    Err(error)
+}
+
 pub(crate) fn assert_cli_success(process: &std::process::Output) {
     assert!(
         process.status.success(),
