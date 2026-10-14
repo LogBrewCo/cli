@@ -1,100 +1,62 @@
 //! CLI search shortcut tests.
 
+use super::{assert_command, assert_help};
 use logbrew_cli::{Command, HelpTopic, ReadOptions, ReadTarget, parse_command};
 
 #[test]
 fn parses_search_as_log_search_shortcut() {
-    for (args, search, level, release, environment) in [
-        (
-            &[
-                "logbrew",
-                "search",
-                "checkout",
-                "failed",
-                "--release",
-                "api@1",
-                "--environment",
-                "production",
-                "--level",
-                "error",
-                "--json",
-            ][..],
+    for args in [
+        &[
+            "logbrew",
+            "search",
+            "checkout",
+            "failed",
+            "--release",
+            "api@1",
+            "--environment",
+            "production",
+            "--level",
+            "error",
+            "--json",
+        ][..],
+        &[
+            "logbrew",
+            "search",
             "checkout failed",
-            Some("error"),
-            Some("api@1"),
-            Some("production"),
-        ),
-        (
-            &[
-                "logbrew",
-                "search",
-                "checkout failed",
-                "--release",
-                "api@1",
-                "--environment",
-                "production",
-                "--level",
-                "error",
-                "--json",
-            ][..],
+            "--release",
+            "api@1",
+            "--environment",
+            "production",
+            "--level",
+            "error",
+            "--json",
+        ],
+        &[
+            "logbrew",
+            "--json",
+            "search",
             "checkout failed",
-            Some("error"),
-            Some("api@1"),
-            Some("production"),
-        ),
-        (
-            &[
-                "logbrew",
-                "--json",
-                "search",
-                "checkout failed",
-                "--release",
-                "api@1",
-                "--environment",
-                "production",
-                "--level",
-                "error",
-            ][..],
+            "--release",
+            "api@1",
+            "--environment",
+            "production",
+            "--level",
+            "error",
+        ],
+        &[
+            "logbrew",
+            "search",
+            "--json",
             "checkout failed",
-            Some("error"),
-            Some("api@1"),
-            Some("production"),
-        ),
-        (
-            &[
-                "logbrew",
-                "search",
-                "--json",
-                "checkout failed",
-                "--release",
-                "api@1",
-                "--environment",
-                "production",
-                "--level",
-                "error",
-            ][..],
-            "checkout failed",
-            Some("error"),
-            Some("api@1"),
-            Some("production"),
-        ),
+            "--release",
+            "api@1",
+            "--environment",
+            "production",
+            "--level",
+            "error",
+        ],
     ] {
-        let command = parse_command(args.iter().copied()).expect("search shortcut parses");
-
-        assert_eq!(
-            command,
-            Command::Read {
-                target: ReadTarget::Logs,
-                options: Box::new(ReadOptions {
-                    level: level.map(str::to_owned),
-                    search: Some(search.to_owned()),
-                    release: release.map(str::to_owned),
-                    environment: environment.map(str::to_owned),
-                    ..ReadOptions::default()
-                }),
-                json: true,
-            }
-        );
+        assert_filtered_search(args);
     }
 }
 
@@ -134,10 +96,8 @@ fn parses_search_separator_as_literal_log_search_shortcut() {
             true,
         ),
     ] {
-        let command = parse_command(args.iter().copied()).expect("search separator parses");
-
-        assert_eq!(
-            command,
+        assert_command(
+            args,
             Command::Read {
                 target: ReadTarget::Logs,
                 options: Box::new(ReadOptions {
@@ -145,61 +105,67 @@ fn parses_search_separator_as_literal_log_search_shortcut() {
                     ..ReadOptions::default()
                 }),
                 json,
-            }
+            },
         );
     }
 }
 
 #[test]
-fn parses_logs_separator_as_literal_log_search_shortcut() {
-    for (args, expected_path, json) in [
+fn parses_logs_separator_as_literal_log_search_shortcut() -> Result<(), Box<dyn std::error::Error>>
+{
+    for (args, expected_path) in [
         (
             &["logbrew", "logs", "--", "--timeout", "--json"][..],
             "/api/logs?search=--timeout",
-            true,
         ),
         (
             &["logbrew", "logs", "--", "--help", "--json"][..],
             "/api/logs?search=--help",
-            true,
         ),
         (
             &["logbrew", "--json", "logs", "--", "--json"][..],
             "/api/logs?search=--json",
-            true,
         ),
         (
             &["logbrew", "read", "logs", "--", "--help", "--json"][..],
             "/api/logs?search=--help",
-            true,
         ),
         (
             &["logbrew", "last", "5", "logs", "--", "--help", "--json"][..],
             "/api/logs?search=--help&limit=5",
-            true,
         ),
         (
             &[
                 "logbrew", "read", "recent", "5", "logs", "--", "--help", "--json",
             ][..],
             "/api/logs?search=--help&limit=5",
-            true,
         ),
         (
             &["logbrew", "logs", "--search", "--", "--timeout", "--json"][..],
             "/api/logs?search=--timeout",
-            true,
         ),
         (
             &["logbrew", "logs", "--search", "--", "--help", "--json"][..],
             "/api/logs?search=--help",
-            true,
         ),
         (
             &["logbrew", "--json", "logs", "--search", "--", "--json"][..],
             "/api/logs?search=--json",
-            true,
         ),
+        (
+            &["logbrew", "logs", "--", "--json", "--json"][..],
+            "/api/logs?search=--json",
+        ),
+    ] {
+        assert_json_log_path(args, expected_path)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn parses_filtered_logs_separator_without_losing_filters() -> Result<(), Box<dyn std::error::Error>>
+{
+    for (args, expected_path) in [
         (
             &[
                 "logbrew",
@@ -211,7 +177,6 @@ fn parses_logs_separator_as_literal_log_search_shortcut() {
                 "--json",
             ][..],
             "/api/logs?severity=error&search=--timeout",
-            true,
         ),
         (
             &[
@@ -225,12 +190,10 @@ fn parses_logs_separator_as_literal_log_search_shortcut() {
                 "--json",
             ][..],
             "/api/logs?severity=error&search=--timeout",
-            true,
         ),
         (
             &["logbrew", "logs", "--search=--timeout", "failed", "--json"][..],
             "/api/logs?search=--timeout%20failed",
-            true,
         ),
         (
             &[
@@ -243,7 +206,6 @@ fn parses_logs_separator_as_literal_log_search_shortcut() {
                 "failed",
             ][..],
             "/api/logs?severity=error&search=--timeout%20failed",
-            true,
         ),
         (
             &[
@@ -257,22 +219,11 @@ fn parses_logs_separator_as_literal_log_search_shortcut() {
                 "--json",
             ],
             "/api/logs?search=--timeout%20failed&release=filtered%401",
-            true,
-        ),
-        (
-            &["logbrew", "logs", "--", "--json", "--json"][..],
-            "/api/logs?search=--json",
-            true,
         ),
     ] {
-        let command = parse_command(args.iter().copied()).expect("logs separator parses");
-
-        assert_eq!(
-            command.http_path().expect("read logs has endpoint"),
-            expected_path
-        );
-        assert!(matches!(command, Command::Read { json: actual, .. } if actual == json));
+        assert_json_log_path(args, expected_path)?;
     }
+    Ok(())
 }
 
 #[test]
@@ -303,22 +254,7 @@ fn parses_find_and_grep_as_log_search_shortcuts() {
             "error",
         ],
     ] {
-        let command = parse_command(args.iter().copied()).expect("search alias parses");
-
-        assert_eq!(
-            command,
-            Command::Read {
-                target: ReadTarget::Logs,
-                options: Box::new(ReadOptions {
-                    level: Some("error".to_owned()),
-                    search: Some("checkout failed".to_owned()),
-                    release: Some("api@1".to_owned()),
-                    environment: Some("production".to_owned()),
-                    ..ReadOptions::default()
-                }),
-                json: true,
-            }
-        );
+        assert_filtered_search(args);
     }
 }
 
@@ -341,27 +277,50 @@ fn parses_search_help_as_logs_help() {
         &["logbrew", "help", "grep"],
         &["logbrew", "help", "grep", "timeout"],
     ] {
-        let command = parse_command(args.iter().copied()).expect("search help parses");
-
-        assert_eq!(
-            command,
-            Command::Help {
-                topic: HelpTopic::ReadLogs,
-                json: false
-            }
-        );
+        assert_help(args, HelpTopic::ReadLogs, false);
     }
 
-    assert_eq!(
-        parse_command(["logbrew", "help", "search", "checkout", "--json"])
-            .expect("explicit search term help parses"),
-        Command::Help {
-            topic: HelpTopic::ReadLogs,
-            json: true
-        }
+    assert_help(
+        &["logbrew", "help", "search", "checkout", "--json"],
+        HelpTopic::ReadLogs,
+        true,
     );
     assert!(
         parse_command(["logbrew", "help", "search", "checkout", "extra"]).is_err(),
         "extra search help terms remain errors"
     );
+}
+
+fn assert_filtered_search(args: &[&str]) {
+    assert_command(
+        args,
+        Command::Read {
+            target: ReadTarget::Logs,
+            options: Box::new(ReadOptions {
+                level: Some("error".to_owned()),
+                search: Some("checkout failed".to_owned()),
+                release: Some("api@1".to_owned()),
+                environment: Some("production".to_owned()),
+                ..ReadOptions::default()
+            }),
+            json: true,
+        },
+    );
+}
+
+fn assert_json_log_path(
+    args: &[&str],
+    expected_path: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let command = parse_command(args.iter().copied())?;
+    assert_eq!(
+        command.http_path().as_deref(),
+        Some(expected_path),
+        "unexpected log-search endpoint for {args:?}"
+    );
+    assert!(
+        matches!(command, Command::Read { json: true, .. }),
+        "log-search command must preserve JSON output for {args:?}"
+    );
+    Ok(())
 }

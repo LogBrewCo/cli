@@ -1,66 +1,54 @@
 //! Local non-HTTP command tests.
 
+use super::{TestResult, assert_help};
 use logbrew_cli::{CliEnvironment, Command, HelpTopic, execute_command, help, parse_command};
-type TestResult = Result<(), Box<dyn std::error::Error>>;
 
 #[test]
-fn parses_version_command_for_humans() {
-    let command = parse_command(["logbrew", "version"]).expect("version parses");
-
-    assert_eq!(command, Command::Version { json: false });
-    assert!(!command.wants_json());
-    assert!(command.http_path().is_none());
+fn parses_version_command_for_humans() -> TestResult {
+    assert_local_command(
+        &["logbrew", "version"],
+        &Command::Version { json: false },
+        false,
+    )
 }
 
 #[test]
-fn parses_logout_command_for_agents() {
+fn parses_logout_command_for_agents() -> TestResult {
     for args in [
         &["logbrew", "logout", "--json"][..],
-        &["logbrew", "--json", "logout"][..],
-        &["logbrew", "auth", "logout", "--json"][..],
-        &["logbrew", "--json", "auth", "logout"][..],
+        &["logbrew", "--json", "logout"],
+        &["logbrew", "auth", "logout", "--json"],
+        &["logbrew", "--json", "auth", "logout"],
     ] {
-        let command = parse_command(args.iter().copied()).expect("logout parses");
-
-        assert_eq!(command, Command::Logout { json: true });
-        assert!(command.wants_json());
-        assert!(command.http_path().is_none());
+        assert_local_command(args, &Command::Logout { json: true }, true)?;
     }
+    Ok(())
 }
 
 #[test]
-fn parses_root_version_flag_for_agents() {
-    let command = parse_command(["logbrew", "--version", "--json"]).expect("version parses");
-
-    assert_eq!(command, Command::Version { json: true });
-    assert!(command.wants_json());
+fn parses_root_version_flag_for_agents() -> TestResult {
+    assert_local_command(
+        &["logbrew", "--version", "--json"],
+        &Command::Version { json: true },
+        true,
+    )
 }
 
 #[test]
-fn parses_global_json_version_forms_for_agents() {
+fn parses_global_json_version_forms_for_agents() -> TestResult {
     for args in [
         &["logbrew", "--json", "version"][..],
-        &["logbrew", "--json", "--version"][..],
+        &["logbrew", "--json", "--version"],
     ] {
-        let command = parse_command(args.iter().copied()).expect("version parses");
-
-        assert_eq!(command, Command::Version { json: true });
-        assert!(command.wants_json());
-        assert!(command.http_path().is_none());
+        assert_local_command(args, &Command::Version { json: true }, true)?;
     }
+    Ok(())
 }
 
 #[test]
 fn version_help_is_discoverable() {
-    let command = parse_command(["logbrew", "version", "--help"]).expect("help parses");
+    assert_help(&["logbrew", "version", "--help"], HelpTopic::Version, false);
 
-    assert_eq!(
-        command,
-        Command::Help {
-            topic: HelpTopic::Version,
-            json: false
-        }
-    );
     assert!(help::help_text(HelpTopic::Root).contains("logbrew version [--json]"));
     assert!(help::help_text(HelpTopic::Version).contains("Prints the installed CLI version."));
     assert!(help::help_text(HelpTopic::Version).contains("The CLI is a native Rust binary."));
@@ -68,15 +56,8 @@ fn version_help_is_discoverable() {
 
 #[test]
 fn logout_help_is_discoverable() {
-    let command = parse_command(["logbrew", "logout", "--help"]).expect("help parses");
+    assert_help(&["logbrew", "logout", "--help"], HelpTopic::Logout, false);
 
-    assert_eq!(
-        command,
-        Command::Help {
-            topic: HelpTopic::Logout,
-            json: false
-        }
-    );
     assert!(help::help_text(HelpTopic::Root).contains("logbrew logout [--json]"));
     let logout_help = help::help_text(HelpTopic::Logout);
     assert_contains_all(
@@ -91,16 +72,9 @@ fn logout_help_is_discoverable() {
 
 #[test]
 fn setup_help_is_honest_about_install_readiness() {
-    let command = parse_command(["logbrew", "setup", "--help"]).expect("help parses");
+    assert_help(&["logbrew", "setup", "--help"], HelpTopic::Setup, false);
     let setup_help = help::help_text(HelpTopic::Setup);
 
-    assert_eq!(
-        command,
-        Command::Help {
-            topic: HelpTopic::Setup,
-            json: false
-        }
-    );
     assert_contains_all(
         setup_help,
         &[
@@ -129,28 +103,20 @@ fn setup_help_is_honest_about_install_readiness() {
 }
 
 #[test]
-fn project_catalog_executes_while_explicit_setup_help_remains_non_mutating() {
+fn project_catalog_executes_while_explicit_setup_help_remains_non_mutating() -> TestResult {
     for args in [
         &["logbrew", "setup", "--create-project", "--json"][..],
         &["logbrew", "--json", "setup", "--create-project"][..],
         &["logbrew", "setup", "--create-project", "--help", "--json"][..],
     ] {
-        let command = parse_command(args.iter().copied()).expect("project help parses");
-
-        assert_eq!(
-            command,
-            Command::Help {
-                topic: HelpTopic::Projects,
-                json: true
-            }
-        );
+        assert_help(args, HelpTopic::Projects, true);
     }
     for args in [
         &["logbrew", "projects", "--json"][..],
         &["logbrew", "project", "--json"][..],
         &["logbrew", "--json", "projects"][..],
     ] {
-        let command = parse_command(args.iter().copied()).expect("project catalog parses");
+        let command = parse_command(args.iter().copied())?;
         assert!(!matches!(command, Command::Help { .. }));
         assert_eq!(command.http_path().as_deref(), Some("/api/projects"));
     }
@@ -178,33 +144,25 @@ fn project_catalog_executes_while_explicit_setup_help_remains_non_mutating() {
             "The CLI does not calculate or persist usage/quota state from local files.",
         ],
     );
+    Ok(())
 }
 
 #[test]
 fn setup_alias_help_is_discoverable() {
     for args in [
         &["logbrew", "init", "--help"][..],
-        &["logbrew", "help", "install"][..],
-        &["logbrew", "configure", "help"][..],
-        &["logbrew", "sdk", "help", "--json"][..],
+        &["logbrew", "help", "install"],
+        &["logbrew", "configure", "help"],
+        &["logbrew", "sdk", "help", "--json"],
     ] {
-        let command = parse_command(args.iter().copied()).expect("setup alias help parses");
-
-        assert_eq!(
-            command,
-            Command::Help {
-                topic: HelpTopic::Setup,
-                json: args.contains(&"--json"),
-            }
-        );
+        assert_help(args, HelpTopic::Setup, args.contains(&"--json"));
     }
 }
 
 #[test]
-fn setup_aliases_are_non_mutating_setup() {
+fn setup_aliases_are_non_mutating_setup() -> TestResult {
     for alias in ["init", "install", "configure", "sdk"] {
-        let command = parse_command(["logbrew", alias, "--auto", "--yes", "--json"])
-            .expect("setup alias parses");
+        let command = parse_command(["logbrew", alias, "--auto", "--yes", "--json"])?;
 
         assert_eq!(
             command,
@@ -216,6 +174,7 @@ fn setup_aliases_are_non_mutating_setup() {
         );
         assert!(command.http_path().is_none());
     }
+    Ok(())
 }
 
 async_test!(version_human_output_is_short -> TestResult, {
@@ -262,7 +221,7 @@ async_test!(logout_json_removes_legacy_local_credentials_without_leaking_them ->
         let refresh_path = auth_dir.join("refresh-token");
         let origin_path = auth_dir.join("auth-origin");
         let session_path = auth_dir.join("session.json");
-        std::fs::create_dir_all(token_path.parent().expect("token path has parent"))?;
+        std::fs::create_dir_all(token_path.parent().ok_or("token path has no parent")?)?;
         std::fs::write(token_path.as_path(), "fixture-token\n")?;
         let command = parse_command(args.iter().copied())?;
         let env = environment(None, Some(home));
@@ -306,7 +265,7 @@ async_test!(logout_human_is_idempotent_without_local_token -> TestResult, {
 async_test!(logout_warns_when_env_token_still_authenticates -> TestResult, {
     let home = local_command_home("logout-env")?;
     let token_path = home.join(".logbrew").join("token");
-    std::fs::create_dir_all(token_path.parent().expect("token path has parent"))?;
+    std::fs::create_dir_all(token_path.parent().ok_or("token path has no parent")?)?;
     std::fs::write(token_path.as_path(), "file-token\n")?;
     let command = parse_command(["logbrew", "logout"])?;
     let env = environment(Some("env-token"), Some(home));
@@ -327,14 +286,7 @@ async_test!(logout_warns_when_env_token_still_authenticates -> TestResult, {
 });
 
 fn local_command_home(name: &str) -> Result<std::path::PathBuf, std::io::Error> {
-    let dir = std::env::temp_dir().join(format!("logbrew-cli-{name}-{}", std::process::id()));
-    match std::fs::remove_dir_all(dir.as_path()) {
-        Ok(()) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => return Err(error),
-    }
-    std::fs::create_dir_all(dir.as_path())?;
-    Ok(dir)
+    crate::isolated_home("logbrew-cli", name)
 }
 
 fn environment(token: Option<&str>, home: Option<std::path::PathBuf>) -> CliEnvironment {
@@ -350,4 +302,20 @@ fn assert_contains_all(text: &str, expected: &[&str]) {
     for value in expected {
         assert!(text.contains(value), "missing {value:?}");
     }
+}
+
+fn assert_local_command(args: &[&str], expected: &Command, json: bool) -> TestResult {
+    let command = parse_command(args.iter().copied())?;
+    assert_eq!(&command, expected, "unexpected local command for {args:?}");
+    assert_eq!(
+        command.wants_json(),
+        json,
+        "unexpected output mode for {args:?}"
+    );
+    assert_eq!(
+        command.http_path(),
+        None,
+        "local command must not have an endpoint"
+    );
+    Ok(())
 }

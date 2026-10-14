@@ -1,9 +1,9 @@
 //! CLI issue shortcut recovery tests.
 
-use logbrew_cli::{parse_command, write_cli_error};
+use super::{TestResult, assert_json_error};
 
 #[test]
-fn rejects_bare_issue_status_words_with_target_next_step() {
+fn rejects_bare_issue_status_words_with_target_next_step() -> TestResult {
     for (args, next) in [
         (
             &["logbrew", "open", "--json"][..],
@@ -18,22 +18,18 @@ fn rejects_bare_issue_status_words_with_target_next_step() {
             "use logbrew ignored <issue_id> or logbrew ignored issues",
         ),
     ] {
-        let error = parse_command(args.iter().copied()).expect_err("bare status needs target");
-        let mut output = Vec::new();
-
-        write_cli_error(&error, true, &mut output).expect("error writes");
-
-        let body: serde_json::Value =
-            serde_json::from_slice(output.as_slice()).expect("valid json");
-        assert_eq!(body["ok"], false);
-        assert_eq!(body["error"], "missing_argument");
-        assert_eq!(body["message"], "missing argument: issue_id_or_issues");
-        assert_eq!(body["next"], next);
+        assert_json_error(
+            args,
+            "missing_argument",
+            "missing argument: issue_id_or_issues",
+            next,
+        )?;
     }
+    Ok(())
 }
 
 #[test]
-fn rejects_issue_mutation_shortcuts_without_ids_with_command_next_step() {
+fn rejects_issue_mutation_shortcuts_without_ids_with_command_next_step() -> TestResult {
     for (args, next) in [
         (
             &["logbrew", "resolve", "--json"][..],
@@ -52,22 +48,13 @@ fn rejects_issue_mutation_shortcuts_without_ids_with_command_next_step() {
             "use logbrew reopen <issue_id>",
         ),
     ] {
-        let error = parse_command(args.iter().copied()).expect_err("shortcut needs issue id");
-        let mut output = Vec::new();
-
-        write_cli_error(&error, true, &mut output).expect("error writes");
-
-        let body: serde_json::Value =
-            serde_json::from_slice(output.as_slice()).expect("valid json");
-        assert_eq!(body["ok"], false);
-        assert_eq!(body["error"], "missing_argument");
-        assert_eq!(body["message"], "missing argument: issue_id");
-        assert_eq!(body["next"], next);
+        assert_json_error(args, "missing_argument", "missing argument: issue_id", next)?;
     }
+    Ok(())
 }
 
 #[test]
-fn issue_first_mutation_flags_preserve_shortcut_recovery() {
+fn issue_first_mutation_flags_preserve_shortcut_recovery() -> TestResult {
     for (args, error, message, next) in [
         (
             &[
@@ -97,16 +84,7 @@ fn issue_first_mutation_flags_preserve_shortcut_recovery() {
             "run logbrew ignored --help",
         ),
     ] {
-        let error_value = parse_command(args.iter().copied()).expect_err("bad issue-first flag");
-        let mut output = Vec::new();
-
-        write_cli_error(&error_value, true, &mut output).expect("error writes");
-
-        let body: serde_json::Value =
-            serde_json::from_slice(output.as_slice()).expect("valid json");
-        assert_eq!(body["ok"], false);
-        assert_eq!(body["error"], error);
-        assert_eq!(body["message"], message);
-        assert_eq!(body["next"], next);
+        assert_json_error(args, error, message, next)?;
     }
+    Ok(())
 }

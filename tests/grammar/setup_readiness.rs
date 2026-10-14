@@ -1,11 +1,11 @@
 //! Truthful non-mutating setup readiness tests.
 
+use super::TestResult;
 use logbrew_cli::{CliEnvironment, execute_command, parse_command};
 
 const SWIFT_PACKAGE_URL: &str = "https://github.com/LogBrewCo/sdk.git";
 const REACT_EXPRESS_PACKAGES: &str =
     "@logbrew/sdk @logbrew/browser @logbrew/react @logbrew/node @logbrew/express";
-type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
 fn javascript_surfaces(browser: &str, server: &str) -> serde_json::Value {
     serde_json::json!([
@@ -650,7 +650,7 @@ async_test!(scanner_classifies_and_prioritizes_apple_projects -> TestResult, {
         std::fs::write(root.join("project.yml"), "name: Checkout\n")?;
         for source in sources {
             let path = root.join(source);
-            std::fs::create_dir_all(path.parent().expect("source has parent"))?;
+            std::fs::create_dir_all(path.parent().ok_or("source has no parent")?)?;
             std::fs::write(path, "// source evidence\n")?;
         }
         let body = setup_json(&root).await?;
@@ -722,7 +722,10 @@ async fn setup_text(root: &std::path::Path, args: &[&str]) -> TestResult<String>
     let mut output = Vec::new();
     execute_command(&command, &environment(root), &mut output).await?;
     let text = String::from_utf8(output)?;
-    assert!(!text.contains(root.to_string_lossy().as_ref()));
+    assert!(
+        !text.contains(root.to_string_lossy().as_ref()),
+        "setup must not expose its local path"
+    );
     Ok(text)
 }
 
@@ -738,22 +741,17 @@ fn assert_contains_all(text: &str, expected: &[&str]) {
 }
 
 fn fixture_root(label: &str) -> Result<std::path::PathBuf, std::io::Error> {
-    let root = std::env::temp_dir().join(format!(
-        "logbrew-setup-readiness-{label}-{}",
-        std::process::id()
-    ));
-    if root.try_exists()? {
-        std::fs::remove_dir_all(&root)?;
-    }
-    std::fs::create_dir_all(&root)?;
-    Ok(root)
+    crate::isolated_home("logbrew-setup-readiness", label)
 }
 
 fn fixture(label: &str, files: &[(&str, &str)]) -> Result<std::path::PathBuf, std::io::Error> {
     let root = fixture_root(label)?;
     for (name, contents) in files {
         let path = root.join(name);
-        std::fs::create_dir_all(path.parent().expect("fixture file has parent"))?;
+        std::fs::create_dir_all(
+            path.parent()
+                .ok_or_else(|| std::io::Error::other("fixture file has no parent"))?,
+        )?;
         std::fs::write(path, contents)?;
     }
     Ok(root)
