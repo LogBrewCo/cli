@@ -111,8 +111,8 @@ impl ResponseTemplate {
         }
     }
 
-    pub(crate) fn set_body_json(self, value: impl std::borrow::Borrow<serde_json::Value>) -> Self {
-        self.set_body_string(value.borrow().to_string())
+    pub(crate) fn set_body_json(self, value: &serde_json::Value) -> Self {
+        self.set_body_string(value.to_string())
             .insert_header("content-type", "application/json")
     }
 

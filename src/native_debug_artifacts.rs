@@ -597,7 +597,8 @@ mod tests {
                 std::time::Duration::from_millis(1),
                 std::future::pending::<Result<(), crate::RuntimeError>>(),
             ))
-            .expect_err("pending upload must hit the supplied test deadline");
+            .err()
+            .ok_or("pending upload must hit the supplied test deadline")?;
         assert!(matches!(
             error,
             crate::RuntimeError::Unavailable {

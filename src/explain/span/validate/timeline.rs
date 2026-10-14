@@ -13,6 +13,7 @@ use super::{
 };
 use crate::RuntimeError;
 use crate::ids::is_uuid;
+use crate::time::parse_utc_evidence;
 
 /// Maximum mixed-signal timeline items returned by the server.
 const TIMELINE_LIMIT: usize = 50;
@@ -69,7 +70,8 @@ pub(super) fn validate_timeline(
     }
     let mut seen = BTreeSet::new();
     let mut kinds = BTreeSet::new();
-    let mut previous: Option<(TimestampKey<'_>, u8, &str)> = None;
+    let started_at = parse_utc_evidence(subject.started_at).ok_or_else(invalid_response)?;
+    let mut previous = None;
     for item in items {
         let item = item.as_object().ok_or_else(invalid_response)?;
         validate_timeline_item_shape(item)?;
@@ -80,11 +82,14 @@ pub(super) fn validate_timeline(
         }
         let _ = kinds.insert(kind);
         validate_timeline_projection(item, kind, id, subject, &sources)?;
-        let order = (
-            timestamp_key(require_timestamp(item, "occurred_at")?)?,
-            timeline_kind_rank(kind)?,
-            id,
-        );
+        let occurred_at = parse_utc_evidence(require_timestamp(item, "occurred_at")?)
+            .ok_or_else(invalid_response)?;
+        let expected_offset = crate::time::evidence_offset_millis(occurred_at, started_at)
+            .ok_or_else(invalid_response)?;
+        if nullable_safe_i64(item, "offset_ms")? != Some(expected_offset) {
+            return Err(invalid_response());
+        }
+        let order = (occurred_at, timeline_kind_rank(kind)?, id);
         if previous.is_some_and(|previous| previous >= order) {
             return Err(invalid_response());
         }
@@ -176,12 +181,6 @@ fn validate_timeline_item_shape(item: &Map<String, Value>) -> Result<(), Runtime
     let _id = require_string(item, "id")?;
     let _kind = timeline_kind_rank(require_string(item, "kind")?)?;
     let _time = require_timestamp(item, "occurred_at")?;
-    let offset = item
-        .get("offset_ms")
-        .and_then(Value::as_i64)
-        .filter(|offset| offset.unsigned_abs() <= super::MAX_SAFE_JSON_INTEGER)
-        .ok_or_else(invalid_response)?;
-    let _ = offset;
     let _name = require_string(item, "name")?;
     let _service = require_string(item, "service_name")?;
     if nullable_string(item, "span_id")?.is_some_and(|span| !is_w3c_id(span, 16))
@@ -212,9 +211,9 @@ fn validate_timeline_projection(
         "issue" => find_source(sources.issues, id)
             .and_then(|source| validate_issue_projection(item, source)),
         "action" => find_source(sources.actions, id)
-            .and_then(|source| validate_action_projection(item, source)),
+            .and_then(|source| validate_named_signal_projection(item, source)),
         "metric" => find_source(sources.metrics, id)
-            .and_then(|source| validate_metric_projection(item, source)),
+            .and_then(|source| validate_named_signal_projection(item, source)),
         _ => Err(invalid_response()),
     }
 }
@@ -326,23 +325,8 @@ fn validate_issue_projection(
     Ok(())
 }
 
-/// Validates one product action timeline projection.
-fn validate_action_projection(
-    item: &Map<String, Value>,
-    source: &Map<String, Value>,
-) -> Result<(), RuntimeError> {
-    if require_timestamp(item, "occurred_at")? != require_timestamp(source, "occurred_at")?
-        || require_string(item, "name")? != require_string(source, "name")?
-        || require_string(item, "service_name")? != require_string(source, "service_name")?
-        || any_optional_signal_field(item)
-    {
-        return Err(invalid_response());
-    }
-    Ok(())
-}
-
-/// Validates one metric exemplar timeline projection.
-fn validate_metric_projection(
+/// Validates the shared action and metric timeline projection.
+fn validate_named_signal_projection(
     item: &Map<String, Value>,
     source: &Map<String, Value>,
 ) -> Result<(), RuntimeError> {
@@ -362,39 +346,6 @@ fn any_optional_signal_field(item: &Map<String, Value>) -> bool {
         || item.get("severity").is_none_or(|value| !value.is_null())
         || item.get("status").is_none_or(|value| !value.is_null())
         || item.get("duration_ms").is_none_or(|value| !value.is_null())
-}
-
-/// Stable chronological key for one UTC RFC3339 timestamp.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-struct TimestampKey<'a> {
-    /// Fixed calendar and whole-second prefix.
-    seconds: &'a str,
-    /// Nanosecond-normalized fractional part.
-    nanos: u32,
-}
-
-/// Converts a validated UTC timestamp into a comparison key.
-fn timestamp_key(value: &str) -> Result<TimestampKey<'_>, RuntimeError> {
-    let seconds = value.get(..19).ok_or_else(invalid_response)?;
-    let suffix = value.get(19..).ok_or_else(invalid_response)?;
-    let without_zone = suffix
-        .strip_suffix('Z')
-        .or_else(|| suffix.strip_suffix("+00:00"))
-        .ok_or_else(invalid_response)?;
-    let digits = without_zone.strip_prefix('.').unwrap_or(without_zone);
-    if !digits.is_empty() && (digits.len() > 9 || !digits.bytes().all(|byte| byte.is_ascii_digit()))
-    {
-        return Err(invalid_response());
-    }
-    let mut nanos = if digits.is_empty() {
-        0
-    } else {
-        digits.parse::<u32>().map_err(|_error| invalid_response())?
-    };
-    for _ in digits.len()..9 {
-        nanos = nanos.saturating_mul(10);
-    }
-    Ok(TimestampKey { seconds, nanos })
 }
 
 /// Returns the server enum's deterministic timeline-kind order.
@@ -498,7 +449,7 @@ pub(super) fn validate_evidence(
     if payload.redacted != attribute_redactions || payload.truncated != attribute_truncations {
         return Err(invalid_response());
     }
-    validate_evidence_sets_disjoint(&captured, &missing, &redacted, &truncated)?;
+    validate_evidence_field_states(&captured, &missing, &redacted, &truncated)?;
     Ok(EvidenceFacts {
         capture_incomplete: missing.contains(&"context") || missing.contains(&"subject.sdk"),
     })
@@ -520,8 +471,8 @@ fn require_membership(
     }
 }
 
-/// Rejects one exact evidence field appearing in multiple semantic categories.
-fn validate_evidence_sets_disjoint(
+/// Allows partial capture while rejecting missing/present contradictions and invalid field paths.
+fn validate_evidence_field_states(
     captured: &[&str],
     missing: &[&str],
     redacted: &[&str],
@@ -541,7 +492,22 @@ fn validate_evidence_sets_disjoint(
             }
             let entry = categories.entry(field).or_default();
             *entry |= bit;
-            if entry.count_ones() > 1 {
+            // Attribute paths can summarize both retained and withheld values. A bounded
+            // collection can remain present while its retained history is incomplete.
+            let partial = field.starts_with("attributes.") && *entry & 2 == 0
+                || *entry == 9
+                    && matches!(
+                        *field,
+                        "context"
+                            | "topology"
+                            | "timeline"
+                            | "correlations.trace"
+                            | "correlations.issues"
+                            | "correlations.logs"
+                            | "correlations.actions"
+                            | "correlations.metrics"
+                    );
+            if entry.count_ones() > 1 && !partial {
                 return Err(invalid_response());
             }
         }
@@ -558,40 +524,7 @@ pub(super) fn validate_next_actions(
     correlations: &CorrelationFacts<'_>,
     evidence: EvidenceFacts,
 ) -> Result<(), RuntimeError> {
-    let mut expected = Vec::new();
-    append_topology_actions(
-        &mut expected,
-        topology.parent_span_id,
-        topology.error_child_span_id,
-    );
-    let issue_id = correlations
-        .issues
-        .first()
-        .and_then(|issue| issue.get("issue_id"))
-        .and_then(Value::as_str);
-    append_correlation_actions(
-        &mut expected,
-        subject.span_id,
-        correlations.logs.is_empty(),
-        issue_id,
-        correlations.trace.status,
-    );
-    let unavailable = [
-        correlations.trace.status,
-        baseline.status,
-        correlations.issue_state.status,
-        correlations.log_state.status,
-        correlations.action_state.status,
-        correlations.metric_state.status,
-    ]
-    .contains(&"unavailable");
-    append_follow_up_actions(
-        &mut expected,
-        subject.span_id,
-        baseline.status == "available" && baseline.at_or_above_p95,
-        unavailable,
-        evidence.capture_incomplete,
-    );
+    let expected = expected_actions(subject, topology, baseline, correlations, evidence);
     let actions = value
         .and_then(Value::as_array)
         .filter(|actions| !actions.is_empty() && actions.len() <= NEXT_ACTION_LIMIT)
@@ -605,111 +538,114 @@ pub(super) fn validate_next_actions(
     Ok(())
 }
 
-/// Adds deterministic direct-parent and first-error-child pivots.
-fn append_topology_actions<'a>(
-    actions: &mut Vec<ExpectedAction<'a>>,
-    parent: Option<&'a str>,
-    error_child: Option<&'a str>,
-) {
-    if let Some(parent) = parent {
-        actions.push(ExpectedAction {
-            code: "inspect_parent_span",
-            target: "span_investigation",
-            reason: "parent_context_available",
-            span_id: Some(parent),
-            issue_id: None,
-        });
-    }
-    if let Some(child) = error_child {
-        actions.push(ExpectedAction {
-            code: "inspect_error_child",
-            target: "span_investigation",
-            reason: "child_error_observed",
-            span_id: Some(child),
-            issue_id: None,
-        });
-    }
-}
-
-/// Adds exact-span log, issue, and containing-trace pivots.
-fn append_correlation_actions<'a>(
-    actions: &mut Vec<ExpectedAction<'a>>,
-    subject_span: &'a str,
-    logs_empty: bool,
-    issue_id: Option<&'a str>,
-    trace_status: &str,
-) {
-    if !logs_empty {
-        actions.push(ExpectedAction {
-            code: "review_exact_span_logs",
-            target: "telemetry_logs",
-            reason: "exact_span_logs_available",
-            span_id: Some(subject_span),
-            issue_id: None,
-        });
-    }
-    if let Some(issue_id) = issue_id {
-        actions.push(ExpectedAction {
-            code: "review_related_issue",
-            target: "issue_investigation",
-            reason: "related_issue_available",
-            span_id: None,
-            issue_id: Some(issue_id),
-        });
-    }
-    if trace_status == "available" {
-        actions.push(ExpectedAction {
-            code: "inspect_trace",
-            target: "trace_investigation",
-            reason: "trace_context_available",
-            span_id: Some(subject_span),
-            issue_id: None,
-        });
-    }
-}
-
-/// Adds baseline, release, recovery, and capture-quality pivots.
-fn append_follow_up_actions<'a>(
-    actions: &mut Vec<ExpectedAction<'a>>,
-    subject_span: &'a str,
-    latency_elevated: bool,
-    evidence_unavailable: bool,
-    capture_incomplete: bool,
-) {
-    if latency_elevated {
-        actions.push(ExpectedAction {
-            code: "compare_peer_baseline",
-            target: "peer_baseline",
-            reason: "subject_latency_elevated",
-            span_id: Some(subject_span),
-            issue_id: None,
-        });
-    }
-    actions.push(ExpectedAction {
-        code: "compare_release",
-        target: "release_investigation",
-        reason: "exact_release_available",
-        span_id: None,
-        issue_id: None,
-    });
-    if evidence_unavailable {
-        actions.push(ExpectedAction {
-            code: "retry_unavailable_evidence",
-            target: "exact_span_investigation",
-            reason: "optional_evidence_unavailable",
-            span_id: Some(subject_span),
-            issue_id: None,
-        });
-    }
-    if capture_incomplete {
-        actions.push(ExpectedAction {
-            code: "improve_capture",
-            target: "sdk_capture",
-            reason: "capture_incomplete",
-            span_id: Some(subject_span),
-            issue_id: None,
-        });
-    }
+/// Derives ordered investigation pivots from one canonical action catalog.
+fn expected_actions<'a>(
+    subject: &SubjectFacts<'a>,
+    topology: &TopologyFacts<'a>,
+    baseline: &BaselineFacts<'_>,
+    correlations: &CorrelationFacts<'a>,
+    evidence: EvidenceFacts,
+) -> Vec<ExpectedAction<'a>> {
+    let issue = correlations
+        .issues
+        .first()
+        .and_then(|issue| issue.get("issue_id")?.as_str());
+    let unavailable = [
+        correlations.trace.status,
+        baseline.status,
+        correlations.issue_state.status,
+        correlations.log_state.status,
+        correlations.action_state.status,
+        correlations.metric_state.status,
+    ]
+    .contains(&"unavailable");
+    let span = Some(subject.span_id);
+    [
+        (
+            topology.parent_span_id.is_some(),
+            "inspect_parent_span",
+            "span_investigation",
+            "parent_context_available",
+            topology.parent_span_id,
+            None,
+        ),
+        (
+            topology.error_child_span_id.is_some(),
+            "inspect_error_child",
+            "span_investigation",
+            "child_error_observed",
+            topology.error_child_span_id,
+            None,
+        ),
+        (
+            !correlations.logs.is_empty(),
+            "review_exact_span_logs",
+            "telemetry_logs",
+            "exact_span_logs_available",
+            span,
+            None,
+        ),
+        (
+            issue.is_some(),
+            "review_related_issue",
+            "issue_investigation",
+            "related_issue_available",
+            None,
+            issue,
+        ),
+        (
+            correlations.trace.status == "available",
+            "inspect_trace",
+            "trace_investigation",
+            "trace_context_available",
+            span,
+            None,
+        ),
+        (
+            baseline.status == "available" && baseline.at_or_above_p95,
+            "compare_peer_baseline",
+            "peer_baseline",
+            "subject_latency_elevated",
+            span,
+            None,
+        ),
+        (
+            true,
+            "compare_release",
+            "release_investigation",
+            "exact_release_available",
+            None,
+            None,
+        ),
+        (
+            unavailable,
+            "retry_unavailable_evidence",
+            "exact_span_investigation",
+            "optional_evidence_unavailable",
+            span,
+            None,
+        ),
+        (
+            evidence.capture_incomplete,
+            "improve_capture",
+            "sdk_capture",
+            "capture_incomplete",
+            span,
+            None,
+        ),
+    ]
+    .into_iter()
+    .filter(|(present, ..)| *present)
+    .map(
+        |(_, code, target, reason, span_id, issue_id)| ExpectedAction {
+            code,
+            target,
+            reason,
+            span_id,
+            issue_id,
+        },
+    )
+    .collect()
 }
 
 /// Validates one generated action's exact vocabulary, identity, and one-based priority.
