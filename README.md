@@ -260,6 +260,26 @@ then leaves the active catalog and its project-scoped ingest keys no longer
 authorize new ingestion. This is a soft archive; the CLI makes no hard-delete
 or restoration promise.
 
+### Review and revoke connected MCP clients
+
+List the AI clients that you connected to the LogBrew MCP server:
+
+```bash
+logbrew mcp grants --json
+```
+
+Each grant shows its client, the projects that you approved, when it was last
+used, and when it expires. A connected client refreshes its access about once
+an hour while you use it. A grant ends after 30 days without use, and after 90
+days in all. To disconnect a client:
+
+```bash
+logbrew mcp revoke <grant_id> --yes
+```
+
+The client loses access at its next request. To connect again, it must sign in
+again.
+
 For AI sessions, the default mode should be checking only when requested because
 it uses fewer AI tokens. `logbrew watch --json` opens a live WebSocket stream for
 the current session, and `logbrew watch --severity error,critical --json`

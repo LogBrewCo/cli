@@ -146,6 +146,9 @@ pub enum CliError {
     /// Confirmed project archival syntax is malformed.
     #[error("invalid project archive command")]
     InvalidProjectArchiveCommand,
+    /// MCP grant list or confirmed revocation syntax is malformed.
+    #[error("invalid mcp command")]
+    InvalidMcpCommand,
     /// Permanently deleted project syntax or exact confirmation is malformed.
     #[error("invalid project deletion command")]
     InvalidProjectDeletionCommand,
@@ -617,6 +620,7 @@ const fn cli_error_code(error: &CliError) -> &'static str {
             "invalid_project_ingest_key_create_command"
         }
         CliError::InvalidProjectArchiveCommand => "invalid_project_archive_command",
+        CliError::InvalidMcpCommand => "invalid_mcp_command",
         CliError::InvalidProjectDeletionCommand => "invalid_project_deletion_command",
         CliError::InvalidDeploymentCommand => "invalid_deployment_command",
         CliError::InvalidProjectsCommand => "invalid_projects_command",
@@ -675,6 +679,9 @@ const fn cli_error_next_step(error: &CliError) -> &'static str {
         }
         CliError::InvalidProjectArchiveCommand => {
             "use logbrew projects archive <project_id> --yes with optional --json"
+        }
+        CliError::InvalidMcpCommand => {
+            "use logbrew mcp grants or logbrew mcp revoke <grant_id> --yes, with optional --json"
         }
         CliError::InvalidProjectDeletionCommand => {
             "use logbrew projects delete <project_id> --confirm <project_id> with optional --json"
