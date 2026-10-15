@@ -104,9 +104,13 @@ jobs:
           ANNOUNCEMENT_IS_PRERELEASE: ${{ fromJson(steps.plan.outputs.manifest).announcement_is_prerelease }}
           ANNOUNCEMENT_TITLE: ${{ fromJson(steps.plan.outputs.manifest).announcement_title }}
           ANNOUNCEMENT_BODY: ${{ fromJson(steps.plan.outputs.manifest).announcement_github_body }}
+          PUBLIC_GUARD_TERMS: ${{ secrets.PUBLIC_GUARD_TERMS }}
+          PUBLIC_GUARD_REQUIRE_TERMS: "1"
         shell: bash
         run: |
           printf '%s\n' "$ANNOUNCEMENT_BODY" > "$RUNNER_TEMP/notes.txt"
+          printf '%s\n' "$ANNOUNCEMENT_TITLE" > "$RUNNER_TEMP/title.txt"
+          bash scripts/public-guard.sh text release-title="$RUNNER_TEMP/title.txt" release-notes="$RUNNER_TEMP/notes.txt"
           release_args=()
           [[ "$ANNOUNCEMENT_IS_PRERELEASE" == "true" ]] && release_args+=(--prerelease)
           gh release create "$GITHUB_REF_NAME" --target "$GITHUB_SHA" "${release_args[@]}" --title "$ANNOUNCEMENT_TITLE" --notes-file "$RUNNER_TEMP/notes.txt" target/distrib/*

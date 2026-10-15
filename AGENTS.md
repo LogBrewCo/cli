@@ -86,6 +86,19 @@ artifacts are permanent. Use generic product-facing metadata. Do not tag,
 publish, dispatch release workflows, or alter registry state unless the task
 explicitly owns that action.
 
+Commits, pull-request titles and bodies, branch names, READMEs, and release
+notes describe user-visible behavior only. Do not name hosting, network,
+storage, or deployment internals, non-public repositories, local paths,
+plans, agent sessions, costs, or real user data. Do not add AI attribution.
+
+`scripts/public-guard.sh` enforces this. The required `Public guard` status
+scans every new commit, commit message, changed path, branch name, and
+pull-request title and body. Run `bash scripts/public-guard.sh install` once
+per checkout to scan commit messages and pushes locally. Never use
+`--no-verify`. If a finding is a false positive, change the rule in its own
+pull request first; never split, encode, or reword text only to pass the
+guard.
+
 Keep this guide concise and current. Add durable rules after repeated review
 feedback; keep one-off context out of the repository. Do not add a duplicate
 `CLAUDE.md` instruction surface.
