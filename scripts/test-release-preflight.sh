@@ -164,6 +164,10 @@ case "${1:-} ${2:-}" in
     fi
     ;;
   "run list")
+    if [[ "$*" == *"--event workflow_dispatch"* ]]; then
+      [[ "${LOGBREW_TEST_PREBUILD:-present}" == present ]] && printf '12345\n'
+      exit 0
+    fi
     case "${LOGBREW_TEST_CI:-green}" in
       missing)
         ;;
@@ -418,6 +422,20 @@ fi
 
 if ! grep -Fq "Release preflight passed for v0.1.0 (abc123)." "$output_file"; then
   printf 'expected release preflight success output\n' >&2
+  printf 'actual output:\n' >&2
+  cat "$output_file" >&2
+  exit 1
+fi
+
+: >"$output_file"
+if LOGBREW_TEST_SECRETS=all LOGBREW_TEST_PREBUILD=missing PATH="$tmp_dir:$PATH" bash scripts/release-preflight.sh v0.1.0 >"$output_file" 2>&1; then
+  printf 'expected release preflight to fail when the release prebuild is missing\n' >&2
+  cat "$output_file" >&2
+  exit 1
+fi
+
+if ! grep -Fq "Next: run gh workflow run release.yml --repo LogBrewCo/cli --ref main" "$output_file"; then
+  printf 'expected release preflight to explain the missing release prebuild\n' >&2
   printf 'actual output:\n' >&2
   cat "$output_file" >&2
   exit 1
