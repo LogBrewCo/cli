@@ -16,8 +16,8 @@ use crate::http::{nonempty_control_safe as bounded_contract_text, terminal_safe 
 use crate::{AnalyticsOverviewOptions, AnalyticsPathEventKind, CliEnvironment, RuntimeError};
 
 /// Public response version implemented by this CLI.
-const SCHEMA_VERSION: u8 = 2;
-/// Subject-kind index required by response schema version 2.
+const SCHEMA_VERSION: u8 = 3;
+/// Subject-kind index required by typed-subject response schemas.
 const SUBJECT_INDEX_VERSION: u8 = 1;
 /// Maximum accepted response body.
 const RESPONSE_LIMIT: usize = 1024 * 1024;
@@ -46,7 +46,7 @@ pub(super) fn request_path(options: &AnalyticsOverviewOptions) -> String {
             ("release", options.release.as_deref()),
             ("environment", options.environment.as_deref()),
             ("top_limit", Some(top_limit.as_str())),
-            ("response_version", Some("2")),
+            ("response_version", Some("3")),
         ],
     )
 }
@@ -575,7 +575,7 @@ fn valid_top_actions(response: &OverviewResponse) -> bool {
 /// Proves the fixed approximate-cardinality disclosure.
 fn valid_estimation(estimation: &Estimation) -> bool {
     estimation.unique_counts_are_approximate
-        && estimation.method == "clickhouse_uniq_combined64"
+        && estimation.method == "approximate_distinct"
         && bounded_contract_text(estimation.description.as_str(), 1024)
 }
 

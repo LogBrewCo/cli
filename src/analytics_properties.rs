@@ -17,7 +17,7 @@ use crate::render::{filter_label, percentage};
 use crate::{AnalyticsPropertyOptions, CliEnvironment, RuntimeError};
 
 /// Public response version implemented by this CLI.
-const SCHEMA_VERSION: u8 = 1;
+const SCHEMA_VERSION: u8 = 2;
 /// Maximum accepted response body.
 const RESPONSE_LIMIT: usize = 1024 * 1024;
 /// Conservative bound for approximate cross-event cardinalities.
@@ -46,6 +46,7 @@ pub(super) fn request_path(options: &AnalyticsPropertyOptions) -> String {
             ("release", options.release.as_deref()),
             ("environment", options.environment.as_deref()),
             ("limit", Some(limit.as_str())),
+            ("response_version", Some("2")),
         ],
     )
 }
@@ -300,7 +301,7 @@ fn valid_properties(response: &PropertyCatalogResponse) -> bool {
 /// Proves the fixed approximate-cardinality disclosure.
 fn valid_estimation(estimation: &PropertyEstimation) -> bool {
     estimation.count_accuracy == CountAccuracy::Approximate
-        && estimation.method == "clickhouse_uniq_combined64"
+        && estimation.method == "approximate_distinct"
         && bounded_contract_text(estimation.description.as_str(), 2048)
 }
 
@@ -437,7 +438,7 @@ mod tests {
     /// One internally consistent key-only property response.
     fn body() -> String {
         serde_json::json!({
-            "schema_version": 1,
+            "schema_version": 2,
             "query": {
                 "project_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
                 "since": "2026-08-03T00:00:00Z",
@@ -465,7 +466,7 @@ mod tests {
             },
             "estimation": {
                 "count_accuracy": "approximate",
-                "method": "clickhouse_uniq_combined64",
+                "method": "approximate_distinct",
                 "description": "Cardinalities are approximate."
             },
             "properties": [

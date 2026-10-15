@@ -61,7 +61,7 @@
     "metadata": {
       "values": {
         "db.collection": "checkout",
-        "db.system": "clickhouse"
+        "db.system": "postgresql"
       },
       "included_leaf_count": 2,
       "redacted": true,

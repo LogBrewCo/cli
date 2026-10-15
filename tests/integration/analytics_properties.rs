@@ -59,6 +59,7 @@ async_test!(built_binary_gets_exact_scope_and_preserves_validated_json -> Result
     .and(query_param("since", "24h"))
     .and(query_param("environment", "production"))
     .and(query_param("limit", "2"))
+    .and(query_param("response_version", "2"))
     .respond_with(
         ResponseTemplate::new(200).set_body_raw(response_body.clone(), "application/json"),
     )
@@ -148,10 +149,10 @@ fn properties_args(json: bool) -> Vec<&'static str> {
     args
 }
 
-/// Stable schema-version-1 fixture matching the private API contract.
+/// Stable schema-version-2 fixture matching the API contract.
 fn property_response() -> serde_json::Value {
     serde_json::json!({
-        "schema_version": 1,
+        "schema_version": 2,
         "query": {
             "project_id": PROJECT_ID,
             "since": "2026-08-03T00:00:00Z",
@@ -184,7 +185,7 @@ fn property_response() -> serde_json::Value {
         },
         "estimation": {
             "count_accuracy": "approximate",
-            "method": "clickhouse_uniq_combined64",
+            "method": "approximate_distinct",
             "description": "Distinct key and value counts use bounded estimates."
         },
         "properties": [

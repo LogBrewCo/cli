@@ -21,7 +21,7 @@ use crate::{
 };
 
 /// Public response version implemented by this CLI.
-const SCHEMA_VERSION: u8 = 1;
+const SCHEMA_VERSION: u8 = 2;
 /// Maximum accepted response body, matching the API result-byte bound.
 const RESPONSE_LIMIT: usize = 10 * 1024 * 1024;
 /// Maximum UTC-aligned buckets returned for one segment.
@@ -42,6 +42,10 @@ const NANOS_PER_SECOND: i128 = 1_000_000_000;
 )]
 pub(super) fn request_body(options: &AnalyticsSegmentComparisonOptions) -> serde_json::Value {
     let mut body = serde_json::Map::new();
+    drop(body.insert(
+        "response_version".to_owned(),
+        serde_json::Value::from(SCHEMA_VERSION),
+    ));
     drop(body.insert(
         "project_id".to_owned(),
         serde_json::Value::String(options.project_id.clone()),
@@ -508,7 +512,7 @@ fn valid_segment_key(value: &str) -> bool {
 fn valid_confidence(confidence: &ComparisonConfidence) -> bool {
     confidence.interpretation == "descriptive_only"
         && confidence.unique_count_accuracy == UniqueCountAccuracy::Approximate
-        && confidence.estimation_method == "clickhouse_uniq_combined64"
+        && confidence.estimation_method == "approximate_distinct"
         && confidence.causal_inference == CausalInference::NotEstablished
         && confidence.statistical_significance == StatisticalSignificance::NotTested
         && confidence.segment_overlap == SegmentOverlap::Possible

@@ -29,7 +29,7 @@ fn public_grammar_help_and_get_model_stay_aligned() -> Result<(), Box<dyn std::e
         "interval=5m",
         "environment=production",
         "top_limit=2",
-        "response_version=2",
+        "response_version=3",
     ] {
         assert!(path.contains(expected), "missing request scope: {expected}");
     }
@@ -60,7 +60,7 @@ async_test!(built_binary_gets_exact_scope_and_preserves_validated_json -> Result
         .and(query_param("interval", "5m"))
         .and(query_param("environment", "production"))
         .and(query_param("top_limit", "2"))
-        .and(query_param("response_version", "2"))
+        .and(query_param("response_version", "3"))
         .respond_with(
             ResponseTemplate::new(200).set_body_raw(response_body.clone(), "application/json"),
         )
@@ -187,10 +187,10 @@ fn overview_args(json: bool) -> Vec<&'static str> {
     args
 }
 
-/// Stable schema-version-2 fixture matching the public API contract.
+/// Stable schema-version-3 fixture matching the public API contract.
 fn overview_response() -> serde_json::Value {
     serde_json::json!({
-        "schema_version": 2,
+        "schema_version": 3,
         "query": {
             "project_id": PROJECT_ID,
             "since": "2026-08-02T00:00:00Z",
@@ -237,7 +237,7 @@ fn overview_response() -> serde_json::Value {
         },
         "estimation": {
             "unique_counts_are_approximate": true,
-            "method": "clickhouse_uniq_combined64",
+            "method": "approximate_distinct",
             "description": "Unique counts use bounded approximate aggregation."
         },
         "series": [
