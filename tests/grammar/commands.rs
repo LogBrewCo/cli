@@ -1234,7 +1234,7 @@ fn parses_log_release_and_metric_explanations() {
             "--service",
             "checkout-api",
         ],
-        "/api/telemetry/releases/investigation?project_id=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa&release=checkout%401.2.3&environment=production&service_name=checkout-api&response_version=4",
+        "/api/telemetry/releases/investigation?project_id=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa&release=checkout%401.2.3&environment=production&service_name=checkout-api&response_version=5",
     );
 
     assert_path(

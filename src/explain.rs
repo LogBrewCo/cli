@@ -328,7 +328,7 @@ fn validate_issue_response(
     expected_occurrence: &IssueOccurrenceSelection,
 ) -> Result<(), RuntimeError> {
     let response = exact_response_object(value, ISSUE_RESPONSE_FIELDS)?;
-    validate_schema_version_value(response, 12)?;
+    validate_schema_version_value(response, 13)?;
     let subject = required_object(response, "subject")?;
     require_string_equals(subject, "kind", "issue")?;
     require_string_equals(subject, "id", expected_id)?;
@@ -1153,7 +1153,7 @@ fn validate_issue_user_impact(
     }
     let known = optional_safe_u64(user_impact, "known_affected_users")?;
     let method = require_string(user_impact, "count_method")?;
-    if !matches!(method, "approximate_uniq_combined64" | "unavailable") {
+    if !matches!(method, "approximate_distinct" | "unavailable") {
         return Err(invalid_response());
     }
     let coverage = match user_impact.get("coverage") {
@@ -1241,16 +1241,13 @@ fn validate_available_issue_user_impact(
     let has_valid_known = known.is_some_and(|value| value > 0 && value <= coverage.identified);
     let valid_shape = match status {
         "complete" => {
-            complete
-                && has_valid_known
-                && method == "approximate_uniq_combined64"
-                && legacy == known
+            complete && has_valid_known && method == "approximate_distinct" && legacy == known
         }
         "partial" => {
             !complete
                 && coverage.identified > 0
                 && has_valid_known
-                && method == "approximate_uniq_combined64"
+                && method == "approximate_distinct"
                 && legacy.is_none()
         }
         "not_captured" => {

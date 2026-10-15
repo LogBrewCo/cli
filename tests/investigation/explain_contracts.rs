@@ -17,7 +17,7 @@ async_test!(human_release_explanation_connects_health_sdk_and_every_signal -> Re
         .and(query_param("release", "checkout@1.2.3"))
         .and(query_param("environment", "production"))
         .and(query_param("service_name", "checkout-api"))
-        .and(query_param("response_version", "4"))
+        .and(query_param("response_version", "5"))
         .respond_with(ResponseTemplate::new(200).set_body_json(&release_response()))
         .mount(&server);
     let command = release_command(false)?;
@@ -64,7 +64,7 @@ async_test!(built_binary_release_preserves_validated_version_4_json -> Result<()
     let server = MockServer::start().await?;
     let response = release_response();
     Mock::route("GET", "/api/telemetry/releases/investigation")
-        .and(query_param("response_version", "4"))
+        .and(query_param("response_version", "5"))
         .and(header("authorization", "Bearer account-token"))
         .respond_with(ResponseTemplate::new(200).set_body_json(&response))
         .expect(1)
@@ -216,7 +216,7 @@ async_test!(release_v4_accepts_exact_capture_retry_and_partial_recovery_states -
     ] {
         let server = MockServer::start().await?;
         Mock::route("GET", "/api/telemetry/releases/investigation")
-            .and(query_param("response_version", "4"))
+            .and(query_param("response_version", "5"))
             .respond_with(ResponseTemplate::new(200).set_body_json(&response))
             .mount(&server);
         let command = release_command(true)?;
@@ -1108,7 +1108,7 @@ fn log_response() -> serde_json::Value {
 
 fn release_response() -> serde_json::Value {
     serde_json::json!({
-        "schema_version": 4,
+        "schema_version": 5,
         "subject": {
             "kind": "release",
             "project_id": PROJECT_ID,
@@ -1423,7 +1423,7 @@ fn release_signals() -> serde_json::Value {
             "status": "available",
             "estimation": {
                 "unique_counts_are_approximate": true,
-                "method": "approximate_uniq_combined64"
+                "method": "approximate_distinct"
             },
             "items": [{
                 "name": "checkout.submit",
