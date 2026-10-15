@@ -37,7 +37,7 @@ async_test!(human_release_explanation_connects_health_sdk_and_every_signal -> Re
         "Release issues: status=available count=1",
         "High-severity logs: status=available count=1",
         "Log: message=processor rejected charge level=error",
-        "Action cardinality: unique_counts_approximate=true method=approximate_uniq_combined64",
+        "Action cardinality: unique_counts_approximate=true",
         "Action: name=checkout.submit events=4 known_users=~2 anonymous_subjects=~1 sessions=~3",
         "Action subject coverage: index_version=1 typed_user_events=2 anonymous_events=1 \
          legacy_unknown_events=0 missing_events=1 historical_unindexed_events=0",

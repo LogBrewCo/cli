@@ -3322,7 +3322,6 @@ fn append_issue_user_impact(output: &mut String, user_impact: Option<&Value>) {
             output.push_str("Known affected users: ~");
             output.push_str(known.as_str());
             append_labeled_text(output, "status", user_impact, "status", 32);
-            append_labeled_text(output, "method", user_impact, "count_method", 64);
             output.push('\n');
         }
         ("not_captured", _) => {
@@ -3866,7 +3865,6 @@ fn append_release_action_previews(
             estimation,
             "unique_counts_are_approximate",
         );
-        append_labeled_text(output, "method", estimation, "method", 80);
         output.push('\n');
     }
     for action in items.into_iter().flatten().take(RELATED_PREVIEW_LIMIT) {

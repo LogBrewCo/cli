@@ -22,6 +22,7 @@ fn public_grammar_help_and_request_model_stay_aligned() -> Result<(), Box<dyn st
     assert_eq!(command.http_method(), Some(HttpMethod::Post));
     assert!(command.wants_json());
     let body = command.request_body().ok_or("comparison body missing")?;
+    assert_eq!(body["response_version"], 2);
     assert_eq!(body["analysis_unit"], "session");
     assert_eq!(body["target"]["kind"], "interaction");
     assert_eq!(body["target"]["event_name"], "checkout_completed");
@@ -33,7 +34,7 @@ fn public_grammar_help_and_request_model_stay_aligned() -> Result<(), Box<dyn st
     assert!(text.contains("first segment is the descriptive baseline"));
     assert!(text.contains("Segments are evaluated independently and may overlap"));
     assert!(text.contains("no causal inference or statistical significance"));
-    assert!(text.contains("exact validated schema-version-1 response"));
+    assert!(text.contains("exact validated schema-version-2 response"));
     Ok(())
 }
 
@@ -74,6 +75,7 @@ async_test!(built_binary_posts_exact_segments_and_preserves_validated_json -> Re
         "account-token",
     )
     .and(body_json(serde_json::json!({
+        "response_version": 2,
         "project_id": PROJECT_ID,
         "since": "7d",
         "interval": "1h",
@@ -331,10 +333,10 @@ fn compare_args(json: bool, baseline: &str) -> Vec<String> {
     args
 }
 
-/// Stable schema-version-1 fixture matching the API contract.
+/// Stable schema-version-2 fixture matching the API contract.
 fn comparison_response(baseline_label: &str) -> serde_json::Value {
     serde_json::json!({
-        "schema_version": 1,
+        "schema_version": 2,
         "query": {
             "project_id": PROJECT_ID,
             "since": "2026-08-01T00:00:00Z",
@@ -371,7 +373,7 @@ fn comparison_response(baseline_label: &str) -> serde_json::Value {
         "confidence": {
             "interpretation": "descriptive_only",
             "unique_count_accuracy": "approximate",
-            "estimation_method": "clickhouse_uniq_combined64",
+            "estimation_method": "approximate_distinct",
             "causal_inference": "not_established",
             "statistical_significance": "not_tested",
             "segment_overlap": "possible",

@@ -464,7 +464,7 @@ async_test!(human_output_surfaces_failure_fix_timeline_correlations_and_limits -
          revision_source=deployment_commit file=apps/checkout/payment_gateway.ts evidence=complete",
         "Reproducer: status=ready \
          baseline=22222222-2222-4222-8222-222222222222 evidence=complete",
-        "Known affected users: ~2 status=partial method=approximate_uniq_combined64",
+        "Known affected users: ~2 status=partial",
         "User-impact coverage: retained=3 indexed=3 identified=2 anonymous=0 missing=0 \
          privacy_filtered=1 historical_unindexed=0 index=100.00% identified_share=66.66%",
         "User-impact limitations: approximate_distinct_count, privacy_filtered_subject_context",

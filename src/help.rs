@@ -677,8 +677,8 @@ maturity-aware denominators that do not classify unobservable users as churned.
 Lifecycle classifies typed opaque users as new in observed history, returning, resurrected, or \
 dormant for one exact event, with explicit history and capture bounds.
 All commands return bounded human guidance and exact validated JSON contracts for AI agents. \
-Overview uses schema version 2 for exhaustive subject-kind coverage; the other commands use \
-schema version 1.
+Overview uses schema version 3, properties and compare use schema version 2, and the other \
+commands use schema version 1.
 Next: start with overview, inspect properties before property-based comparisons, then choose compare \
 for context differences, paths for journeys, funnels for conversion, retention for return behavior, \
 or lifecycle for population change.";
@@ -705,7 +705,7 @@ untraced events, unnamed events, and unclassified activity remain separate.
 Unique user, anonymous-subject, session, name, and surface counts are approximate; event and \
 coverage totals are exact within the selected window.
 Human output is terminal-safe and recommends the next useful capture or analysis action.
-JSON emits the exact validated schema-version-2 response without user or session identifiers.
+JSON emits the exact validated schema-version-3 response without user or session identifiers.
 Next: use exact event names from the overview with analytics compare, paths, funnel, retention, or \
 lifecycle.";
 
@@ -728,7 +728,7 @@ privacy filtering, truncation, and the next useful action.
 Property values and user, session, subject, trace, network-address, or credential identifiers are \
 never returned by this command. Use a value already known by your application with \
 --segment-property <segment-key>:<property-key>=<exact-value> in analytics compare.
-Human output is terminal-safe. JSON emits the exact validated schema-version-1 aggregate response.
+Human output is terminal-safe. JSON emits the exact validated schema-version-2 aggregate response.
 Next: copy an exact returned key into an analytics compare property predicate; verify value spelling \
 and case locally because catalog discovery intentionally does not reveal values.";
 
@@ -765,7 +765,7 @@ statistical significance test is claimed.
 Human output shows segment reach, baseline differences, missing-key coverage versus nonmatching-value \
 coverage, capture and trace-link coverage, bounded \
 time-series evidence, interpretation limits, and the next useful action. JSON emits the exact \
-validated schema-version-1 response without raw session or subject identifiers.
+validated schema-version-2 response without raw session or subject identifiers.
 Next: choose an exact captured target from Product Analytics overview, compare meaningful exact \
 contexts, then inspect paths and correlated traces in the weakest segment.";
 
