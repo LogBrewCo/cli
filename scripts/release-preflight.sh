@@ -52,6 +52,12 @@ fail_missing_ci() {
   exit 1
 }
 
+fail_missing_prebuild() {
+  printf 'Release preflight failed: no successful release prebuild exists for %s\n' "$1" >&2
+  printf 'Next: run gh workflow run release.yml --repo %s --ref main, wait for it to pass, then rerun %s %s before tagging.\n' "$REPO" "$0" "$TAG" >&2
+  exit 1
+}
+
 fail_audit() {
   printf 'Release preflight failed: cargo audit found RustSec advisories or could not complete\n' >&2
   printf 'Next: review cargo audit output, update affected dependencies, then rerun %s %s before tagging.\n' "$0" "$TAG" >&2
@@ -371,6 +377,24 @@ ci_url="$(jq -r '.url' <<<"$ci_run")"
 
 if [[ "$ci_head" != "$local_head" || "$ci_status" != "completed" || "$ci_conclusion" != "success" ]]; then
   fail_ci_not_green "$local_head" "$ci_url"
+fi
+
+# Release tags publish the artifacts that a manual release.yml run built for this exact commit.
+prebuild_run="$(
+  gh run list \
+    --repo "$REPO" \
+    --workflow release.yml \
+    --event workflow_dispatch \
+    --branch main \
+    --commit "$local_head" \
+    --status success \
+    --limit 1 \
+    --json databaseId \
+    --jq '.[0].databaseId // empty'
+)"
+
+if [[ -z "$prebuild_run" ]]; then
+  fail_missing_prebuild "$local_head"
 fi
 
 printf 'Release preflight passed for %s (%s).\n' "$TAG" "$local_head"
