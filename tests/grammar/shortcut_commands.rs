@@ -76,7 +76,7 @@ fn parses_common_human_terms_as_read_shortcuts() -> TestResult {
     );
     assert_eq!(
         errors.http_path().ok_or("errors shortcut has endpoint")?,
-        "/api/telemetry/issues?status=unresolved&release=checkout%401"
+        "/api/telemetry/issues?status=unresolved&release=checkout%401&response_version=2"
     );
 
     let events = parse_command([
@@ -133,47 +133,47 @@ fn parses_issue_status_words_as_issue_list_filters() {
     for (args, expected_path) in [
         (
             &["logbrew", "latest", "issues", "ignored", "--json"][..],
-            "/api/telemetry/issues?status=ignored",
+            "/api/telemetry/issues?status=ignored&response_version=2",
         ),
         (
             &["logbrew", "last", "open", "issues", "--json"],
-            "/api/telemetry/issues?status=unresolved",
+            "/api/telemetry/issues?status=unresolved&response_version=2",
         ),
         (
             &["logbrew", "read", "exceptions", "unresolved", "--json"],
-            "/api/telemetry/issues?status=unresolved",
+            "/api/telemetry/issues?status=unresolved&response_version=2",
         ),
         (
             &["logbrew", "issue", "open", "--json"],
-            "/api/telemetry/issues?status=unresolved",
+            "/api/telemetry/issues?status=unresolved&response_version=2",
         ),
         (
             &["logbrew", "read", "open", "issue", "--json"],
-            "/api/telemetry/issues?status=unresolved",
+            "/api/telemetry/issues?status=unresolved&response_version=2",
         ),
         (
             &["logbrew", "read", "issue", "closed", "--json"],
-            "/api/telemetry/issues?status=resolved",
+            "/api/telemetry/issues?status=resolved&response_version=2",
         ),
         (
             &["logbrew", "show", "issue", "ignored", "--json"],
-            "/api/telemetry/issues?status=ignored",
+            "/api/telemetry/issues?status=ignored&response_version=2",
         ),
         (
             &["logbrew", "open", "issue", "--json"],
-            "/api/telemetry/issues?status=unresolved",
+            "/api/telemetry/issues?status=unresolved&response_version=2",
         ),
         (
             &["logbrew", "last", "closed", "issue", "--json"],
-            "/api/telemetry/issues?status=resolved",
+            "/api/telemetry/issues?status=resolved&response_version=2",
         ),
         (
             &["logbrew", "ignored", "exceptions", "--json"],
-            "/api/telemetry/issues?status=ignored",
+            "/api/telemetry/issues?status=ignored&response_version=2",
         ),
         (
             &["logbrew", "resolved", "issues", "--json"],
-            "/api/telemetry/issues?status=resolved",
+            "/api/telemetry/issues?status=resolved&response_version=2",
         ),
     ] {
         assert_path(args, expected_path);
@@ -192,7 +192,7 @@ fn parses_issue_status_shortcuts_with_scope_and_count() {
                 "checkout@1",
                 "--json",
             ][..],
-            "/api/telemetry/issues?status=unresolved&release=checkout%401",
+            "/api/telemetry/issues?status=unresolved&release=checkout%401&response_version=2",
         ),
         (
             &[
@@ -203,17 +203,17 @@ fn parses_issue_status_shortcuts_with_scope_and_count() {
                 "production",
                 "--json",
             ],
-            "/api/telemetry/issues?status=resolved&environment=production",
+            "/api/telemetry/issues?status=resolved&environment=production&response_version=2",
         ),
         (
             &["logbrew", "last", "5", "open", "issues", "--json"],
-            "/api/telemetry/issues?status=unresolved&limit=5",
+            "/api/telemetry/issues?status=unresolved&limit=5&response_version=2",
         ),
         (
             &[
                 "logbrew", "read", "recent", "3", "closed", "errors", "--json",
             ],
-            "/api/telemetry/issues?status=resolved&limit=3",
+            "/api/telemetry/issues?status=resolved&limit=3&response_version=2",
         ),
         (
             &[
@@ -224,7 +224,7 @@ fn parses_issue_status_shortcuts_with_scope_and_count() {
                 "checkout@1",
                 "--json",
             ],
-            "/api/telemetry/issues?status=unresolved&release=checkout%401",
+            "/api/telemetry/issues?status=unresolved&release=checkout%401&response_version=2",
         ),
         (
             &[
@@ -235,7 +235,7 @@ fn parses_issue_status_shortcuts_with_scope_and_count() {
                 "production",
                 "--json",
             ],
-            "/api/telemetry/issues?status=resolved&environment=production",
+            "/api/telemetry/issues?status=resolved&environment=production&response_version=2",
         ),
         (
             &[
@@ -246,11 +246,11 @@ fn parses_issue_status_shortcuts_with_scope_and_count() {
                 "production",
                 "--json",
             ],
-            "/api/telemetry/issues?status=resolved&environment=production",
+            "/api/telemetry/issues?status=resolved&environment=production&response_version=2",
         ),
         (
             &["logbrew", "last", "5", "closed", "issue", "--json"],
-            "/api/telemetry/issues?status=resolved&limit=5",
+            "/api/telemetry/issues?status=resolved&limit=5&response_version=2",
         ),
     ] {
         assert_path(args, expected_path);
@@ -319,7 +319,7 @@ fn parses_recency_words_as_read_shortcuts() -> TestResult {
         recent_issues
             .http_path()
             .ok_or("recent issues has endpoint")?,
-        "/api/telemetry/issues?status=unresolved"
+        "/api/telemetry/issues?status=unresolved&response_version=2"
     );
 
     let last_action = parse_command(["logbrew", "last", "action", "checkout_failed", "--json"])?;
@@ -356,7 +356,7 @@ fn parses_recency_count_before_resource_as_limit() {
             &[
                 "logbrew", "read", "recent", "5", "issues", "--status", "open", "--json",
             ],
-            "/api/telemetry/issues?status=unresolved&limit=5",
+            "/api/telemetry/issues?status=unresolved&limit=5&response_version=2",
         ),
         (
             &[
@@ -399,7 +399,7 @@ fn parses_read_prefixed_recency_and_status_shortcuts() -> TestResult {
             &[
                 "logbrew", "read", "recent", "issues", "--status", "open", "--json",
             ],
-            "/api/telemetry/issues?status=unresolved",
+            "/api/telemetry/issues?status=unresolved&response_version=2",
         ),
         (
             &[
@@ -434,7 +434,7 @@ fn parses_read_prefixed_recency_and_status_shortcuts() -> TestResult {
                 "checkout@1",
                 "--json",
             ],
-            "/api/telemetry/issues?status=unresolved&release=checkout%401",
+            "/api/telemetry/issues?status=unresolved&release=checkout%401&response_version=2",
         ),
         (
             &[
@@ -446,7 +446,7 @@ fn parses_read_prefixed_recency_and_status_shortcuts() -> TestResult {
                 "production",
                 "--json",
             ],
-            "/api/telemetry/issues?status=resolved&environment=production",
+            "/api/telemetry/issues?status=resolved&environment=production&response_version=2",
         ),
     ] {
         let command = parse_command(args.iter().copied())?;
@@ -894,7 +894,7 @@ fn parses_issue_status_shortcuts_as_mutations() -> TestResult {
         );
         assert_eq!(
             command.http_path().ok_or("status shortcut has endpoint")?,
-            "/api/telemetry/issues/issue_123"
+            "/api/telemetry/issues/issue_123?response_version=2"
         );
         assert_eq!(
             command.request_body().ok_or("status shortcut has body")?,
@@ -929,7 +929,7 @@ fn parses_issue_aliases_with_ids_as_issue_detail_shortcuts() -> TestResult {
         );
         assert_eq!(
             command.http_path().ok_or("issue alias id has endpoint")?,
-            format!("/api/telemetry/issues/{expected_id}")
+            format!("/api/telemetry/issues/{expected_id}?response_version=2")
         );
     }
     Ok(())
@@ -1045,7 +1045,7 @@ fn parses_common_read_verbs_as_read_shortcuts() -> TestResult {
     );
     assert_eq!(
         get_issue.http_path().ok_or("get issue has endpoint")?,
-        "/api/telemetry/issues/issue_123"
+        "/api/telemetry/issues/issue_123?response_version=2"
     );
     Ok(())
 }
@@ -1066,7 +1066,7 @@ fn parses_singular_collections_with_read_verbs() -> TestResult {
         (
             &["logbrew", "list", "issue", "--json"],
             ReadTarget::Issues,
-            "/api/telemetry/issues",
+            "/api/telemetry/issues?response_version=2",
         ),
         (
             &["logbrew", "list", "log", "--json"],
@@ -1243,7 +1243,7 @@ fn parses_pasted_detail_ids_as_read_shortcuts() -> TestResult {
     );
     assert_eq!(
         issue.http_path().ok_or("issue id has endpoint")?,
-        "/api/telemetry/issues/issue_123"
+        "/api/telemetry/issues/issue_123?response_version=2"
     );
 
     let trace = parse_command(["logbrew", "--json", "4bf92f3577b34da6a3ce929d0e0e4736"])?;

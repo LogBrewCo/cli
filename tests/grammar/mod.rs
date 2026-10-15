@@ -11,6 +11,7 @@ mod help_errors;
 mod help_text;
 mod issue_mutation_shortcuts;
 mod issue_recovery;
+mod issue_triage;
 mod local_commands;
 mod parse_errors;
 mod search_commands;

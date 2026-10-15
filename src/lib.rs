@@ -33,6 +33,7 @@ mod http;
 pub mod ids;
 #[doc(hidden)]
 pub mod investigate;
+pub mod issue_triage;
 mod mcp_grants;
 mod native_debug_artifacts;
 mod parser;
@@ -60,6 +61,7 @@ pub use error::{
     CliError, RuntimeError, write_cli_error, write_native_debug_runtime_error, write_runtime_error,
 };
 use futures_util::StreamExt as _;
+pub use issue_triage::IssueBulkOptions;
 pub use parser::parse_command;
 use render::write_api_success;
 use setup::write_setup_plan;
@@ -113,13 +115,13 @@ pub async fn run_process() -> std::process::ExitCode {
 
 /// Accepted issue status values for generic recovery text.
 pub(crate) const ISSUE_STATUS_VALUES_NEXT_STEP: &str =
-    "use one of unresolved/open, resolved/closed, ignored";
+    "use one of unresolved/open, resolved/closed, archived/ignored";
 /// Accepted issue status values for read filter recovery text.
 pub(crate) const ISSUE_STATUS_FILTER_NEXT_STEP: &str =
-    "use --status unresolved/open, --status resolved/closed, or --status ignored";
+    "use --status unresolved/open, --status resolved/closed, or --status archived/ignored";
 /// Accepted issue status values for missing mutation arguments.
 pub(crate) const ISSUE_STATUS_ARGUMENT_NEXT_STEP: &str =
-    "provide one of unresolved/open, resolved/closed, ignored";
+    "provide one of unresolved/open, resolved/closed, archived/ignored";
 
 /// OAuth provider used for native CLI browser login.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -554,6 +556,7 @@ impl ReadTarget {
                 !matches!(self, Self::Issue(_))
             }
             "--status" => matches!(self, Self::Issues | Self::Traces),
+            "--priority" => matches!(self, Self::Issues),
             "--min-duration-ms" => matches!(self, Self::Traces),
             "--pagination" | "--cursor-time" | "--cursor-id" => {
                 matches!(
@@ -593,6 +596,8 @@ pub struct ReadOptions {
     pub environment: Option<String>,
     /// Optional issue status filter.
     pub status: Option<String>,
+    /// Optional issue priority filter.
+    pub priority: Option<String>,
     /// Optional row limit.
     pub limit: Option<String>,
     /// Optional minimum end-to-end trace duration in milliseconds.
@@ -622,6 +627,7 @@ impl ReadOptions {
             (self.release.is_some(), "--release"),
             (self.environment.is_some(), "--environment"),
             (self.status.is_some(), "--status"),
+            (self.priority.is_some(), "--priority"),
             (self.limit.is_some(), "--limit"),
             (self.min_duration_ms.is_some(), "--min-duration-ms"),
             (self.pagination.is_some(), "--pagination"),
@@ -1435,6 +1441,15 @@ pub enum SetTarget {
         /// New issue status.
         status: String,
     },
+    /// Set one issue's priority.
+    IssuePriority {
+        /// Issue identifier.
+        id: String,
+        /// New priority: `high`, `medium`, or `low`.
+        priority: String,
+    },
+    /// Update status or priority of several issues of one project in one request.
+    IssueBulk(IssueBulkOptions),
 }
 
 /// Process environment needed by the CLI.
@@ -1486,6 +1501,7 @@ impl Command {
                     release: options.release.as_deref(),
                     environment: options.environment.as_deref(),
                     status: options.status.as_deref(),
+                    priority: options.priority.as_deref(),
                     limit: options.limit.as_deref(),
                     min_duration_ms: options.min_duration_ms.as_deref(),
                     pagination: options.pagination.as_deref(),
@@ -1612,6 +1628,10 @@ impl Command {
                 target: SupportTarget::Create(_) | SupportTarget::ReplyContext(_),
                 ..
             }
+            | Self::Set {
+                target: SetTarget::IssueBulk(_),
+                ..
+            }
             | Self::ProjectDeletion { .. } => Some(HttpMethod::Post),
             Self::Support {
                 target: SupportTarget::UpdateStatus { .. },
@@ -1659,6 +1679,14 @@ impl Command {
                 target: SetTarget::IssueStatus { status, .. },
                 ..
             } => Some(serde_json::json!({ "status": status })),
+            Self::Set {
+                target: SetTarget::IssuePriority { priority, .. },
+                ..
+            } => Some(serde_json::json!({ "priority": priority })),
+            Self::Set {
+                target: SetTarget::IssueBulk(options),
+                ..
+            } => Some(issue_triage::request_body(options)),
             Self::Deploy { options, .. } => serde_json::to_value(options).ok(),
             Self::AnalyticsPaths { options, .. } => Some(analytics::request_body(options)),
             Self::AnalyticsCompare { options, .. } => {
@@ -2410,6 +2438,8 @@ struct ReadPathFilters<'a> {
     environment: Option<&'a str>,
     /// Optional issue status filter.
     status: Option<&'a str>,
+    /// Optional issue priority filter.
+    priority: Option<&'a str>,
     /// Optional row limit.
     limit: Option<&'a str>,
     /// Optional minimum end-to-end trace duration in milliseconds.
@@ -2450,6 +2480,7 @@ fn read_path(target: &ReadTarget, filters: &ReadPathFilters<'_>) -> String {
                 ("since", filters.since),
                 ("until", filters.until),
                 ("status", filters.status),
+                ("priority", filters.priority),
                 ("project_id", filters.project),
                 ("release", filters.release),
                 ("environment", filters.environment),
@@ -2457,6 +2488,7 @@ fn read_path(target: &ReadTarget, filters: &ReadPathFilters<'_>) -> String {
                 ("cursor_time", filters.cursor_time),
                 ("cursor_id", filters.cursor_id),
                 ("limit", filters.limit),
+                ("response_version", Some("2")),
             ],
         ),
         ReadTarget::Actions => path_with_query(
@@ -2513,7 +2545,10 @@ fn read_path(target: &ReadTarget, filters: &ReadPathFilters<'_>) -> String {
                 ("environment", filters.environment),
             ],
         ),
-        ReadTarget::Issue(id) => format!("/api/telemetry/issues/{}", encode_component(id)),
+        ReadTarget::Issue(id) => format!(
+            "/api/telemetry/issues/{}?response_version=2",
+            encode_component(id)
+        ),
     }
 }
 
@@ -2641,9 +2676,14 @@ fn metric_explain_path(metric: &ExplainMetricTarget) -> String {
 /// Builds a mutation endpoint path.
 fn set_path(target: &SetTarget) -> String {
     match target {
-        SetTarget::IssueStatus { id, .. } => {
-            format!("/api/telemetry/issues/{}", encode_component(id))
+        // Version 2 reports `archived` and priority.
+        SetTarget::IssueStatus { id, .. } | SetTarget::IssuePriority { id, .. } => {
+            format!(
+                "/api/telemetry/issues/{}?response_version=2",
+                encode_component(id)
+            )
         }
+        SetTarget::IssueBulk(_) => String::from("/api/telemetry/issues/bulk"),
     }
 }
 

@@ -83,6 +83,9 @@ pub enum CliError {
     /// Trace status is unsupported.
     #[error("unknown trace status: {0}")]
     UnknownTraceStatus(String),
+    /// Issue priority is unsupported.
+    #[error("unknown issue priority: {0}")]
+    UnknownPriority(String),
     /// Log level is unsupported.
     #[error("unknown log level: {0}")]
     UnknownLogLevel(String),
@@ -149,6 +152,9 @@ pub enum CliError {
     /// MCP grant list or confirmed revocation syntax is malformed.
     #[error("invalid mcp command")]
     InvalidMcpCommand,
+    /// Issue archive, resolve, reopen, or priority syntax is malformed.
+    #[error("invalid issue command")]
+    InvalidIssueTriageCommand,
     /// Permanently deleted project syntax or exact confirmation is malformed.
     #[error("invalid project deletion command")]
     InvalidProjectDeletionCommand,
@@ -597,6 +603,7 @@ const fn cli_error_code(error: &CliError) -> &'static str {
         CliError::UnknownResource { .. } => "unknown_resource",
         CliError::UnknownStatus(_) => "unknown_status",
         CliError::UnknownTraceStatus(_) => "unknown_trace_status",
+        CliError::UnknownPriority(_) => "unknown_priority",
         CliError::UnknownLogLevel(_) => "unknown_log_level",
         CliError::InvalidLimit(_) => "invalid_limit",
         CliError::InvalidMinDuration(_) => "invalid_min_duration",
@@ -621,6 +628,7 @@ const fn cli_error_code(error: &CliError) -> &'static str {
         }
         CliError::InvalidProjectArchiveCommand => "invalid_project_archive_command",
         CliError::InvalidMcpCommand => "invalid_mcp_command",
+        CliError::InvalidIssueTriageCommand => "invalid_issue_command",
         CliError::InvalidProjectDeletionCommand => "invalid_project_deletion_command",
         CliError::InvalidDeploymentCommand => "invalid_deployment_command",
         CliError::InvalidProjectsCommand => "invalid_projects_command",
@@ -683,6 +691,9 @@ const fn cli_error_next_step(error: &CliError) -> &'static str {
         CliError::InvalidMcpCommand => {
             "use logbrew mcp grants or logbrew mcp revoke <grant_id> --yes, with optional --json"
         }
+        CliError::InvalidIssueTriageCommand => {
+            "use logbrew issues archive|resolve|reopen <issue_id>... or logbrew issues priority high|medium|low <issue_id>..., with --project <project_id> for more than one issue (up to 100) and optional --json"
+        }
         CliError::InvalidProjectDeletionCommand => {
             "use logbrew projects delete <project_id> --confirm <project_id> with optional --json"
         }
@@ -710,6 +721,7 @@ const fn cli_error_next_step(error: &CliError) -> &'static str {
         CliError::UnknownCommand => "run logbrew --help",
         CliError::UnknownStatus(_) => ISSUE_STATUS_VALUES_NEXT_STEP,
         CliError::UnknownTraceStatus(_) => "use --status error or --status ok",
+        CliError::UnknownPriority(_) => "use --priority high, medium, or low",
         CliError::UnknownLogLevel(_) => "use one of info, warning, error, critical",
     }
 }

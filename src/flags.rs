@@ -122,6 +122,7 @@ impl FlagScope {
             }
             (Self::Read, "since") => "use --since <duration>",
             (Self::Read, "until") => "use --until <RFC3339>",
+            (Self::Read, "priority") => "use --priority high, medium, or low",
             (Self::Read, "min-duration-ms") => {
                 "use --min-duration-ms with a non-negative whole number"
             }
@@ -293,6 +294,7 @@ pub(crate) fn is_read_filter_word(value: &str) -> bool {
             | "service-name"
             | "since"
             | "until"
+            | "priority"
             | "min-duration-ms"
             | "pagination"
             | "cursor-time"
@@ -425,6 +427,8 @@ enum ReadFilterKind {
     Since,
     /// Exclusive RFC 3339 upper time bound.
     Until,
+    /// Issue priority filter.
+    Priority,
     /// Actor/distinct-id filter.
     User,
     /// Trace correlation filter.
@@ -461,6 +465,7 @@ fn read_filter_spec(flag: &str) -> Option<ReadFilterSpec> {
         "--service-name" => (ReadFilterKind::Service, "--service", "--service-name"),
         "--since" => (ReadFilterKind::Since, "--since", "--since"),
         "--until" => (ReadFilterKind::Until, "--until", "--until"),
+        "--priority" => (ReadFilterKind::Priority, "--priority", "--priority"),
         "--user" => (ReadFilterKind::User, "--user", "--user"),
         "--distinct-id" => (ReadFilterKind::User, "--user", "--distinct-id"),
         "--trace" => (ReadFilterKind::Trace, "--trace", "--trace"),
@@ -503,6 +508,7 @@ fn apply_read_filter(
         ReadFilterKind::Service => read.service = Some(value),
         ReadFilterKind::Since => read.since = Some(value),
         ReadFilterKind::Until => read.until = Some(value),
+        ReadFilterKind::Priority => read.priority = Some(normalize_priority(&value)?),
         ReadFilterKind::User => read.user = Some(value),
         ReadFilterKind::Trace => read.trace = Some(value),
         ReadFilterKind::Level => read.level = Some(normalize_log_level(&value)?),
@@ -585,6 +591,7 @@ fn duplicate_flag_next(flag: &'static str) -> &'static str {
         "--service" => "use --service once",
         "--since" => "use --since once",
         "--until" => "use --until once",
+        "--priority" => "use --priority once",
         "--user" => "use --user once",
         "--trace" => "use --trace once",
         "--severity" => "use --severity once",
@@ -608,7 +615,16 @@ pub(crate) fn normalize_status(status: &str) -> Result<String, CliError> {
         "open" | "unresolved" => Ok(String::from("unresolved")),
         "resolved" | "closed" => Ok(String::from("resolved")),
         "ignored" => Ok(String::from("ignored")),
+        "archived" => Ok(String::from("archived")),
         other => Err(CliError::UnknownStatus(other.to_owned())),
+    }
+}
+
+/// Normalizes an issue priority filter.
+fn normalize_priority(priority: &str) -> Result<String, CliError> {
+    match priority.to_ascii_lowercase().as_str() {
+        level @ ("high" | "medium" | "low") => Ok(level.to_owned()),
+        other => Err(CliError::UnknownPriority(other.to_owned())),
     }
 }
 
@@ -696,6 +712,7 @@ fn missing_flag_value_next(flag: &'static str) -> &'static str {
         "--service-name" => "provide a value after --service-name",
         "--since" => "provide a value after --since",
         "--until" => "provide a value after --until",
+        "--priority" => "provide a value after --priority",
         "--user" => "provide a value after --user",
         "--distinct-id" => "provide a value after --distinct-id",
         "--trace" => "provide a value after --trace",

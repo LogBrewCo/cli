@@ -191,6 +191,7 @@ fn parse_values(values: &[String]) -> Result<Command, CliError> {
             parse_read_resource("trace", tail)
         }
         "traces" | "spans" => parse_read_resource("traces", tail),
+        "issues" if is_issue_triage_action(tail) => crate::issue_triage::parse(tail),
         "logs" | "issues" | "errors" | "error" | "exceptions" | "exception" | "actions"
         | "events" | "event" | "action" | "releases" | "metrics" | "metric" | "trace" | "issue" => {
             parse_read_resource(head, tail)
@@ -1312,6 +1313,18 @@ fn parse_mcp(args: &[String]) -> Result<Command, CliError> {
     }
 }
 
+/// Returns whether `logbrew issues` continues with a change rather than a read.
+fn is_issue_triage_action(args: &[String]) -> bool {
+    args.iter()
+        .find(|arg| *arg != "--json")
+        .is_some_and(|action| {
+            matches!(
+                action.as_str(),
+                "archive" | "resolve" | "reopen" | "priority"
+            )
+        })
+}
+
 /// Parses the closed authenticated account-usage read grammar.
 fn parse_usage(args: &[String]) -> Result<Command, CliError> {
     match args {
@@ -1875,6 +1888,7 @@ fn read_value_canonical_flag(flag: &str) -> Option<&'static str> {
         "--service" | "--service-name" => "--service",
         "--since" => "--since",
         "--until" => "--until",
+        "--priority" => "--priority",
         "--user" | "--distinct-id" => "--user",
         "--trace" | "--trace-id" => "--trace",
         "--level" | "--severity" => "--severity",
@@ -1938,6 +1952,7 @@ fn is_read_value_flag(flag: &str) -> bool {
             | "--service-name"
             | "--since"
             | "--until"
+            | "--priority"
             | "--user"
             | "--distinct-id"
             | "--trace"

@@ -26,7 +26,7 @@ fn rejects_filter_words_before_action_name_shortcuts_with_specific_hints()
                 "--json",
             ][..],
             "status",
-            "use --status unresolved/open, --status resolved/closed, or --status ignored",
+            "use --status unresolved/open, --status resolved/closed, or --status archived/ignored",
         ),
         (
             &["logbrew", "events", "trace-id", "trace_123", "--json"][..],
