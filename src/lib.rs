@@ -538,7 +538,7 @@ impl ReadTarget {
         match flag {
             "--name" => matches!(self, Self::Actions | Self::Metrics),
             "--user" | "--distinct-id" => matches!(self, Self::Actions),
-            "--service" | "--service-name" | "--since" | "--limit" => matches!(
+            "--service" | "--service-name" | "--since" | "--until" | "--limit" => matches!(
                 self,
                 Self::Logs
                     | Self::Issues
@@ -575,6 +575,8 @@ pub struct ReadOptions {
     pub service: Option<String>,
     /// Optional relative or absolute lower time bound.
     pub since: Option<String>,
+    /// Optional exclusive RFC 3339 upper time bound.
+    pub until: Option<String>,
     /// Optional user or actor filter.
     pub user: Option<String>,
     /// Optional trace ID filter.
@@ -611,6 +613,7 @@ impl ReadOptions {
             (self.name.is_some(), "--name"),
             (self.service.is_some(), "--service"),
             (self.since.is_some(), "--since"),
+            (self.until.is_some(), "--until"),
             (self.user.is_some(), "--user"),
             (self.trace.is_some(), "--trace"),
             (self.level.is_some(), "--severity"),
@@ -1474,6 +1477,7 @@ impl Command {
                     name: options.name.as_deref(),
                     service: options.service.as_deref(),
                     since: options.since.as_deref(),
+                    until: options.until.as_deref(),
                     user: options.user.as_deref(),
                     trace: options.trace.as_deref(),
                     level: options.level.as_deref(),
@@ -2388,6 +2392,8 @@ struct ReadPathFilters<'a> {
     service: Option<&'a str>,
     /// Optional lower time bound.
     since: Option<&'a str>,
+    /// Optional exclusive upper time bound.
+    until: Option<&'a str>,
     /// Optional user or actor filter.
     user: Option<&'a str>,
     /// Optional trace ID filter.
@@ -2426,6 +2432,7 @@ fn read_path(target: &ReadTarget, filters: &ReadPathFilters<'_>) -> String {
                 ("severity", filters.level),
                 ("search", filters.search),
                 ("since", filters.since),
+                ("until", filters.until),
                 ("trace_id", filters.trace),
                 ("project_id", filters.project),
                 ("release", filters.release),
@@ -2441,6 +2448,7 @@ fn read_path(target: &ReadTarget, filters: &ReadPathFilters<'_>) -> String {
             &[
                 ("service_name", filters.service),
                 ("since", filters.since),
+                ("until", filters.until),
                 ("status", filters.status),
                 ("project_id", filters.project),
                 ("release", filters.release),
@@ -2457,6 +2465,7 @@ fn read_path(target: &ReadTarget, filters: &ReadPathFilters<'_>) -> String {
                 ("service_name", filters.service),
                 ("name", filters.name),
                 ("since", filters.since),
+                ("until", filters.until),
                 ("distinct_id", filters.user),
                 ("project_id", filters.project),
                 ("release", filters.release),
@@ -2472,6 +2481,7 @@ fn read_path(target: &ReadTarget, filters: &ReadPathFilters<'_>) -> String {
             &[
                 ("service_name", filters.service),
                 ("since", filters.since),
+                ("until", filters.until),
                 ("project_id", filters.project),
                 ("release", filters.release),
                 ("environment", filters.environment),
@@ -2484,6 +2494,7 @@ fn read_path(target: &ReadTarget, filters: &ReadPathFilters<'_>) -> String {
                 ("name", filters.name),
                 ("service_name", filters.service),
                 ("since", filters.since),
+                ("until", filters.until),
                 ("project_id", filters.project),
                 ("release", filters.release),
                 ("environment", filters.environment),
@@ -2517,6 +2528,7 @@ fn trace_list_path(filters: &ReadPathFilters<'_>) -> String {
             ("environment", filters.environment),
             ("status", filters.status),
             ("since", filters.since),
+            ("until", filters.until),
             ("min_duration_ms", filters.min_duration_ms),
             ("pagination", filters.pagination),
             ("cursor_time", filters.cursor_time),

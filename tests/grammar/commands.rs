@@ -39,6 +39,7 @@ fn read_options_default_has_no_filters() {
             name: None,
             service: None,
             since: None,
+            until: None,
             user: None,
             trace: None,
             level: None,
@@ -873,6 +874,60 @@ fn parses_agent_friendly_read_actions() {
         ),
         "/api/telemetry/actions?name=checkout_failed&since=24h",
     );
+}
+
+#[test]
+fn sends_an_exclusive_until_with_every_collection_read() -> Result<(), Box<dyn std::error::Error>> {
+    let window = "since=2026-05-01T00%3A00%3A00Z&until=2026-06-01T00%3A00%3A00Z";
+    for (resource, expected_path) in [
+        ("logs", format!("/api/logs?{window}")),
+        ("issues", format!("/api/telemetry/issues?{window}")),
+        ("actions", format!("/api/telemetry/actions?{window}")),
+        ("releases", format!("/api/telemetry/releases?{window}")),
+        ("metrics", format!("/api/telemetry/metrics?{window}")),
+        ("traces", format!("/api/telemetry/traces?{window}")),
+    ] {
+        assert_path(
+            &[
+                "logbrew",
+                "read",
+                resource,
+                "--since",
+                "2026-05-01T00:00:00Z",
+                "--until",
+                "2026-06-01T00:00:00Z",
+                "--json",
+            ],
+            expected_path.as_str(),
+        );
+    }
+
+    let duplicate = parse_command([
+        "logbrew",
+        "issues",
+        "--until",
+        "2026-06-01T00:00:00Z",
+        "--until",
+        "2026-06-02T00:00:00Z",
+    ])
+    .err()
+    .ok_or("duplicate --until must fail")?;
+    assert_eq!(duplicate.to_string(), "duplicate flag: --until");
+
+    let missing = parse_command(["logbrew", "logs", "--until"])
+        .err()
+        .ok_or("--until without a value must fail")?;
+    assert!(missing.to_string().contains("--until"), "{missing}");
+
+    let unsupported = parse_command([
+        "logbrew",
+        "issue",
+        "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "--until",
+        "2026-06-01T00:00:00Z",
+    ]);
+    assert!(unsupported.is_err(), "one issue by ID takes no time range");
+    Ok(())
 }
 
 #[test]
