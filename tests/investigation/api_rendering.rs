@@ -1000,3 +1000,51 @@ fn authenticated_env(server: &MockServer, home_name: &str) -> CliEnvironment {
         Some(std::env::temp_dir().join(format!("logbrew-{home_name}-{}", std::process::id()))),
     )
 }
+
+async_test!(human_issue_changes_render_priority_and_bulk_outcomes -> TestResult, {
+    let issue = "223e4567-e89b-12d3-a456-426614174001";
+    let other = "223e4567-e89b-12d3-a456-426614174002";
+    let server = MockServer::start().await?;
+    Mock::auth("PATCH", &format!("/api/telemetry/issues/{issue}"), "test-token")
+        .and(query_param("response_version", "2"))
+        .and(body_json(serde_json::json!({"priority": "low"})))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&serde_json::json!({
+            "id": issue, "status": "archived", "priority": "low", "priority_source": "manual",
+            "release": "checkout@1.2.3", "environment": "production"
+        })))
+        .mount(&server);
+    let line = concat!("logbrew issues priority low ", "223e4567-e89b-12d3-a456-426614174001");
+    let text = successful_human_output(&server, line.split_whitespace(), "human-issue-priority").await?;
+    assert_eq!(
+        text,
+        format!("Issue {issue} marked archived, priority low [checkout@1.2.3 / production].\n")
+    );
+
+    let server = MockServer::start().await?;
+    Mock::auth("POST", "/api/telemetry/issues/bulk", "test-token")
+        .and(body_json(serde_json::json!({
+            "project_id": PROJECT_ID, "issue_ids": [issue, other], "status": "archived"
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&serde_json::json!({
+            "project_id": PROJECT_ID,
+            "results": [
+                {"issue_id": issue, "outcome": "updated",
+                 "issue": {"id": issue, "status": "archived", "priority": "high"}},
+                {"issue_id": other, "outcome": "not_found", "issue": null}
+            ]
+        })))
+        .mount(&server);
+    let line = concat!(
+        "logbrew issues archive 223e4567-e89b-12d3-a456-426614174001 ",
+        "223e4567-e89b-12d3-a456-426614174002 --project 123e4567-e89b-12d3-a456-426614174000"
+    );
+    let text = successful_human_output(&server, line.split_whitespace(), "human-issue-bulk").await?;
+    assert_eq!(
+        text,
+        format!(
+            "Project {PROJECT_ID}: 1 updated, 0 unchanged, 1 not found.\n  {issue} updated: archived, \
+             priority high\n  {other} not found\n"
+        )
+    );
+    Ok(())
+});

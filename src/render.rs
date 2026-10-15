@@ -455,11 +455,16 @@ fn explain_summary(target: &ExplainTarget, value: &serde_json::Value) -> Option<
 /// Builds a human summary for mutation responses.
 fn set_summary(target: &SetTarget, value: &serde_json::Value) -> Option<String> {
     match target {
-        SetTarget::IssueStatus { .. } => {
+        SetTarget::IssueBulk(_) => crate::issue_triage::summary(value),
+        SetTarget::IssueStatus { .. } | SetTarget::IssuePriority { .. } => {
             let issue = issue_value(value)?;
             let id = field(issue, "id")?;
             let status = field(issue, "status")?;
             let mut output = format!("Issue {id} marked {status}");
+            if let Some(priority) = field(issue, "priority") {
+                output.push_str(", priority ");
+                output.push_str(priority);
+            }
             append_labeled_field(&mut output, "trace", issue, "trace_id");
             output.push_str(release_environment_suffix(issue).as_str());
             output.push_str(".\n");
@@ -933,6 +938,7 @@ fn issue_line(value: &serde_json::Value) -> Option<String> {
         output.push(' ');
         output.push_str(&severity);
     }
+    append_labeled_field(&mut output, "priority", value, "priority");
     if let Some(title) = field(value, "title") {
         output.push(' ');
         output.push_str(title);
@@ -959,7 +965,7 @@ fn issue_cursor_line(value: &serde_json::Value) -> Option<String> {
     );
     let last_seen = field(value, "last_seen_at")?;
     if !is_uuid(id)
-        || !matches!(status, "unresolved" | "resolved" | "ignored")
+        || !matches!(status, "unresolved" | "resolved" | "archived" | "ignored")
         || !is_rfc3339_utc(last_seen)
     {
         return None;
@@ -1355,6 +1361,11 @@ fn issue_detail_summary(value: &serde_json::Value) -> Option<String> {
     append_labeled_field(&mut output, "trace", issue, "trace_id");
     output.push_str(release_environment_suffix(issue).as_str());
     output.push('\n');
+    if let (Some(priority), Some(source)) =
+        (field(issue, "priority"), field(issue, "priority_source"))
+    {
+        output.push_str(format!("Priority: {priority} ({source})\n").as_str());
+    }
     if let Some(title) = field(issue, "title") {
         output.push_str("Title: ");
         output.push_str(title);
@@ -1447,7 +1458,7 @@ fn count_field(value: &serde_json::Value, name: &str) -> String {
 /// Returns the next issue action for the current status.
 fn issue_next_step(id: &str, status: &str) -> String {
     match status {
-        "resolved" | "ignored" => format!("logbrew reopen {id}"),
+        "resolved" | "archived" | "ignored" => format!("logbrew reopen {id}"),
         _ => format!("logbrew resolve {id} or logbrew ignore {id}"),
     }
 }

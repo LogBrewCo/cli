@@ -59,7 +59,7 @@ fn rejects_common_json_parse_errors_with_exact_recovery() -> TestResult {
             &["logbrew", "issues", "--status", "done", "--json"][..],
             "unknown_status",
             "unknown issue status: done",
-            "use one of unresolved/open, resolved/closed, ignored",
+            "use one of unresolved/open, resolved/closed, archived/ignored",
         ),
         (
             &["logbrew", "logs", "--release", "--json"][..],
@@ -154,7 +154,7 @@ fn rejects_common_human_parse_errors_with_exact_recovery() -> TestResult {
         (
             &["logbrew", "set", "issue", "issue_123", "done"][..],
             "unknown issue status: done",
-            "use one of unresolved/open, resolved/closed, ignored",
+            "use one of unresolved/open, resolved/closed, archived/ignored",
         ),
         (
             &["logbrew", "inspect"][..],
@@ -375,7 +375,7 @@ fn keeps_invalid_value_recovery_before_later_unsupported_filter() -> TestResult 
             ][..],
             "unknown_status",
             "unknown issue status: done",
-            "use one of unresolved/open, resolved/closed, ignored",
+            "use one of unresolved/open, resolved/closed, archived/ignored",
         ),
     ] {
         assert_json_error(args, error_code, message, next)?;
@@ -486,7 +486,7 @@ fn rejects_filter_words_after_read_shortcuts_with_specific_hints() -> TestResult
         ),
         (
             "status",
-            "use --status unresolved/open, --status resolved/closed, or --status ignored",
+            "use --status unresolved/open, --status resolved/closed, or --status archived/ignored",
         ),
         (
             "level",
@@ -572,7 +572,7 @@ fn rejects_flag_like_missing_set_fields_with_agent_next_steps() -> TestResult {
         (
             &["logbrew", "set", "issue", "issue_123", "--json"][..],
             "missing argument: status",
-            "provide one of unresolved/open, resolved/closed, ignored",
+            "provide one of unresolved/open, resolved/closed, archived/ignored",
         ),
     ] {
         assert_json_error(args, "missing_argument", message, next)?;
