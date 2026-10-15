@@ -2554,14 +2554,14 @@ fn explain_path(target: &ExplainTarget) -> String {
                 ("release", Some(release.release.as_str())),
                 ("environment", Some(release.environment.as_str())),
                 ("service_name", Some(release.service_name.as_str())),
-                ("response_version", Some("4")),
+                ("response_version", Some("5")),
             ],
         ),
         ExplainTarget::Metric(metric) => metric_explain_path(metric),
     }
 }
 
-/// Builds one explicit version-12 issue investigation path.
+/// Builds one explicit version-13 issue investigation path.
 fn issue_explain_path(id: &str, occurrence: &IssueOccurrenceSelection) -> String {
     let base = format!(
         "/api/telemetry/issues/{}/investigation",
@@ -2575,7 +2575,7 @@ fn issue_explain_path(id: &str, occurrence: &IssueOccurrenceSelection) -> String
     };
     path_with_query(
         base.as_str(),
-        &[("response_version", Some("12")), (name, Some(value))],
+        &[("response_version", Some("13")), (name, Some(value))],
     )
 }
 

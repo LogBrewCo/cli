@@ -181,7 +181,7 @@ pub(in crate::explain) fn response(
             "next_actions",
         ],
     )?;
-    if response.get("schema_version").and_then(Value::as_u64) != Some(4) {
+    if response.get("schema_version").and_then(Value::as_u64) != Some(5) {
         return Err(invalid_response());
     }
 
@@ -624,7 +624,7 @@ fn validate_actions(
     let estimation = required_object(value, "estimation")?;
     require_exact_fields(estimation, &["unique_counts_are_approximate", "method"])?;
     if !require_bool(estimation, "unique_counts_are_approximate")?
-        || require_string(estimation, "method")? != "approximate_uniq_combined64"
+        || require_string(estimation, "method")? != "approximate_distinct"
     {
         return Err(invalid_response());
     }

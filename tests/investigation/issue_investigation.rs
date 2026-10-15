@@ -175,7 +175,7 @@ fn parses_only_the_explicit_issue_investigation_grammar() -> TestResult {
         exact.http_path().as_deref(),
         Some(
             "/api/telemetry/issues/11111111-1111-4111-8111-111111111111/investigation?\
-             response_version=12&occurrence_id=22222222-2222-4222-8222-222222222222"
+             response_version=13&occurrence_id=22222222-2222-4222-8222-222222222222"
         )
     );
     assert!(exact.wants_json());
@@ -191,7 +191,7 @@ fn parses_only_the_explicit_issue_investigation_grammar() -> TestResult {
         latest.http_path().as_deref(),
         Some(
             "/api/telemetry/issues/11111111-1111-4111-8111-111111111111/investigation?\
-             response_version=12&selection=latest"
+             response_version=13&selection=latest"
         )
     );
     Ok(())
@@ -280,7 +280,7 @@ fn help_describes_the_complete_versioned_bundle() -> TestResult {
     assert!(text.contains("approximate affected-user coverage and limitations"));
     assert!(text.contains("trace, sibling issues, related logs, actions, metric exemplars"));
     assert!(text.contains("same contract as logbrew explain issue"));
-    assert!(text.contains("exact validated schema-version-12 response"));
+    assert!(text.contains("exact validated schema-version-13 response"));
     assert!(text.contains("deterministic grouping"));
     assert!(text.contains("exact preceding-deployment and customer-source locator evidence"));
     assert!(text.contains("explicit selected, first, latest, and recommended occurrence"));
@@ -763,7 +763,7 @@ fn mount_bundle(
         "GET",
         format!("/api/telemetry/issues/{ISSUE_ID}/investigation"),
     )
-    .and(query_param("response_version", "12"))
+    .and(query_param("response_version", "13"))
     .and(query_param(selector.0, selector.1))
     .and(header("authorization", "Bearer test-token"))
     .respond_with(ResponseTemplate::new(200).set_body_json(bundle))
@@ -881,7 +881,7 @@ fn rich_investigation_bundle() -> serde_json::Value {
         "0.1.4",
     );
     serde_json::json!({
-        "schema_version": 12,
+        "schema_version": 13,
         "subject": {
             "kind": "issue",
             "id": ISSUE_ID,
@@ -1096,7 +1096,7 @@ fn captured_impact() -> serde_json::Value {
         "user_impact": {
             "status": "partial",
             "known_affected_users": 2,
-            "count_method": "approximate_uniq_combined64",
+            "count_method": "approximate_distinct",
             "coverage": {
                 "retained_occurrences": 3,
                 "indexed_occurrences": 3,
