@@ -162,6 +162,7 @@ fn parse_values(values: &[String]) -> Result<Command, CliError> {
         alias if is_examples_help_alias(alias) => parse_help_alias(HelpTopic::Examples, tail),
         alias if is_project_help_alias(alias) => parse_project(tail),
         "usage" => parse_usage(tail),
+        "mcp" => parse_mcp(tail),
         "support" => parse_support(tail),
         "investigate" => parse_investigate(tail),
         "debug-artifacts" => parse_native_debug_artifacts(tail),
@@ -1287,6 +1288,28 @@ fn parse_whoami(args: &[String]) -> Result<Command, CliError> {
     Ok(Command::WhoAmI {
         json: flags.is_json(),
     })
+}
+
+/// Parses the closed MCP grant list and confirmed revocation grammar.
+fn parse_mcp(args: &[String]) -> Result<Command, CliError> {
+    let normalized = move_leading_json_to_tail(args);
+    let json_count = normalized.iter().filter(|value| *value == "--json").count();
+    let values = normalized
+        .iter()
+        .map(String::as_str)
+        .filter(|value| *value != "--json")
+        .collect::<Vec<_>>();
+    let json = json_count == 1;
+    match values.as_slice() {
+        ["grants"] if json_count <= 1 => Ok(Command::McpGrants { json }),
+        ["revoke", grant_id, "--yes"] if json_count <= 1 && is_uuid(grant_id) => {
+            Ok(Command::McpRevoke {
+                grant_id: grant_id.to_ascii_lowercase(),
+                json,
+            })
+        }
+        _ => Err(CliError::InvalidMcpCommand),
+    }
 }
 
 /// Parses the closed authenticated account-usage read grammar.

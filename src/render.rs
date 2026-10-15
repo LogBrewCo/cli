@@ -115,6 +115,8 @@ fn cursor_response_title(command: &Command) -> Option<&'static str> {
         | Command::ProjectRepositories { .. }
         | Command::Projects { .. }
         | Command::Usage { .. }
+        | Command::McpGrants { .. }
+        | Command::McpRevoke { .. }
         | Command::Version { .. }
         | Command::Watch { .. }
         | Command::Explain { .. }
@@ -348,6 +350,8 @@ fn human_summary(command: &Command, value: &serde_json::Value) -> Option<String>
         | Command::WhoAmI { .. }
         | Command::Doctor { .. }
         | Command::Usage { .. }
+        | Command::McpGrants { .. }
+        | Command::McpRevoke { .. }
         | Command::Version { .. }
         | Command::Deploy { .. }
         | Command::AnalyticsOverview { .. }

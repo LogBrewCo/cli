@@ -33,6 +33,7 @@ mod http;
 pub mod ids;
 #[doc(hidden)]
 pub mod investigate;
+mod mcp_grants;
 mod native_debug_artifacts;
 mod parser;
 mod project_archive;
@@ -250,6 +251,18 @@ pub enum Command {
     /// Reads authenticated account usage and configured limits.
     Usage {
         /// Emit the exact validated server object.
+        json: bool,
+    },
+    /// Lists the account's connected MCP clients (grants).
+    McpGrants {
+        /// Emit the exact validated server object.
+        json: bool,
+    },
+    /// Revokes one MCP grant after explicit confirmation.
+    McpRevoke {
+        /// Canonical lowercase grant UUID.
+        grant_id: String,
+        /// Emit machine-readable JSON.
         json: bool,
     },
     /// Prints the installed CLI version.
@@ -1503,6 +1516,8 @@ impl Command {
                 Some(format!("/api/projects/{project_id}/setup/seen"))
             }
             Self::ProjectArchive { project_id, .. } => Some(format!("/api/projects/{project_id}")),
+            Self::McpGrants { .. } => Some(String::from("/api/mcp/grants")),
+            Self::McpRevoke { grant_id, .. } => Some(format!("/api/mcp/grants/{grant_id}")),
             Self::ProjectDeletion { .. } => Some(String::from("/api/support/tickets")),
             Self::ProjectRepositories { target, .. } => Some(String::from(match target {
                 RepositorySetupTarget::Catalog => "/api/projects/repositories",
@@ -1549,6 +1564,8 @@ impl Command {
             | Self::ProjectRepositories { json, .. }
             | Self::Projects { json }
             | Self::Usage { json }
+            | Self::McpGrants { json }
+            | Self::McpRevoke { json, .. }
             | Self::Version { json }
             | Self::Read { json, .. }
             | Self::Watch { json, .. }
@@ -1597,8 +1614,9 @@ impl Command {
                 ..
             }
             | Self::Set { .. } => Some(HttpMethod::Patch),
-            Self::ProjectArchive { .. } => Some(HttpMethod::Delete),
+            Self::ProjectArchive { .. } | Self::McpRevoke { .. } => Some(HttpMethod::Delete),
             Self::Projects { .. }
+            | Self::McpGrants { .. }
             | Self::ProjectRepositories {
                 target: RepositorySetupTarget::Catalog,
                 ..
@@ -1690,6 +1708,8 @@ impl Command {
             }
             | Self::Projects { .. }
             | Self::Usage { .. }
+            | Self::McpGrants { .. }
+            | Self::McpRevoke { .. }
             | Self::Version { .. }
             | Self::Read { .. }
             | Self::Watch { .. }
@@ -1717,6 +1737,8 @@ impl Command {
             | Self::WhoAmI { .. }
             | Self::Doctor { .. }
             | Self::Usage { .. }
+            | Self::McpGrants { .. }
+            | Self::McpRevoke { .. }
             | Self::Version { .. }
             | Self::Read { .. }
             | Self::Watch { .. }
@@ -1875,6 +1897,10 @@ pub async fn execute_command<W: std::io::Write>(
         }
         Command::Projects { json } => projects::execute(env, *json, output).await,
         Command::Usage { json } => usage::execute(env, *json, output).await,
+        Command::McpGrants { json } => mcp_grants::execute_list(env, *json, output).await,
+        Command::McpRevoke { grant_id, json } => {
+            mcp_grants::execute_revoke(env, grant_id.as_str(), *json, output).await
+        }
         Command::Version { json } => execute_version(*json, output),
         Command::InvestigateIssue {
             issue_id,

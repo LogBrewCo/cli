@@ -63,6 +63,8 @@ Usage:
   logbrew projects archive <project_id> --yes [--json]
   logbrew projects delete <project_id> --confirm <project_id> [--json]
   logbrew usage [--json]
+  logbrew mcp grants [--json]
+  logbrew mcp revoke <grant_id> --yes [--json]
   logbrew status [--json]
   logbrew health [--json]
   logbrew doctor [--json]
