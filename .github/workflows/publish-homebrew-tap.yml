@@ -92,4 +92,13 @@ jobs:
           fi
 
           GH_TOKEN="${{ github.token }}" bash ../release-tooling/scripts/validate-publish-boundary.sh
-          git push
+          # The tap's public guard scans formula/* branches and fast-forwards main.
+          formula_sha="$(git rev-parse HEAD)"
+          [[ "$formula_sha" != "$(git rev-parse origin/main)" ]] || exit 0
+          git push origin "HEAD:refs/heads/formula/${expected_version}"
+          for _ in {1..36}; do
+            [[ "$(git ls-remote origin refs/heads/main | cut -f1)" == "$formula_sha" ]] && exit 0
+            sleep 5
+          done
+          printf 'Formula update did not reach the tap main branch within 3 minutes.\n' >&2
+          exit 1
