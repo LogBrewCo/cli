@@ -1874,6 +1874,7 @@ fn read_value_canonical_flag(flag: &str) -> Option<&'static str> {
         "--name" => "--name",
         "--service" | "--service-name" => "--service",
         "--since" => "--since",
+        "--until" => "--until",
         "--user" | "--distinct-id" => "--user",
         "--trace" | "--trace-id" => "--trace",
         "--level" | "--severity" => "--severity",
@@ -1936,6 +1937,7 @@ fn is_read_value_flag(flag: &str) -> bool {
             | "--service"
             | "--service-name"
             | "--since"
+            | "--until"
             | "--user"
             | "--distinct-id"
             | "--trace"

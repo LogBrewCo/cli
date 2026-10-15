@@ -287,6 +287,7 @@ fn is_log_filter_with_tail_search(flag: &str) -> bool {
         "--service"
             | "--service-name"
             | "--since"
+            | "--until"
             | "--trace"
             | "--trace-id"
             | "--project"

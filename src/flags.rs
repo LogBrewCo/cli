@@ -121,6 +121,7 @@ impl FlagScope {
                 "use --service <service_name> or --service-name <service_name>"
             }
             (Self::Read, "since") => "use --since <duration>",
+            (Self::Read, "until") => "use --until <RFC3339>",
             (Self::Read, "min-duration-ms") => {
                 "use --min-duration-ms with a non-negative whole number"
             }
@@ -291,6 +292,7 @@ pub(crate) fn is_read_filter_word(value: &str) -> bool {
             | "service"
             | "service-name"
             | "since"
+            | "until"
             | "min-duration-ms"
             | "pagination"
             | "cursor-time"
@@ -421,6 +423,8 @@ enum ReadFilterKind {
     Service,
     /// Relative or absolute time filter.
     Since,
+    /// Exclusive RFC 3339 upper time bound.
+    Until,
     /// Actor/distinct-id filter.
     User,
     /// Trace correlation filter.
@@ -456,6 +460,7 @@ fn read_filter_spec(flag: &str) -> Option<ReadFilterSpec> {
         "--service" => (ReadFilterKind::Service, "--service", "--service"),
         "--service-name" => (ReadFilterKind::Service, "--service", "--service-name"),
         "--since" => (ReadFilterKind::Since, "--since", "--since"),
+        "--until" => (ReadFilterKind::Until, "--until", "--until"),
         "--user" => (ReadFilterKind::User, "--user", "--user"),
         "--distinct-id" => (ReadFilterKind::User, "--user", "--distinct-id"),
         "--trace" => (ReadFilterKind::Trace, "--trace", "--trace"),
@@ -497,6 +502,7 @@ fn apply_read_filter(
         ReadFilterKind::Name => read.name = Some(value),
         ReadFilterKind::Service => read.service = Some(value),
         ReadFilterKind::Since => read.since = Some(value),
+        ReadFilterKind::Until => read.until = Some(value),
         ReadFilterKind::User => read.user = Some(value),
         ReadFilterKind::Trace => read.trace = Some(value),
         ReadFilterKind::Level => read.level = Some(normalize_log_level(&value)?),
@@ -578,6 +584,7 @@ fn duplicate_flag_next(flag: &'static str) -> &'static str {
         "--name" => "use --name once",
         "--service" => "use --service once",
         "--since" => "use --since once",
+        "--until" => "use --until once",
         "--user" => "use --user once",
         "--trace" => "use --trace once",
         "--severity" => "use --severity once",
@@ -688,6 +695,7 @@ fn missing_flag_value_next(flag: &'static str) -> &'static str {
         "--service" => "provide a value after --service",
         "--service-name" => "provide a value after --service-name",
         "--since" => "provide a value after --since",
+        "--until" => "provide a value after --until",
         "--user" => "provide a value after --user",
         "--distinct-id" => "provide a value after --distinct-id",
         "--trace" => "provide a value after --trace",

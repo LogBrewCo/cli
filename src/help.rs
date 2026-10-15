@@ -422,9 +422,9 @@ Filter aliases: --service-name, --env, --project-id, --trace-id, and --distinct-
 const READ_LOGS_HELP: &str = "\
 Usage:
   logbrew read logs [--severity error] [--search checkout] [--release <release>] [--environment \
-                              production] [--service <service_name>] [--since 24h] [--trace \
-                              <trace_id>] [--project <project_id>] [--pagination cursor] [--limit \
-                              100] [--json]
+                              production] [--service <service_name>] [--since 24h] [--until \
+                              <RFC3339>] [--trace <trace_id>] [--project <project_id>] \
+                              [--pagination cursor] [--limit 100] [--json]
   logbrew read logs [filters] --pagination cursor --cursor-time <RFC3339> --cursor-id <uuid> \
                               [--limit 100] [--json]
   logbrew logs checkout failed [--severity error] [--release <release>] [--environment \
@@ -442,6 +442,7 @@ Explicit filters accept unquoted search text too, such as logbrew logs --severit
                               failed or logbrew logs --search checkout failed.
 Use -- before literal flag-looking search text, such as logbrew logs -- --timeout --json.
 Filter by severity, message search, release, or trace_id to correlate logs with spans.
+Until is an exclusive RFC3339 upper bound, such as 2026-06-01T00:00:00Z, later than since.
 --service-name <service_name> is accepted as an alias for --service <service_name>.
 Cursor pagination preserves JSON as {logs,next_cursor}; next_cursor is either {time,id} or null.
 Use --pagination cursor alone for the first page. Continue with --cursor-time and --cursor-id from \
@@ -453,8 +454,9 @@ Limit must be a positive whole number.";
 const READ_ISSUES_HELP: &str = "\
 Usage:
   logbrew read issues [--release <release>] [--environment production] [--status unresolved] \
-                                [--service <service_name>] [--since <24h|7d|RFC3339>] [--project \
-                                <project_id>] [--pagination cursor] [--limit 100] [--json]
+                                [--service <service_name>] [--since <24h|7d|RFC3339>] [--until \
+                                <RFC3339>] [--project <project_id>] [--pagination cursor] \
+                                [--limit 100] [--json]
   logbrew read issues [filters] --pagination cursor --cursor-time <RFC3339> --cursor-id <uuid> \
                                 [--limit 100] [--json]
   logbrew issues open [--release <release>] [--environment production] [--json]
@@ -472,6 +474,7 @@ Recency issue shortcuts can include status and count, such as logbrew last 5 ope
 --service-name <service_name> is accepted as an alias for --service <service_name>.
 Since accepts positive compact durations such as 24h or 7d, or an RFC3339 timestamp such as \
                                 2026-05-01T00:00:00Z.
+Until is an exclusive RFC3339 upper bound, such as 2026-06-01T00:00:00Z, later than since.
 Cursor pagination preserves JSON as {issues,next_cursor}; next_cursor is either {time,id} or null.
 Use --pagination cursor alone for the first page. Continue with --cursor-time and --cursor-id from \
                                 next_cursor.
@@ -483,14 +486,15 @@ const READ_ACTIONS_HELP: &str = "\
 Usage:
   logbrew read actions [--release <release>] [--environment production] [--name checkout_failed] \
                                  [--user <distinct_id>] [--service <service_name>] [--since 24h] \
-                                 [--project <project_id>] [--pagination cursor] [--limit 100] \
-                                 [--json]
+                                 [--until <RFC3339>] [--project <project_id>] [--pagination \
+                                 cursor] [--limit 100] [--json]
   logbrew read actions [filters] --pagination cursor --cursor-time <RFC3339> --cursor-id <uuid> \
                                  [--limit 100] [--json]
   logbrew events checkout_failed [--release <release>] [--environment production] [--json]
 
 Reads product actions. Use distinct_id to follow one actor or session.
 Action/event aliases accept one positional name as the same filter as --name.
+Until is an exclusive RFC3339 upper bound, such as 2026-06-01T00:00:00Z, later than since.
 --service-name <service_name> is accepted as an alias for --service <service_name>.
 Cursor pagination preserves JSON as {actions,next_cursor}; next_cursor is either {time,id} or null.
 Use --pagination cursor alone for the first page. Continue with --cursor-time and --cursor-id from \
@@ -502,13 +506,14 @@ Limit must be a positive whole number.";
 const READ_RELEASES_HELP: &str = "\
 Usage:
   logbrew read releases [--release <release>] [--environment production] [--service \
-                                  <service_name>] [--since <24h|7d|RFC3339>] [--project \
-                                  <project_id>] [--limit 100] [--json]
+                                  <service_name>] [--since <24h|7d|RFC3339>] [--until <RFC3339>] \
+                                  [--project <project_id>] [--limit 100] [--json]
 
 Reads release summaries with counts for issues, logs, trace spans, and actions.
 --service-name <service_name> is accepted as an alias for --service <service_name>.
 Since accepts positive compact durations such as 24h or 7d, or an RFC3339 timestamp such as \
                                   2026-05-01T00:00:00Z.
+Until is an exclusive RFC3339 upper bound, such as 2026-06-01T00:00:00Z, later than since.
 Limit must be a positive whole number.";
 
 /// Read metric samples help text.
@@ -516,7 +521,7 @@ const READ_METRICS_HELP: &str = "\
 Usage:
   logbrew read metrics [--name <metric_name>] [--project <project_id>] [--service \
                                  <service_name>] [--release <release>] [--environment \
-                                 <environment>] [--since <24h|7d|RFC3339>] \
+                                 <environment>] [--since <24h|7d|RFC3339>] [--until <RFC3339>] \
                                  [--pagination cursor] [--limit 100] [--json]
   logbrew read metrics [filters] --pagination cursor --cursor-time <RFC3339> --cursor-id <uuid> \
                                  [--limit 100] [--json]
@@ -526,6 +531,7 @@ Reads retained metric samples with their kind, value, unit, temporality, SDK, an
 --service-name <service_name> is accepted as an alias for --service <service_name>.
 Since accepts positive compact durations such as 24h or 7d, or an RFC3339 timestamp such as \
                                  2026-05-01T00:00:00Z.
+Until is an exclusive RFC3339 upper bound, such as 2026-06-01T00:00:00Z, later than since.
 Cursor pagination preserves JSON as {metrics,next_cursor}; next_cursor is either {time,id} or null.
 Use --pagination cursor alone for the first page. Continue with --cursor-time and --cursor-id from \
                                  next_cursor.
@@ -538,7 +544,7 @@ const READ_TRACES_HELP: &str = "\
 Usage:
   logbrew traces [--project <project_id>] [--service <service_name>] [--release <release>] \
                                [--environment <environment>] [--status <error|ok>] \
-                               [--since <24h|7d|RFC3339>] \
+                               [--since <24h|7d|RFC3339>] [--until <RFC3339>] \
                                [--min-duration-ms <milliseconds>] [--pagination cursor] \
                                [--limit 100] [--json]
   logbrew traces [filters] --pagination cursor --cursor-time <RFC3339> --cursor-id <trace_id> \
@@ -551,6 +557,7 @@ Lists recent distributed traces for incident investigation. JSON preserves the b
 Status accepts error or ok, case-insensitively. Minimum duration is a non-negative whole number.
 Since accepts positive compact durations such as 24h or 7d, or an RFC3339 timestamp such as \
                                2026-05-01T00:00:00Z.
+Until is an exclusive RFC3339 upper bound, such as 2026-06-01T00:00:00Z, later than since.
 The backend defaults limit to 100 and clamps it to 1..500.
 CLI aliases --project-id, --service-name, and --env still serialize only canonical API query keys.
 Use --pagination cursor alone for the first page. Continue with --cursor-time and --cursor-id from \
