@@ -67,18 +67,29 @@ fn grammar_is_closed_explicit_and_introspectable() -> TestResult {
 
 async_test!(list_renders_validated_grants -> TestResult, {
     let server = MockServer::start().await?;
-    let body = grants(&[grant()]);
+    let mut named = grant();
+    named["client_name"] = "Claude Code".into();
+    let mut unnamed = grant();
+    unnamed["client_name"] = serde_json::Value::Null;
+    let body = grants(&[named, unnamed, grant()]);
     Mock::auth("GET", "/api/mcp/grants", "account-token")
         .respond_with(ResponseTemplate::new(200).set_body_json(&body))
         .expect(2)
         .mount(&server);
     assert_eq!(run(&server, "logbrew mcp grants --json").await?, format!("{body}\n"));
+    let row = |client: &str| {
+        format!(
+            "- id={ID} client={client} projects=1 \
+             last_used=2026-10-15T10:00:00.000Z expires=2026-11-14T10:00:00.000Z\n"
+        )
+    };
     assert_eq!(
         run(&server, "logbrew mcp grants").await?,
         format!(
-            "MCP grants (1)\n- id={ID} client={CLIENT} projects=1 \
-             last_used=2026-10-15T10:00:00.000Z expires=2026-11-14T10:00:00.000Z\n\
-             Next: run logbrew mcp revoke <grant_id> --yes\n"
+            "MCP grants (3)\n{}{}{}Next: run logbrew mcp revoke <grant_id> --yes\n",
+            row("Claude Code"),
+            row(CLIENT),
+            row(CLIENT)
         )
     );
     let empty = MockServer::start().await?;
@@ -99,12 +110,25 @@ async_test!(list_rejects_invalid_and_hostile_responses -> TestResult, {
     control["client_id"] = "hostile\u{1b}[31m".into();
     let mut project = grant();
     project["project_ids"] = serde_json::json!(["hostile-secret"]);
-    for response in [
+    let names = [
+        serde_json::json!("hostile\u{1b}[31m"),
+        serde_json::json!("hostile\u{202e}name"),
+        serde_json::json!("hostile".repeat(15)),
+        serde_json::json!(" "),
+        serde_json::json!(["hostile"]),
+    ];
+    let mut responses = vec![
         grants(&[extra]),
         grants(&[control]),
         grants(&[project]),
         serde_json::json!([grant()]),
-    ] {
+    ];
+    for name in names {
+        let mut row = grant();
+        row["client_name"] = name;
+        responses.push(grants(&[row]));
+    }
+    for response in responses {
         let server = MockServer::start().await?;
         Mock::auth("GET", "/api/mcp/grants", "account-token")
             .respond_with(ResponseTemplate::new(200).set_body_json(&response))
