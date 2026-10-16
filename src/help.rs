@@ -1019,6 +1019,7 @@ Usage:
 Creates, reads, adds requested context to, closes, and reopens authenticated account support \
                          tickets. Creation source is \
                          always cli.
+Create is safe to repeat: the same command returns the first ticket, not a duplicate.
 Categories: sdk_install_failure, ingest_failure, auth_failure, project_setup, dashboard_issue, \
                          docs_confusion, cli_issue, mobile_issue, billing_question, other.
 --diagnostics adds only binary, CLI version, operating system, and architecture. It never reads \

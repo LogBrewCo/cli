@@ -1,11 +1,11 @@
 //! Local native debug-object discovery and validation.
 
 use crate::RuntimeError;
+use crate::ids::sha256_hex;
 use object::read::macho::{MachOFatFile, MachOFatFile32, MachOFatFile64, MachOFile64};
 use object::{
     Architecture, FileKind, Object as _, ObjectSection as _, SectionKind, SubArchitecture,
 };
-use sha2::{Digest as _, Sha256};
 use std::collections::BTreeSet;
 use std::io::{Read as _, Seek as _};
 use std::path::{Path, PathBuf};
@@ -578,18 +578,6 @@ fn format_uuid(bytes: [u8; 16]) -> String {
         bytes[14],
         bytes[15]
     )
-}
-
-/// Computes lowercase SHA-256 for exactly the bytes sent in one part.
-fn sha256_hex(bytes: &[u8]) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let digest = Sha256::digest(bytes);
-    let mut output = String::with_capacity(64);
-    for byte in digest {
-        output.push(char::from(HEX[usize::from(byte >> 4)]));
-        output.push(char::from(HEX[usize::from(byte & 0x0f)]));
-    }
-    output
 }
 
 /// Returns the fixed path-free local artifact error.
