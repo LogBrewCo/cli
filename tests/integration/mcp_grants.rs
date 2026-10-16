@@ -1,5 +1,6 @@
 //! Connected MCP client list and revocation contract tests.
 
+use crate::matchers::query_param;
 use crate::{Mock, MockServer, ResponseTemplate, TestResult, execute_command, rendered_json_error};
 use logbrew_cli::{Command, HttpMethod, RuntimeError, parse_command, write_runtime_error};
 
@@ -18,7 +19,10 @@ fn grammar_is_closed_explicit_and_introspectable() -> TestResult {
     ] {
         let command = parse(line)?;
         assert_eq!(command, Command::McpGrants { json });
-        assert_eq!(command.http_path().as_deref(), Some("/api/mcp/grants"));
+        assert_eq!(
+            command.http_path().as_deref(),
+            Some("/api/mcp/grants?response_version=2")
+        );
         assert_eq!(command.http_method(), Some(HttpMethod::Get));
     }
     for (line, json) in [
@@ -73,6 +77,7 @@ async_test!(list_renders_validated_grants -> TestResult, {
     unnamed["client_name"] = serde_json::Value::Null;
     let body = grants(&[named, unnamed, grant()]);
     Mock::auth("GET", "/api/mcp/grants", "account-token")
+        .and(query_param("response_version", "2"))
         .respond_with(ResponseTemplate::new(200).set_body_json(&body))
         .expect(2)
         .mount(&server);

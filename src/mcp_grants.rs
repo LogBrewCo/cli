@@ -11,6 +11,8 @@ use crate::{CliEnvironment, CliError, RuntimeError};
 
 /// Maximum accepted grant list response body.
 const RESPONSE_LIMIT: usize = 1024 * 1024;
+/// Requested list response version; version 2 adds `client_name`.
+const LIST_RESPONSE_VERSION: u8 = 2;
 /// Maximum grants shown in human output.
 const HUMAN_ROW_LIMIT: usize = 100;
 
@@ -145,7 +147,7 @@ async fn send(
     let origin = crate::http::normalized_origin(env.base_url.as_str()).ok_or_else(transport)?;
     let client = crate::http::api_client().map_err(|_| transport())?;
     let url = grant_id.map_or_else(
-        || format!("{origin}/api/mcp/grants"),
+        || format!("{origin}/api/mcp/grants?response_version={LIST_RESPONSE_VERSION}"),
         |id| format!("{origin}/api/mcp/grants/{id}"),
     );
     let (response, credential) =
