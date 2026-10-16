@@ -119,6 +119,8 @@ pub(crate) const ISSUE_STATUS_VALUES_NEXT_STEP: &str =
 /// Accepted issue status values for read filter recovery text.
 pub(crate) const ISSUE_STATUS_FILTER_NEXT_STEP: &str =
     "use --status unresolved/open, --status resolved/closed, or --status archived/ignored";
+/// Accepted issue assignee filter values.
+pub(crate) const ASSIGNEE_NEXT_STEP: &str = "use --assignee me, none, or a user ID";
 /// Accepted issue status values for missing mutation arguments.
 pub(crate) const ISSUE_STATUS_ARGUMENT_NEXT_STEP: &str =
     "provide one of unresolved/open, resolved/closed, archived/ignored";
@@ -532,6 +534,8 @@ pub enum ReadTarget {
     Trace(String),
     /// One issue by ID.
     Issue(String),
+    /// Accounts that can be assigned issues of one project, by project ID.
+    IssueAssignees(String),
 }
 
 impl ReadTarget {
@@ -556,7 +560,7 @@ impl ReadTarget {
                 !matches!(self, Self::Issue(_))
             }
             "--status" => matches!(self, Self::Issues | Self::Traces),
-            "--priority" => matches!(self, Self::Issues),
+            "--priority" | "--assignee" => matches!(self, Self::Issues),
             "--min-duration-ms" => matches!(self, Self::Traces),
             "--pagination" | "--cursor-time" | "--cursor-id" => {
                 matches!(
@@ -598,6 +602,8 @@ pub struct ReadOptions {
     pub status: Option<String>,
     /// Optional issue priority filter.
     pub priority: Option<String>,
+    /// Optional issue assignee filter: `me`, `none`, or a user ID.
+    pub assignee: Option<String>,
     /// Optional row limit.
     pub limit: Option<String>,
     /// Optional minimum end-to-end trace duration in milliseconds.
@@ -628,6 +634,7 @@ impl ReadOptions {
             (self.environment.is_some(), "--environment"),
             (self.status.is_some(), "--status"),
             (self.priority.is_some(), "--priority"),
+            (self.assignee.is_some(), "--assignee"),
             (self.limit.is_some(), "--limit"),
             (self.min_duration_ms.is_some(), "--min-duration-ms"),
             (self.pagination.is_some(), "--pagination"),
@@ -1448,7 +1455,14 @@ pub enum SetTarget {
         /// New priority: `high`, `medium`, or `low`.
         priority: String,
     },
-    /// Update status or priority of several issues of one project in one request.
+    /// Assign or unassign one issue.
+    IssueAssignee {
+        /// Issue identifier.
+        id: String,
+        /// New assignee: a user ID, `me`, or `none`.
+        assignee: String,
+    },
+    /// Update status, priority, or assignee of several issues of one project in one request.
     IssueBulk(IssueBulkOptions),
 }
 
@@ -1502,6 +1516,7 @@ impl Command {
                     environment: options.environment.as_deref(),
                     status: options.status.as_deref(),
                     priority: options.priority.as_deref(),
+                    assignee: options.assignee.as_deref(),
                     limit: options.limit.as_deref(),
                     min_duration_ms: options.min_duration_ms.as_deref(),
                     pagination: options.pagination.as_deref(),
@@ -1683,6 +1698,10 @@ impl Command {
                 target: SetTarget::IssuePriority { priority, .. },
                 ..
             } => Some(serde_json::json!({ "priority": priority })),
+            Self::Set {
+                target: SetTarget::IssueAssignee { assignee, .. },
+                ..
+            } => Some(serde_json::json!({ "assignee": assignee })),
             Self::Set {
                 target: SetTarget::IssueBulk(options),
                 ..
@@ -2440,6 +2459,8 @@ struct ReadPathFilters<'a> {
     status: Option<&'a str>,
     /// Optional issue priority filter.
     priority: Option<&'a str>,
+    /// Optional issue assignee filter.
+    assignee: Option<&'a str>,
     /// Optional row limit.
     limit: Option<&'a str>,
     /// Optional minimum end-to-end trace duration in milliseconds.
@@ -2481,6 +2502,7 @@ fn read_path(target: &ReadTarget, filters: &ReadPathFilters<'_>) -> String {
                 ("until", filters.until),
                 ("status", filters.status),
                 ("priority", filters.priority),
+                ("assignee", filters.assignee),
                 ("project_id", filters.project),
                 ("release", filters.release),
                 ("environment", filters.environment),
@@ -2488,7 +2510,7 @@ fn read_path(target: &ReadTarget, filters: &ReadPathFilters<'_>) -> String {
                 ("cursor_time", filters.cursor_time),
                 ("cursor_id", filters.cursor_id),
                 ("limit", filters.limit),
-                ("response_version", Some("2")),
+                ("response_version", Some("3")),
             ],
         ),
         ReadTarget::Actions => path_with_query(
@@ -2546,9 +2568,12 @@ fn read_path(target: &ReadTarget, filters: &ReadPathFilters<'_>) -> String {
             ],
         ),
         ReadTarget::Issue(id) => format!(
-            "/api/telemetry/issues/{}?response_version=2",
+            "/api/telemetry/issues/{}?response_version=3",
             encode_component(id)
         ),
+        ReadTarget::IssueAssignees(project) => {
+            format!("/api/telemetry/issues/assignees?project_id={project}")
+        }
     }
 }
 
@@ -2676,10 +2701,12 @@ fn metric_explain_path(metric: &ExplainMetricTarget) -> String {
 /// Builds a mutation endpoint path.
 fn set_path(target: &SetTarget) -> String {
     match target {
-        // Version 2 reports `archived` and priority.
-        SetTarget::IssueStatus { id, .. } | SetTarget::IssuePriority { id, .. } => {
+        // Version 3 reports `archived`, priority, and assignee.
+        SetTarget::IssueStatus { id, .. }
+        | SetTarget::IssuePriority { id, .. }
+        | SetTarget::IssueAssignee { id, .. } => {
             format!(
-                "/api/telemetry/issues/{}?response_version=2",
+                "/api/telemetry/issues/{}?response_version=3",
                 encode_component(id)
             )
         }

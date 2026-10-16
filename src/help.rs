@@ -153,6 +153,9 @@ Usage:
   logbrew reopen <issue_id> [--json]
   logbrew issues archive|resolve|reopen <issue_id>... [--project <project_id>] [--json]
   logbrew issues priority <high|medium|low> <issue_id>... [--project <project_id>] [--json]
+  logbrew issues assign <user_id|me> <issue_id>... [--project <project_id>] [--json]
+  logbrew issues unassign <issue_id>... [--project <project_id>] [--json]
+  logbrew issues assignees --project <project_id> [--json]
 
 Popular terms: auth, status, health, setup, projects, usage, logs, issues, errors, traces, spans, \
                          metrics, actions, events, releases, environments, support.
@@ -456,9 +459,10 @@ Limit must be a positive whole number.";
 const READ_ISSUES_HELP: &str = "\
 Usage:
   logbrew read issues [--release <release>] [--environment production] [--status unresolved] \
-                                [--priority <high|medium|low>] [--service <service_name>] \
-                                [--since <24h|7d|RFC3339>] [--until <RFC3339>] [--project \
-                                <project_id>] [--pagination cursor] [--limit 100] [--json]
+                                [--priority <high|medium|low>] [--assignee <me|none|user_id>] \
+                                [--service <service_name>] [--since <24h|7d|RFC3339>] [--until \
+                                <RFC3339>] [--project <project_id>] [--pagination cursor] \
+                                [--limit 100] [--json]
   logbrew read issues [filters] --pagination cursor --cursor-time <RFC3339> --cursor-id <uuid> \
                                 [--limit 100] [--json]
   logbrew issues open [--release <release>] [--environment production] [--json]
@@ -471,6 +475,7 @@ Usage:
 Reads grouped issues across releases and environments.
 Status accepts unresolved/open, resolved/closed, or archived/ignored, case-insensitively.
 Priority accepts high, medium, or low.
+Assignee accepts me, none for unassigned issues, or a user ID.
 Issue shortcuts accept status words, such as logbrew issues open, logbrew issue open, logbrew open \
                                 issues, logbrew open issue, or logbrew errors closed.
 Recency issue shortcuts can include status and count, such as logbrew last 5 open issues.
@@ -976,10 +981,15 @@ Usage:
   logbrew issues priority <high|medium|low> <issue_id> [--json]
   logbrew issues archive|resolve|reopen <issue_id>... --project <project_id> [--json]
   logbrew issues priority <high|medium|low> <issue_id>... --project <project_id> [--json]
+  logbrew issues assign <user_id|me> <issue_id>... [--project <project_id>] [--json]
+  logbrew issues unassign <issue_id>... [--project <project_id>] [--json]
+  logbrew issues assignees --project <project_id> [--json]
 
 Updates grouped issue status. Resolve/close map to resolved; ignore and archive map to archived; \
                         reopen maps to unresolved.
 Priority is high, medium, or low. A priority you set stays fixed; otherwise it follows severity.
+Assign takes a user ID or me; logbrew issues assignees lists everyone who can be assigned in a \
+                        project.
 With --project, one request updates up to 100 issues of that project and reports each one as \
                         updated, unchanged, or not found.
 Close is an alias for resolved.
