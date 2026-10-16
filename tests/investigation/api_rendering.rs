@@ -5,6 +5,7 @@ use crate::{Mock, MockServer, ResponseTemplate, TestResult, execute_command};
 use logbrew_cli::{CliEnvironment, RuntimeError, parse_command, write_runtime_error};
 
 const PROJECT_ID: &str = "123e4567-e89b-12d3-a456-426614174000";
+const USER_ID: &str = "323e4567-e89b-12d3-a456-426614174009";
 
 async_test!(authenticated_read_logs_rejects_multiple_json_documents -> TestResult, {
     let server = MockServer::start().await?;
@@ -1004,47 +1005,172 @@ fn authenticated_env(server: &MockServer, home_name: &str) -> CliEnvironment {
 async_test!(human_issue_changes_render_priority_and_bulk_outcomes -> TestResult, {
     let issue = "223e4567-e89b-12d3-a456-426614174001";
     let other = "223e4567-e89b-12d3-a456-426614174002";
+    let third = "223e4567-e89b-12d3-a456-426614174003";
     let server = MockServer::start().await?;
-    Mock::auth("PATCH", &format!("/api/telemetry/issues/{issue}"), "test-token")
-        .and(query_param("response_version", "2"))
+    Mock::auth("PATCH", format!("/api/telemetry/issues/{issue}"), "test-token")
+        .and(query_param("response_version", "3"))
         .and(body_json(serde_json::json!({"priority": "low"})))
         .respond_with(ResponseTemplate::new(200).set_body_json(&serde_json::json!({
             "id": issue, "status": "archived", "priority": "low", "priority_source": "manual",
-            "release": "checkout@1.2.3", "environment": "production"
+            "assignee": null, "release": "checkout@1.2.3", "environment": "production"
         })))
         .mount(&server);
     let line = concat!("logbrew issues priority low ", "223e4567-e89b-12d3-a456-426614174001");
     let text = successful_human_output(&server, line.split_whitespace(), "human-issue-priority").await?;
     assert_eq!(
         text,
-        format!("Issue {issue} marked archived, priority low [checkout@1.2.3 / production].\n")
+        format!(
+            "Issue {issue} marked archived, priority low, assignee unassigned \
+             [checkout@1.2.3 / production].\n"
+        )
     );
 
     let server = MockServer::start().await?;
     Mock::auth("POST", "/api/telemetry/issues/bulk", "test-token")
         .and(body_json(serde_json::json!({
-            "project_id": PROJECT_ID, "issue_ids": [issue, other], "status": "archived"
+            "project_id": PROJECT_ID, "issue_ids": [issue, other, third], "assignee": USER_ID
         })))
         .respond_with(ResponseTemplate::new(200).set_body_json(&serde_json::json!({
             "project_id": PROJECT_ID,
             "results": [
                 {"issue_id": issue, "outcome": "updated",
-                 "issue": {"id": issue, "status": "archived", "priority": "high"}},
-                {"issue_id": other, "outcome": "not_found", "issue": null}
+                 "issue": {"id": issue, "status": "archived", "priority": "high",
+                           "assignee": {"user_id": USER_ID, "name": "Ada", "email": "ada@example.com"}}},
+                {"issue_id": other, "outcome": "unchanged",
+                 "issue": {"id": other, "status": "unresolved", "priority": "low",
+                           "assignee": null}},
+                {"issue_id": third, "outcome": "not_found", "issue": null}
             ]
         })))
         .mount(&server);
     let line = concat!(
-        "logbrew issues archive 223e4567-e89b-12d3-a456-426614174001 ",
-        "223e4567-e89b-12d3-a456-426614174002 --project 123e4567-e89b-12d3-a456-426614174000"
+        "logbrew issues assign 323e4567-e89b-12d3-a456-426614174009 ",
+        "223e4567-e89b-12d3-a456-426614174001 223e4567-e89b-12d3-a456-426614174002 ",
+        "223e4567-e89b-12d3-a456-426614174003 --project 123e4567-e89b-12d3-a456-426614174000"
     );
     let text = successful_human_output(&server, line.split_whitespace(), "human-issue-bulk").await?;
     assert_eq!(
         text,
         format!(
-            "Project {PROJECT_ID}: 1 updated, 0 unchanged, 1 not found.\n  {issue} updated: archived, \
-             priority high\n  {other} not found\n"
+            "Project {PROJECT_ID}: 1 updated, 1 unchanged, 1 not found.\n  {issue} updated: archived, \
+             priority high, assignee Ada\n  {other} unchanged: unresolved, priority low, assignee \
+             unassigned\n  {third} not found\n"
         )
     );
+    Ok(())
+});
+
+async_test!(human_issue_reads_and_changes_show_the_assignee -> TestResult, {
+    let issue = "223e4567-e89b-12d3-a456-426614174001";
+    let no_name = serde_json::json!({"user_id": USER_ID, "name": null, "email": "dev@example.com"});
+    let server = MockServer::start().await?;
+    Mock::auth("PATCH", format!("/api/telemetry/issues/{issue}"), "test-token")
+        .and(query_param("response_version", "3"))
+        .and(body_json(serde_json::json!({"assignee": "me"})))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&serde_json::json!({
+            "id": issue, "status": "unresolved", "priority": "medium", "assignee": no_name
+        })))
+        .mount(&server);
+    let line = concat!("logbrew issues assign me ", "223e4567-e89b-12d3-a456-426614174001");
+    let text = successful_human_output(&server, line.split_whitespace(), "human-issue-assign").await?;
+    assert_eq!(
+        text,
+        format!("Issue {issue} marked unresolved, priority medium, assignee dev@example.com.\n")
+    );
+
+    let server = MockServer::start().await?;
+    mount_authenticated_json(
+        &server,
+        "GET",
+        "/api/telemetry/issues/issue_123",
+        [("response_version", "3")],
+        &serde_json::json!({
+            "id": "issue_123", "status": "unresolved", "priority": "high",
+            "priority_source": "derived",
+            "assignee": {"user_id": USER_ID, "name": " ", "email": ""}
+        }),
+    );
+    let text = successful_human_output(&server, ["logbrew", "issue", "issue_123"], "human-issue-assignee").await?;
+    assert_eq!(
+        text,
+        format!(
+            "Issue issue_123 unresolved\nPriority: high (derived)\nAssignee: {USER_ID}\nNext: \
+             logbrew resolve issue_123 or logbrew ignore issue_123\n"
+        )
+    );
+
+    let server = MockServer::start().await?;
+    mount_authenticated_json(
+        &server,
+        "GET",
+        "/api/telemetry/issues",
+        [("assignee", "none"), ("response_version", "3")],
+        &serde_json::json!([
+            {"id": "issue_1", "status": "unresolved", "title": "PaymentError", "assignee": null},
+            {"id": "issue_2", "status": "resolved", "title": "Timeout",
+             "assignee": {"user_id": USER_ID, "name": "Ada\u{1b}[2J", "email": "ada@example.com"}}
+        ]),
+    );
+    let text = successful_human_output(
+        &server,
+        ["logbrew", "issues", "--assignee", "none"],
+        "human-issue-list-assignee",
+    )
+    .await?;
+    assert_eq!(
+        text,
+        "Issues (2)\n- issue_1 unresolved PaymentError assignee=unassigned\n- issue_2 resolved \
+         Timeout assignee=Ada\\u{1b}[2J\n"
+    );
+    Ok(())
+});
+
+async_test!(issue_assignees_render_one_line_per_account_and_keep_json -> TestResult, {
+    let body = serde_json::json!({
+        "project_id": PROJECT_ID,
+        "assignees": [
+            {"user_id": USER_ID, "name": "Ada Lovelace", "email": "ada@example.com"},
+            {"user_id": "323e4567-e89b-12d3-a456-42661417400a", "name": null, "email": "dev@example.com"}
+        ]
+    });
+    let server = MockServer::start().await?;
+    mount_authenticated_json(
+        &server,
+        "GET",
+        "/api/telemetry/issues/assignees",
+        [("project_id", PROJECT_ID)],
+        &body,
+    );
+    let line = "logbrew issues assignees --project 123e4567-e89b-12d3-a456-426614174000";
+    let text = successful_human_output(&server, line.split_whitespace(), "human-assignees").await?;
+    assert_eq!(
+        text,
+        format!(
+            "Assignees for project {PROJECT_ID} (2)\n- {USER_ID} Ada Lovelace <ada@example.com>\n- \
+             323e4567-e89b-12d3-a456-42661417400a <dev@example.com>\n"
+        )
+    );
+    let json = successful_human_output(
+        &server,
+        "logbrew issues assignees --project 123e4567-e89b-12d3-a456-426614174000 --json"
+        .split_whitespace(),
+        "json-assignees",
+    )
+    .await?;
+    assert_eq!(serde_json::from_str::<serde_json::Value>(&json)?, body);
+
+    let server = MockServer::start().await?;
+    let malformed = serde_json::json!({
+        "project_id": PROJECT_ID, "assignees": [{"user_id": "not-a-user", "name": null, "email": "x"}]
+    });
+    mount_authenticated_json(
+        &server,
+        "GET",
+        "/api/telemetry/issues/assignees",
+        [("project_id", PROJECT_ID)],
+        &malformed,
+    );
+    let text = successful_human_output(&server, line.split_whitespace(), "human-assignees-bad").await?;
+    assert!(!text.starts_with("Assignees"), "malformed accounts are not summarized: {text}");
     Ok(())
 });

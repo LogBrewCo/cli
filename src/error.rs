@@ -1,6 +1,6 @@
 //! CLI error types and output rendering.
 
-use crate::ISSUE_STATUS_VALUES_NEXT_STEP;
+use crate::{ASSIGNEE_NEXT_STEP, ISSUE_STATUS_VALUES_NEXT_STEP};
 use std::borrow::Cow;
 
 /// CLI parsing error.
@@ -86,6 +86,9 @@ pub enum CliError {
     /// Issue priority is unsupported.
     #[error("unknown issue priority: {0}")]
     UnknownPriority(String),
+    /// Issue assignee filter is not `me`, `none`, or a user ID.
+    #[error("invalid issue assignee: {0}")]
+    InvalidAssignee(String),
     /// Log level is unsupported.
     #[error("unknown log level: {0}")]
     UnknownLogLevel(String),
@@ -152,7 +155,7 @@ pub enum CliError {
     /// MCP grant list or confirmed revocation syntax is malformed.
     #[error("invalid mcp command")]
     InvalidMcpCommand,
-    /// Issue archive, resolve, reopen, or priority syntax is malformed.
+    /// Issue archive, resolve, reopen, priority, or assignment syntax is malformed.
     #[error("invalid issue command")]
     InvalidIssueTriageCommand,
     /// Permanently deleted project syntax or exact confirmation is malformed.
@@ -604,6 +607,7 @@ const fn cli_error_code(error: &CliError) -> &'static str {
         CliError::UnknownStatus(_) => "unknown_status",
         CliError::UnknownTraceStatus(_) => "unknown_trace_status",
         CliError::UnknownPriority(_) => "unknown_priority",
+        CliError::InvalidAssignee(_) => "invalid_assignee",
         CliError::UnknownLogLevel(_) => "unknown_log_level",
         CliError::InvalidLimit(_) => "invalid_limit",
         CliError::InvalidMinDuration(_) => "invalid_min_duration",
@@ -692,7 +696,7 @@ const fn cli_error_next_step(error: &CliError) -> &'static str {
             "use logbrew mcp grants or logbrew mcp revoke <grant_id> --yes, with optional --json"
         }
         CliError::InvalidIssueTriageCommand => {
-            "use logbrew issues archive|resolve|reopen <issue_id>... or logbrew issues priority high|medium|low <issue_id>..., with --project <project_id> for more than one issue (up to 100) and optional --json"
+            "use logbrew issues archive|resolve|reopen|unassign <issue_id>..., logbrew issues priority high|medium|low <issue_id>..., or logbrew issues assign <user_id|me> <issue_id>..., with --project <project_id> for more than one issue (up to 100), or logbrew issues assignees --project <project_id>, each with optional --json"
         }
         CliError::InvalidProjectDeletionCommand => {
             "use logbrew projects delete <project_id> --confirm <project_id> with optional --json"
@@ -722,6 +726,7 @@ const fn cli_error_next_step(error: &CliError) -> &'static str {
         CliError::UnknownStatus(_) => ISSUE_STATUS_VALUES_NEXT_STEP,
         CliError::UnknownTraceStatus(_) => "use --status error or --status ok",
         CliError::UnknownPriority(_) => "use --priority high, medium, or low",
+        CliError::InvalidAssignee(_) => ASSIGNEE_NEXT_STEP,
         CliError::UnknownLogLevel(_) => "use one of info, warning, error, critical",
     }
 }

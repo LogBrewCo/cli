@@ -1,6 +1,8 @@
 //! Common CLI flag parsing.
 
-use crate::{CliError, ISSUE_STATUS_FILTER_NEXT_STEP, LoginProvider, ReadOptions};
+use crate::{
+    ASSIGNEE_NEXT_STEP, CliError, ISSUE_STATUS_FILTER_NEXT_STEP, LoginProvider, ReadOptions,
+};
 
 /// Parsed common flags.
 #[derive(Debug, Default)]
@@ -123,6 +125,7 @@ impl FlagScope {
             (Self::Read, "since") => "use --since <duration>",
             (Self::Read, "until") => "use --until <RFC3339>",
             (Self::Read, "priority") => "use --priority high, medium, or low",
+            (Self::Read, "assignee") => ASSIGNEE_NEXT_STEP,
             (Self::Read, "min-duration-ms") => {
                 "use --min-duration-ms with a non-negative whole number"
             }
@@ -295,6 +298,7 @@ pub(crate) fn is_read_filter_word(value: &str) -> bool {
             | "since"
             | "until"
             | "priority"
+            | "assignee"
             | "min-duration-ms"
             | "pagination"
             | "cursor-time"
@@ -429,6 +433,8 @@ enum ReadFilterKind {
     Until,
     /// Issue priority filter.
     Priority,
+    /// Issue assignee filter.
+    Assignee,
     /// Actor/distinct-id filter.
     User,
     /// Trace correlation filter.
@@ -466,6 +472,7 @@ fn read_filter_spec(flag: &str) -> Option<ReadFilterSpec> {
         "--since" => (ReadFilterKind::Since, "--since", "--since"),
         "--until" => (ReadFilterKind::Until, "--until", "--until"),
         "--priority" => (ReadFilterKind::Priority, "--priority", "--priority"),
+        "--assignee" => (ReadFilterKind::Assignee, "--assignee", "--assignee"),
         "--user" => (ReadFilterKind::User, "--user", "--user"),
         "--distinct-id" => (ReadFilterKind::User, "--user", "--distinct-id"),
         "--trace" => (ReadFilterKind::Trace, "--trace", "--trace"),
@@ -509,6 +516,7 @@ fn apply_read_filter(
         ReadFilterKind::Since => read.since = Some(value),
         ReadFilterKind::Until => read.until = Some(value),
         ReadFilterKind::Priority => read.priority = Some(normalize_priority(&value)?),
+        ReadFilterKind::Assignee => read.assignee = Some(normalize_assignee(&value)?),
         ReadFilterKind::User => read.user = Some(value),
         ReadFilterKind::Trace => read.trace = Some(value),
         ReadFilterKind::Level => read.level = Some(normalize_log_level(&value)?),
@@ -592,6 +600,7 @@ fn duplicate_flag_next(flag: &'static str) -> &'static str {
         "--since" => "use --since once",
         "--until" => "use --until once",
         "--priority" => "use --priority once",
+        "--assignee" => "use --assignee once",
         "--user" => "use --user once",
         "--trace" => "use --trace once",
         "--severity" => "use --severity once",
@@ -625,6 +634,16 @@ fn normalize_priority(priority: &str) -> Result<String, CliError> {
     match priority.to_ascii_lowercase().as_str() {
         level @ ("high" | "medium" | "low") => Ok(level.to_owned()),
         other => Err(CliError::UnknownPriority(other.to_owned())),
+    }
+}
+
+/// Normalizes an issue assignee filter: `me`, `none`, or a user ID.
+fn normalize_assignee(assignee: &str) -> Result<String, CliError> {
+    let assignee = assignee.to_ascii_lowercase();
+    if matches!(assignee.as_str(), "me" | "none") || crate::ids::is_uuid(&assignee) {
+        Ok(assignee)
+    } else {
+        Err(CliError::InvalidAssignee(assignee))
     }
 }
 
@@ -713,6 +732,7 @@ fn missing_flag_value_next(flag: &'static str) -> &'static str {
         "--since" => "provide a value after --since",
         "--until" => "provide a value after --until",
         "--priority" => "provide a value after --priority",
+        "--assignee" => "provide a value after --assignee",
         "--user" => "provide a value after --user",
         "--distinct-id" => "provide a value after --distinct-id",
         "--trace" => "provide a value after --trace",

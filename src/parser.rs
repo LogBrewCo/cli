@@ -1320,7 +1320,7 @@ fn is_issue_triage_action(args: &[String]) -> bool {
         .is_some_and(|action| {
             matches!(
                 action.as_str(),
-                "archive" | "resolve" | "reopen" | "priority"
+                "archive" | "resolve" | "reopen" | "priority" | "assign" | "unassign" | "assignees"
             )
         })
 }
@@ -1889,6 +1889,7 @@ fn read_value_canonical_flag(flag: &str) -> Option<&'static str> {
         "--since" => "--since",
         "--until" => "--until",
         "--priority" => "--priority",
+        "--assignee" => "--assignee",
         "--user" | "--distinct-id" => "--user",
         "--trace" | "--trace-id" => "--trace",
         "--level" | "--severity" => "--severity",
@@ -1953,6 +1954,7 @@ fn is_read_value_flag(flag: &str) -> bool {
             | "--since"
             | "--until"
             | "--priority"
+            | "--assignee"
             | "--user"
             | "--distinct-id"
             | "--trace"
@@ -2060,6 +2062,7 @@ fn validate_read_filters(target: &ReadTarget, filters: &ReadOptions) -> Result<(
         ReadTarget::Traces => ("read traces", READ_TRACES_NEXT_STEP),
         ReadTarget::Trace(_) => ("read trace", READ_TRACE_NEXT_STEP),
         ReadTarget::Issue(_) => ("read issue", READ_ISSUE_NEXT_STEP),
+        ReadTarget::IssueAssignees(_) => ("issues assignees", READ_ISSUES_NEXT_STEP),
     };
     if let Some(flag) = filters.first_unsupported_flag(target) {
         return Err(CliError::UnsupportedFlag {
@@ -2074,7 +2077,10 @@ fn validate_read_filters(target: &ReadTarget, filters: &ReadOptions) -> Result<(
         ReadTarget::Issues => validate_read_cursor(filters, CliError::InvalidIssueCursor)?,
         ReadTarget::Metrics => validate_read_cursor(filters, CliError::InvalidMetricCursor)?,
         ReadTarget::Traces => validate_read_cursor(filters, CliError::InvalidTraceCursor)?,
-        ReadTarget::Releases | ReadTarget::Trace(_) | ReadTarget::Issue(_) => {}
+        ReadTarget::Releases
+        | ReadTarget::Trace(_)
+        | ReadTarget::Issue(_)
+        | ReadTarget::IssueAssignees(_) => {}
     }
     Ok(())
 }
