@@ -561,6 +561,50 @@ async_test!(support_create_preserves_json_and_renders_concise_human_output -> Te
     Ok(())
 });
 
+async_test!(support_create_retries_reuse_one_idempotency_key -> TestResult, {
+    let server = MockServer::start().await?;
+    Mock::auth("POST", "/api/support/tickets", "test-token")
+        .respond_with(ResponseTemplate::new(200).set_body_json(&serde_json::json!({
+            "ticket_id": TICKET_ID,
+            "status": "open",
+            "created_at": CREATED_AT,
+            "next": "track this ticket with logbrew support show",
+            "next_action": {"code": "inspect_support_ticket", "target": "support_ticket"}
+        })))
+        .expect(3)
+        .mount(&server);
+    let create = |description| {
+        [
+            "logbrew", "support", "create", "--category", "cli_issue", "--title",
+            "Cursor output is unclear", "--description", description, "--json",
+        ]
+    };
+
+    for (run, description) in [(1, "first"), (2, "first"), (3, "second")] {
+        let _output = run_command(&server, create(description), &format!("support-retry-{run}")).await?;
+    }
+
+    let keys = server
+        .received_requests()
+        .iter()
+        .map(|request| {
+            request
+                .headers
+                .get("idempotency-key")
+                .and_then(|value| value.to_str().ok())
+                .map(str::to_owned)
+                .ok_or("support create sends an Idempotency-Key")
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let [first, retry, changed] = keys.as_slice() else {
+        return Err("three support creates".into());
+    };
+    assert_eq!(first, retry, "a repeated create must reuse its key");
+    assert_ne!(first, changed, "a changed ticket must use a new key");
+    assert!(first.len() == 64 && first.bytes().all(|byte| byte.is_ascii_hexdigit()));
+    Ok(())
+});
+
 async_test!(support_list_preserves_legacy_and_cursor_envelopes -> TestResult, {
     let legacy_server = MockServer::start().await?;
     let cursor_server = MockServer::start().await?;

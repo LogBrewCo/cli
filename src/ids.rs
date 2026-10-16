@@ -1,6 +1,18 @@
 //! Local CLI identifier shape helpers.
 
 use crate::{ExplainTarget, IssueOccurrenceSelection};
+use sha2::{Digest as _, Sha256};
+
+/// Computes lowercase SHA-256 hex for exactly these bytes.
+pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut output = String::with_capacity(64);
+    for byte in Sha256::digest(bytes) {
+        output.push(char::from(HEX[usize::from(byte >> 4)]));
+        output.push(char::from(HEX[usize::from(byte & 0x0f)]));
+    }
+    output
+}
 
 /// Infers an explain target from obvious pasted IDs.
 pub(crate) fn infer_explain_target(value: &str) -> Option<ExplainTarget> {

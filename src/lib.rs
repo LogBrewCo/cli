@@ -1773,13 +1773,17 @@ impl Command {
         }
     }
 
-    /// Returns an idempotency key for support context replies.
-    fn idempotency_key(&self) -> Option<&str> {
+    /// Returns the idempotency key for support ticket creation and context replies.
+    fn idempotency_key(&self) -> Option<String> {
         match self {
+            Self::Support {
+                target: SupportTarget::Create(options),
+                ..
+            } => Some(support::create_retry_key(options)),
             Self::Support {
                 target: SupportTarget::ReplyContext(options),
                 ..
-            } => Some(options.retry_key.as_str()),
+            } => Some(options.retry_key.clone()),
             Self::Help { .. }
             | Self::Login { .. }
             | Self::Logout { .. }

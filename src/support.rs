@@ -81,6 +81,20 @@ pub(super) fn create_body(options: &SupportTicketCreateOptions) -> serde_json::V
     serde_json::Value::Object(body)
 }
 
+/// Derives the create retry key from the exact create body.
+///
+/// The server maps one key to one ticket per account, so repeating the same create (for
+/// example after a timeout) returns the first ticket instead of a duplicate. A changed field
+/// makes a new key and a new ticket.
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "the parent command executor consumes this private-module helper"
+)]
+pub(super) fn create_retry_key(options: &SupportTicketCreateOptions) -> String {
+    let body = create_body(options).to_string();
+    crate::ids::sha256_hex(format!("logbrew-cli-support-create-v1\n{body}").as_bytes())
+}
+
 /// Returns a bounded diagnostics object without reading environment variables or files.
 fn generated_diagnostics() -> serde_json::Value {
     sanitize_diagnostics(serde_json::json!({
