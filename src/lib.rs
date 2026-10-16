@@ -1536,7 +1536,7 @@ impl Command {
                 Some(format!("/api/projects/{project_id}/setup/seen"))
             }
             Self::ProjectArchive { project_id, .. } => Some(format!("/api/projects/{project_id}")),
-            Self::McpGrants { .. } => Some(String::from("/api/mcp/grants")),
+            Self::McpGrants { .. } => Some(String::from("/api/mcp/grants?response_version=2")),
             Self::McpRevoke { grant_id, .. } => Some(format!("/api/mcp/grants/{grant_id}")),
             Self::ProjectDeletion { .. } => Some(String::from("/api/support/tickets")),
             Self::ProjectRepositories { target, .. } => Some(String::from(match target {
