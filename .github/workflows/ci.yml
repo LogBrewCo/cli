@@ -36,6 +36,9 @@ jobs:
       - name: Check
         run: bash scripts/check-all.sh
 
+      - name: SDK versions match the newest published releases
+        run: bash scripts/test-check-sdk-versions.sh
+
   npm-install:
     name: npm-install (${{ matrix.target }})
     strategy:

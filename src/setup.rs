@@ -14,8 +14,22 @@ const SDK_NEXT_STEP: &str = "use the released SDK guidance for this runtime; thi
 /// Next step when a public package-registry plan is available.
 const PACKAGE_NEXT_STEP: &str =
     "review the compatibility requirements, then add the dependency; no files were changed";
-/// Current released Java SDK coordinate and compatibility floor.
-const JAVA_SDK_VERSION: &str = "0.1.6";
+// Newest published SDK releases that setup recommends. These lines are the only place a
+// version appears; `scripts/check-sdk-versions.sh` fails CI when one is not the newest
+// release on its registry or tag list.
+/// Newest `co.logbrew:logbrew-sdk` release on Maven Central.
+pub const JAVA_SDK_VERSION: &str = "0.1.9";
+/// Newest `logbrew-sdk` gem release on `RubyGems`.
+pub const RUBY_SDK_VERSION: &str = "0.1.15";
+/// Newest `LogBrew.AspNetCore` release on `NuGet`.
+pub const ASPNETCORE_VERSION: &str = "0.1.2";
+/// Newest Swift package release tag (`v<version>`) in the public SDK repository.
+pub const SWIFT_SDK_VERSION: &str = "0.1.20";
+/// Newest Objective-C release tag (`objc/logbrew-objc/v<version>`).
+pub const OBJC_VERSION: &str = "0.2.3";
+/// Newest C++ release tag (`cpp/logbrew-cpp/v<version>`).
+pub const CPP_VERSION: &str = "0.2.3";
+/// Java compatibility floor for the current SDK.
 const JAVA_MINIMUM_VERSION: &str = ">=11";
 const GO_MODULE: &str = "github.com/LogBrewCo/sdk/go/logbrew";
 const GO_MINIMUM_VERSION: &str = ">=1.24";
@@ -33,39 +47,26 @@ const PHP_MINIMUM_VERSION: &str = "^8.2";
 const SYMFONY_VERSION_REQUIREMENT: &str = "Symfony^6.4 || ^7.0 || ^8.0";
 /// Minimum Ruby version required by the current public Ruby SDK.
 const RUBY_MINIMUM_VERSION: &str = ">=2.6";
-/// Copyable Bundler command pinned to the current public Ruby SDK family.
-const RUBY_INSTALL_COMMAND: &str = "bundle add logbrew-sdk --version \"~> 0.1.5\"";
 const NODE_PACKAGES: &str = "@logbrew/sdk @logbrew/node";
 const SVELTE_PACKAGES: &str = "@logbrew/sdk @logbrew/browser @logbrew/svelte";
 const REACT_EXPRESS_PACKAGES: &str =
     "@logbrew/sdk @logbrew/browser @logbrew/react @logbrew/node @logbrew/express";
 const ASPNETCORE_PACKAGE: &str = "LogBrew.AspNetCore";
-const ASPNETCORE_VERSION: &str = "0.1.2";
 /// Maximum bytes read from a manifest while detecting a framework.
 const MAX_FRAMEWORK_MANIFEST_BYTES: u64 = 256 * 1024;
 /// Public SDK repository used by non-mutating install plans.
 const SDK_PACKAGE_URL: &str = "https://github.com/LogBrewCo/sdk.git";
 /// Public Swift package product consumed by application targets.
 const SWIFT_PRODUCT: &str = "LogBrew";
-/// Minimum public Swift package release required by this setup plan.
-const SWIFT_MINIMUM_VERSION: &str = "0.1.6";
 /// `SwiftPM` requirement that accepts compatible releases before version 1.0.0.
 const SWIFT_VERSION_REQUIREMENT: &str = "up_to_next_major";
 /// Next step when a public Swift package can be planned truthfully.
 const SWIFT_NEXT_STEP: &str =
     "add the LogBrew Swift package from the install plan; no files were changed";
-/// Scoped immutable release tag for the current Objective-C SDK package.
-const OBJC_RELEASE_TAG: &str = "objc/logbrew-objc/v0.2.3";
-/// Current released Objective-C SDK version.
-const OBJC_VERSION: &str = "0.2.3";
 /// Objective-C package location inside the public SDK repository.
 const OBJC_SOURCE_SUBDIRECTORY: &str = "objc/logbrew-objc";
 /// Next step for the released Objective-C source/header package.
 const OBJC_NEXT_STEP: &str = "vendor the pinned LogBrew Objective-C header and source directory into the application target; no files were changed";
-/// Scoped immutable release tag for the current C++ SDK package.
-const CPP_RELEASE_TAG: &str = "cpp/logbrew-cpp/v0.2.3";
-/// Current released C++ SDK version.
-const CPP_VERSION: &str = "0.2.3";
 /// C++ package location inside the public SDK repository.
 const CPP_SOURCE_SUBDIRECTORY: &str = "cpp/logbrew-cpp";
 /// Exported dependency-free `CMake` target.
@@ -160,10 +161,10 @@ impl InstallPlan {
                 "ecosystem": "swiftpm",
                 "package_url": SDK_PACKAGE_URL,
                 "product": SWIFT_PRODUCT,
-                "version": SWIFT_MINIMUM_VERSION,
+                "version": SWIFT_SDK_VERSION,
                 "version_requirement": {
                     "kind": SWIFT_VERSION_REQUIREMENT,
-                    "minimum_version": SWIFT_MINIMUM_VERSION,
+                    "minimum_version": SWIFT_SDK_VERSION,
                 },
                 "dependency_declaration": swift_dependency_declaration(),
                 "next_action": {
@@ -176,7 +177,7 @@ impl InstallPlan {
                 "ecosystem": "source",
                 "language": "objective-c",
                 "package_url": SDK_PACKAGE_URL,
-                "release_tag": OBJC_RELEASE_TAG,
+                "release_tag": release_tag(OBJC_SOURCE_SUBDIRECTORY, OBJC_VERSION),
                 "version": OBJC_VERSION,
                 "source_subdirectory": OBJC_SOURCE_SUBDIRECTORY,
                 "header": "include/LogBrew.h",
@@ -191,7 +192,7 @@ impl InstallPlan {
                 "mode": "non_mutating",
                 "ecosystem": "cmake",
                 "package_url": SDK_PACKAGE_URL,
-                "release_tag": CPP_RELEASE_TAG,
+                "release_tag": release_tag(CPP_SOURCE_SUBDIRECTORY, CPP_VERSION),
                 "version": CPP_VERSION,
                 "source_subdirectory": CPP_SOURCE_SUBDIRECTORY,
                 "targets": {
@@ -237,20 +238,22 @@ impl InstallPlan {
             Self::Swift => writeln!(
                 output,
                 "Package: {SDK_PACKAGE_URL}\nProduct: {SWIFT_PRODUCT}\nMinimum version: \
-                 {SWIFT_MINIMUM_VERSION}\nDependency: {}",
+                 {SWIFT_SDK_VERSION}\nDependency: {}",
                 swift_dependency_declaration()
             ),
             Self::ObjectiveC => writeln!(
                 output,
-                "Package: {SDK_PACKAGE_URL}\nRelease tag: {OBJC_RELEASE_TAG}\nSource subdirectory: \
+                "Package: {SDK_PACKAGE_URL}\nRelease tag: {}\nSource subdirectory: \
                  {OBJC_SOURCE_SUBDIRECTORY}\nHeader: include/LogBrew.h\nSource directory: src\nFramework: \
-                 Foundation"
+                 Foundation",
+                release_tag(OBJC_SOURCE_SUBDIRECTORY, OBJC_VERSION)
             ),
             Self::Cmake => writeln!(
                 output,
-                "Package: {SDK_PACKAGE_URL}\nRelease tag: {CPP_RELEASE_TAG}\nSource subdirectory: \
+                "Package: {SDK_PACKAGE_URL}\nRelease tag: {}\nSource subdirectory: \
                  {CPP_SOURCE_SUBDIRECTORY}\nCore target: {CPP_CORE_TARGET}\nHTTP target: {CPP_HTTP_TARGET} \
                  (optional; requires libcurl)\nDependency:\n{}",
+                release_tag(CPP_SOURCE_SUBDIRECTORY, CPP_VERSION),
                 cmake_dependency_declaration()
             ),
             Self::Package {
@@ -330,7 +333,7 @@ fn ruby_plan_json(package_manager: &str, rails: bool) -> serde_json::Value {
             "requires_ruby": RUBY_MINIMUM_VERSION,
             "requires_framework": serde_json::Value::Null,
         },
-        "install_command": RUBY_INSTALL_COMMAND,
+        "install_command": ruby_install_command(),
     })
 }
 
@@ -443,8 +446,9 @@ fn write_package_human<W: std::io::Write>(
             },
         ),
         PackageIntegration::Ruby(rails) => format!(
-            "Integration: {}\nPackage: logbrew-sdk\nCompatibility review: Ruby {RUBY_MINIMUM_VERSION}\nCommand: {RUBY_INSTALL_COMMAND}",
+            "Integration: {}\nPackage: logbrew-sdk\nCompatibility review: Ruby {RUBY_MINIMUM_VERSION}\nCommand: {}",
             if rails { "Rails" } else { "Ruby" },
+            ruby_install_command(),
         ),
         PackageIntegration::AspNetCore => format!(
             "Integration: ASP.NET Core\nPackage: {ASPNETCORE_PACKAGE}:{ASPNETCORE_VERSION}\nCompatibility review: .NET >=10; ASP.NET Core 10+\nSurface: server; key kind: server; stable service name, environment, and release required\nCommand: dotnet add package {ASPNETCORE_PACKAGE} --version {ASPNETCORE_VERSION}"
@@ -540,13 +544,24 @@ pub(crate) fn write_setup_plan<W: std::io::Write>(
 
 /// Builds the copyable `SwiftPM` dependency declaration from canonical fields.
 fn swift_dependency_declaration() -> String {
-    format!(r#".package(url: "{SDK_PACKAGE_URL}", from: "{SWIFT_MINIMUM_VERSION}")"#)
+    format!(r#".package(url: "{SDK_PACKAGE_URL}", from: "{SWIFT_SDK_VERSION}")"#)
+}
+
+/// Builds the immutable release tag of one source package in the public SDK repository.
+fn release_tag(subdirectory: &str, version: &str) -> String {
+    format!("{subdirectory}/v{version}")
+}
+
+/// Builds the copyable Bundler command for the current Ruby SDK release and later patches.
+fn ruby_install_command() -> String {
+    format!("bundle add logbrew-sdk --version \"~> {RUBY_SDK_VERSION}\"")
 }
 
 /// Builds a copyable pinned `CMake` `FetchContent` declaration.
 fn cmake_dependency_declaration() -> String {
     format!(
-        "include(FetchContent)\nFetchContent_Declare(\n  logbrew\n  GIT_REPOSITORY {SDK_PACKAGE_URL}\n  GIT_TAG {CPP_RELEASE_TAG}\n  GIT_SHALLOW TRUE\n  SOURCE_SUBDIR {CPP_SOURCE_SUBDIRECTORY}\n)\nFetchContent_MakeAvailable(logbrew)"
+        "include(FetchContent)\nFetchContent_Declare(\n  logbrew\n  GIT_REPOSITORY {SDK_PACKAGE_URL}\n  GIT_TAG {}\n  GIT_SHALLOW TRUE\n  SOURCE_SUBDIR {CPP_SOURCE_SUBDIRECTORY}\n)\nFetchContent_MakeAvailable(logbrew)",
+        release_tag(CPP_SOURCE_SUBDIRECTORY, CPP_VERSION)
     )
 }
 
