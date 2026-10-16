@@ -268,8 +268,9 @@ List the AI clients that you connected to the LogBrew MCP server:
 logbrew mcp grants --json
 ```
 
-Each grant shows its client, the projects that you approved, when it was last
-used, and when it expires. A connected client refreshes its access about once
+Each grant shows its client name (or the client ID when the grant has no
+name), the projects that you approved, when it was last used, and when it
+expires. A connected client refreshes its access about once
 an hour while you use it. A grant ends after 30 days without use, and after 90
 days in all. To disconnect a client:
 

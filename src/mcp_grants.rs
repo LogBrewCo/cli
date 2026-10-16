@@ -30,6 +30,8 @@ struct Grant {
     id: String,
     /// Client identifier (its metadata document URL).
     client_id: String,
+    /// Approved client display name; `null` for grants approved before names were stored.
+    client_name: Option<String>,
     /// Approved project UUIDs.
     project_ids: Vec<String>,
     /// Approval time.
@@ -47,6 +49,10 @@ impl Grant {
             && self.client_id.len() <= 2048
             && display_safe(self.client_id.as_str(), 2048)
             && !self.client_id.trim().is_empty()
+            && self
+                .client_name
+                .as_deref()
+                .is_none_or(|name| crate::http::nonempty_display_safe(name, 100))
             && self.project_ids.len() <= 50
             && self.project_ids.iter().all(|id| is_uuid(id.as_str()))
             && [&self.created_at, &self.last_used_at, &self.expires_at]
@@ -83,7 +89,10 @@ pub(crate) async fn execute_list<W: std::io::Write>(
             output,
             "- id={} client={} projects={} last_used={} expires={}",
             grant.id,
-            grant.client_id,
+            grant
+                .client_name
+                .as_deref()
+                .unwrap_or(grant.client_id.as_str()),
             grant.project_ids.len(),
             grant.last_used_at,
             grant.expires_at
