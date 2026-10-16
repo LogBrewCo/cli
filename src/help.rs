@@ -208,14 +208,14 @@ Usage:
   logbrew setup [--auto] [--yes] [--json]
 
 Detects supported project manifests and prints a non-mutating SDK setup plan.
-No files are changed. SwiftPM planning uses compatible releases from 0.1.6 for detected SwiftPM \
-or XcodeGen projects.
+No files are changed. SwiftPM planning uses compatible releases from the newest SDK release for \
+detected SwiftPM or XcodeGen projects.
 Python planning detects Django, Flask, and FastAPI from bounded local project metadata. It emits \
 the public core and framework packages, the detected pip, uv, poetry, or pipenv command, and \
 explicit Python/framework compatibility requirements.
-Bundler planning detects Rails from its canonical application manifest and pins the released \
-logbrew-sdk 0.1.5-compatible requirement without changing Gemfile.
-CMake planning pins the released C++ SDK tag cpp/logbrew-cpp/v0.2.3, source subdirectory \
+Bundler planning detects Rails from its canonical application manifest and requires the newest \
+released logbrew-sdk or a later compatible release without changing Gemfile.
+CMake planning pins the newest released C++ SDK tag, source subdirectory \
 cpp/logbrew-cpp, core target LogBrew::LogBrew, and optional libcurl target \
 LogBrew::HttpTransport. It prints a copyable FetchContent block without editing CMakeLists.txt.
 JavaScript planning detects exact @sveltejs/kit and mixed React + Express dependencies, then emits \

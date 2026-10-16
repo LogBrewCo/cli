@@ -1,6 +1,10 @@
 //! Truthful non-mutating setup readiness tests.
 
 use super::TestResult;
+use logbrew_cli::setup::{
+    ASPNETCORE_VERSION, CPP_VERSION, JAVA_SDK_VERSION, OBJC_VERSION, RUBY_SDK_VERSION,
+    SWIFT_SDK_VERSION,
+};
 use logbrew_cli::{CliEnvironment, execute_command, parse_command};
 
 const SWIFT_PACKAGE_URL: &str = "https://github.com/LogBrewCo/sdk.git";
@@ -29,12 +33,12 @@ async_test!(swiftpm_emits_exact_non_mutating_install_plan -> TestResult, {
                 "ecosystem": "swiftpm",
                 "package_url": SWIFT_PACKAGE_URL,
                 "product": "LogBrew",
-                "version": "0.1.6",
+                "version": SWIFT_SDK_VERSION,
                 "version_requirement": {
                     "kind": "up_to_next_major",
-                    "minimum_version": "0.1.6"
+                    "minimum_version": SWIFT_SDK_VERSION
                 },
-                "dependency_declaration": ".package(url: \"https://github.com/LogBrewCo/sdk.git\", from: \"0.1.6\")",
+                "dependency_declaration": format!(".package(url: \"https://github.com/LogBrewCo/sdk.git\", from: \"{SWIFT_SDK_VERSION}\")"),
                 "next_action": {
                     "code": "add_swift_package_dependency",
                     "target": "project_manifest"
@@ -53,8 +57,8 @@ async_test!(swiftpm_emits_exact_non_mutating_install_plan -> TestResult, {
         &human,
         &[
             "Product: LogBrew",
-            "Minimum version: 0.1.6",
-            r#"Dependency: .package(url: "https://github.com/LogBrewCo/sdk.git", from: "0.1.6")"#,
+            format!("Minimum version: {SWIFT_SDK_VERSION}").as_str(),
+            format!(r#"Dependency: .package(url: "https://github.com/LogBrewCo/sdk.git", from: "{SWIFT_SDK_VERSION}")"#).as_str(),
         ],
     );
     Ok(())
@@ -74,8 +78,8 @@ async_test!(cmake_emits_exact_pinned_cpp_install_plan -> TestResult, {
             "mode": "non_mutating",
             "ecosystem": "cmake",
             "package_url": SWIFT_PACKAGE_URL,
-            "release_tag": "cpp/logbrew-cpp/v0.2.3",
-            "version": "0.2.3",
+            "release_tag": format!("cpp/logbrew-cpp/v{CPP_VERSION}"),
+            "version": CPP_VERSION,
             "source_subdirectory": "cpp/logbrew-cpp",
             "targets": {
                 "core": "LogBrew::LogBrew",
@@ -86,7 +90,7 @@ async_test!(cmake_emits_exact_pinned_cpp_install_plan -> TestResult, {
                 "default_enabled": false,
                 "requires": "libcurl"
             },
-            "dependency_declaration": "include(FetchContent)\nFetchContent_Declare(\n  logbrew\n  GIT_REPOSITORY https://github.com/LogBrewCo/sdk.git\n  GIT_TAG cpp/logbrew-cpp/v0.2.3\n  GIT_SHALLOW TRUE\n  SOURCE_SUBDIR cpp/logbrew-cpp\n)\nFetchContent_MakeAvailable(logbrew)",
+            "dependency_declaration": format!("include(FetchContent)\nFetchContent_Declare(\n  logbrew\n  GIT_REPOSITORY https://github.com/LogBrewCo/sdk.git\n  GIT_TAG cpp/logbrew-cpp/v{CPP_VERSION}\n  GIT_SHALLOW TRUE\n  SOURCE_SUBDIR cpp/logbrew-cpp\n)\nFetchContent_MakeAvailable(logbrew)"),
             "next_action": {
                 "code": "add_cmake_fetch_content",
                 "target": "CMakeLists.txt"
@@ -109,7 +113,7 @@ async_test!(cmake_emits_exact_pinned_cpp_install_plan -> TestResult, {
     assert_contains_all(
         &human,
         &[
-            "Release tag: cpp/logbrew-cpp/v0.2.3",
+            format!("Release tag: cpp/logbrew-cpp/v{CPP_VERSION}").as_str(),
             "Source subdirectory: cpp/logbrew-cpp",
             "Core target: LogBrew::LogBrew",
             "HTTP target: LogBrew::HttpTransport (optional; requires libcurl)",
@@ -137,8 +141,8 @@ async_test!(xcodegen_prefers_the_objective_c_app_plan -> TestResult, {
             "ecosystem": "source",
             "language": "objective-c",
             "package_url": SWIFT_PACKAGE_URL,
-            "release_tag": "objc/logbrew-objc/v0.2.3",
-            "version": "0.2.3",
+            "release_tag": format!("objc/logbrew-objc/v{OBJC_VERSION}"),
+            "version": OBJC_VERSION,
             "source_subdirectory": "objc/logbrew-objc",
             "header": "include/LogBrew.h",
             "source_directory": "src",
@@ -157,7 +161,7 @@ async_test!(xcodegen_prefers_the_objective_c_app_plan -> TestResult, {
     assert_contains_all(
         &human,
         &[
-            "Release tag: objc/logbrew-objc/v0.2.3",
+            format!("Release tag: objc/logbrew-objc/v{OBJC_VERSION}").as_str(),
             "Source subdirectory: objc/logbrew-objc",
             "Header: include/LogBrew.h",
             "Source directory: src",
@@ -263,21 +267,21 @@ async_test!(java_builds_emit_exact_released_dependency_plans -> TestResult, {
             "maven",
             "<project><dependency><groupId>org.springframework.kafka</groupId></dependency></project>",
             "spring",
-            "<dependency>\n  <groupId>co.logbrew</groupId>\n  <artifactId>logbrew-sdk</artifactId>\n  <version>0.1.6</version>\n</dependency>",
+            format!("<dependency>\n  <groupId>co.logbrew</groupId>\n  <artifactId>logbrew-sdk</artifactId>\n  <version>{JAVA_SDK_VERSION}</version>\n</dependency>"),
         ),
         (
             "build.gradle",
             "gradle",
             "plugins { id 'java' }",
             "java",
-            "implementation 'co.logbrew:logbrew-sdk:0.1.6'",
+            format!("implementation 'co.logbrew:logbrew-sdk:{JAVA_SDK_VERSION}'"),
         ),
         (
             "build.gradle.kts",
             "gradle-kotlin",
             "plugins { java }",
             "java",
-            "implementation(\"co.logbrew:logbrew-sdk:0.1.6\")",
+            format!("implementation(\"co.logbrew:logbrew-sdk:{JAVA_SDK_VERSION}\")"),
         ),
     ] {
         let root = fixture(manager, &[(manifest, contents)])?;
@@ -289,7 +293,7 @@ async_test!(java_builds_emit_exact_released_dependency_plans -> TestResult, {
                 "ecosystem": manager,
                 "package_manager": manager,
                 "integration": integration,
-                "package": {"group_id": "co.logbrew", "artifact_id": "logbrew-sdk", "version": "0.1.6"},
+                "package": {"group_id": "co.logbrew", "artifact_id": "logbrew-sdk", "version": JAVA_SDK_VERSION},
                 "compatibility": {
                     "status": "review_required",
                     "requires_java": ">=11",
@@ -310,8 +314,8 @@ async_test!(java_builds_emit_exact_released_dependency_plans -> TestResult, {
                 &setup_text(&root, &["logbrew", "setup"]).await?,
                 &[
                     "Integration: Spring",
-                    "co.logbrew:logbrew-sdk:0.1.6",
-                    declaration,
+                    format!("co.logbrew:logbrew-sdk:{JAVA_SDK_VERSION}").as_str(),
+                    declaration.as_str(),
                 ],
             );
         }
@@ -467,7 +471,7 @@ async_test!(aspnetcore_wins_a_mixed_repo_without_claiming_plain_dotnet -> TestRe
             "ecosystem": "nuget",
             "package_manager": "dotnet",
             "integration": "aspnetcore",
-            "package": {"id": "LogBrew.AspNetCore", "version": "0.1.2"},
+            "package": {"id": "LogBrew.AspNetCore", "version": ASPNETCORE_VERSION},
             "compatibility": {
                 "status": "review_required",
                 "requires_dotnet": ">=10",
@@ -480,7 +484,7 @@ async_test!(aspnetcore_wins_a_mixed_repo_without_claiming_plain_dotnet -> TestRe
                 "service_name_required": true,
                 "deployment_context_required": ["environment", "release"],
             }],
-            "install_command": "dotnet add package LogBrew.AspNetCore --version 0.1.2",
+            "install_command": format!("dotnet add package LogBrew.AspNetCore --version {ASPNETCORE_VERSION}"),
             "next_action": {"code": "review_compatibility_and_install", "target": "project_environment"},
         })
     );
@@ -503,7 +507,7 @@ async_test!(aspnetcore_wins_a_mixed_repo_without_claiming_plain_dotnet -> TestRe
         &setup_text(&root, &["logbrew", "setup"]).await?,
         &[
             "Integration: ASP.NET Core",
-            "Package: LogBrew.AspNetCore:0.1.2",
+            format!("Package: LogBrew.AspNetCore:{ASPNETCORE_VERSION}").as_str(),
             "Surface: server; key kind: server",
         ],
     );
@@ -632,6 +636,10 @@ async_test!(scanner_does_not_follow_manifest_or_metadata_symlinks -> TestResult,
     std::os::unix::fs::symlink(&outside_manifest, linked.join("config/application.rb"))?;
     let body = setup_json(&linked).await?;
     assert_eq!(body["install_plan"]["integration"], "ruby");
+    assert_eq!(
+        body["install_plan"]["install_command"],
+        format!("bundle add logbrew-sdk --version \"~> {RUBY_SDK_VERSION}\"")
+    );
     std::fs::remove_file(outside)?;
     std::fs::remove_file(outside_manifest)?;
     Ok(())
