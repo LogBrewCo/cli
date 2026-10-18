@@ -297,7 +297,7 @@ fn validated_zip_name<R: std::io::Read>(
     entry: &zip::read::ZipFile<'_, R>,
 ) -> Result<String, RuntimeError> {
     let raw = std::str::from_utf8(entry.name_raw()).map_err(|_| invalid_artifact())?;
-    if raw != entry.name()
+    if entry.name().ok().as_deref() != Some(raw)
         || raw.is_empty()
         || raw.starts_with('/')
         || raw.contains('\\')
