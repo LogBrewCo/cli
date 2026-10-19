@@ -33,6 +33,8 @@ mod http;
 pub mod ids;
 #[doc(hidden)]
 pub mod investigate;
+/// Issue owners, activity, ownership rules, and severity rules.
+pub mod issue_ownership;
 pub mod issue_triage;
 mod mcp_grants;
 mod native_debug_artifacts;
@@ -536,6 +538,12 @@ pub enum ReadTarget {
     Issue(String),
     /// Accounts that can be assigned issues of one project, by project ID.
     IssueAssignees(String),
+    /// Suggested owners of one issue, by issue ID.
+    IssueOwners(String),
+    /// Activity of one issue, by issue ID; `limit` and the cursor select the page.
+    IssueActivity(String),
+    /// Ownership rules and CODEOWNERS text of one project, by project ID.
+    IssueOwnership(String),
 }
 
 impl ReadTarget {
@@ -1464,6 +1472,31 @@ pub enum SetTarget {
     },
     /// Update status, priority, or assignee of several issues of one project in one request.
     IssueBulk(IssueBulkOptions),
+    /// Replace a project's ownership rules, CODEOWNERS text, or both.
+    IssueOwnership {
+        /// Project identifier.
+        project_id: String,
+        /// New ownership rules text.
+        rules: Option<String>,
+        /// New CODEOWNERS text.
+        codeowners: Option<String>,
+    },
+    /// Set one issue's severity rule.
+    IssueRule {
+        /// Issue identifier.
+        id: String,
+        /// `source`, `info`, `warning`, `error`, or `critical`.
+        severity: String,
+    },
+    /// Set the severity rule of one log's signature.
+    LogRule {
+        /// Log identifier.
+        id: String,
+        /// `source`, `info`, `warning`, `error`, or `critical`.
+        severity: String,
+        /// Whether logs with this signature are hidden.
+        ignored: bool,
+    },
 }
 
 /// Process environment needed by the CLI.
@@ -1626,7 +1659,14 @@ impl Command {
     #[must_use]
     pub const fn http_method(&self) -> Option<HttpMethod> {
         match self {
-            Self::Deploy { .. } => Some(HttpMethod::Put),
+            Self::Deploy { .. }
+            | Self::Set {
+                target:
+                    SetTarget::IssueOwnership { .. }
+                    | SetTarget::IssueRule { .. }
+                    | SetTarget::LogRule { .. },
+                ..
+            } => Some(HttpMethod::Put),
             Self::ProjectCreate { .. }
             | Self::ProjectIngestKeyCreate { .. }
             | Self::ProjectRepositories {
@@ -1706,6 +1746,13 @@ impl Command {
                 target: SetTarget::IssueBulk(options),
                 ..
             } => Some(issue_triage::request_body(options)),
+            Self::Set {
+                target:
+                    target @ (SetTarget::IssueOwnership { .. }
+                    | SetTarget::IssueRule { .. }
+                    | SetTarget::LogRule { .. }),
+                ..
+            } => issue_ownership::request_body(target),
             Self::Deploy { options, .. } => serde_json::to_value(options).ok(),
             Self::AnalyticsPaths { options, .. } => Some(analytics::request_body(options)),
             Self::AnalyticsCompare { options, .. } => {
@@ -2546,22 +2593,7 @@ fn read_path(target: &ReadTarget, filters: &ReadPathFilters<'_>) -> String {
                 ("limit", filters.limit),
             ],
         ),
-        ReadTarget::Metrics => path_with_query(
-            "/api/telemetry/metrics",
-            &[
-                ("name", filters.name),
-                ("service_name", filters.service),
-                ("since", filters.since),
-                ("until", filters.until),
-                ("project_id", filters.project),
-                ("release", filters.release),
-                ("environment", filters.environment),
-                ("pagination", filters.pagination),
-                ("cursor_time", filters.cursor_time),
-                ("cursor_id", filters.cursor_id),
-                ("limit", filters.limit),
-            ],
-        ),
+        ReadTarget::Metrics => metric_list_path(filters),
         ReadTarget::Traces => trace_list_path(filters),
         ReadTarget::Trace(id) => path_with_query(
             &format!("/api/telemetry/traces/{}", encode_component(id)),
@@ -2578,7 +2610,41 @@ fn read_path(target: &ReadTarget, filters: &ReadPathFilters<'_>) -> String {
         ReadTarget::IssueAssignees(project) => {
             format!("/api/telemetry/issues/assignees?project_id={project}")
         }
+        ReadTarget::IssueOwners(id) => {
+            format!("/api/telemetry/issues/{}/owners", encode_component(id))
+        }
+        ReadTarget::IssueActivity(id) => path_with_query(
+            &format!("/api/telemetry/issues/{}/activity", encode_component(id)),
+            &[
+                ("limit", filters.limit),
+                ("cursor_time", filters.cursor_time),
+                ("cursor_id", filters.cursor_id),
+            ],
+        ),
+        ReadTarget::IssueOwnership(project) => {
+            format!("/api/telemetry/issues/ownership?project_id={project}")
+        }
     }
+}
+
+/// Builds the metric sample list path.
+fn metric_list_path(filters: &ReadPathFilters<'_>) -> String {
+    path_with_query(
+        "/api/telemetry/metrics",
+        &[
+            ("name", filters.name),
+            ("service_name", filters.service),
+            ("since", filters.since),
+            ("until", filters.until),
+            ("project_id", filters.project),
+            ("release", filters.release),
+            ("environment", filters.environment),
+            ("pagination", filters.pagination),
+            ("cursor_time", filters.cursor_time),
+            ("cursor_id", filters.cursor_id),
+            ("limit", filters.limit),
+        ],
+    )
 }
 
 /// Builds the recent trace list path with its trace-specific cursor key.
@@ -2715,6 +2781,11 @@ fn set_path(target: &SetTarget) -> String {
             )
         }
         SetTarget::IssueBulk(_) => String::from("/api/telemetry/issues/bulk"),
+        SetTarget::IssueOwnership { .. } => String::from("/api/telemetry/issues/ownership"),
+        SetTarget::IssueRule { id, .. } => {
+            format!("/api/telemetry/issues/{}/triage-rule", encode_component(id))
+        }
+        SetTarget::LogRule { id, .. } => format!("/api/logs/{}/triage-rule", encode_component(id)),
     }
 }
 

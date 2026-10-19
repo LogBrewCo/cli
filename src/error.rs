@@ -158,6 +158,15 @@ pub enum CliError {
     /// Issue archive, resolve, reopen, priority, or assignment syntax is malformed.
     #[error("invalid issue command")]
     InvalidIssueTriageCommand,
+    /// Issue owner, activity, or ownership syntax is malformed.
+    #[error("invalid ownership command")]
+    InvalidOwnershipCommand,
+    /// An ownership file cannot be read, is not UTF-8 text, or is larger than 128 KiB.
+    #[error("invalid ownership file")]
+    InvalidOwnershipFile,
+    /// Issue or log severity rule syntax is malformed.
+    #[error("invalid severity rule command")]
+    InvalidSeverityRuleCommand,
     /// Permanently deleted project syntax or exact confirmation is malformed.
     #[error("invalid project deletion command")]
     InvalidProjectDeletionCommand,
@@ -633,6 +642,9 @@ const fn cli_error_code(error: &CliError) -> &'static str {
         CliError::InvalidProjectArchiveCommand => "invalid_project_archive_command",
         CliError::InvalidMcpCommand => "invalid_mcp_command",
         CliError::InvalidIssueTriageCommand => "invalid_issue_command",
+        CliError::InvalidOwnershipCommand => "invalid_ownership_command",
+        CliError::InvalidOwnershipFile => "invalid_ownership_file",
+        CliError::InvalidSeverityRuleCommand => "invalid_severity_rule_command",
         CliError::InvalidProjectDeletionCommand => "invalid_project_deletion_command",
         CliError::InvalidDeploymentCommand => "invalid_deployment_command",
         CliError::InvalidProjectsCommand => "invalid_projects_command",
@@ -695,6 +707,11 @@ const fn cli_error_next_step(error: &CliError) -> &'static str {
         CliError::InvalidMcpCommand => {
             "use logbrew mcp grants or logbrew mcp revoke <grant_id> --yes, with optional --json"
         }
+        CliError::InvalidOwnershipCommand => crate::issue_ownership::OWNERSHIP_NEXT_STEP,
+        CliError::InvalidOwnershipFile => {
+            "pass a readable UTF-8 text file of at most 128 KiB to --rules or --codeowners"
+        }
+        CliError::InvalidSeverityRuleCommand => crate::issue_ownership::RULE_NEXT_STEP,
         CliError::InvalidIssueTriageCommand => {
             "use logbrew issues archive|resolve|reopen|unassign <issue_id>..., logbrew issues priority high|medium|low <issue_id>..., or logbrew issues assign <user_id|me> <issue_id>..., with --project <project_id> for more than one issue (up to 100), or logbrew issues assignees --project <project_id>, each with optional --json"
         }
