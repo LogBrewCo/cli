@@ -7,7 +7,8 @@
 # from a fresh runner (the npm-install jobs restore a Cargo cache). p99 needs 100
 # runs; below that an entry gives the run count and the maximum.
 # Format: one `key = value` per line, arrays on one line, pins as "file::text"
-# where @VERSION@ stands for the entry's version.
+# where @VERSION@ stands for the entry's version. `uses` lists actions by name; the
+# workflows hold each pin (a full commit and a version comment).
 
 gates = ["scripts/check-all.sh"]
 utilities = ["[[", "awk", "basename", "bash", "cd", "cmp", "command", "continue", "cp", "curl", "cut", "dirname", "echo", "exit", "export", "find", "gh", "git", "grep", "jq", "mapfile", "mkdir", "mktemp", "openssl", "printf", "rmdir", "sed", "set", "sh", "sleep", "sudo", "tar", "tee", "tr", "trap", "true", "uname", "unzip", "wait", "xargs"]
@@ -18,7 +19,7 @@ risk = "Rust compile errors, compiler lints (warnings deny), and test failures"
 tool = "rustc, cargo, and libtest"
 version = "stable"
 unpinned = "CI installs the latest stable toolchain on every run (dtolnay/rust-toolchain, toolchain: stable); Cargo.toml requires at least 1.87"
-uses = ["dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master", "swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2"]
+uses = ["dtolnay/rust-toolchain", "swatinem/rust-cache"]
 commands = ["cargo test", "cargo build", "cargo metadata", "cargo package", "rustc"]
 runs_in = "CI check job (scripts/check-all.sh), npm-install jobs, release builds"
 config = "Cargo.toml [lints]"
@@ -67,7 +68,7 @@ risk = "dependency advisories"
 tool = "cargo-audit"
 version = "0.22.2"
 pins = ["scripts/cargo-audit-version.sh::LOGBREW_CARGO_AUDIT_VERSION:-@VERSION@}", ".github/workflows/ci.yml::tool: cargo-audit@@VERSION@"]
-uses = ["taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28"]
+uses = ["taiki-e/install-action"]
 commands = ["cargo audit"]
 runs_in = "CI check job (scripts/check-all.sh); release preflight"
 config = "defaults"
@@ -117,7 +118,7 @@ risk = "npm packages that run install scripts or install the wrong binary"
 tool = "Node.js and npm (packaging tests and trusted publishing, not quality tools)"
 version = "24.19.0"
 pins = [".github/workflows/ci.yml::node-version: \"@VERSION@\"", ".github/workflows/ci.yml::npm install --global npm@12.2.0", ".github/workflows/publish-npm-trusted.yml::node-version: \"@VERSION@\""]
-uses = ["actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0"]
+uses = ["actions/setup-node"]
 commands = ["npm", "npm init", "npm install", "npm publish", "npm view", "npx"]
 runs_in = "CI npm-install jobs on Linux, macOS, and Windows; npm trusted publishing"
 config = "scripts/npm-packages.sh"
@@ -164,9 +165,9 @@ checked = 2026-10-19
 id = "release-actions"
 risk = "release artifact, attestation, and publishing supply chain"
 tool = "GitHub actions used by the release and publish workflows"
-version = "pinned by commit"
-unpinned = "each action is pinned by commit (see uses)"
-uses = ["actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2", "actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2", "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2", "rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5", "./.github/workflows/publish-npm-trusted.yml", "./.github/workflows/publish-homebrew-tap.yml", "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1"]
+version = "pinned in the workflows"
+unpinned = "each workflow pins the commit with a version comment; the check requires one such pin per action"
+uses = ["actions/attest-build-provenance", "actions/download-artifact", "actions/upload-artifact", "rust-lang/crates-io-auth-action", "./.github/workflows/publish-npm-trusted.yml", "./.github/workflows/publish-homebrew-tap.yml", "actions/checkout"]
 commands = ["cargo publish"]
 runs_in = "every workflow (checkout); release and publish workflows"
 config = "release.yml, publish-*.yml"
