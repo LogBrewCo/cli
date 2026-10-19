@@ -164,6 +164,9 @@ pub enum CliError {
     /// An ownership file cannot be read, is not UTF-8 text, or is larger than 128 KiB.
     #[error("invalid ownership file")]
     InvalidOwnershipFile,
+    /// Inbox syntax is malformed.
+    #[error("invalid inbox command")]
+    InvalidInboxCommand,
     /// Issue or log severity rule syntax is malformed.
     #[error("invalid severity rule command")]
     InvalidSeverityRuleCommand,
@@ -645,6 +648,7 @@ const fn cli_error_code(error: &CliError) -> &'static str {
         CliError::InvalidOwnershipCommand => "invalid_ownership_command",
         CliError::InvalidOwnershipFile => "invalid_ownership_file",
         CliError::InvalidSeverityRuleCommand => "invalid_severity_rule_command",
+        CliError::InvalidInboxCommand => "invalid_inbox_command",
         CliError::InvalidProjectDeletionCommand => "invalid_project_deletion_command",
         CliError::InvalidDeploymentCommand => "invalid_deployment_command",
         CliError::InvalidProjectsCommand => "invalid_projects_command",
@@ -712,6 +716,7 @@ const fn cli_error_next_step(error: &CliError) -> &'static str {
             "pass a readable UTF-8 text file of at most 128 KiB to --rules or --codeowners"
         }
         CliError::InvalidSeverityRuleCommand => crate::issue_ownership::RULE_NEXT_STEP,
+        CliError::InvalidInboxCommand => crate::issue_ownership::INBOX_NEXT_STEP,
         CliError::InvalidIssueTriageCommand => {
             "use logbrew issues archive|resolve|reopen|unassign <issue_id>..., logbrew issues priority high|medium|low <issue_id>..., or logbrew issues assign <user_id|me> <issue_id>..., with --project <project_id> for more than one issue (up to 100), or logbrew issues assignees --project <project_id>, each with optional --json"
         }

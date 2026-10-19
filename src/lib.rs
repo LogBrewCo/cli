@@ -122,7 +122,8 @@ pub(crate) const ISSUE_STATUS_VALUES_NEXT_STEP: &str =
 pub(crate) const ISSUE_STATUS_FILTER_NEXT_STEP: &str =
     "use --status unresolved/open, --status resolved/closed, or --status archived/ignored";
 /// Accepted issue assignee filter values.
-pub(crate) const ASSIGNEE_NEXT_STEP: &str = "use --assignee me, none, or a user ID";
+pub(crate) const ASSIGNEE_NEXT_STEP: &str =
+    "use --assignee me, none, my_teams, a user ID, or team:<team_id>";
 /// Accepted issue status values for missing mutation arguments.
 pub(crate) const ISSUE_STATUS_ARGUMENT_NEXT_STEP: &str =
     "provide one of unresolved/open, resolved/closed, archived/ignored";
@@ -544,6 +545,8 @@ pub enum ReadTarget {
     IssueActivity(String),
     /// Ownership rules and CODEOWNERS text of one project, by project ID.
     IssueOwnership(String),
+    /// The caller's issue notifications; `limit` and the cursor select the page.
+    Notifications,
 }
 
 impl ReadTarget {
@@ -1488,6 +1491,8 @@ pub enum SetTarget {
         /// `source`, `info`, `warning`, `error`, or `critical`.
         severity: String,
     },
+    /// Mark every issue notification read.
+    NotificationsRead,
     /// Set the severity rule of one log's signature.
     LogRule {
         /// Log identifier.
@@ -1684,7 +1689,7 @@ impl Command {
                 ..
             }
             | Self::Set {
-                target: SetTarget::IssueBulk(_),
+                target: SetTarget::IssueBulk(_) | SetTarget::NotificationsRead,
                 ..
             }
             | Self::ProjectDeletion { .. } => Some(HttpMethod::Post),
@@ -1749,6 +1754,7 @@ impl Command {
             Self::Set {
                 target:
                     target @ (SetTarget::IssueOwnership { .. }
+                    | SetTarget::NotificationsRead
                     | SetTarget::IssueRule { .. }
                     | SetTarget::LogRule { .. }),
                 ..
@@ -2545,25 +2551,7 @@ fn read_path(target: &ReadTarget, filters: &ReadPathFilters<'_>) -> String {
                 ("limit", filters.limit),
             ],
         ),
-        ReadTarget::Issues => path_with_query(
-            "/api/telemetry/issues",
-            &[
-                ("service_name", filters.service),
-                ("since", filters.since),
-                ("until", filters.until),
-                ("status", filters.status),
-                ("priority", filters.priority),
-                ("assignee", filters.assignee),
-                ("project_id", filters.project),
-                ("release", filters.release),
-                ("environment", filters.environment),
-                ("pagination", filters.pagination),
-                ("cursor_time", filters.cursor_time),
-                ("cursor_id", filters.cursor_id),
-                ("limit", filters.limit),
-                ("response_version", Some("3")),
-            ],
-        ),
+        ReadTarget::Issues => issue_list_path(filters),
         ReadTarget::Actions => path_with_query(
             "/api/telemetry/actions",
             &[
@@ -2604,14 +2592,17 @@ fn read_path(target: &ReadTarget, filters: &ReadPathFilters<'_>) -> String {
             ],
         ),
         ReadTarget::Issue(id) => format!(
-            "/api/telemetry/issues/{}?response_version=3",
+            "/api/telemetry/issues/{}?response_version=4",
             encode_component(id)
         ),
         ReadTarget::IssueAssignees(project) => {
-            format!("/api/telemetry/issues/assignees?project_id={project}")
+            format!("/api/telemetry/issues/assignees?project_id={project}&response_version=2")
         }
         ReadTarget::IssueOwners(id) => {
-            format!("/api/telemetry/issues/{}/owners", encode_component(id))
+            format!(
+                "/api/telemetry/issues/{}/owners?response_version=2",
+                encode_component(id)
+            )
         }
         ReadTarget::IssueActivity(id) => path_with_query(
             &format!("/api/telemetry/issues/{}/activity", encode_component(id)),
@@ -2619,12 +2610,44 @@ fn read_path(target: &ReadTarget, filters: &ReadPathFilters<'_>) -> String {
                 ("limit", filters.limit),
                 ("cursor_time", filters.cursor_time),
                 ("cursor_id", filters.cursor_id),
+                ("response_version", Some("2")),
             ],
         ),
         ReadTarget::IssueOwnership(project) => {
             format!("/api/telemetry/issues/ownership?project_id={project}")
         }
+        ReadTarget::Notifications => path_with_query(
+            "/api/telemetry/issues/notifications",
+            &[
+                ("limit", filters.limit),
+                ("cursor_time", filters.cursor_time),
+                ("cursor_id", filters.cursor_id),
+            ],
+        ),
     }
+}
+
+/// Builds the grouped issue list path in response version 4.
+fn issue_list_path(filters: &ReadPathFilters<'_>) -> String {
+    path_with_query(
+        "/api/telemetry/issues",
+        &[
+            ("service_name", filters.service),
+            ("since", filters.since),
+            ("until", filters.until),
+            ("status", filters.status),
+            ("priority", filters.priority),
+            ("assignee", filters.assignee),
+            ("project_id", filters.project),
+            ("release", filters.release),
+            ("environment", filters.environment),
+            ("pagination", filters.pagination),
+            ("cursor_time", filters.cursor_time),
+            ("cursor_id", filters.cursor_id),
+            ("limit", filters.limit),
+            ("response_version", Some("4")),
+        ],
+    )
 }
 
 /// Builds the metric sample list path.
@@ -2776,12 +2799,13 @@ fn set_path(target: &SetTarget) -> String {
         | SetTarget::IssuePriority { id, .. }
         | SetTarget::IssueAssignee { id, .. } => {
             format!(
-                "/api/telemetry/issues/{}?response_version=3",
+                "/api/telemetry/issues/{}?response_version=4",
                 encode_component(id)
             )
         }
         SetTarget::IssueBulk(_) => String::from("/api/telemetry/issues/bulk"),
         SetTarget::IssueOwnership { .. } => String::from("/api/telemetry/issues/ownership"),
+        SetTarget::NotificationsRead => String::from("/api/telemetry/issues/notifications/read"),
         SetTarget::IssueRule { id, .. } => {
             format!("/api/telemetry/issues/{}/triage-rule", encode_component(id))
         }

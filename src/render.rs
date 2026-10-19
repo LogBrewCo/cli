@@ -101,7 +101,8 @@ fn cursor_response_title(command: &Command) -> Option<&'static str> {
             | ReadTarget::IssueAssignees(_)
             | ReadTarget::IssueOwners(_)
             | ReadTarget::IssueActivity(_)
-            | ReadTarget::IssueOwnership(_) => None,
+            | ReadTarget::IssueOwnership(_)
+            | ReadTarget::Notifications => None,
         },
         Command::Support {
             target: SupportTarget::List(options),
@@ -445,6 +446,7 @@ fn read_summary(
         ReadTarget::IssueOwners(_) => crate::issue_ownership::owners_summary(value),
         ReadTarget::IssueActivity(_) => crate::issue_ownership::activity_summary(value),
         ReadTarget::IssueOwnership(_) => crate::issue_ownership::ownership_summary(value),
+        ReadTarget::Notifications => crate::issue_ownership::inbox_summary(value),
     }
 }
 
@@ -469,6 +471,7 @@ fn set_summary(target: &SetTarget, value: &serde_json::Value) -> Option<String> 
         SetTarget::IssueOwnership { .. } => crate::issue_ownership::ownership_summary(value),
         SetTarget::IssueRule { .. } => crate::issue_ownership::rule_summary("Issue", value),
         SetTarget::LogRule { .. } => crate::issue_ownership::rule_summary("Log", value),
+        SetTarget::NotificationsRead => crate::issue_ownership::inbox_read_summary(value),
         SetTarget::IssueStatus { .. }
         | SetTarget::IssuePriority { .. }
         | SetTarget::IssueAssignee { .. } => {

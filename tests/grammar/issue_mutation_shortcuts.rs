@@ -57,7 +57,7 @@ fn parses_status_first_issue_ids_as_mutations() -> TestResult {
         assert_eq!(
             command.http_path(),
             Some(format!(
-                "/api/telemetry/issues/{expected_id}?response_version=3"
+                "/api/telemetry/issues/{expected_id}?response_version=4"
             ))
         );
         assert_eq!(

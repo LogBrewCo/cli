@@ -28,13 +28,13 @@ fn owner_activity_and_ownership_reads_use_their_endpoints() -> TestResult {
         (
             format!("logbrew issues owners {upper}"),
             ReadTarget::IssueOwners(ISSUE.into()),
-            format!("/api/telemetry/issues/{ISSUE}/owners"),
+            format!("/api/telemetry/issues/{ISSUE}/owners?response_version=2"),
             false,
         ),
         (
             format!("logbrew --json issues activity {ISSUE}"),
             ReadTarget::IssueActivity(ISSUE.into()),
-            format!("/api/telemetry/issues/{ISSUE}/activity"),
+            format!("/api/telemetry/issues/{ISSUE}/activity?response_version=2"),
             true,
         ),
         (
@@ -78,7 +78,7 @@ fn owner_activity_and_ownership_reads_use_their_endpoints() -> TestResult {
     assert_eq!(
         command.http_path(),
         Some(format!(
-            "/api/telemetry/issues/{ISSUE}/activity?limit=200&cursor_time=2026-10-19T01%3A02%3A03.004Z&cursor_id={ISSUE}"
+            "/api/telemetry/issues/{ISSUE}/activity?limit=200&cursor_time=2026-10-19T01%3A02%3A03.004Z&cursor_id={ISSUE}&response_version=2"
         ))
     );
     Ok(())
@@ -221,6 +221,66 @@ fn malformed_commands_fail_before_any_request() -> TestResult {
     }
     for path in [large, invalid, valid] {
         std::fs::remove_file(path)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn teams_are_assignees_and_filters_and_the_inbox_reads_assignments() -> TestResult {
+    const TEAM: &str = "523e4567-e89b-12d3-a456-426614174005";
+    let command = parse(&format!("logbrew issues assign team:{TEAM} {ISSUE}"))?;
+    assert_eq!(
+        command.request_body(),
+        Some(serde_json::json!({"assignee": format!("team:{TEAM}")}))
+    );
+    for filter in ["my_teams".to_owned(), format!("team:{TEAM}")] {
+        let command = parse(&format!("logbrew issues --assignee {filter}"))?;
+        assert!(
+            command.http_path().is_some_and(
+                |path| path.contains(&format!("assignee={}", filter.replace(':', "%3A")))
+            ),
+            "{filter}"
+        );
+    }
+    for (line, path, method, body) in [
+        (
+            "logbrew inbox",
+            "/api/telemetry/issues/notifications",
+            HttpMethod::Get,
+            None,
+        ),
+        (
+            "logbrew inbox --limit 5 --json",
+            "/api/telemetry/issues/notifications?limit=5",
+            HttpMethod::Get,
+            None,
+        ),
+        (
+            "logbrew inbox read",
+            "/api/telemetry/issues/notifications/read",
+            HttpMethod::Post,
+            Some(serde_json::json!({})),
+        ),
+    ] {
+        let command = parse(line)?;
+        assert_eq!(command.http_path().as_deref(), Some(path), "{line}");
+        assert_eq!(command.http_method(), Some(method), "{line}");
+        assert_eq!(command.request_body(), body, "{line}");
+    }
+    for line in [
+        "logbrew inbox read extra",
+        "logbrew inbox --limit 0",
+        "logbrew inbox --cursor-id x",
+    ] {
+        assert_json_error(
+            &line
+                .split_whitespace()
+                .chain(["--json"])
+                .collect::<Vec<_>>(),
+            "invalid_inbox_command",
+            "invalid inbox command",
+            "use logbrew inbox [--limit <1-200>] [--cursor-time <time> --cursor-id <id>] or logbrew inbox read, each with optional --json",
+        )?;
     }
     Ok(())
 }
