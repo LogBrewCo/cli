@@ -74,7 +74,7 @@ fn one_issue_changes_through_its_own_endpoint_in_version_3() -> TestResult {
         assert_eq!(
             command.http_path(),
             Some(format!(
-                "/api/telemetry/issues/{ISSUE_A}?response_version=3"
+                "/api/telemetry/issues/{ISSUE_A}?response_version=4"
             )),
             "{line}"
         );
@@ -140,7 +140,9 @@ fn several_issues_of_one_project_change_in_one_bulk_request() -> TestResult {
             Some("/api/telemetry/issues/bulk")
         );
         assert_eq!(command.http_method(), Some(HttpMethod::Post));
-        let mut body = serde_json::json!({"project_id": PROJECT, "issue_ids": [ISSUE_A, ISSUE_B]});
+        let mut body = serde_json::json!({
+            "project_id": PROJECT, "issue_ids": [ISSUE_A, ISSUE_B], "response_version": 2
+        });
         body[field] = value.into();
         assert_eq!(command.request_body(), Some(body), "{line}");
     }
@@ -209,7 +211,7 @@ fn issue_reads_filter_by_priority_and_archived_status() -> TestResult {
             "archived",
             "--json",
         ],
-        "/api/telemetry/issues?status=archived&priority=high&response_version=3",
+        "/api/telemetry/issues?status=archived&priority=high&response_version=4",
     );
     assert_json_error(
         &["logbrew", "issues", "--priority", "urgent", "--json"],
@@ -252,7 +254,7 @@ fn assignees_list_everyone_who_can_be_assigned_in_a_project() -> TestResult {
         assert_eq!(
             command.http_path(),
             Some(format!(
-                "/api/telemetry/issues/assignees?project_id={PROJECT}"
+                "/api/telemetry/issues/assignees?project_id={PROJECT}&response_version=2"
             ))
         );
         assert_eq!(command.http_method(), Some(HttpMethod::Get));
@@ -289,10 +291,10 @@ fn issue_reads_filter_by_assignee() -> TestResult {
     ] {
         assert_path(
             &args,
-            &format!("/api/telemetry/issues?{query}&response_version=3"),
+            &format!("/api/telemetry/issues?{query}&response_version=4"),
         );
     }
-    let next = "use --assignee me, none, or a user ID";
+    let next = "use --assignee me, none, my_teams, a user ID, or team:<team_id>";
     for (value, echoed) in [("someone", "someone"), ("ME-TOO", "me-too")] {
         assert_json_error(
             &["logbrew", "issues", "--assignee", value, "--json"],

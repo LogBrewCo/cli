@@ -1008,7 +1008,7 @@ async_test!(human_issue_changes_render_priority_and_bulk_outcomes -> TestResult,
     let third = "223e4567-e89b-12d3-a456-426614174003";
     let server = MockServer::start().await?;
     Mock::auth("PATCH", format!("/api/telemetry/issues/{issue}"), "test-token")
-        .and(query_param("response_version", "3"))
+        .and(query_param("response_version", "4"))
         .and(body_json(serde_json::json!({"priority": "low"})))
         .respond_with(ResponseTemplate::new(200).set_body_json(&serde_json::json!({
             "id": issue, "status": "archived", "priority": "low", "priority_source": "manual",
@@ -1028,7 +1028,8 @@ async_test!(human_issue_changes_render_priority_and_bulk_outcomes -> TestResult,
     let server = MockServer::start().await?;
     Mock::auth("POST", "/api/telemetry/issues/bulk", "test-token")
         .and(body_json(serde_json::json!({
-            "project_id": PROJECT_ID, "issue_ids": [issue, other, third], "assignee": USER_ID
+            "project_id": PROJECT_ID, "issue_ids": [issue, other, third], "assignee": USER_ID,
+            "response_version": 2
         })))
         .respond_with(ResponseTemplate::new(200).set_body_json(&serde_json::json!({
             "project_id": PROJECT_ID,
@@ -1065,7 +1066,7 @@ async_test!(human_issue_reads_and_changes_show_the_assignee -> TestResult, {
     let no_name = serde_json::json!({"user_id": USER_ID, "name": null, "email": "dev@example.com"});
     let server = MockServer::start().await?;
     Mock::auth("PATCH", format!("/api/telemetry/issues/{issue}"), "test-token")
-        .and(query_param("response_version", "3"))
+        .and(query_param("response_version", "4"))
         .and(body_json(serde_json::json!({"assignee": "me"})))
         .respond_with(ResponseTemplate::new(200).set_body_json(&serde_json::json!({
             "id": issue, "status": "unresolved", "priority": "medium", "assignee": no_name
@@ -1083,7 +1084,7 @@ async_test!(human_issue_reads_and_changes_show_the_assignee -> TestResult, {
         &server,
         "GET",
         "/api/telemetry/issues/issue_123",
-        [("response_version", "3")],
+        [("response_version", "4")],
         &serde_json::json!({
             "id": "issue_123", "status": "unresolved", "priority": "high",
             "priority_source": "derived",
@@ -1104,7 +1105,7 @@ async_test!(human_issue_reads_and_changes_show_the_assignee -> TestResult, {
         &server,
         "GET",
         "/api/telemetry/issues",
-        [("assignee", "none"), ("response_version", "3")],
+        [("assignee", "none"), ("response_version", "4")],
         &serde_json::json!([
             {"id": "issue_1", "status": "unresolved", "title": "PaymentError", "assignee": null},
             {"id": "issue_2", "status": "resolved", "title": "Timeout",
@@ -1131,6 +1132,9 @@ async_test!(issue_assignees_render_one_line_per_account_and_keep_json -> TestRes
         "assignees": [
             {"user_id": USER_ID, "name": "Ada Lovelace", "email": "ada@example.com"},
             {"user_id": "323e4567-e89b-12d3-a456-42661417400a", "name": null, "email": "dev@example.com"}
+        ],
+        "teams": [
+            {"team_id": "523e4567-e89b-12d3-a456-426614174005", "slug": "payments", "name": "Payments"}
         ]
     });
     let server = MockServer::start().await?;
@@ -1138,7 +1142,7 @@ async_test!(issue_assignees_render_one_line_per_account_and_keep_json -> TestRes
         &server,
         "GET",
         "/api/telemetry/issues/assignees",
-        [("project_id", PROJECT_ID)],
+        [("project_id", PROJECT_ID), ("response_version", "2")],
         &body,
     );
     let line = "logbrew issues assignees --project 123e4567-e89b-12d3-a456-426614174000";
@@ -1147,7 +1151,8 @@ async_test!(issue_assignees_render_one_line_per_account_and_keep_json -> TestRes
         text,
         format!(
             "Assignees for project {PROJECT_ID} (2)\n- {USER_ID} Ada Lovelace <ada@example.com>\n- \
-             323e4567-e89b-12d3-a456-42661417400a <dev@example.com>\n"
+             323e4567-e89b-12d3-a456-42661417400a <dev@example.com>\nTeams (1)\n- \
+             team:523e4567-e89b-12d3-a456-426614174005 #payments Payments\n"
         )
     );
     let json = successful_human_output(
@@ -1167,7 +1172,7 @@ async_test!(issue_assignees_render_one_line_per_account_and_keep_json -> TestRes
         &server,
         "GET",
         "/api/telemetry/issues/assignees",
-        [("project_id", PROJECT_ID)],
+        [("project_id", PROJECT_ID), ("response_version", "2")],
         &malformed,
     );
     let text = successful_human_output(&server, line.split_whitespace(), "human-assignees-bad").await?;
@@ -1335,5 +1340,61 @@ async_test!(ownership_and_severity_rules_render_and_send_their_bodies -> TestRes
     )
     .await?;
     assert_eq!(text, format!("Log {log} severity info (captured info), ignored.\n"));
+    Ok(())
+});
+
+async_test!(teams_render_in_owners_activity_issues_and_the_inbox -> TestResult, {
+    let issue = "223e4567-e89b-12d3-a456-426614174001";
+    let team_id = "523e4567-e89b-12d3-a456-426614174005";
+    let team = serde_json::json!({"type": "team", "team_id": team_id, "slug": "payments", "name": "Payments"});
+    let server = MockServer::start().await?;
+    let mut owner = team.clone();
+    owner["source"] = serde_json::json!("codeowners");
+    owner["rule"] = serde_json::json!("src/ @acme/payments");
+    owner["line"] = serde_json::json!(1);
+    owner["matched"] = serde_json::json!("src/a.ts");
+    mount_authenticated_json(
+        &server,
+        "GET",
+        "/api/telemetry/issues/223e4567-e89b-12d3-a456-426614174001/owners",
+        [("response_version", "2")],
+        &serde_json::json!({
+            "issue_id": issue, "project_id": PROJECT_ID, "suggested_assignee": team,
+            "owners": [owner],
+            "inputs": {"frame_paths": 1, "frame_modules": 0, "route_template": false,
+                       "context_tags": 0, "ownership_rules": 0, "codeowners_rules": 1}
+        }),
+    );
+    mount_authenticated_json(
+        &server,
+        "GET",
+        "/api/telemetry/issues/notifications",
+        [],
+        &serde_json::json!({
+            "notifications": [{
+                "id": "623e4567-e89b-12d3-a456-426614174006", "issue_id": issue,
+                "project_id": PROJECT_ID, "title": "Charge failed", "assignee": team,
+                "actor_id": USER_ID, "actor": {"user_id": USER_ID, "name": "Ada", "email": "ada@example.com"},
+                "at": "2026-10-19T02:00:00.000Z", "read": false
+            }],
+            "unread": 1, "read_at": null, "next_cursor": null
+        }),
+    );
+    let text = successful_human_output(
+        &server,
+        "logbrew issues owners 223e4567-e89b-12d3-a456-426614174001".split_whitespace(),
+        "human-team-owners",
+    )
+    .await?;
+    assert!(text.contains("Suggested assignee: team #payments\n"), "{text}");
+    assert!(text.contains(&format!("Next: run logbrew issues assign team:{team_id} {issue}\n")), "{text}");
+    let text = successful_human_output(&server, "logbrew inbox".split_whitespace(), "human-inbox").await?;
+    assert_eq!(
+        text,
+        format!(
+            "Inbox (1, 1 unread)\n- 2026-10-19T02:00:00.000Z [new] Charge failed ({issue}) \
+             assigned to team #payments by Ada <ada@example.com>\nNext: run logbrew inbox read\n"
+        )
+    );
     Ok(())
 });

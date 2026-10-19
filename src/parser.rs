@@ -193,6 +193,7 @@ fn parse_values(values: &[String]) -> Result<Command, CliError> {
         "traces" | "spans" => parse_read_resource("traces", tail),
         "issues" if is_issue_triage_action(tail) => crate::issue_triage::parse(tail),
         "issues" if crate::issue_ownership::is_command(tail) => crate::issue_ownership::parse(tail),
+        "inbox" => crate::issue_ownership::parse_inbox(tail),
         "logs" if crate::issue_ownership::is_log_rule(tail) => {
             crate::issue_ownership::parse_log_rule(tail)
         }
@@ -2070,6 +2071,7 @@ fn validate_read_filters(target: &ReadTarget, filters: &ReadOptions) -> Result<(
         ReadTarget::IssueOwners(_) => ("issues owners", READ_ISSUES_NEXT_STEP),
         ReadTarget::IssueActivity(_) => ("issues activity", READ_ISSUES_NEXT_STEP),
         ReadTarget::IssueOwnership(_) => ("issues ownership", READ_ISSUES_NEXT_STEP),
+        ReadTarget::Notifications => ("inbox", READ_ISSUES_NEXT_STEP),
     };
     if let Some(flag) = filters.first_unsupported_flag(target) {
         return Err(CliError::UnsupportedFlag {
@@ -2090,7 +2092,8 @@ fn validate_read_filters(target: &ReadTarget, filters: &ReadOptions) -> Result<(
         | ReadTarget::IssueAssignees(_)
         | ReadTarget::IssueOwners(_)
         | ReadTarget::IssueActivity(_)
-        | ReadTarget::IssueOwnership(_) => {}
+        | ReadTarget::IssueOwnership(_)
+        | ReadTarget::Notifications => {}
     }
     Ok(())
 }

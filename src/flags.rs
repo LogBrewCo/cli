@@ -637,10 +637,13 @@ fn normalize_priority(priority: &str) -> Result<String, CliError> {
     }
 }
 
-/// Normalizes an issue assignee filter: `me`, `none`, or a user ID.
+/// Normalizes an issue assignee filter: `me`, `none`, `my_teams`, a user ID, or
+/// `team:<team_id>`.
 fn normalize_assignee(assignee: &str) -> Result<String, CliError> {
     let assignee = assignee.to_ascii_lowercase();
-    if matches!(assignee.as_str(), "me" | "none") || crate::ids::is_uuid(&assignee) {
+    if matches!(assignee.as_str(), "me" | "none" | "my_teams")
+        || crate::ids::is_assignee_id(&assignee)
+    {
         Ok(assignee)
     } else {
         Err(CliError::InvalidAssignee(assignee))

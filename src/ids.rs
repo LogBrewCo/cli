@@ -51,6 +51,11 @@ pub(crate) fn is_issue_id(value: &str) -> bool {
         || is_uuid(value)
 }
 
+/// Returns whether a value names an assignee: a user ID or `team:<team_id>`.
+pub(crate) fn is_assignee_id(value: &str) -> bool {
+    is_uuid(value.strip_prefix("team:").unwrap_or(value))
+}
+
 /// Returns whether a value is a dashed UUID.
 pub(crate) fn is_uuid(value: &str) -> bool {
     if value.len() != 36 {

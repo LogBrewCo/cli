@@ -58,8 +58,8 @@ const SPECS: [CursorSpec; 5] = [
         cursor_id: CURSOR_ID,
         error_code: "invalid_issue_cursor",
         help_id: "--cursor-id <uuid>",
-        expected_initial: "/api/telemetry/issues?service_name=checkout-api&since=24h&status=unresolved&project_id=123e4567-e89b-12d3-a456-426614174000&release=checkout%401.2.3&environment=production&pagination=cursor&limit=2&response_version=3",
-        expected_continuation: "/api/telemetry/issues?service_name=checkout-api&since=24h&status=unresolved&project_id=123e4567-e89b-12d3-a456-426614174000&release=checkout%401.2.3&environment=production&pagination=cursor&cursor_time=2026-07-13T08%3A00%3A00.123456Z&cursor_id=9b2b4b3a-bd4e-4f85-a0f6-48118f037c17&limit=2&response_version=3",
+        expected_initial: "/api/telemetry/issues?service_name=checkout-api&since=24h&status=unresolved&project_id=123e4567-e89b-12d3-a456-426614174000&release=checkout%401.2.3&environment=production&pagination=cursor&limit=2&response_version=4",
+        expected_continuation: "/api/telemetry/issues?service_name=checkout-api&since=24h&status=unresolved&project_id=123e4567-e89b-12d3-a456-426614174000&release=checkout%401.2.3&environment=production&pagination=cursor&cursor_time=2026-07-13T08%3A00%3A00.123456Z&cursor_id=9b2b4b3a-bd4e-4f85-a0f6-48118f037c17&limit=2&response_version=4",
         expected_line: "9b2b4b3a-bd4e-4f85-a0f6-48118f037c17 archived error priority=high PaymentError occurrences=2 last_seen=2026-07-13T08:00:00.123456Z service=checkout-api trace=trace_123 assignee=unassigned [checkout@1.2.3 / production]",
     },
     CursorSpec {

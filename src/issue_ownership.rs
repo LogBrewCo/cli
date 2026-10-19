@@ -11,6 +11,8 @@ use crate::{CliError, Command, ReadOptions, ReadTarget, SetTarget};
 pub const OWNERSHIP_NEXT_STEP: &str = "use logbrew issues owners <issue_id>, logbrew issues activity <issue_id> [--limit <1-200>] [--cursor-time <time> --cursor-id <id>], logbrew issues ownership --project <project_id>, or logbrew issues ownership set --project <project_id> [--rules <file>] [--codeowners <file>], each with optional --json";
 /// Recovery for malformed severity rule commands.
 pub const RULE_NEXT_STEP: &str = "use logbrew issues rule <issue_id> <severity> or logbrew logs rule <log_id> <severity> [--ignore], where severity is source, info, warning, error, or critical, with optional --json";
+/// Recovery for malformed inbox commands.
+pub const INBOX_NEXT_STEP: &str = "use logbrew inbox [--limit <1-200>] [--cursor-time <time> --cursor-id <id>] or logbrew inbox read, each with optional --json";
 /// Largest ownership file, matching the API limit.
 const MAX_FILE_BYTES: u64 = 128 * 1024;
 /// Severity rule values: `source` restores the captured severity.
@@ -72,6 +74,64 @@ pub fn parse(args: &[String]) -> Result<Command, CliError> {
     }
 }
 
+/// Parses `inbox [--limit N] [--cursor-time T --cursor-id ID]` and `inbox read`.
+///
+/// # Errors
+///
+/// Returns [`CliError::InvalidInboxCommand`] for any other form.
+pub fn parse_inbox(args: &[String]) -> Result<Command, CliError> {
+    let json = args.iter().filter(|arg| *arg == "--json").count();
+    let words = args
+        .iter()
+        .map(String::as_str)
+        .filter(|arg| *arg != "--json")
+        .collect::<Vec<_>>();
+    if json > 1 {
+        return Err(CliError::InvalidInboxCommand);
+    }
+    if words == ["read"] {
+        return Ok(Command::Set {
+            target: SetTarget::NotificationsRead,
+            json: json == 1,
+        });
+    }
+    let options = page_options(&words).ok_or(CliError::InvalidInboxCommand)?;
+    Ok(Command::Read {
+        target: ReadTarget::Notifications,
+        options: Box::new(options),
+        json: json == 1,
+    })
+}
+
+/// Parses `--limit` (1 to 200) and a complete `--cursor-time` and `--cursor-id` pair.
+fn page_options(flags: &[&str]) -> Option<ReadOptions> {
+    let mut options = ReadOptions::default();
+    let mut flags = flags.iter();
+    while let Some(flag) = flags.next() {
+        let value = (*flags.next()?).to_owned();
+        let slot = match *flag {
+            "--limit" => &mut options.limit,
+            "--cursor-time" => &mut options.cursor_time,
+            "--cursor-id" => &mut options.cursor_id,
+            _ => return None,
+        };
+        if slot.replace(value).is_some() {
+            return None;
+        }
+    }
+    let limit_ok = options.limit.as_deref().is_none_or(|limit| {
+        limit
+            .parse::<u16>()
+            .is_ok_and(|limit| (1..=200).contains(&limit))
+    });
+    let cursor_ok = match (&options.cursor_time, &options.cursor_id) {
+        (None, None) => true,
+        (Some(time), Some(id)) => crate::render::is_rfc3339_utc(time) && is_uuid(id),
+        _ => false,
+    };
+    (limit_ok && cursor_ok).then_some(options)
+}
+
 /// Parses `logs rule <log_id> <severity> [--ignore] [--json]`.
 ///
 /// # Errors
@@ -125,33 +185,7 @@ fn read(target: ReadTarget, json: bool) -> Command {
 
 /// Parses the activity page flags.
 fn activity(issue: &str, flags: &[&str], json: bool) -> Result<Command, CliError> {
-    let mut options = ReadOptions::default();
-    let mut flags = flags.iter();
-    while let Some(flag) = flags.next() {
-        let value = flags.next().ok_or(CliError::InvalidOwnershipCommand)?;
-        let slot = match *flag {
-            "--limit" => &mut options.limit,
-            "--cursor-time" => &mut options.cursor_time,
-            "--cursor-id" => &mut options.cursor_id,
-            _ => return Err(CliError::InvalidOwnershipCommand),
-        };
-        if slot.replace((*value).to_owned()).is_some() {
-            return Err(CliError::InvalidOwnershipCommand);
-        }
-    }
-    let limit_ok = options.limit.as_deref().is_none_or(|limit| {
-        limit
-            .parse::<u16>()
-            .is_ok_and(|limit| (1..=200).contains(&limit))
-    });
-    let cursor_ok = match (&options.cursor_time, &options.cursor_id) {
-        (None, None) => true,
-        (Some(time), Some(id)) => crate::render::is_rfc3339_utc(time) && is_uuid(id),
-        _ => false,
-    };
-    if !limit_ok || !cursor_ok {
-        return Err(CliError::InvalidOwnershipCommand);
-    }
+    let options = page_options(flags).ok_or(CliError::InvalidOwnershipCommand)?;
     Ok(Command::Read {
         target: ReadTarget::IssueActivity(lower(issue)),
         options: Box::new(options),
@@ -231,6 +265,7 @@ pub(crate) fn request_body(target: &SetTarget) -> Option<serde_json::Value> {
         SetTarget::LogRule {
             severity, ignored, ..
         } => Some(serde_json::json!({ "severity": severity, "ignored": ignored })),
+        SetTarget::NotificationsRead => Some(serde_json::json!({})),
         SetTarget::IssueStatus { .. }
         | SetTarget::IssuePriority { .. }
         | SetTarget::IssueAssignee { .. }
@@ -248,7 +283,7 @@ pub fn owners_summary(value: &serde_json::Value) -> Option<String> {
         .get("suggested_assignee")
         .filter(|value| !value.is_null())
     {
-        let suggested = crate::http::terminal_safe(&account(suggested)?);
+        let suggested = crate::http::terminal_safe(&who(suggested)?);
         output.push_str(format!("Suggested assignee: {suggested}\n").as_str());
     }
     for owner in owners {
@@ -258,7 +293,7 @@ pub fn owners_summary(value: &serde_json::Value) -> Option<String> {
             "recent_activity" => "recent activity",
             _ => return None,
         };
-        let mut line = format!("- {}: {reason}", account(owner)?);
+        let mut line = format!("- {}: {reason}", who(owner)?);
         if let (Some(rule), Some(number)) = (text(owner, "rule"), owner.get("line")?.as_u64()) {
             line.push_str(format!(" line {number} `{rule}`").as_str());
         }
@@ -289,10 +324,7 @@ pub fn owners_summary(value: &serde_json::Value) -> Option<String> {
     );
     let project = id(value, "project_id")?;
     let next = match owners.first() {
-        Some(owner) => format!(
-            "run logbrew issues assign {} {issue}",
-            id(owner, "user_id")?
-        ),
+        Some(owner) => format!("run logbrew issues assign {} {issue}", assignee_ref(owner)?),
         None => format!(
             "add rules with logbrew issues ownership set --project {project} --rules <file>"
         ),
@@ -346,7 +378,10 @@ pub fn activity_summary(value: &serde_json::Value) -> Option<String> {
             ("status", Some(value)) => format!("status set to {value}"),
             ("priority", Some(value)) => format!("priority set to {value}"),
             ("severity_rule", Some(value)) => format!("severity rule set to {value}"),
-            ("assigned", _) => format!("assigned to {}", person(entry, "assignee")?),
+            ("assigned", _) => match entry.get("team").filter(|team| !team.is_null()) {
+                Some(team) => format!("assigned to {}", who(team)?),
+                None => format!("assigned to {}", person(entry, "assignee")?),
+            },
             ("unassigned", _) => String::from("unassigned"),
             _ => return None,
         };
@@ -396,6 +431,22 @@ fn person(entry: &serde_json::Value, field: &str) -> Option<String> {
     account(profile)
 }
 
+/// A team as `team #slug`, or an account as [`account`] shows it.
+fn who(value: &serde_json::Value) -> Option<String> {
+    match crate::issue_triage::team_parts(value) {
+        Some((_team_id, slug, _name)) => Some(format!("team #{slug}")),
+        None => account(value),
+    }
+}
+
+/// The value `logbrew issues assign` takes for an owner: `team:<team_id>` or a user ID.
+fn assignee_ref(owner: &serde_json::Value) -> Option<String> {
+    match crate::issue_triage::team_parts(owner) {
+        Some((team_id, _slug, _name)) => Some(format!("team:{team_id}")),
+        None => id(owner, "user_id").map(str::to_owned),
+    }
+}
+
 /// `name <email>`, or `<email>` without a name, after checking the user ID.
 fn account(value: &serde_json::Value) -> Option<String> {
     let _user_id = id(value, "user_id")?;
@@ -416,4 +467,58 @@ fn id<'a>(value: &'a serde_json::Value, name: &str) -> Option<&'a str> {
 /// One string field.
 fn text<'a>(value: &'a serde_json::Value, name: &str) -> Option<&'a str> {
     value.get(name)?.as_str()
+}
+
+/// Human list of the caller's notifications, or `None` when the shape is not the contract.
+#[must_use]
+pub fn inbox_summary(value: &serde_json::Value) -> Option<String> {
+    let notifications = value.get("notifications")?.as_array()?;
+    let unread = value.get("unread")?.as_u64()?;
+    let mut output = format!("Inbox ({}, {unread} unread)\n", notifications.len());
+    for notification in notifications {
+        let at = text(notification, "at").filter(|time| crate::render::is_rfc3339_utc(time))?;
+        let issue = id(notification, "issue_id")?;
+        let title = notification.get("title")?;
+        let title = if title.is_null() {
+            "(issue removed)"
+        } else {
+            title.as_str()?
+        };
+        let assignee = notification.get("assignee")?;
+        let to = match crate::issue_triage::team_parts(assignee) {
+            Some((_team_id, slug, _name)) => format!("team #{slug}"),
+            None => String::from("you"),
+        };
+        let by = person(notification, "actor")?;
+        let new = if notification.get("read")?.as_bool()? {
+            ""
+        } else {
+            " [new]"
+        };
+        let line = format!("- {at}{new} {title} ({issue}) assigned to {to} by {by}");
+        output.push_str(&crate::http::terminal_safe(&line));
+        output.push('\n');
+    }
+    if let Some(cursor) = value.get("next_cursor").filter(|cursor| !cursor.is_null()) {
+        output.push_str(
+            format!(
+                "More: run logbrew inbox --cursor-time {} --cursor-id {}\n",
+                text(cursor, "time").filter(|time| crate::render::is_rfc3339_utc(time))?,
+                id(cursor, "id")?
+            )
+            .as_str(),
+        );
+    }
+    if unread > 0 {
+        output.push_str("Next: run logbrew inbox read\n");
+    }
+    Some(output)
+}
+
+/// Human summary of marking notifications read.
+#[must_use]
+pub fn inbox_read_summary(value: &serde_json::Value) -> Option<String> {
+    let read_at = text(value, "read_at").filter(|time| crate::render::is_rfc3339_utc(time))?;
+    let unread = value.get("unread")?.as_u64()?;
+    Some(format!("Inbox read up to {read_at}; {unread} unread.\n"))
 }

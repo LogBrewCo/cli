@@ -46,7 +46,9 @@ pub fn parse(args: &[String]) -> Result<Command, CliError> {
             _ => return Err(CliError::InvalidIssueTriageCommand),
         },
         Some("assign") => match words.next() {
-            Some(user) if user == "me" || is_uuid(user) => (None, None, Some(user)),
+            Some(user) if user == "me" || crate::ids::is_assignee_id(user) => {
+                (None, None, Some(user))
+            }
             _ => return Err(CliError::InvalidIssueTriageCommand),
         },
         Some("unassign") => (None, None, Some("none")),
@@ -123,6 +125,7 @@ pub fn request_body(options: &IssueBulkOptions) -> serde_json::Value {
     let mut body = serde_json::json!({
         "project_id": options.project_id,
         "issue_ids": options.issue_ids,
+        "response_version": 2,
     });
     for (name, value) in [
         ("status", &options.status),
@@ -178,6 +181,13 @@ pub fn assignees_summary(value: &serde_json::Value) -> Option<String> {
         let line = crate::http::terminal_safe(format!("{user_id} {name}<{email}>").as_str());
         output.push_str(format!("- {line}\n").as_str());
     }
+    let teams = value.get("teams")?.as_array()?;
+    output.push_str(format!("Teams ({})\n", teams.len()).as_str());
+    for team in teams {
+        let (team_id, slug, name) = team_parts(team)?;
+        let line = crate::http::terminal_safe(format!("team:{team_id} #{slug} {name}").as_str());
+        output.push_str(format!("- {line}\n").as_str());
+    }
     Some(output)
 }
 
@@ -189,12 +199,26 @@ pub fn assignee_label(issue: &serde_json::Value) -> Option<String> {
     if assignee.is_null() {
         return Some(String::from("unassigned"));
     }
+    if assignee.get("type").and_then(serde_json::Value::as_str) == Some("team") {
+        let (_team_id, slug, _name) = team_parts(assignee)?;
+        return Some(crate::http::terminal_safe(format!("team #{slug}").as_str()));
+    }
     let (user_id, name, email) = account(assignee)?;
     let label = [name.unwrap_or_default(), email]
         .into_iter()
         .find(|text| !text.trim().is_empty())
         .unwrap_or(user_id);
     Some(crate::http::terminal_safe(label))
+}
+
+/// Team ID, slug, and name of one team object.
+pub(crate) fn team_parts(value: &serde_json::Value) -> Option<(&str, &str, &str)> {
+    let team_id = value.get("team_id")?.as_str().filter(|id| is_uuid(id))?;
+    Some((
+        team_id,
+        value.get("slug")?.as_str()?,
+        value.get("name")?.as_str()?,
+    ))
 }
 
 /// User ID, optional name, and email of one account object.

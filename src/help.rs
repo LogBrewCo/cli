@@ -153,7 +153,7 @@ Usage:
   logbrew reopen <issue_id> [--json]
   logbrew issues archive|resolve|reopen <issue_id>... [--project <project_id>] [--json]
   logbrew issues priority <high|medium|low> <issue_id>... [--project <project_id>] [--json]
-  logbrew issues assign <user_id|me> <issue_id>... [--project <project_id>] [--json]
+  logbrew issues assign <user_id|me|team:<team_id>> <issue_id>... [--project <project_id>] [--json]
   logbrew issues unassign <issue_id>... [--project <project_id>] [--json]
   logbrew issues assignees --project <project_id> [--json]
   logbrew issues owners <issue_id> [--json]
@@ -164,6 +164,8 @@ Usage:
                          [--json]
   logbrew issues rule <issue_id> <source|info|warning|error|critical> [--json]
   logbrew logs rule <log_id> <source|info|warning|error|critical> [--ignore] [--json]
+  logbrew inbox [--limit <1-200>] [--cursor-time <time> --cursor-id <id>] [--json]
+  logbrew inbox read [--json]
 
 Popular terms: auth, status, health, setup, projects, usage, logs, issues, errors, traces, spans, \
                          metrics, actions, events, releases, environments, support.
@@ -467,7 +469,7 @@ Limit must be a positive whole number.";
 const READ_ISSUES_HELP: &str = "\
 Usage:
   logbrew read issues [--release <release>] [--environment production] [--status unresolved] \
-                                [--priority <high|medium|low>] [--assignee <me|none|user_id>] \
+                                [--priority <high|medium|low>] [--assignee <me|none|my_teams|user_id|team:<team_id>>] \
                                 [--service <service_name>] [--since <24h|7d|RFC3339>] [--until \
                                 <RFC3339>] [--project <project_id>] [--pagination cursor] \
                                 [--limit 100] [--json]
@@ -989,7 +991,7 @@ Usage:
   logbrew issues priority <high|medium|low> <issue_id> [--json]
   logbrew issues archive|resolve|reopen <issue_id>... --project <project_id> [--json]
   logbrew issues priority <high|medium|low> <issue_id>... --project <project_id> [--json]
-  logbrew issues assign <user_id|me> <issue_id>... [--project <project_id>] [--json]
+  logbrew issues assign <user_id|me|team:<team_id>> <issue_id>... [--project <project_id>] [--json]
   logbrew issues unassign <issue_id>... [--project <project_id>] [--json]
   logbrew issues assignees --project <project_id> [--json]
   logbrew issues owners <issue_id> [--json]
@@ -1000,12 +1002,16 @@ Usage:
                         [--json]
   logbrew issues rule <issue_id> <source|info|warning|error|critical> [--json]
   logbrew logs rule <log_id> <source|info|warning|error|critical> [--ignore] [--json]
+  logbrew inbox [--limit <1-200>] [--cursor-time <time> --cursor-id <id>] [--json]
+  logbrew inbox read [--json]
 
 Updates grouped issue status. Resolve/close map to resolved; ignore and archive map to archived; \
                         reopen maps to unresolved.
 Priority is high, medium, or low. A priority you set stays fixed; otherwise it follows severity.
-Assign takes a user ID or me; logbrew issues assignees lists everyone who can be assigned in a \
-                        project.
+Assign takes a user ID, me, or team:<team_id>; logbrew issues assignees lists everyone and \
+                        every team that can be assigned in a project. Filter with --assignee me, \
+                        none, my_teams, a user ID, or team:<team_id>.
+Inbox lists issues others assigned to you or your teams; inbox read marks them read.
 With --project, one request updates up to 100 issues of that project and reports each one as \
                         updated, unchanged, or not found.
 Owners lists who owns an issue: matching ownership rules first, then CODEOWNERS lines, then people \
