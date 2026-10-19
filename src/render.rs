@@ -98,7 +98,10 @@ fn cursor_response_title(command: &Command) -> Option<&'static str> {
             ReadTarget::Releases
             | ReadTarget::Trace(_)
             | ReadTarget::Issue(_)
-            | ReadTarget::IssueAssignees(_) => None,
+            | ReadTarget::IssueAssignees(_)
+            | ReadTarget::IssueOwners(_)
+            | ReadTarget::IssueActivity(_)
+            | ReadTarget::IssueOwnership(_) => None,
         },
         Command::Support {
             target: SupportTarget::List(options),
@@ -439,6 +442,9 @@ fn read_summary(
         ReadTarget::Trace(id) => trace_summary(value, id.as_str()),
         ReadTarget::Issue(_) => issue_detail_summary(value),
         ReadTarget::IssueAssignees(_) => crate::issue_triage::assignees_summary(value),
+        ReadTarget::IssueOwners(_) => crate::issue_ownership::owners_summary(value),
+        ReadTarget::IssueActivity(_) => crate::issue_ownership::activity_summary(value),
+        ReadTarget::IssueOwnership(_) => crate::issue_ownership::ownership_summary(value),
     }
 }
 
@@ -460,6 +466,9 @@ fn explain_summary(target: &ExplainTarget, value: &serde_json::Value) -> Option<
 fn set_summary(target: &SetTarget, value: &serde_json::Value) -> Option<String> {
     match target {
         SetTarget::IssueBulk(_) => crate::issue_triage::summary(value),
+        SetTarget::IssueOwnership { .. } => crate::issue_ownership::ownership_summary(value),
+        SetTarget::IssueRule { .. } => crate::issue_ownership::rule_summary("Issue", value),
+        SetTarget::LogRule { .. } => crate::issue_ownership::rule_summary("Log", value),
         SetTarget::IssueStatus { .. }
         | SetTarget::IssuePriority { .. }
         | SetTarget::IssueAssignee { .. } => {

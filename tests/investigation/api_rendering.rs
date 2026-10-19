@@ -1174,3 +1174,166 @@ async_test!(issue_assignees_render_one_line_per_account_and_keep_json -> TestRes
     assert!(!text.starts_with("Assignees"), "malformed accounts are not summarized: {text}");
     Ok(())
 });
+
+async_test!(issue_owners_render_reasons_inputs_and_the_next_assignment -> TestResult, {
+    let issue = "223e4567-e89b-12d3-a456-426614174001";
+    let other = "323e4567-e89b-12d3-a456-42661417400a";
+    let ada = serde_json::json!({"user_id": USER_ID, "name": "Ada Lovelace", "email": "ada@example.com"});
+    let body = serde_json::json!({
+        "issue_id": issue, "project_id": PROJECT_ID, "suggested_assignee": ada,
+        "owners": [
+            {"user_id": USER_ID, "name": "Ada Lovelace", "email": "ada@example.com",
+             "source": "ownership_rule", "rule": "path:src/payments/** ada@example.com",
+             "line": 2, "matched": "src/payments/charge.ts"},
+            {"user_id": other, "name": "Dev\u{1b}[2J", "email": "dev@example.com",
+             "source": "recent_activity", "rule": null, "line": null, "matched": null}
+        ],
+        "inputs": {"frame_paths": 1, "frame_modules": 0, "route_template": true,
+                   "context_tags": 2, "ownership_rules": 3, "codeowners_rules": 0}
+    });
+    let server = MockServer::start().await?;
+    let route = "/api/telemetry/issues/223e4567-e89b-12d3-a456-426614174001/owners";
+    mount_authenticated_json(&server, "GET", route, [], &body);
+    let line = "logbrew issues owners 223e4567-e89b-12d3-a456-426614174001";
+    let text = successful_human_output(&server, line.split_whitespace(), "human-owners").await?;
+    assert_eq!(
+        text,
+        format!(
+            "Owners of issue {issue} (2)\nSuggested assignee: Ada Lovelace <ada@example.com>\n- Ada \
+             Lovelace <ada@example.com>: ownership rule line 2 `path:src/payments/** \
+             ada@example.com`, matched src/payments/charge.ts\n- Dev\\u{{1b}}[2J \
+             <dev@example.com>: recent activity\nChecked: frame paths 1, modules 0, route template yes, tags 2, ownership \
+             rules 3, CODEOWNERS lines 0.\nNext: run logbrew issues assign {USER_ID} {issue}\n"
+        )
+    );
+    let json = successful_human_output(
+        &server,
+        "logbrew issues owners 223e4567-e89b-12d3-a456-426614174001 --json".split_whitespace(),
+        "json-owners",
+    )
+    .await?;
+    assert_eq!(serde_json::from_str::<serde_json::Value>(&json)?, body);
+
+    let server = MockServer::start().await?;
+    let none = serde_json::json!({
+        "issue_id": issue, "project_id": PROJECT_ID, "suggested_assignee": null, "owners": [],
+        "inputs": {"frame_paths": 0, "frame_modules": 0, "route_template": false,
+                   "context_tags": 0, "ownership_rules": 0, "codeowners_rules": 0}
+    });
+    mount_authenticated_json(&server, "GET", route, [], &none);
+    let text = successful_human_output(&server, line.split_whitespace(), "human-no-owners").await?;
+    assert!(
+        text.ends_with(&format!(
+            "Next: add rules with logbrew issues ownership set --project {PROJECT_ID} --rules \
+             <file>\n"
+        )),
+        "{text}"
+    );
+    Ok(())
+});
+
+async_test!(issue_activity_renders_actors_access_loss_and_the_next_page -> TestResult, {
+    let issue = "223e4567-e89b-12d3-a456-426614174001";
+    let change = "523e4567-e89b-12d3-a456-426614174005";
+    let former = "323e4567-e89b-12d3-a456-42661417400b";
+    let entry = |id: &str, kind: &str, value: serde_json::Value, actor: serde_json::Value| {
+        serde_json::json!({
+            "id": id, "type": kind, "value": value, "actor_id": actor["user_id"].clone(),
+            "actor": actor, "assignee_id": null, "assignee": null,
+            "at": "2026-10-19T02:00:00.000Z"
+        })
+    };
+    let ada = serde_json::json!({"user_id": USER_ID, "name": "Ada Lovelace", "email": "ada@example.com"});
+    let mut assigned = entry(change, "assigned", serde_json::Value::Null, ada);
+    assigned["assignee_id"] = serde_json::json!(former);
+    let mut status = entry(change, "status", serde_json::json!("archived"), serde_json::Value::Null);
+    status["actor_id"] = serde_json::json!(former);
+    let body = serde_json::json!({
+        "issue_id": issue, "project_id": PROJECT_ID,
+        "activity": [assigned, status,
+                     entry(issue, "first_seen", serde_json::Value::Null, serde_json::Value::Null)],
+        "next_cursor": {"time": "2026-10-19T01:00:00.000Z", "id": change}
+    });
+    let server = MockServer::start().await?;
+    Mock::route(
+        "GET",
+        "/api/telemetry/issues/223e4567-e89b-12d3-a456-426614174001/activity",
+    )
+    .and(header("authorization", "Bearer test-token"))
+    .and(query_param("limit", "3"))
+    .respond_with(ResponseTemplate::new(200).set_body_json(&body))
+    .mount(&server);
+    let line = "logbrew issues activity 223e4567-e89b-12d3-a456-426614174001 --limit 3";
+    let text = successful_human_output(&server, line.split_whitespace(), "human-activity").await?;
+    assert_eq!(
+        text,
+        format!(
+            "Activity of issue {issue} (3)\n- 2026-10-19T02:00:00.000Z assigned to {former} (no \
+             access) by Ada Lovelace <ada@example.com>\n- 2026-10-19T02:00:00.000Z status set to \
+             archived by {former} (no access)\n- 2026-10-19T02:00:00.000Z first seen\nMore: run \
+             logbrew issues activity {issue} --cursor-time 2026-10-19T01:00:00.000Z --cursor-id \
+             {change}\n"
+        )
+    );
+    Ok(())
+});
+
+async_test!(ownership_and_severity_rules_render_and_send_their_bodies -> TestResult, {
+    let issue = "223e4567-e89b-12d3-a456-426614174001";
+    let log = "423e4567-e89b-12d3-a456-426614174004";
+    let ownership = serde_json::json!({
+        "project_id": PROJECT_ID, "rules": "# payments\npath:src/** ada@example.com\n",
+        "codeowners": "", "updated_at": "2026-10-19T02:00:00.000Z",
+        "unresolved_owners": ["@org/web"]
+    });
+    let server = MockServer::start().await?;
+    mount_authenticated_json(
+        &server,
+        "GET",
+        "/api/telemetry/issues/ownership",
+        [("project_id", PROJECT_ID)],
+        &ownership,
+    );
+    let line = "logbrew issues ownership --project 123e4567-e89b-12d3-a456-426614174000";
+    let text = successful_human_output(&server, line.split_whitespace(), "human-ownership").await?;
+    assert_eq!(
+        text,
+        format!(
+            "Ownership for project {PROJECT_ID}\nUpdated: 2026-10-19T02:00:00.000Z\nOwnership rules \
+             (2 lines)\n  # payments\n  path:src/** ada@example.com\nCODEOWNERS (0 lines)\nOwners \
+             without project access: @org/web\n"
+        )
+    );
+
+    let triage = |severity: &str, ignored: bool| {
+        serde_json::json!({"effective_severity": severity, "ignored": ignored, "rule_applied": true})
+    };
+    let server = MockServer::start().await?;
+    Mock::auth("PUT", format!("/api/telemetry/issues/{issue}/triage-rule"), "test-token")
+        .and(body_json(serde_json::json!({"severity": "warning"})))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&serde_json::json!({
+            "id": issue, "severity": "error", "triage": triage("warning", false)
+        })))
+        .mount(&server);
+    Mock::auth("PUT", format!("/api/logs/{log}/triage-rule"), "test-token")
+        .and(body_json(serde_json::json!({"severity": "source", "ignored": true})))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&serde_json::json!({
+            "id": log, "severity": "info", "triage": triage("info", true)
+        })))
+        .mount(&server);
+    let text = successful_human_output(
+        &server,
+        "logbrew issues rule 223e4567-e89b-12d3-a456-426614174001 warning".split_whitespace(),
+        "human-issue-rule",
+    )
+    .await?;
+    assert_eq!(text, format!("Issue {issue} severity warning (captured error).\n"));
+    let text = successful_human_output(
+        &server,
+        "logbrew logs rule 423e4567-e89b-12d3-a456-426614174004 source --ignore".split_whitespace(),
+        "human-log-rule",
+    )
+    .await?;
+    assert_eq!(text, format!("Log {log} severity info (captured info), ignored.\n"));
+    Ok(())
+});

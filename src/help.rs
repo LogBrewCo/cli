@@ -156,6 +156,14 @@ Usage:
   logbrew issues assign <user_id|me> <issue_id>... [--project <project_id>] [--json]
   logbrew issues unassign <issue_id>... [--project <project_id>] [--json]
   logbrew issues assignees --project <project_id> [--json]
+  logbrew issues owners <issue_id> [--json]
+  logbrew issues activity <issue_id> [--limit <1-200>] [--cursor-time <time> --cursor-id <id>] \
+                         [--json]
+  logbrew issues ownership --project <project_id> [--json]
+  logbrew issues ownership set --project <project_id> [--rules <file>] [--codeowners <file>] \
+                         [--json]
+  logbrew issues rule <issue_id> <source|info|warning|error|critical> [--json]
+  logbrew logs rule <log_id> <source|info|warning|error|critical> [--ignore] [--json]
 
 Popular terms: auth, status, health, setup, projects, usage, logs, issues, errors, traces, spans, \
                          metrics, actions, events, releases, environments, support.
@@ -984,6 +992,14 @@ Usage:
   logbrew issues assign <user_id|me> <issue_id>... [--project <project_id>] [--json]
   logbrew issues unassign <issue_id>... [--project <project_id>] [--json]
   logbrew issues assignees --project <project_id> [--json]
+  logbrew issues owners <issue_id> [--json]
+  logbrew issues activity <issue_id> [--limit <1-200>] [--cursor-time <time> --cursor-id <id>] \
+                        [--json]
+  logbrew issues ownership --project <project_id> [--json]
+  logbrew issues ownership set --project <project_id> [--rules <file>] [--codeowners <file>] \
+                        [--json]
+  logbrew issues rule <issue_id> <source|info|warning|error|critical> [--json]
+  logbrew logs rule <log_id> <source|info|warning|error|critical> [--ignore] [--json]
 
 Updates grouped issue status. Resolve/close map to resolved; ignore and archive map to archived; \
                         reopen maps to unresolved.
@@ -992,6 +1008,13 @@ Assign takes a user ID or me; logbrew issues assignees lists everyone who can be
                         project.
 With --project, one request updates up to 100 issues of that project and reports each one as \
                         updated, unchanged, or not found.
+Owners lists who owns an issue: matching ownership rules first, then CODEOWNERS lines, then people \
+                        who recently changed it. Activity lists every change, newest first.
+Ownership set reads local files: --rules takes one type:pattern owner rule per line (types path, \
+                        module, url, service, tags.<key>; owners by email), --codeowners takes a \
+                        GitHub CODEOWNERS file. An empty file clears it.
+A severity rule changes how an issue or log signature is shown; source restores the captured \
+                        severity, and --ignore hides matching logs.
 Close is an alias for resolved.
 Issue-first, pasted-ID, and status-first aliases are useful after reading issue detail.
 Status values are case-insensitive.";
