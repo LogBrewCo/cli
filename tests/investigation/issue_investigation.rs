@@ -175,7 +175,7 @@ fn parses_only_the_explicit_issue_investigation_grammar() -> TestResult {
         exact.http_path().as_deref(),
         Some(
             "/api/telemetry/issues/11111111-1111-4111-8111-111111111111/investigation?\
-             response_version=13&occurrence_id=22222222-2222-4222-8222-222222222222"
+             response_version=14&occurrence_id=22222222-2222-4222-8222-222222222222"
         )
     );
     assert!(exact.wants_json());
@@ -191,7 +191,7 @@ fn parses_only_the_explicit_issue_investigation_grammar() -> TestResult {
         latest.http_path().as_deref(),
         Some(
             "/api/telemetry/issues/11111111-1111-4111-8111-111111111111/investigation?\
-             response_version=13&selection=latest"
+             response_version=14&selection=latest"
         )
     );
     Ok(())
@@ -280,7 +280,7 @@ fn help_describes_the_complete_versioned_bundle() -> TestResult {
     assert!(text.contains("approximate affected-user coverage and limitations"));
     assert!(text.contains("trace, sibling issues, related logs, actions, metric exemplars"));
     assert!(text.contains("same contract as logbrew explain issue"));
-    assert!(text.contains("exact validated schema-version-13 response"));
+    assert!(text.contains("exact validated schema-version-14 response"));
     assert!(text.contains("deterministic grouping"));
     assert!(text.contains("exact preceding-deployment and customer-source locator evidence"));
     assert!(text.contains("explicit selected, first, latest, and recommended occurrence"));
@@ -454,7 +454,8 @@ async_test!(human_output_surfaces_failure_fix_timeline_correlations_and_limits -
         "Exception stack node=1 state=truncated frames=0",
         "Request: method=POST route=/checkout/{cart_id} status=503",
         "Frame: module=checkout function=capturePayment file=apps/checkout/payment_gateway.ts line=87",
-        "Breadcrumb: at=2026-08-04T07:59:58Z category=checkout.submit",
+        "Breadcrumb: at=2026-08-04T07:59:58Z category=http.client type=http level=error \
+         method=POST url=https://payments.example.com/v1/charges status=503",
         "Runtime: service=checkout-api@1.2.3 runtime=node@24",
         "Cause assessment: status=reported_hypothesis provenance=application_reported",
         "Reported hypothesis (unverified): The provider returned 503 after retries.",
@@ -763,7 +764,7 @@ fn mount_bundle(
         "GET",
         format!("/api/telemetry/issues/{ISSUE_ID}/investigation"),
     )
-    .and(query_param("response_version", "13"))
+    .and(query_param("response_version", "14"))
     .and(query_param(selector.0, selector.1))
     .and(header("authorization", "Bearer test-token"))
     .respond_with(ResponseTemplate::new(200).set_body_json(bundle))
@@ -881,7 +882,7 @@ fn rich_investigation_bundle() -> serde_json::Value {
         "0.1.4",
     );
     serde_json::json!({
-        "schema_version": 13,
+        "schema_version": 14,
         "subject": {
             "kind": "issue",
             "id": ISSUE_ID,
@@ -1038,11 +1039,17 @@ fn captured_event() -> serde_json::Value {
         ))],
         "breadcrumbs": [{
             "timestamp": "2026-08-04T07:59:58Z",
-            "type": "user",
-            "category": "checkout.submit",
-            "level": "info",
-            "message": "Submit checkout",
-            "data": {"screen": "checkout"}
+            "type": "http",
+            "category": "http.client",
+            "level": "error",
+            "data": {
+                "method": "POST",
+                "url": "https://payments.example.com/v1/charges",
+                "status_code": 503,
+                "from": null,
+                "to": null,
+                "logger": null
+            }
         }],
         "breadcrumbs_truncated": false
     })
@@ -1737,6 +1744,15 @@ fn invalid_event_evidence_bundles() -> TestResult<Vec<serde_json::Value>> {
         ),
         ("/event/request/method", serde_json::json!("INVALID")),
         (
+            "/event/breadcrumbs/0/data/status_code",
+            serde_json::json!("503"),
+        ),
+        ("/event/breadcrumbs/0/data/url", serde_json::json!(7)),
+        (
+            "/event/breadcrumbs/0/data",
+            serde_json::json!({"screen": "checkout"}),
+        ),
+        (
             "/reproduction/status",
             serde_json::json!("insufficient_evidence"),
         ),
@@ -1754,6 +1770,10 @@ fn invalid_event_evidence_bundles() -> TestResult<Vec<serde_json::Value>> {
     let mut missing_receipt = rich_investigation_bundle();
     remove_evidence_fields(&mut missing_receipt, &["exception_chain"])?;
     cases.push(mark_invalid(missing_receipt));
+
+    let mut extra_breadcrumb_data = rich_investigation_bundle();
+    extra_breadcrumb_data["event"]["breadcrumbs"][0]["data"]["headers"] = serde_json::json!("x");
+    cases.push(mark_invalid(extra_breadcrumb_data));
 
     let mut forged_fix = underlying_exception_fix_bundle();
     forged_fix["fix"]["location"]["file"] = serde_json::json!("forged.rs");
