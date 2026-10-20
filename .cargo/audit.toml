@@ -1,0 +1,7 @@
+[advisories]
+# RUSTSEC-2026-0381 flags webpki-roots 0.26.x by version range. 0.26.11 bundles
+# no certificates: it re-exports webpki-roots 1.0.10, which removes the
+# distrusted emSign roots. It remains only because tokio-tungstenite 0.30.0
+# (the newest release) requires webpki-roots ^0.26. Remove this entry when
+# tokio-tungstenite moves to webpki-roots 1.x.
+ignore = ["RUSTSEC-2026-0381"]
