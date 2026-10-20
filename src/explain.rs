@@ -328,7 +328,7 @@ fn validate_issue_response(
     expected_occurrence: &IssueOccurrenceSelection,
 ) -> Result<(), RuntimeError> {
     let response = exact_response_object(value, ISSUE_RESPONSE_FIELDS)?;
-    validate_schema_version_value(response, 13)?;
+    validate_schema_version_value(response, 14)?;
     let subject = required_object(response, "subject")?;
     require_string_equals(subject, "kind", "issue")?;
     require_string_equals(subject, "id", expected_id)?;
@@ -350,7 +350,7 @@ fn validate_issue_response(
     validate_nullable_object(event, "context")?;
     validate_nullable_object(event, "exception")?;
     let _ = validate_object_array(event, "stack_frames", 256)?;
-    let _ = validate_object_array(event, "breadcrumbs", 256)?;
+    validate_issue_breadcrumbs(validate_object_array(event, "breadcrumbs", 256)?)?;
     let _breadcrumbs_truncated = require_bool(event, "breadcrumbs_truncated")?;
     let evidence = required_object(response, "evidence")?;
     validate_evidence(evidence)?;
@@ -2009,6 +2009,35 @@ fn validate_nullable_object(value: &Map<String, Value>, name: &str) -> Result<()
     }
 }
 
+/// Typed nullable `data` fields of every version-14 issue breadcrumb.
+const ISSUE_BREADCRUMB_DATA_FIELDS: &[&str] =
+    &["method", "url", "status_code", "from", "to", "logger"];
+
+/// Requires each breadcrumb's exact typed `data`: text fields or an HTTP status, each nullable.
+fn validate_issue_breadcrumbs(breadcrumbs: &[Value]) -> Result<(), RuntimeError> {
+    for breadcrumb in breadcrumbs {
+        let data = breadcrumb
+            .get("data")
+            .and_then(Value::as_object)
+            .ok_or_else(invalid_response)?;
+        require_exact_fields(data, ISSUE_BREADCRUMB_DATA_FIELDS)?;
+        let valid = data
+            .iter()
+            .all(|(name, value)| match (name.as_str(), value) {
+                (_, Value::Null) => true,
+                ("status_code", value) => value
+                    .as_u64()
+                    .is_some_and(|code| (100..=599).contains(&code)),
+                (_, Value::String(text)) => !text.is_empty(),
+                _ => false,
+            });
+        if !valid {
+            return Err(invalid_response());
+        }
+    }
+    Ok(())
+}
+
 /// Validates one required bounded array of objects.
 fn validate_object_array<'a>(
     value: &'a Map<String, Value>,
@@ -3148,6 +3177,14 @@ fn append_issue_breadcrumbs(output: &mut String, event: &Value) {
         append_labeled_text(output, "type", breadcrumb, "type", 80);
         append_labeled_text(output, "level", breadcrumb, "level", 32);
         append_labeled_text(output, "message", breadcrumb, "message", 240);
+        if let Some(data) = breadcrumb.get("data") {
+            append_labeled_text(output, "method", data, "method", 16);
+            append_labeled_text(output, "url", data, "url", 256);
+            append_labeled_integer(output, "status", data, "status_code");
+            append_labeled_text(output, "from", data, "from", 256);
+            append_labeled_text(output, "to", data, "to", 256);
+            append_labeled_text(output, "logger", data, "logger", 80);
+        }
         output.push('\n');
     }
 }
