@@ -34,7 +34,7 @@ use crate::ids::{
 use crate::{
     CliError, Command, ExplainMetricTarget, ExplainReleaseTarget, ExplainSpanTarget, ExplainTarget,
     HelpTopic, ISSUE_STATUS_ARGUMENT_NEXT_STEP, IssueCorrectionTarget, IssueOccurrenceSelection,
-    ProjectCreateOptions, ProjectIngestKeyCreateOptions, ProjectRepositoryOptions,
+    LoginProvider, ProjectCreateOptions, ProjectIngestKeyCreateOptions, ProjectRepositoryOptions,
     ProjectSetupSeenOptions, ReadOptions, ReadTarget, RepositoryDiscoveryOptions,
     RepositorySetupTarget, SetTarget, auth_namespace,
 };
@@ -808,7 +808,9 @@ fn parse_repository_discovery(args: &[String]) -> Result<Command, CliError> {
                 provider = Some(
                     value
                         .parse()
-                        .map_err(|_| CliError::InvalidProjectsCommand)?,
+                        .ok()
+                        .filter(|provider: &LoginProvider| provider.hosts_repositories())
+                        .ok_or(CliError::InvalidProjectsCommand)?,
                 );
             }
             "--repository" if repository_id.is_none() => {
@@ -1009,7 +1011,9 @@ fn parse_project_create(args: &[String]) -> Result<Command, CliError> {
                 provider = Some(
                     value
                         .parse()
-                        .map_err(|_| CliError::InvalidProjectCreateCommand)?,
+                        .ok()
+                        .filter(|provider: &LoginProvider| provider.hosts_repositories())
+                        .ok_or(CliError::InvalidProjectCreateCommand)?,
                 );
             }
             "--repository" if repository_id.is_none() => {

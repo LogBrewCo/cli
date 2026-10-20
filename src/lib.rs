@@ -138,6 +138,8 @@ pub enum LoginProvider {
     GitLab,
     /// Bitbucket OAuth.
     Bitbucket,
+    /// Google sign-in. Google hosts no repositories.
+    Google,
 }
 
 impl LoginProvider {
@@ -148,7 +150,14 @@ impl LoginProvider {
             Self::GitHub => "github",
             Self::GitLab => "gitlab",
             Self::Bitbucket => "bitbucket",
+            Self::Google => "google",
         }
+    }
+
+    /// Returns whether the provider hosts source repositories.
+    #[must_use]
+    pub const fn hosts_repositories(self) -> bool {
+        !matches!(self, Self::Google)
     }
 }
 
@@ -160,6 +169,7 @@ impl std::str::FromStr for LoginProvider {
             "github" => Ok(Self::GitHub),
             "gitlab" => Ok(Self::GitLab),
             "bitbucket" => Ok(Self::Bitbucket),
+            "google" => Ok(Self::Google),
             _ => Err(CliError::InvalidLoginProvider),
         }
     }

@@ -754,7 +754,7 @@ fn missing_flag_value_next(flag: &'static str) -> &'static str {
         "--pagination" => "provide a value after --pagination",
         "--cursor-time" => "provide a value after --cursor-time",
         "--cursor-id" => "provide a value after --cursor-id",
-        "--provider" => "provide github, gitlab, or bitbucket after --provider",
+        "--provider" => "provide github, gitlab, bitbucket, or google after --provider",
         _ => "provide a value after the flag",
     }
 }

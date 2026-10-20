@@ -198,7 +198,7 @@ fn help_keeps_agent_auth_watch_and_investigation_contracts() {
     assert_help!(HelpTopic::Login;
         "stores a private local access/refresh pair",
         "refresh local auth once after an expired-token response",
-        "--provider github|gitlab|bitbucket",
+        "--provider github|gitlab|bitbucket|google",
         "--json prints the auth handoff without opening a browser.");
     assert_help!(HelpTopic::Watch;
         "logbrew watch --json",
@@ -806,6 +806,10 @@ fn parses_login_provider_in_separate_or_inline_form() {
             &["logbrew", "--json", "auth", "login", "--provider=gitlab"][..],
             LoginProvider::GitLab,
         ),
+        (
+            &["logbrew", "login", "--provider", "google"][..],
+            LoginProvider::Google,
+        ),
     ] {
         assert_command(
             args,
@@ -814,6 +818,47 @@ fn parses_login_provider_in_separate_or_inline_form() {
                 open_browser: !args.contains(&"--no-open") && !args.contains(&"--json"),
                 json: args.contains(&"--json"),
             },
+        );
+    }
+}
+
+#[test]
+fn rejects_google_as_a_repository_provider() {
+    let discover = [
+        "logbrew",
+        "projects",
+        "repositories",
+        "discover",
+        "--provider",
+        "github",
+        "--repository",
+        "42",
+    ];
+    let create = [
+        "logbrew",
+        "projects",
+        "create",
+        "Checkout Platform",
+        "--ingest-key-file",
+        "./private/ingest.key",
+        "--provider=github",
+        "--repository",
+        "42",
+        "--discovery",
+        "123e4567-e89b-12d3-a456-426614174001",
+        "--component",
+        "123e4567-e89b-12d3-a456-426614174002",
+    ];
+    for args in [&discover[..], &create[..]] {
+        assert!(parse_command(args.iter().copied()).is_ok(), "{args:?}");
+        let google = args.iter().map(|arg| match *arg {
+            "github" => "google",
+            "--provider=github" => "--provider=google",
+            other => other,
+        });
+        assert!(
+            parse_command(google).is_err(),
+            "Google hosts no repositories: {args:?}"
         );
     }
 }
