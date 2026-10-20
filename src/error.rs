@@ -727,7 +727,7 @@ const fn cli_error_next_step(error: &CliError) -> &'static str {
         CliError::InvalidProjectsCommand => {
             "use logbrew projects [--json], logbrew projects repositories [discover --provider <provider> --repository <id>] [--json], or logbrew projects --help"
         }
-        CliError::InvalidLoginProvider => "use --provider github, gitlab, or bitbucket",
+        CliError::InvalidLoginProvider => "use --provider github, gitlab, bitbucket, or google",
         CliError::InvalidUsageCommand => "use logbrew usage with optional --json",
         CliError::InvalidNativeDebugCommand => {
             "use logbrew debug-artifacts upload <path> --project <project_id> --release <release> --environment <environment> --service <service> with optional --expect-image-uuid, --dry-run, and --json"

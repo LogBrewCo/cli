@@ -145,8 +145,8 @@ The default API URL is `https://api.logbrew.co`. Override it with
 
 Authentication uses either `LOGBREW_TOKEN` or the secured local access/refresh
 pair created by `logbrew login`. Interactive login supports GitHub (the
-default), GitLab, and Bitbucket through
-`logbrew login --provider github|gitlab|bitbucket`, receives the result on a
+default), GitLab, Bitbucket, and Google through
+`logbrew login --provider github|gitlab|bitbucket|google`, receives the result on a
 loopback-only callback, and stores the pair under `~/.logbrew`. `logbrew
 whoami` and `logbrew me` return the authenticated account identity.
 Authenticated commands rotate local credentials once after an expired-token
