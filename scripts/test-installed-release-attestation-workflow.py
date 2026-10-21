@@ -120,7 +120,8 @@ class InstalledReleaseAttestationWorkflowTests(unittest.TestCase):
             "for _ in {1..100}",
             "sleep 0.5",
             "run-id=%s",
-            "for _ in {1..40}",
+            "for _ in {1..180}",
+            "sleep 15",
             '[[ "$state" == "completed|success" ]]',
         ]:
             with self.subTest(required=required):
