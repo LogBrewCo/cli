@@ -94,6 +94,7 @@ async fn run_binary_login(
     code: &str,
     label: &str,
 ) -> TestResult<(std::process::Output, std::path::PathBuf, String)> {
+    super::execution_commands::mount_providers(server, &["github", "gitlab", "bitbucket"]);
     let root = super::isolated_home("logbrew-cli-binary-login", label)?;
     let home = root.join("home");
     let bin_dir = root.join("bin");

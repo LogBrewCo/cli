@@ -24,21 +24,38 @@ async_test!(authenticated_reads_without_token_explain_login_step -> TestResult, 
     Ok(())
 });
 
+/// Serves `GET /api/auth/providers` with `available` set for each listed slug.
+pub(super) fn mount_providers(server: &crate::MockServer, available: &[&str]) {
+    let providers =
+        ["github", "gitlab", "bitbucket", "google", "future-provider"].map(|provider| {
+            serde_json::json!({
+                "provider": provider,
+                "available": available.contains(&provider),
+                "error_code": null,
+                "missing": [],
+                "next_action": { "code": "start_oauth", "target": "oauth_provider" },
+                "added_later": true
+            })
+        });
+    crate::Mock::route("GET", "/api/auth/providers")
+        .respond_with(
+            crate::ResponseTemplate::new(200)
+                .set_body_json(&serde_json::json!({ "providers": providers })),
+        )
+        .mount(server);
+}
+
 async_test!(
     login_no_open_json_prints_auth_url_without_browser_side_effect -> TestResult,
     {
-        let env = test_env("https://example.test", None, "login-no-open");
-        for args in [
-            &["logbrew", "login", "--no-open", "--json"][..],
-            &["logbrew", "--json", "login"][..],
-            &[
-                "logbrew",
-                "login",
-                "--provider",
-                "gitlab",
-                "--no-open",
-                "--json",
-            ][..],
+        let server = crate::MockServer::start().await?;
+        mount_providers(&server, &["github", "gitlab", "google"]);
+        let env = test_env(server.uri(), None, "login-no-open");
+        for (args, provider) in [
+            (&["logbrew", "login", "--no-open", "--json"][..], "github"),
+            (&["logbrew", "--json", "login"][..], "github"),
+            (&["logbrew", "login", "--provider", "gitlab", "--no-open", "--json"][..], "gitlab"),
+            (&["logbrew", "login", "--provider=google", "--json"][..], "google"),
         ] {
             let command = parse_command(args.iter().copied())?;
             let mut output = Vec::new();
@@ -48,15 +65,10 @@ async_test!(
 
             let body: serde_json::Value =
                 serde_json::from_slice(output.as_slice())?;
-            let provider = if args.contains(&"gitlab") {
-                "gitlab"
-            } else {
-                "github"
-            };
             assert_eq!(body["ok"], true);
             assert_eq!(
                 body["auth_url"],
-                format!("https://example.test/api/auth/cli/login?provider={provider}")
+                format!("{}/api/auth/cli/login?provider={provider}", server.uri())
             );
             assert_eq!(body["provider"], provider);
             assert_eq!(body["browser_opened"], false);
@@ -67,8 +79,10 @@ async_test!(
 );
 
 async_test!(login_no_open_human_prints_browser_state_and_next_step -> TestResult, {
+    let server = crate::MockServer::start().await?;
+    mount_providers(&server, &["bitbucket"]);
     let command = parse_command(["logbrew", "login", "--provider", "bitbucket", "--no-open"])?;
-    let env = test_env("https://example.test", None, "login-no-open-human");
+    let env = test_env(server.uri(), None, "login-no-open-human");
     let mut output = Vec::new();
 
     execute_command(&command, &env, &mut output)
@@ -77,10 +91,89 @@ async_test!(login_no_open_human_prints_browser_state_and_next_step -> TestResult
     let text = String::from_utf8(output)?;
     assert_eq!(
         text,
-        "Open this URL to log in: \
-             https://example.test/api/auth/cli/login?provider=bitbucket\nProvider: bitbucket\nBrowser: \
-             not opened\nNext: open the URL in a browser\n"
+        format!(
+            "Open this URL to log in: {}/api/auth/cli/login?provider=bitbucket\nProvider: \
+             bitbucket\nBrowser: not opened\nNext: open the URL in a browser\n",
+            server.uri()
+        )
     );
+    Ok(())
+});
+
+async_test!(login_stops_when_the_server_does_not_offer_the_provider -> TestResult, {
+    let server = crate::MockServer::start().await?;
+    mount_providers(&server, &["github", "gitlab", "bitbucket"]);
+    let env = test_env(server.uri(), None, "login-provider-not-offered");
+    for args in [
+        &["logbrew", "login", "--provider", "google", "--json"][..],
+        &["logbrew", "login", "--provider", "google", "--no-open"][..],
+    ] {
+        let command = parse_command(args.iter().copied())?;
+        let mut output = Vec::new();
+
+        let error = execute_command(&command, &env, &mut output)
+            .await
+            .err()
+            .ok_or("a provider the server does not offer must fail")?;
+
+        assert!(output.is_empty(), "no login URL for a provider the server does not offer");
+        assert!(matches!(
+            error,
+            RuntimeError::Unavailable {
+                message: "Google sign-in is not available yet",
+                next: "use --provider github, gitlab, or bitbucket",
+            }
+        ));
+        let mut rendered = Vec::new();
+        write_runtime_error(&error, true, &mut rendered)?;
+        let rendered: serde_json::Value = serde_json::from_slice(rendered.as_slice())?;
+        assert_eq!(rendered["error"], "unavailable");
+        assert_eq!(rendered["message"], "Google sign-in is not available yet");
+        assert_eq!(rendered["next"], "use --provider github, gitlab, or bitbucket");
+    }
+
+    let none = crate::MockServer::start().await?;
+    mount_providers(&none, &[]);
+    let command = parse_command(["logbrew", "login", "--json"])?;
+    let error = execute_command(&command, &test_env(none.uri(), None, "login-none"), &mut Vec::new())
+        .await
+        .err()
+        .ok_or("a server that offers no provider must fail")?;
+    assert!(matches!(
+        error,
+        RuntimeError::Unavailable {
+            message: "GitHub sign-in is not available yet",
+            next: "this LogBrew server offers no sign-in provider; check LOGBREW_API_URL",
+        }
+    ));
+    Ok(())
+});
+
+async_test!(login_fails_closed_when_providers_cannot_be_read -> TestResult, {
+    for response in [
+        crate::ResponseTemplate::new(500),
+        crate::ResponseTemplate::new(200).set_body_json(&serde_json::json!({ "providers": "github" })),
+        crate::ResponseTemplate::new(200)
+            .set_body_json(&serde_json::json!({ "providers": [{ "provider": "github" }] })),
+    ] {
+        let server = crate::MockServer::start().await?;
+        crate::Mock::route("GET", "/api/auth/providers")
+            .respond_with(response)
+            .mount(&server);
+        let command = parse_command(["logbrew", "login", "--json"])?;
+        let mut output = Vec::new();
+
+        let error = execute_command(&command, &test_env(server.uri(), None, "login-unreadable"), &mut output)
+            .await
+            .err()
+            .ok_or("an unreadable provider list must fail closed")?;
+
+        assert!(output.is_empty());
+        assert!(matches!(
+            error,
+            RuntimeError::Unavailable { message: "the sign-in providers could not be read", .. }
+        ));
+    }
     Ok(())
 });
 

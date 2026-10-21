@@ -18,11 +18,90 @@ pub(super) async fn execute_login<W: std::io::Write>(
     json: bool,
     output: &mut W,
 ) -> Result<(), RuntimeError> {
+    let origin = super::normalized_api_base(env.base_url.as_str())?;
+    ensure_offered(origin.as_str(), provider).await?;
     if json || !should_open_browser {
         return write_auth_handoff(env, provider, json, output);
     }
     execute_interactive(env, provider, output).await
 }
+
+/// Fails before any browser step unless the server offers `provider`.
+async fn ensure_offered(origin: &str, provider: LoginProvider) -> Result<(), RuntimeError> {
+    let unreadable = || login_unavailable("the sign-in providers could not be read");
+    let response = crate::http::api_client()?
+        .get(format!(
+            "{}/api/auth/providers",
+            origin.trim_end_matches('/')
+        ))
+        .send()
+        .await
+        .map_err(|_| unreadable())?;
+    if !response.status().is_success() {
+        return Err(unreadable());
+    }
+    let value = response
+        .json::<serde_json::Value>()
+        .await
+        .map_err(|_| unreadable())?;
+    let offered = offered_providers(&value).ok_or_else(unreadable)?;
+    if offered & provider_bit(provider) != 0 {
+        return Ok(());
+    }
+    Err(RuntimeError::Unavailable {
+        message: match provider {
+            LoginProvider::GitHub => "GitHub sign-in is not available yet",
+            LoginProvider::GitLab => "GitLab sign-in is not available yet",
+            LoginProvider::Bitbucket => "Bitbucket sign-in is not available yet",
+            LoginProvider::Google => "Google sign-in is not available yet",
+        },
+        next: OFFERED_NEXT_STEPS[usize::from(offered)],
+    })
+}
+
+/// Reads the providers the server marks available, as `provider_bit` flags.
+/// Unknown providers and extra fields are ignored; a missing field fails.
+fn offered_providers(value: &serde_json::Value) -> Option<u8> {
+    let mut offered = 0;
+    for entry in value.get("providers")?.as_array()? {
+        let slug = entry.get("provider")?.as_str()?;
+        let available = entry.get("available")?.as_bool()?;
+        if let (true, Ok(provider)) = (available, slug.parse::<LoginProvider>()) {
+            offered |= provider_bit(provider);
+        }
+    }
+    Some(offered)
+}
+
+/// Flag for one provider in an offered-provider set.
+const fn provider_bit(provider: LoginProvider) -> u8 {
+    match provider {
+        LoginProvider::GitHub => 1,
+        LoginProvider::GitLab => 2,
+        LoginProvider::Bitbucket => 4,
+        LoginProvider::Google => 8,
+    }
+}
+
+/// Recovery for each offered-provider set, indexed by its `provider_bit` flags.
+const OFFERED_NEXT_STEPS: [&str; 16] = [
+    "this LogBrew server offers no sign-in provider; check LOGBREW_API_URL",
+    "use --provider github",
+    "use --provider gitlab",
+    "use --provider github or gitlab",
+    "use --provider bitbucket",
+    "use --provider github or bitbucket",
+    "use --provider gitlab or bitbucket",
+    "use --provider github, gitlab, or bitbucket",
+    "use --provider google",
+    "use --provider github or google",
+    "use --provider gitlab or google",
+    "use --provider github, gitlab, or google",
+    "use --provider bitbucket or google",
+    "use --provider github, bitbucket, or google",
+    "use --provider gitlab, bitbucket, or google",
+    "use --provider github, gitlab, bitbucket, or google",
+];
 
 /// Writes the legacy agent/manual handoff without binding or persisting state.
 fn write_auth_handoff<W: std::io::Write>(
