@@ -49,7 +49,7 @@ const ROOT_HELP: &str = "\
 LogBrew CLI
 
 Usage:
-  logbrew login [--provider github|gitlab|bitbucket|google] [--no-open] [--json]
+  logbrew login [--provider <name>] [--no-open] [--json]
   logbrew logout [--json]
   logbrew setup [--auto] [--yes] [--json]
   logbrew projects [--json]
@@ -196,11 +196,12 @@ Use --json for stable machine-readable output.";
 /// Login command help text.
 const LOGIN_HELP: &str = "\
 Usage:
-  logbrew login [--provider github|gitlab|bitbucket|google] [--no-open] [--json]
+  logbrew login [--provider <name>] [--no-open] [--json]
 
 Starts browser login for the native CLI and stores a private local access/refresh pair.
 Authenticated commands refresh local auth once after an expired-token response.
-Use --provider github|gitlab|bitbucket|google to choose the account provider (default: github).
+Use --provider <name> to sign in with a provider your LogBrew server offers (default: github).
+If the server does not offer it, login stops and names the providers it offers.
 Use --no-open to print the URL without opening a browser.
 --json prints the auth handoff without opening a browser.";
 
@@ -278,8 +279,8 @@ The CLI is a native Rust binary.";
 /// Auth workflow help text.
 const AUTH_HELP: &str = "\
 Usage:
-  logbrew login [--provider github|gitlab|bitbucket|google] [--no-open] [--json]
-  logbrew auth login [--provider github|gitlab|bitbucket|google] [--no-open] [--json]
+  logbrew login [--provider <name>] [--no-open] [--json]
+  logbrew auth login [--provider <name>] [--no-open] [--json]
   logbrew status [--json]
   logbrew auth status [--json]
   logbrew auth whoami [--json]

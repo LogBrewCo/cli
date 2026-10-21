@@ -198,7 +198,8 @@ fn help_keeps_agent_auth_watch_and_investigation_contracts() {
     assert_help!(HelpTopic::Login;
         "stores a private local access/refresh pair",
         "refresh local auth once after an expired-token response",
-        "--provider github|gitlab|bitbucket|google",
+        "--provider <name>",
+        "a provider your LogBrew server offers",
         "--json prints the auth handoff without opening a browser.");
     assert_help!(HelpTopic::Watch;
         "logbrew watch --json",
