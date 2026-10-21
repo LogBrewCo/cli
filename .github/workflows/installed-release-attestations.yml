@@ -157,10 +157,10 @@ jobs:
             state="$(gh run view "$RELEASE_RUN" --repo "$GITHUB_REPOSITORY" \
               --json status,conclusion --jq '[.status,.conclusion] | join("|")')"
             [[ "$state" == "completed|success" ]] && exit 0
-            [[ "$state" == completed\|* ]] && { echo "release run ended: $state"; exit 1; }
+            [[ "$state" == completed\|* ]] && { printf 'release run ended: %s\n' "$state" >&2; exit 1; }
             sleep 15
           done
-          echo "release run still not finished after 45 minutes"
+          printf 'release run still not finished after 45 minutes\n' >&2
           exit 1
 
       - name: Upload installed attestation
