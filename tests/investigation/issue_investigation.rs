@@ -58,6 +58,20 @@ async_test!(built_binary_preserves_complete_partial_and_unavailable_evidence -> 
     Ok(())
 });
 
+async_test!(built_binary_accepts_issues_past_the_recommendation_candidate_window -> TestResult, {
+    let bundle = issue_with_51_occurrences()?;
+    assert_binary_bundle(&bundle, true).await?;
+    let mut unreceipted = bundle.clone();
+    let fields = unreceipted["evidence"]["truncated_fields"]
+        .as_array_mut()
+        .ok_or("truncated fields missing")?;
+    fields.retain(|field| field != "occurrence.recommendation_candidates");
+    assert_binary_bundle(&unreceipted, false).await?;
+    let mut complete = bundle;
+    complete["evidence"]["status"] = serde_json::json!("complete");
+    assert_binary_bundle(&complete, false).await
+});
+
 async_test!(bounded_error_previews_preserve_counts_without_inventing_spans -> TestResult, {
     let mut bundle = rich_investigation_bundle();
     let summary = &mut bundle["correlations"]["trace"]["summary"];
@@ -1681,6 +1695,49 @@ fn remove_evidence_fields(bundle: &mut serde_json::Value, fields: &[&str]) -> Te
             .retain(|value| value.as_str().is_none_or(|value| !fields.contains(&value)));
     }
     Ok(())
+}
+
+/// One issue past the 50-candidate recommendation window, with its truncation receipt.
+fn issue_with_51_occurrences() -> TestResult<serde_json::Value> {
+    let mut bundle = rich_investigation_bundle();
+    bundle["subject"]["occurrence_count"] = serde_json::json!(51);
+    bundle["impact"]["occurrence_count"] = serde_json::json!(51);
+    let users = &mut bundle["impact"]["user_impact"]["coverage"];
+    for (field, value) in [
+        ("retained_occurrences", 51),
+        ("indexed_occurrences", 51),
+        ("privacy_filtered_subject_occurrences", 49),
+        ("identified_user_coverage_basis_points", 392),
+    ] {
+        users[field] = serde_json::json!(value);
+    }
+    bundle["occurrence_selection"]["recommendation"]["candidate_count"] = serde_json::json!(50);
+    bundle["occurrence_selection"]["recommendation"]["candidate_window_truncated"] =
+        serde_json::json!(true);
+    let analysis = &mut bundle["occurrence_analysis"];
+    analysis["coverage"]["retained_occurrences"] = serde_json::json!(51);
+    analysis["coverage"]["trend_occurrences"] = serde_json::json!(51);
+    analysis["trend"]["buckets"][0]["occurrence_count"] = serde_json::json!(49);
+    for (dimension, value, count, share) in [
+        (0, 0, 49, 9607),
+        (0, 1, 1, 196),
+        (0, 2, 1, 196),
+        (1, 0, 51, 10_000),
+        (2, 0, 51, 10_000),
+        (3, 0, 50, 9803),
+        (3, 1, 1, 196),
+    ] {
+        let entry = &mut analysis["distributions"][dimension]["values"][value];
+        entry["occurrence_count"] = serde_json::json!(count);
+        entry["share_basis_points"] = serde_json::json!(share);
+    }
+    bundle["evidence"]["status"] = serde_json::json!("partial");
+    add_evidence_field(
+        &mut bundle,
+        "truncated_fields",
+        "occurrence.recommendation_candidates",
+    )?;
+    Ok(bundle)
 }
 
 fn add_evidence_field(bundle: &mut serde_json::Value, category: &str, field: &str) -> TestResult {
