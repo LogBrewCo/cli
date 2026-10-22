@@ -259,7 +259,7 @@ async_test!(standalone_lookup_distinguishes_found_and_missing_json -> Result<(),
     )
     .await?;
     assert!(found.status.success());
-    assert!(found.stderr.is_empty());
+    assert_eq!(found.stderr, b"");
     let found_text = String::from_utf8(found.stdout)?;
     let found_body: serde_json::Value = serde_json::from_str(found_text.as_str())?;
     assert_eq!(found_body["status"], "found");
@@ -275,7 +275,7 @@ async_test!(standalone_lookup_distinguishes_found_and_missing_json -> Result<(),
     )
     .await?;
     assert!(missing.status.success());
-    assert!(missing.stderr.is_empty());
+    assert_eq!(missing.stderr, b"");
     let missing_text = String::from_utf8(missing.stdout)?;
     let missing_body: serde_json::Value = serde_json::from_str(missing_text.as_str())?;
     assert_eq!(missing_body["status"], "missing");

@@ -75,7 +75,7 @@ async_test!(dsym_dry_run_normalizes_apple_uuid_case -> Result<(), Box<dyn std::e
         )
         .await?;
         assert!(output.status.success());
-        assert!(output.stderr.is_empty());
+        assert_eq!(output.stderr, b"");
         let text = String::from_utf8(output.stdout)?;
         let body: serde_json::Value = serde_json::from_str(text.as_str())?;
         assert_eq!(body["artifacts"][0]["image_uuid"], ARM64_UUID);
@@ -130,7 +130,7 @@ async_test!(resumable_upload_sends_only_missing_chunks_then_completes_and_verifi
     )
     .await?;
     assert!(output.status.success());
-    assert!(output.stderr.is_empty());
+    assert_eq!(output.stderr, b"");
     let text = String::from_utf8(output.stdout)?;
     assert_eq!(text.lines().count(), 1);
     let body = serde_json::from_str::<serde_json::Value>(text.as_str())?;
@@ -191,7 +191,7 @@ async_test!(resumable_upload_sends_only_missing_chunks_then_completes_and_verifi
         "application/octet-stream"
     );
     assert_eq!(requests[2].body, object[RESUMABLE_CHUNK_SIZE..]);
-    assert!(requests[3].body.is_empty());
+    assert_eq!(requests[3].body, b"");
     assert!(requests.iter().all(
         |request| request.url.path() != "/api/native-debug-artifacts"
             || request.method.as_str() == "GET"
@@ -245,7 +245,7 @@ async_test!(resumable_retry_replays_only_the_ambiguous_chunk -> Result<(), Box<d
     )
     .await?;
     assert!(output.status.success());
-    assert!(output.stderr.is_empty());
+    assert_eq!(output.stderr, b"");
     let text = String::from_utf8(output.stdout)?;
     assert!(!text.contains("hostile transient text"));
     let requests = server.received_requests();
@@ -404,7 +404,7 @@ async_test!(ambiguous_completion_recovers_through_exact_lookup_without_file_repl
     )
     .await?;
     assert!(output.status.success());
-    assert!(output.stderr.is_empty());
+    assert_eq!(output.stderr, b"");
     let text = String::from_utf8(output.stdout)?;
     let body = serde_json::from_str::<serde_json::Value>(text.as_str())?;
     assert_eq!(body["status"], "verified");
@@ -518,7 +518,7 @@ async_test!(dsym_dry_run_human_output_is_bounded_and_path_free -> Result<(), Box
 
     let output = invoke(&fixture, server.uri().as_str(), args).await?;
     assert!(output.status.success());
-    assert!(output.stderr.is_empty());
+    assert_eq!(output.stderr, b"");
     let text = String::from_utf8(output.stdout)?;
     assert_eq!(
         text,
@@ -554,7 +554,7 @@ async_test!(zip_dry_run_reads_only_dsym_debug_objects -> Result<(), Box<dyn std:
     )
     .await?;
     assert!(output.status.success());
-    assert!(output.stderr.is_empty());
+    assert_eq!(output.stderr, b"");
     let text = String::from_utf8(output.stdout)?;
     let body: serde_json::Value = serde_json::from_str(text.as_str())?;
     assert_eq!(body["status"], "validated");
@@ -690,7 +690,7 @@ async_test!(project_artifact_key_upload_retries_completion_without_claiming_veri
     )
     .await?;
     assert!(output.status.success());
-    assert!(output.stderr.is_empty());
+    assert_eq!(output.stderr, b"");
     let text = String::from_utf8(output.stdout)?;
     let body = serde_json::from_str::<serde_json::Value>(text.as_str())?;
     assert_eq!(body["status"], "uploaded");
@@ -749,7 +749,7 @@ async_test!(exact_already_present_artifact_is_success_without_upload -> Result<(
     )
     .await?;
     assert!(output.status.success());
-    assert!(output.stderr.is_empty());
+    assert_eq!(output.stderr, b"");
     let text = String::from_utf8(output.stdout)?;
     let body: serde_json::Value = serde_json::from_str(text.as_str())?;
     assert_eq!(body["ok"], true);

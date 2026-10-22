@@ -168,7 +168,7 @@ async_test!(login_fails_closed_when_providers_cannot_be_read -> TestResult, {
             .err()
             .ok_or("an unreadable provider list must fail closed")?;
 
-        assert!(output.is_empty());
+        assert_eq!(output, b"");
         assert!(matches!(
             error,
             RuntimeError::Unavailable { message: "the sign-in providers could not be read", .. }

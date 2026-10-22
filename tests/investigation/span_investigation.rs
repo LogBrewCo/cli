@@ -114,7 +114,7 @@ async_test!(partial_attribute_capture_is_not_missing_evidence -> Result<(), Box<
         let process = run_binary(&server, true, None).await?;
         if states.contains(&"missing") {
             assert!(!process.status.success());
-            assert!(process.stdout.is_empty());
+            assert_eq!(process.stdout, b"");
         } else {
             super::assert_cli_success(&process);
             assert_eq!(serde_json::from_slice::<serde_json::Value>(&process.stdout)?, response);
@@ -150,7 +150,7 @@ async_test!(cyclic_parentage_preserves_consistent_shared_span_evidence -> Result
             assert_eq!(serde_json::from_slice::<serde_json::Value>(&process.stdout)?, response);
         } else {
             assert!(!process.status.success());
-            assert!(process.stdout.is_empty());
+            assert_eq!(process.stdout, b"");
         }
     }
     Ok(())
@@ -346,7 +346,7 @@ async_test!(contract_rejects_identity_arithmetic_topology_payload_and_routing_co
             .ok_or("contradictory span response must fail closed")?;
 
         assert!(matches!(error, RuntimeError::ExplainResponseInvalid));
-        assert!(output.is_empty());
+        assert_eq!(output, b"");
     }
     Ok(())
 });

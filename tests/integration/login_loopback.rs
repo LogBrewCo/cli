@@ -35,7 +35,7 @@ async_test!(built_binary_completes_loopback_login_without_exposing_credentials -
     let stdout = String::from_utf8(result.stdout)?;
     let stderr = String::from_utf8(result.stderr)?;
     assert!(stdout.contains("Logged in to LogBrew."));
-    assert!(stderr.is_empty());
+    assert_eq!(stderr, "");
     let saved: serde_json::Value = serde_json::from_str(
         std::fs::read_to_string(home.join(".logbrew/session.json"))?.as_str(),
     )?;
