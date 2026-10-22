@@ -241,7 +241,7 @@ async_test!(archive_and_delete_send_exact_requests_and_local_receipts -> TestRes
                 deletion_body()
             );
         } else {
-            assert!(request.body.is_empty());
+            assert_eq!(request.body, b"");
         }
     }
     Ok(())

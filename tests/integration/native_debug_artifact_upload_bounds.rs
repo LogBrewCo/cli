@@ -159,7 +159,7 @@ async_test!(large_universal_object_uses_bounded_resumable_chunks_and_one_json_do
     )
     .await?;
     assert!(output.status.success());
-    assert!(output.stderr.is_empty());
+    assert_eq!(output.stderr, b"");
     let text = String::from_utf8(output.stdout)?;
     assert_eq!(text.lines().count(), 1);
     let body = serde_json::from_str::<serde_json::Value>(text.as_str())?;

@@ -1781,6 +1781,26 @@ fn mark_invalid(mut bundle: serde_json::Value) -> serde_json::Value {
     bundle
 }
 
+fn missing_request_bundle() -> TestResult<serde_json::Value> {
+    let mut missing_request = rich_investigation_bundle();
+    let _removed = missing_request["event"]
+        .as_object_mut()
+        .ok_or("event must be an object")?
+        .remove("request");
+    remove_evidence_fields(
+        &mut missing_request,
+        &[
+            "request",
+            "request.method",
+            "request.route_template",
+            "request.response_status_code",
+        ],
+    )?;
+    add_evidence_field(&mut missing_request, "missing_fields", "request")?;
+    missing_request["evidence"]["status"] = serde_json::json!("complete");
+    Ok(missing_request)
+}
+
 fn invalid_event_evidence_bundles() -> TestResult<Vec<serde_json::Value>> {
     let mut cases = mutated_bundles(vec![
         (
@@ -1861,23 +1881,7 @@ fn invalid_event_evidence_bundles() -> TestResult<Vec<serde_json::Value>> {
         cases.push(mark_invalid(invalid_request_receipt));
     }
 
-    let mut missing_request = rich_investigation_bundle();
-    let _removed = missing_request["event"]
-        .as_object_mut()
-        .ok_or("event must be an object")?
-        .remove("request");
-    remove_evidence_fields(
-        &mut missing_request,
-        &[
-            "request",
-            "request.method",
-            "request.route_template",
-            "request.response_status_code",
-        ],
-    )?;
-    add_evidence_field(&mut missing_request, "missing_fields", "request")?;
-    missing_request["evidence"]["status"] = serde_json::json!("complete");
-    cases.push(mark_invalid(missing_request));
+    cases.push(mark_invalid(missing_request_bundle()?));
 
     cases.extend(mutated_bundles(vec![
         ("/grouping/strategy", serde_json::json!("unknown")),

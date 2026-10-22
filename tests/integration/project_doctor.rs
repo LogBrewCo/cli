@@ -42,7 +42,7 @@ async_test!(ready_json_uses_the_canonical_doctor_read_then_a_log_visibility_prob
         format!("/api/projects/{PROJECT_ID}/doctor")
     );
     assert_eq!(requests[0].url.query(), None);
-    assert!(requests[0].body.is_empty());
+    assert_eq!(requests[0].body, b"");
     assert_eq!(requests[1].url.path(), "/api/logs");
     let query = requests[1]
         .url

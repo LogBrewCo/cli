@@ -904,7 +904,7 @@ async_test!(persisted_refresh_session_never_authenticates_to_a_different_api_ori
         .ok_or("origin mismatch fails before network access")?;
 
     assert!(matches!(error, RuntimeError::Unavailable { .. }));
-    assert!(output.is_empty());
+    assert_eq!(output, b"");
     Ok(())
 });
 

@@ -198,7 +198,7 @@ async_test!(action_contract_accepts_safe_routes_and_truthfully_truncated_subject
 
         execute_command(&command, &authenticated_env(&server), &mut output).await?;
 
-        assert!(!output.is_empty());
+        assert_ne!(output, b"");
     }
     Ok(())
 });
