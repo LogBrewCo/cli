@@ -273,13 +273,43 @@ fn writes_missing_token_errors_with_human_next_step() -> TestResult {
 
 #[test]
 fn writes_api_fallbacks_for_both_renderers() -> TestResult {
-    for (status, code, next) in [
-        (401, "not_logged_in", "run logbrew login"),
-        (403, "forbidden", "run logbrew login"),
-        (500, "internal", "check LOGBREW_API_URL or retry later"),
-        (429, "rate_limited", "retry later"),
-        (404, "not_found", "check the resource id or filters"),
-        (422, "invalid_filter", "check command arguments or filters"),
+    for (status, code, next, action) in [
+        (
+            401,
+            "not_logged_in",
+            "run logbrew login",
+            ("sign_in", "auth"),
+        ),
+        (
+            403,
+            "forbidden",
+            "run logbrew login",
+            ("request_access", "auth"),
+        ),
+        (
+            500,
+            "internal",
+            "check LOGBREW_API_URL or retry later",
+            ("retry_or_contact_support", "support"),
+        ),
+        (
+            429,
+            "rate_limited",
+            "retry later",
+            ("retry_with_backoff", "request"),
+        ),
+        (
+            404,
+            "not_found",
+            "check the resource id or filters",
+            ("check_resource", "resource"),
+        ),
+        (
+            422,
+            "invalid_filter",
+            "check command arguments or filters",
+            ("fix_request", "request"),
+        ),
     ] {
         let (auth_source, auth_label) = if status == 403 {
             ("env", "logged in (env token)")
@@ -306,6 +336,11 @@ fn writes_api_fallbacks_for_both_renderers() -> TestResult {
             "preserve credential source"
         );
         assert_eq!(body["next"], next, "local fallback remains unchanged");
+        assert_eq!(
+            body["next_action"],
+            serde_json::json!({"code": action.0, "target": action.1}),
+            "every API error carries a recovery action"
+        );
         assert!(
             body.get("retry_after_seconds").is_none(),
             "never invent a delay"
@@ -337,6 +372,48 @@ fn writes_backend_api_code_and_next_for_agents() -> TestResult {
     assert_eq!(body["api_code"], "validation_failed");
     assert_eq!(body["api_next"], "provide --release <release>");
     assert_eq!(body["next"], "provide --release <release>");
+    Ok(())
+}
+
+#[test]
+fn api_errors_keep_only_well_formed_backend_recovery_actions() -> TestResult {
+    for (action, expected) in [
+        (
+            serde_json::json!({"code": "authorize_request", "target": "auth"}),
+            ("authorize_request", "auth"),
+        ),
+        (
+            serde_json::json!({"code": "Send Token abc", "target": "request"}),
+            ("fix_request", "request"),
+        ),
+        (
+            serde_json::json!({"code": "fix_request", "target": "x".repeat(49)}),
+            ("fix_request", "request"),
+        ),
+        (
+            serde_json::json!({"code": "fix_request"}),
+            ("fix_request", "request"),
+        ),
+        (serde_json::json!("fix_request"), ("fix_request", "request")),
+        (
+            serde_json::json!({"code": "wait_or_upgrade", "target": "billing"}),
+            ("wait_or_upgrade", "billing"),
+        ),
+    ] {
+        let error = RuntimeError::Api {
+            status: 402,
+            body: serde_json::json!({"error": "plan", "code": "subscription_required", "next_action": action})
+                .to_string(),
+            auth_source: "token_file",
+            auth_label: "logged in (local token)",
+        };
+        let body: serde_json::Value = serde_json::from_str(&runtime_error_text(&error)?)?;
+        assert_eq!(
+            body["next_action"],
+            serde_json::json!({"code": expected.0, "target": expected.1}),
+            "{action}"
+        );
+    }
     Ok(())
 }
 
