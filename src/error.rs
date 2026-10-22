@@ -555,6 +555,13 @@ fn runtime_error_json(error: &RuntimeError) -> serde_json::Value {
     {
         let api_details = ApiErrorDetails::parse(body);
         let next = api_next_step(*status, &api_details);
+        let (action_code, action_target) = api_details.next_action.as_ref().map_or_else(
+            || {
+                let (code, target) = fallback_api_next_action(*status);
+                (code.to_owned(), target.to_owned())
+            },
+            Clone::clone,
+        );
         let mut value = serde_json::json!({
             "ok": false,
             "error": runtime_error_code(error),
@@ -566,6 +573,7 @@ fn runtime_error_json(error: &RuntimeError) -> serde_json::Value {
             "api_next": api_details.next.as_deref(),
             "auth_source": auth_source,
             "next": next,
+            "next_action": {"code": action_code, "target": action_target},
         });
         if *status == 429 && api_details.code.as_deref() == Some("rate_limited") {
             if let Some(delay) = api_details.retry_after_seconds {
@@ -792,6 +800,8 @@ struct ApiErrorDetails {
     code: Option<String>,
     /// Backend-provided recovery step.
     next: Option<String>,
+    /// Backend-provided recovery action as a code and target.
+    next_action: Option<(String, String)>,
     /// Positive whole-second delay, never used to retry automatically.
     retry_after_seconds: Option<u64>,
 }
@@ -807,12 +817,28 @@ impl ApiErrorDetails {
             error: json_string_field(&value, "error"),
             code: json_string_field(&value, "code"),
             next: json_string_field(&value, "next"),
+            next_action: value.get("next_action").and_then(api_next_action),
             retry_after_seconds: value
                 .get("retry_after_seconds")
                 .and_then(serde_json::Value::as_u64)
                 .filter(|delay| *delay > 0),
         }
     }
+}
+
+/// Reads a backend recovery action only when its code and target are short snake-case tokens.
+fn api_next_action(value: &serde_json::Value) -> Option<(String, String)> {
+    let token = |key| json_string_field(value, key).filter(|text| is_action_token(text));
+    Some((token("code")?, token("target")?))
+}
+
+/// Returns whether text is a lowercase snake-case token of at most 48 characters.
+fn is_action_token(text: &str) -> bool {
+    text.len() <= 48
+        && text.starts_with(|first: char| first.is_ascii_lowercase())
+        && text
+            .chars()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == '_')
 }
 
 /// Extracts a non-empty string field from a JSON object.
@@ -831,6 +857,19 @@ fn api_next_step(status: u16, api_details: &ApiErrorDetails) -> Cow<'static, str
         || Cow::Borrowed(fallback_api_next_step(status)),
         |next| Cow::Owned(next.clone()),
     )
+}
+
+/// Returns the CLI fallback recovery action, as a code and target, for an API status.
+const fn fallback_api_next_action(status: u16) -> (&'static str, &'static str) {
+    match status {
+        401 => ("sign_in", "auth"),
+        403 => ("request_access", "auth"),
+        404 => ("check_resource", "resource"),
+        408 => ("retry_or_narrow_scope", "request"),
+        429 => ("retry_with_backoff", "request"),
+        500..=599 => ("retry_or_contact_support", "support"),
+        _ => ("fix_request", "request"),
+    }
 }
 
 /// Returns the CLI fallback next step for an API status.
