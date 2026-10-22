@@ -367,6 +367,15 @@ fn validate_issue_response(
         last_seen,
         stack_projection_receipted,
     )?;
+    let candidates_truncated = occurrence_count > ISSUE_OCCURRENCE_CANDIDATE_LIMIT;
+    validate_field_receipts(
+        evidence,
+        "occurrence.recommendation_candidates",
+        [false, false, false, candidates_truncated],
+    )?;
+    if candidates_truncated && require_string(evidence, "status")? != "partial" {
+        return Err(invalid_response());
+    }
     let regression_detected = issue_lifecycle::validate(
         required_object(response, "lifecycle")?,
         subject_status,

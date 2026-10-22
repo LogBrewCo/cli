@@ -506,6 +506,7 @@ fn validate_occurrence_receipt_vocabulary(
     let allowed = [
         "occurrence.boundaries",
         "occurrence.recommendation",
+        "occurrence.recommendation_candidates",
         "occurrence.selection",
         "occurrence.trend",
         "occurrence.distribution.release",
