@@ -262,156 +262,7 @@ fn validate_release_response(
 ) -> Result<(), RuntimeError> {
     let response = value.as_object().ok_or_else(invalid_response)?;
     release::validate::response(response, expected)?;
-    validate_release_next_actions(response)
-}
-
-/// Code, target, reason, issue, and trace for one deterministic release follow-up.
-type ReleaseNextActionExpectation<'a> = (
-    &'static str,
-    &'static str,
-    &'static str,
-    Option<&'a str>,
-    Option<&'a str>,
-);
-
-/// Validates the version-3 priority-by-order release action contract and source bindings.
-fn validate_release_next_actions(response: &Map<String, Value>) -> Result<(), RuntimeError> {
-    let expected = expected_release_next_actions(response)?;
-    let actions = response
-        .get("next_actions")
-        .and_then(Value::as_array)
-        .ok_or_else(invalid_response)?;
-    if actions.len() != expected.len() || actions.len() > NEXT_ACTION_LIMIT {
-        return Err(invalid_response());
-    }
-    for (action, (code, target, reason, issue_id, trace_id)) in actions.iter().zip(expected) {
-        let action = action.as_object().ok_or_else(invalid_response)?;
-        require_exact_fields(
-            action,
-            &["code", "target", "reason", "issue_id", "trace_id"],
-        )?;
-        if require_string(action, "code")? != code
-            || require_string(action, "target")? != target
-            || require_string(action, "reason")? != reason
-            || nullable_uuid(action, "issue_id")? != issue_id
-            || nullable_trace_id(action, "trace_id")? != trace_id
-        {
-            return Err(invalid_response());
-        }
-    }
-    Ok(())
-}
-
-/// Recomputes the backend's deterministic release follow-up order from returned evidence.
-fn expected_release_next_actions(
-    response: &Map<String, Value>,
-) -> Result<Vec<ReleaseNextActionExpectation<'_>>, RuntimeError> {
-    let signals = required_object(response, "signals")?;
-    let mut expected = Vec::new();
-    if let Some(issue) = release_signal_items(signals, "issues")?.first() {
-        let issue = issue.as_object().ok_or_else(invalid_response)?;
-        expected.push((
-            "inspect_release_issue",
-            "issue_investigation",
-            "issue_observed",
-            Some(required_uuid_text(issue, "issue_id")?),
-            nullable_trace_id(issue, "trace_id")?,
-        ));
-    }
-    if let Some(trace) = release_signal_items(signals, "traces")?.first() {
-        let trace = trace.as_object().ok_or_else(invalid_response)?;
-        expected.push((
-            "inspect_release_trace",
-            "trace_investigation",
-            "trace_observed",
-            None,
-            Some(required_trace_id(trace, "trace_id")?),
-        ));
-    }
-    for (signal, code, target, reason) in [
-        (
-            "logs",
-            "review_release_logs",
-            "telemetry_logs",
-            "high_severity_logs_observed",
-        ),
-        (
-            "actions",
-            "review_release_actions",
-            "telemetry_actions",
-            "product_usage_observed",
-        ),
-        (
-            "metrics",
-            "review_release_metrics",
-            "telemetry_metrics",
-            "metric_evidence_observed",
-        ),
-    ] {
-        if !release_signal_items(signals, signal)?.is_empty() {
-            expected.push((code, target, reason, None, None));
-        }
-    }
-    let signal_unavailable =
-        require_string(required_object(response, "subject")?, "trace_health_status")?
-            == "unavailable"
-            || require_string(required_object(response, "sdk_coverage")?, "status")?
-                == "unavailable"
-            || require_string(required_object(response, "markers")?, "status")? == "unavailable"
-            || ["issues", "traces", "logs", "actions", "metrics"]
-                .iter()
-                .any(|name| {
-                    required_object(signals, name)
-                        .and_then(|signal| require_string(signal, "status"))
-                        .is_ok_and(|status| status == "unavailable")
-                });
-    let comparison = required_object(response, "comparison")?;
-    let comparison_status = require_string(comparison, "status")?;
-    let comparison_reason = require_string(comparison, "reason")?;
-    let previous_trace_unavailable = comparison
-        .get("details")
-        .and_then(Value::as_object)
-        .and_then(|details| details.get("previous_release"))
-        .and_then(Value::as_object)
-        .and_then(|previous| previous.get("trace_health_status"))
-        .and_then(Value::as_str)
-        == Some("unavailable");
-    if signal_unavailable || comparison_status == "unavailable" || previous_trace_unavailable {
-        expected.push((
-            "retry_unavailable_evidence",
-            "release_investigation",
-            "related_evidence_unavailable",
-            None,
-            None,
-        ));
-    }
-    if matches!(
-        comparison_reason,
-        "deployment_boundary_not_captured"
-            | "subject_deployment_not_found"
-            | "previous_successful_deployment_not_found"
-    ) {
-        expected.push((
-            "capture_deployment_boundary",
-            "release_instrumentation",
-            "comparison_unavailable",
-            None,
-            None,
-        ));
-    }
-    Ok(expected)
-}
-
-/// Returns one already-bounded release signal collection.
-fn release_signal_items<'a>(
-    signals: &'a Map<String, Value>,
-    name: &str,
-) -> Result<&'a [Value], RuntimeError> {
-    required_object(signals, name)?
-        .get("items")
-        .and_then(Value::as_array)
-        .map(Vec::as_slice)
-        .ok_or_else(invalid_response)
+    release::next_actions::validate_release_next_actions(response)
 }
 
 /// Returns one required UUID without reflecting invalid server content.
@@ -424,43 +275,6 @@ fn required_uuid_text<'a>(
         Ok(id)
     } else {
         Err(invalid_response())
-    }
-}
-
-/// Returns one exact nullable UUID field.
-fn nullable_uuid<'a>(
-    value: &'a Map<String, Value>,
-    name: &str,
-) -> Result<Option<&'a str>, RuntimeError> {
-    match value.get(name) {
-        Some(Value::Null) => Ok(None),
-        Some(Value::String(id)) if is_uuid(id) => Ok(Some(id.as_str())),
-        _ => Err(invalid_response()),
-    }
-}
-
-/// Returns one required distributed-trace identifier.
-fn required_trace_id<'a>(
-    value: &'a Map<String, Value>,
-    name: &str,
-) -> Result<&'a str, RuntimeError> {
-    let id = require_string(value, name)?;
-    if is_trace_id(id) {
-        Ok(id)
-    } else {
-        Err(invalid_response())
-    }
-}
-
-/// Returns one exact nullable distributed-trace identifier.
-fn nullable_trace_id<'a>(
-    value: &'a Map<String, Value>,
-    name: &str,
-) -> Result<Option<&'a str>, RuntimeError> {
-    match value.get(name) {
-        Some(Value::Null) => Ok(None),
-        Some(Value::String(id)) if is_trace_id(id) => Ok(Some(id.as_str())),
-        _ => Err(invalid_response()),
     }
 }
 
@@ -1415,7 +1229,7 @@ fn render_response(target: &ExplainTarget, value: &Value) -> Option<String> {
         ExplainTarget::Action(_) => action::render(value),
         ExplainTarget::Span(_) => span::render(value),
         ExplainTarget::Trace(_) => trace::render_trace(value),
-        ExplainTarget::Release(_) => render_release(value),
+        ExplainTarget::Release(_) => release::render::render_release(value),
         ExplainTarget::Metric(_) => metric::render(value),
     }
 }
@@ -1550,99 +1364,6 @@ fn collect_scalar_fields(value: &Value, prefix: &str, fields: &mut Vec<(String, 
     }
 }
 
-/// Builds a detailed exact service-release investigation.
-fn render_release(value: &Value) -> Option<String> {
-    let subject = value.get("subject")?;
-    let analysis = value.get("analysis")?;
-    let mut output = String::new();
-    output.push_str("Release ");
-    output.push_str(field_text(subject, "release", 240)?.as_str());
-    append_labeled_text(&mut output, "status", analysis, "status", 64);
-    append_labeled_text(&mut output, "causality", analysis, "causality", 64);
-    append_labeled_text(&mut output, "environment", subject, "environment", 120);
-    append_labeled_text(&mut output, "service", subject, "service_name", 160);
-    output.push('\n');
-    output.push_str("Signals:");
-    append_labeled_integer(&mut output, "issues", subject, "issue_count");
-    append_labeled_integer(&mut output, "logs", subject, "log_count");
-    append_labeled_integer(&mut output, "spans", subject, "trace_span_count");
-    append_labeled_integer(&mut output, "actions", subject, "action_count");
-    append_labeled_integer(&mut output, "metrics", subject, "metric_count");
-    output.push('\n');
-    append_named_text(&mut output, "First seen", subject, "first_seen_at", 64);
-    append_named_text(&mut output, "Last seen", subject, "last_seen_at", 64);
-    output.push_str("Trace health:");
-    append_labeled_text(&mut output, "status", subject, "trace_health_status", 64);
-    if let Some(health) = subject.get("trace_health") {
-        append_labeled_integer(&mut output, "traces", health, "trace_count");
-        append_labeled_integer(&mut output, "error_traces", health, "error_trace_count");
-        append_labeled_integer(
-            &mut output,
-            "error_rate_bps",
-            health,
-            "error_rate_basis_points",
-        );
-    }
-    output.push('\n');
-    if let Some(sdk) = value.get("sdk_coverage") {
-        let items = append_collection(&mut output, "SDK coverage", sdk);
-        for item in items.into_iter().flatten().take(RELATED_PREVIEW_LIMIT) {
-            output.push_str("SDK:");
-            append_labeled_text(&mut output, "name", item, "name", 120);
-            append_labeled_text(&mut output, "version", item, "version", 80);
-            append_labeled_text(&mut output, "stream", item, "stream", 80);
-            append_labeled_integer(&mut output, "items", item, "item_count");
-            append_labeled_text(&mut output, "first", item, "first_seen_at", 64);
-            append_labeled_text(&mut output, "last", item, "last_seen_at", 64);
-            output.push('\n');
-        }
-    }
-    release::render::markers(&mut output, value.get("markers"));
-    append_release_signals(&mut output, value.get("signals"));
-    append_timeline(&mut output, value.get("timeline"));
-    release::render::comparison(&mut output, value.get("comparison"));
-    append_evidence(&mut output, value.get("evidence"));
-    append_actions(&mut output, value.get("next_actions"));
-    Some(output)
-}
-
-/// Appends bounded high-value evidence from every release signal.
-fn append_release_signals(output: &mut String, signals: Option<&Value>) {
-    let Some(signals) = signals else {
-        return;
-    };
-    for (label, name) in [
-        ("Release issues", "issues"),
-        ("Release traces", "traces"),
-        ("High-severity logs", "logs"),
-        ("Release actions", "actions"),
-        ("Release metrics", "metrics"),
-    ] {
-        let Some(collection) = signals.get(name) else {
-            continue;
-        };
-        let items = append_collection(output, label, collection);
-        match name {
-            "issues" => append_issue_previews(output, items),
-            "traces" => {
-                for trace in items.into_iter().flatten().take(RELATED_PREVIEW_LIMIT) {
-                    output.push_str("Trace:");
-                    append_labeled_text(output, "name", trace, "root_span_name", 220);
-                    append_labeled_integer(output, "spans", trace, "span_count");
-                    append_labeled_integer(output, "errors", trace, "error_span_count");
-                    append_labeled_integer(output, "duration_ms", trace, "duration_ms");
-                    append_labeled_text(output, "trace", trace, "trace_id", 80);
-                    output.push('\n');
-                }
-            }
-            "logs" => append_log_previews(output, items),
-            "actions" => append_release_action_previews(output, collection, items),
-            "metrics" => append_metric_previews(output, items),
-            _ => {}
-        }
-    }
-}
-
 /// Appends one mixed-signal timeline receipt and representative ordered items.
 fn append_timeline(output: &mut String, timeline: Option<&Value>) {
     let Some(timeline) = timeline else {
@@ -1756,54 +1477,6 @@ fn append_action_previews(output: &mut String, items: Option<&[Value]>) {
         append_labeled_text(output, "span", action, "span_id", 40);
         append_labeled_text(output, "at", action, "occurred_at", 64);
         output.push('\n');
-    }
-}
-
-/// Appends versioned release action estimates and exact subject-capture coverage.
-fn append_release_action_previews(
-    output: &mut String,
-    collection: &Value,
-    items: Option<&[Value]>,
-) {
-    if let Some(estimation) = collection.get("estimation") {
-        output.push_str("Action cardinality:");
-        append_labeled_bool(
-            output,
-            "unique_counts_approximate",
-            estimation,
-            "unique_counts_are_approximate",
-        );
-        output.push('\n');
-    }
-    for action in items.into_iter().flatten().take(RELATED_PREVIEW_LIMIT) {
-        output.push_str("Action:");
-        append_labeled_text(output, "name", action, "name", 180);
-        append_labeled_integer(output, "events", action, "event_count");
-        for (label, name) in [
-            ("known_users", "identified_user_count"),
-            ("anonymous_subjects", "anonymous_subject_count"),
-            ("sessions", "session_count"),
-        ] {
-            append_labeled_approximate_integer(output, label, action, name);
-        }
-        append_labeled_text(output, "first", action, "first_seen_at", 64);
-        append_labeled_text(output, "last", action, "last_seen_at", 64);
-        append_labeled_text(output, "trace", action, "trace_id", 80);
-        output.push('\n');
-        if let Some(coverage) = action.get("subject_coverage") {
-            output.push_str("Action subject coverage:");
-            for (label, name) in [
-                ("index_version", "index_version"),
-                ("typed_user_events", "identified_user_events"),
-                ("anonymous_events", "anonymous_subject_events"),
-                ("legacy_unknown_events", "legacy_unknown_kind_events"),
-                ("missing_events", "missing_subject_events"),
-                ("historical_unindexed_events", "historical_unindexed_events"),
-            ] {
-                append_labeled_integer(output, label, coverage, name);
-            }
-            output.push('\n');
-        }
     }
 }
 
