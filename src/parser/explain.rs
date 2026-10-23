@@ -1,8 +1,8 @@
 //! Grammar for explanation and investigation commands.
 
+use super::read::parse_explain_target_flags;
 use super::{
-    is_canonical_lower_uuid, move_leading_json_to_tail, parse_explain_target_flags,
-    take_required_position, unknown_resource,
+    is_canonical_lower_uuid, move_leading_json_to_tail, take_required_position, unknown_resource,
 };
 use crate::ids::{infer_explain_target, is_uuid};
 use crate::{

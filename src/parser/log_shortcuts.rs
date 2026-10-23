@@ -1,8 +1,9 @@
 //! Log-read shortcut argument normalization.
 
-use super::{
+use super::move_leading_json_to_tail;
+use super::read::{
     is_ambiguous_log_search_word, is_known_log_level, is_log_search_shortcut, is_read_verb,
-    is_recency_read_verb, move_leading_json_to_tail,
+    is_recency_read_verb,
 };
 
 /// Rewrites natural log shortcuts to explicit read filters.
