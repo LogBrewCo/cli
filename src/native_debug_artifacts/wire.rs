@@ -263,7 +263,7 @@ fn valid_lookup_artifact(artifact: &LookupArtifactDto, options: &NativeDebugLook
         && artifact.debug_file_byte_size > 0
         && artifact.debug_file_byte_size <= u64::try_from(MAX_ARTIFACT_BYTES).unwrap_or(u64::MAX)
         && artifact.upload_status == "uploaded"
-        && crate::render::is_rfc3339_utc(artifact.created_at.as_str())
+        && crate::time::is_rfc3339_utc(artifact.created_at.as_str())
 }
 
 /// Restricts public IDs to their exact prefix plus 32 lowercase hex bytes.

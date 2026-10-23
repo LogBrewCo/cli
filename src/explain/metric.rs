@@ -1304,7 +1304,7 @@ fn optional_metric_timestamp<'a>(
 ) -> Result<Option<&'a str>, RuntimeError> {
     match value.get(name) {
         None => Ok(None),
-        Some(Value::String(timestamp)) if crate::render::is_rfc3339_utc(timestamp) => {
+        Some(Value::String(timestamp)) if crate::time::is_rfc3339_utc(timestamp) => {
             Ok(Some(timestamp.as_str()))
         }
         _ => Err(invalid_response()),
