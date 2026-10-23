@@ -5,8 +5,10 @@ use std::fmt::Write as _;
 use serde_json::Value;
 
 use super::super::{
-    RELATED_PREVIEW_LIMIT, append_collection, append_labeled_bool, append_labeled_integer,
-    append_labeled_text, append_string_array,
+    RELATED_PREVIEW_LIMIT, append_actions, append_collection, append_evidence,
+    append_issue_previews, append_labeled_approximate_integer, append_labeled_bool,
+    append_labeled_integer, append_labeled_text, append_log_previews, append_metric_previews,
+    append_named_text, append_string_array, append_timeline, field_text,
 };
 
 /// Appends comparison availability, boundaries, prior snapshot, exact deltas, and caveats.
@@ -169,4 +171,145 @@ fn optional_integer(value: &Value, name: &str) -> String {
         .get(name)
         .and_then(Value::as_u64)
         .map_or_else(|| String::from("unavailable"), |value| value.to_string())
+}
+
+/// Builds a detailed exact service-release investigation.
+pub(in crate::explain) fn render_release(value: &Value) -> Option<String> {
+    let subject = value.get("subject")?;
+    let analysis = value.get("analysis")?;
+    let mut output = String::new();
+    output.push_str("Release ");
+    output.push_str(field_text(subject, "release", 240)?.as_str());
+    append_labeled_text(&mut output, "status", analysis, "status", 64);
+    append_labeled_text(&mut output, "causality", analysis, "causality", 64);
+    append_labeled_text(&mut output, "environment", subject, "environment", 120);
+    append_labeled_text(&mut output, "service", subject, "service_name", 160);
+    output.push('\n');
+    output.push_str("Signals:");
+    append_labeled_integer(&mut output, "issues", subject, "issue_count");
+    append_labeled_integer(&mut output, "logs", subject, "log_count");
+    append_labeled_integer(&mut output, "spans", subject, "trace_span_count");
+    append_labeled_integer(&mut output, "actions", subject, "action_count");
+    append_labeled_integer(&mut output, "metrics", subject, "metric_count");
+    output.push('\n');
+    append_named_text(&mut output, "First seen", subject, "first_seen_at", 64);
+    append_named_text(&mut output, "Last seen", subject, "last_seen_at", 64);
+    output.push_str("Trace health:");
+    append_labeled_text(&mut output, "status", subject, "trace_health_status", 64);
+    if let Some(health) = subject.get("trace_health") {
+        append_labeled_integer(&mut output, "traces", health, "trace_count");
+        append_labeled_integer(&mut output, "error_traces", health, "error_trace_count");
+        append_labeled_integer(
+            &mut output,
+            "error_rate_bps",
+            health,
+            "error_rate_basis_points",
+        );
+    }
+    output.push('\n');
+    if let Some(sdk) = value.get("sdk_coverage") {
+        let items = append_collection(&mut output, "SDK coverage", sdk);
+        for item in items.into_iter().flatten().take(RELATED_PREVIEW_LIMIT) {
+            output.push_str("SDK:");
+            append_labeled_text(&mut output, "name", item, "name", 120);
+            append_labeled_text(&mut output, "version", item, "version", 80);
+            append_labeled_text(&mut output, "stream", item, "stream", 80);
+            append_labeled_integer(&mut output, "items", item, "item_count");
+            append_labeled_text(&mut output, "first", item, "first_seen_at", 64);
+            append_labeled_text(&mut output, "last", item, "last_seen_at", 64);
+            output.push('\n');
+        }
+    }
+    markers(&mut output, value.get("markers"));
+    append_release_signals(&mut output, value.get("signals"));
+    append_timeline(&mut output, value.get("timeline"));
+    comparison(&mut output, value.get("comparison"));
+    append_evidence(&mut output, value.get("evidence"));
+    append_actions(&mut output, value.get("next_actions"));
+    Some(output)
+}
+
+/// Appends bounded high-value evidence from every release signal.
+fn append_release_signals(output: &mut String, signals: Option<&Value>) {
+    let Some(signals) = signals else {
+        return;
+    };
+    for (label, name) in [
+        ("Release issues", "issues"),
+        ("Release traces", "traces"),
+        ("High-severity logs", "logs"),
+        ("Release actions", "actions"),
+        ("Release metrics", "metrics"),
+    ] {
+        let Some(collection) = signals.get(name) else {
+            continue;
+        };
+        let items = append_collection(output, label, collection);
+        match name {
+            "issues" => append_issue_previews(output, items),
+            "traces" => {
+                for trace in items.into_iter().flatten().take(RELATED_PREVIEW_LIMIT) {
+                    output.push_str("Trace:");
+                    append_labeled_text(output, "name", trace, "root_span_name", 220);
+                    append_labeled_integer(output, "spans", trace, "span_count");
+                    append_labeled_integer(output, "errors", trace, "error_span_count");
+                    append_labeled_integer(output, "duration_ms", trace, "duration_ms");
+                    append_labeled_text(output, "trace", trace, "trace_id", 80);
+                    output.push('\n');
+                }
+            }
+            "logs" => append_log_previews(output, items),
+            "actions" => append_release_action_previews(output, collection, items),
+            "metrics" => append_metric_previews(output, items),
+            _ => {}
+        }
+    }
+}
+
+/// Appends versioned release action estimates and exact subject-capture coverage.
+fn append_release_action_previews(
+    output: &mut String,
+    collection: &Value,
+    items: Option<&[Value]>,
+) {
+    if let Some(estimation) = collection.get("estimation") {
+        output.push_str("Action cardinality:");
+        append_labeled_bool(
+            output,
+            "unique_counts_approximate",
+            estimation,
+            "unique_counts_are_approximate",
+        );
+        output.push('\n');
+    }
+    for action in items.into_iter().flatten().take(RELATED_PREVIEW_LIMIT) {
+        output.push_str("Action:");
+        append_labeled_text(output, "name", action, "name", 180);
+        append_labeled_integer(output, "events", action, "event_count");
+        for (label, name) in [
+            ("known_users", "identified_user_count"),
+            ("anonymous_subjects", "anonymous_subject_count"),
+            ("sessions", "session_count"),
+        ] {
+            append_labeled_approximate_integer(output, label, action, name);
+        }
+        append_labeled_text(output, "first", action, "first_seen_at", 64);
+        append_labeled_text(output, "last", action, "last_seen_at", 64);
+        append_labeled_text(output, "trace", action, "trace_id", 80);
+        output.push('\n');
+        if let Some(coverage) = action.get("subject_coverage") {
+            output.push_str("Action subject coverage:");
+            for (label, name) in [
+                ("index_version", "index_version"),
+                ("typed_user_events", "identified_user_events"),
+                ("anonymous_events", "anonymous_subject_events"),
+                ("legacy_unknown_events", "legacy_unknown_kind_events"),
+                ("missing_events", "missing_subject_events"),
+                ("historical_unindexed_events", "historical_unindexed_events"),
+            ] {
+                append_labeled_integer(output, label, coverage, name);
+            }
+            output.push('\n');
+        }
+    }
 }
