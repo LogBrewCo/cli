@@ -2,13 +2,16 @@
 //! priority and assignee read filters.
 
 use super::{TestResult, assert_json_error, assert_path};
-use logbrew_cli::{Command, HttpMethod, IssueBulkOptions, ReadTarget, SetTarget, parse_command};
+use logbrew_cli::{
+    Command, HttpMethod, IssueArchiveCondition, IssueBulkOptions, ReadTarget, SetTarget,
+    parse_command,
+};
 
 const PROJECT: &str = "123e4567-e89b-12d3-a456-426614174000";
 const ISSUE_A: &str = "223e4567-e89b-12d3-a456-426614174001";
 const ISSUE_B: &str = "223e4567-e89b-12d3-a456-426614174002";
 const USER: &str = "323e4567-e89b-12d3-a456-426614174003";
-const NEXT: &str = "use logbrew issues archive|resolve|reopen|unassign <issue_id>..., logbrew issues priority high|medium|low <issue_id>..., or logbrew issues assign <user_id|me> <issue_id>..., with --project <project_id> for more than one issue (up to 100), or logbrew issues assignees --project <project_id>, each with optional --json";
+const NEXT: &str = "use logbrew issues archive|resolve|reopen|unassign <issue_id>..., where archive takes one of --until escalating, --for <1m-365d>, --events <count>, or --users <count>, logbrew issues priority high|medium|low <issue_id>..., or logbrew issues assign <user_id|me> <issue_id>..., with --project <project_id> for more than one issue (up to 100), or logbrew issues assignees --project <project_id>, each with optional --json";
 
 fn parse(line: &str) -> TestResult<Command> {
     Ok(parse_command(line.split_whitespace())?)
@@ -126,6 +129,7 @@ fn several_issues_of_one_project_change_in_one_bulk_request() -> TestResult {
             status: (field == "status").then(|| value.to_owned()),
             priority: (field == "priority").then(|| value.to_owned()),
             assignee: (field == "assignee").then(|| value.to_owned()),
+            archive: None,
         };
         assert_eq!(
             command,
@@ -145,6 +149,106 @@ fn several_issues_of_one_project_change_in_one_bulk_request() -> TestResult {
         });
         body[field] = value.into();
         assert_eq!(command.request_body(), Some(body), "{line}");
+    }
+    Ok(())
+}
+
+#[test]
+fn archive_takes_one_condition_that_reopens_the_issue() -> TestResult {
+    for (flags, until, duration, count) in [
+        ("--until escalating", "escalating", None, None),
+        ("--for 30m", "time", Some("30m"), None),
+        ("--for 365d", "time", Some("365d"), None),
+        ("--for 8760h", "time", Some("8760h"), None),
+        ("--events 1", "events", None, Some(1)),
+        ("--users 1000000", "users", None, Some(1_000_000)),
+    ] {
+        let archive = IssueArchiveCondition {
+            until: until.into(),
+            duration: duration.map(str::to_owned),
+            count,
+        };
+        let line = format!("logbrew issues archive {ISSUE_A} {flags} --json");
+        let command = parse(&line)?;
+        let target = SetTarget::IssueArchive {
+            id: ISSUE_A.into(),
+            archive: archive.clone(),
+        };
+        assert_eq!(command, Command::Set { target, json: true }, "{line}");
+        assert_eq!(
+            command.http_path(),
+            Some(format!(
+                "/api/telemetry/issues/{ISSUE_A}?response_version=5"
+            )),
+            "{line}"
+        );
+        assert_eq!(command.http_method(), Some(HttpMethod::Patch), "{line}");
+        let body = serde_json::json!({"status": "archived", "archive": archive.body()});
+        assert_eq!(command.request_body(), Some(body), "{line}");
+
+        let line =
+            format!("logbrew issues archive {flags} {ISSUE_A} {ISSUE_B} --project {PROJECT}");
+        let command = parse(&line)?;
+        let mut body = serde_json::json!({
+            "project_id": PROJECT, "issue_ids": [ISSUE_A, ISSUE_B], "response_version": 2,
+            "status": "archived", "archive": {"until": until}
+        });
+        if let Some(duration) = duration {
+            body["archive"]["duration"] = duration.into();
+        }
+        if let Some(count) = count {
+            body["archive"]["count"] = count.into();
+        }
+        assert_eq!(command.request_body(), Some(body), "{line}");
+    }
+    Ok(())
+}
+
+#[test]
+fn archive_conditions_refuse_malformed_or_conflicting_values() -> TestResult {
+    for flags in [
+        "--until",
+        "--until forever",
+        "--until escalating --events 5",
+        "--events 5 --events 5",
+        "--for 0m",
+        "--for 366d",
+        "--for 525601m",
+        "--for 01h",
+        "--for 2w",
+        "--for 1.5h",
+        "--for h",
+        "--for -1d",
+        "--events 0",
+        "--events 1000001",
+        "--events 05",
+        "--events +5",
+        "--users many",
+    ] {
+        let line = format!("logbrew issues archive {ISSUE_A} {flags}");
+        let args = line.split_whitespace().collect::<Vec<_>>();
+        assert_json_error(
+            &args,
+            "invalid_issue_command",
+            "invalid issue command",
+            NEXT,
+        )?;
+    }
+    for verb in [
+        "resolve",
+        "reopen",
+        "unassign",
+        "priority high",
+        "assign me",
+    ] {
+        let line = format!("logbrew issues {verb} {ISSUE_A} --until escalating");
+        let args = line.split_whitespace().collect::<Vec<_>>();
+        assert_json_error(
+            &args,
+            "invalid_issue_command",
+            "invalid issue command",
+            NEXT,
+        )?;
     }
     Ok(())
 }

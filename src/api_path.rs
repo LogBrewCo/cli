@@ -352,6 +352,11 @@ pub(crate) fn set_path(target: &SetTarget) -> String {
                 encode_component(id)
             )
         }
+        // Version 5 reports when an archived issue reopens.
+        SetTarget::IssueArchive { id, .. } => format!(
+            "/api/telemetry/issues/{}?response_version=5",
+            encode_component(id)
+        ),
         SetTarget::IssueBulk(_) => String::from("/api/telemetry/issues/bulk"),
         SetTarget::IssueOwnership { .. } => String::from("/api/telemetry/issues/ownership"),
         SetTarget::NotificationsRead => String::from("/api/telemetry/issues/notifications/read"),

@@ -1,12 +1,88 @@
 //! `logbrew issues archive|resolve|reopen|priority|assign|unassign`: change one issue, or up to
 //! 100 issues of one project in a single request. `logbrew issues assignees` lists who can be
 //! assigned.
+//!
+//! `archive` takes one optional condition that reopens the issue by itself:
+//! `--until escalating`, `--for <duration>`, `--events <count>`, or `--users <count>`.
 
 use crate::ids::is_uuid;
 use crate::{CliError, Command, ReadTarget, SetTarget};
 
 /// Most issues one bulk request may name.
 const MAX_ISSUES: usize = 100;
+/// Largest `--events` or `--users` count.
+const MAX_ARCHIVE_COUNT: u64 = 1_000_000;
+/// Longest `--for` duration, in minutes (365 days).
+const MAX_ARCHIVE_MINUTES: u64 = 365 * 24 * 60;
+
+/// When an archived issue reopens by itself.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IssueArchiveCondition {
+    /// `escalating`, `time`, `events`, or `users`.
+    pub until: String,
+    /// Duration such as `30m`, `24h`, or `7d`, for `time`.
+    pub duration: Option<String>,
+    /// Number of new events or users, for `events` or `users`.
+    pub count: Option<u64>,
+}
+
+impl IssueArchiveCondition {
+    /// The `archive` request object.
+    #[must_use]
+    pub fn body(&self) -> serde_json::Value {
+        let mut body = serde_json::json!({ "until": self.until });
+        if let Some(duration) = &self.duration {
+            body["duration"] = duration.as_str().into();
+        }
+        if let Some(count) = self.count {
+            body["count"] = count.into();
+        }
+        body
+    }
+
+    /// Parses one condition flag and its value.
+    fn parse(flag: &str, value: Option<&str>) -> Option<Self> {
+        let value = value?;
+        let count = || whole_number(value).filter(|count| (1..=MAX_ARCHIVE_COUNT).contains(count));
+        let (until, duration, count) = match flag {
+            "--until" if value == "escalating" => ("escalating", None, None),
+            "--for" if is_duration(value) => ("time", Some(value.to_owned()), None),
+            "--events" => ("events", None, Some(count()?)),
+            "--users" => ("users", None, Some(count()?)),
+            _ => return None,
+        };
+        Some(Self {
+            until: until.to_owned(),
+            duration,
+            count,
+        })
+    }
+}
+
+/// Whether `value` is a whole number of minutes, hours, or days from 1m to 365d.
+fn is_duration(value: &str) -> bool {
+    let Some((amount, unit)) = value.split_at_checked(value.len().saturating_sub(1)) else {
+        return false;
+    };
+    let minutes = match unit {
+        "m" => 1,
+        "h" => 60,
+        "d" => 24 * 60,
+        _ => return false,
+    };
+    whole_number(amount)
+        .and_then(|amount| amount.checked_mul(minutes))
+        .is_some_and(|total| (1..=MAX_ARCHIVE_MINUTES).contains(&total))
+}
+
+/// A positive decimal number without sign or leading zero.
+fn whole_number(value: &str) -> Option<u64> {
+    (!value.starts_with('0')
+        && !value.is_empty()
+        && value.bytes().all(|byte| byte.is_ascii_digit()))
+    .then(|| value.parse().ok())
+    .flatten()
+}
 
 /// Status, priority, or assignee change for several issues of one project.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -21,6 +97,8 @@ pub struct IssueBulkOptions {
     pub priority: Option<String>,
     /// New assignee: a user ID, `me`, or `none`.
     pub assignee: Option<String>,
+    /// How archived issues reopen by themselves.
+    pub archive: Option<IssueArchiveCondition>,
 }
 
 /// Parses the closed grammar after `logbrew issues`.
@@ -69,6 +147,7 @@ pub fn parse(args: &[String]) -> Result<Command, CliError> {
         _ => return Err(CliError::InvalidIssueTriageCommand),
     };
     let mut project_id = None;
+    let mut archive = None;
     let mut issue_ids: Vec<String> = Vec::new();
     while let Some(word) = words.next() {
         if matches!(word, "--project" | "--project-id") {
@@ -77,6 +156,12 @@ pub fn parse(args: &[String]) -> Result<Command, CliError> {
                 return Err(CliError::InvalidIssueTriageCommand);
             }
             project_id = value.map(str::to_ascii_lowercase);
+        } else if matches!(word, "--until" | "--for" | "--events" | "--users") {
+            let condition = IssueArchiveCondition::parse(word, words.next());
+            if status != Some("archived") || archive.is_some() || condition.is_none() {
+                return Err(CliError::InvalidIssueTriageCommand);
+            }
+            archive = condition;
         } else if word.starts_with('-') || issue_ids.iter().any(|id| id.eq_ignore_ascii_case(word))
         {
             return Err(CliError::InvalidIssueTriageCommand);
@@ -96,10 +181,11 @@ pub fn parse(args: &[String]) -> Result<Command, CliError> {
     let target = match (project_id, issue_ids.as_slice()) {
         (None, [id]) => {
             let id = id.clone();
-            match (status, priority, assignee) {
+            match (status, priority, assignee, archive) {
+                (.., Some(archive)) => SetTarget::IssueArchive { id, archive },
                 (Some(status), ..) => SetTarget::IssueStatus { id, status },
-                (_, Some(priority), _) => SetTarget::IssuePriority { id, priority },
-                (.., assignee) => SetTarget::IssueAssignee {
+                (_, Some(priority), ..) => SetTarget::IssuePriority { id, priority },
+                (_, _, assignee, None) => SetTarget::IssueAssignee {
                     id,
                     assignee: assignee.unwrap_or_default(),
                 },
@@ -112,6 +198,7 @@ pub fn parse(args: &[String]) -> Result<Command, CliError> {
                 status,
                 priority,
                 assignee,
+                archive,
             })
         }
         _ => return Err(CliError::InvalidIssueTriageCommand),
@@ -135,6 +222,9 @@ pub fn request_body(options: &IssueBulkOptions) -> serde_json::Value {
         if let (Some(value), Some(object)) = (value, body.as_object_mut()) {
             let _previous = object.insert(name.to_owned(), serde_json::Value::from(value.as_str()));
         }
+    }
+    if let Some(archive) = &options.archive {
+        body["archive"] = archive.body();
     }
     body
 }
@@ -209,6 +299,25 @@ pub fn assignee_label(issue: &serde_json::Value) -> Option<String> {
         .find(|text| !text.trim().is_empty())
         .unwrap_or(user_id);
     Some(crate::http::terminal_safe(label))
+}
+
+/// How an archived issue reopens, as `, reopens ...`, or `None` when the shape is not the
+/// contract.
+#[must_use]
+pub fn archive_label(archive: &serde_json::Value) -> Option<String> {
+    let until = archive.get("until")?.as_str()?;
+    let count = archive.get("count")?.as_u64();
+    let reopen_at = archive.get("reopen_at")?.as_str();
+    Some(match (until, count, reopen_at) {
+        ("forever", None, None) => String::new(),
+        ("escalating", Some(count), None) => {
+            format!(", reopens when it escalates ({count} events in 1 hour)")
+        }
+        ("time", None, Some(at)) if crate::time::is_rfc3339_utc(at) => format!(", reopens at {at}"),
+        ("events", Some(count), None) => format!(", reopens after {count} more events"),
+        ("users", Some(count), None) => format!(", reopens after {count} more users"),
+        _ => return None,
+    })
 }
 
 /// Team ID, slug, and name of one team object.

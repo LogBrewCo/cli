@@ -154,6 +154,8 @@ Usage:
   logbrew ignore <issue_id> [--json]
   logbrew reopen <issue_id> [--json]
   logbrew issues archive|resolve|reopen <issue_id>... [--project <project_id>] [--json]
+  logbrew issues archive <issue_id>... [--until escalating | --for <duration> | --events <count> \
+                         | --users <count>] [--project <project_id>] [--json]
   logbrew issues priority <high|medium|low> <issue_id>... [--project <project_id>] [--json]
   logbrew issues assign <user_id|me|team:<team_id>> <issue_id>... [--project <project_id>] [--json]
   logbrew issues unassign <issue_id>... [--project <project_id>] [--json]
@@ -1006,6 +1008,8 @@ Usage:
   logbrew issues archive|resolve|reopen <issue_id> [--json]
   logbrew issues priority <high|medium|low> <issue_id> [--json]
   logbrew issues archive|resolve|reopen <issue_id>... --project <project_id> [--json]
+  logbrew issues archive <issue_id>... [--until escalating | --for <duration> | --events <count> \
+                        | --users <count>] [--project <project_id>] [--json]
   logbrew issues priority <high|medium|low> <issue_id>... --project <project_id> [--json]
   logbrew issues assign <user_id|me|team:<team_id>> <issue_id>... [--project <project_id>] [--json]
   logbrew issues unassign <issue_id>... [--project <project_id>] [--json]
@@ -1023,6 +1027,10 @@ Usage:
 
 Updates grouped issue status. Resolve/close map to resolved; ignore and archive map to archived; \
                         reopen maps to unresolved.
+Archive lasts until someone reopens the issue, or until one condition reopens it by itself: \
+                        --until escalating (an hour with twice the events of its busiest hour \
+                        in the past week, and at least 10), --for 30m, 24h, or 7d (1m to 365d), \
+                        --events <count>, or --users <count> (1 to 1000000 new ones).
 Priority is high, medium, or low. A priority you set stays fixed; otherwise it follows severity.
 Assign takes a user ID, me, or team:<team_id>; logbrew issues assignees lists everyone and \
                         every team that can be assigned in a project. Filter with --assignee me, \

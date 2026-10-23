@@ -958,6 +958,52 @@ async_test!(api_auth_errors_report_source_without_leaking_tokens -> TestResult, 
     Ok(())
 });
 
+async_test!(human_archive_renders_when_the_issue_reopens -> TestResult, {
+    let issue = "223e4567-e89b-12d3-a456-426614174001";
+    for (flags, archive, label) in [
+        (
+            "--events 100",
+            serde_json::json!({"until": "events", "count": 100}),
+            serde_json::json!({"until": "events", "reopen_at": null, "count": 100}),
+        ),
+        (
+            "--for 7d",
+            serde_json::json!({"until": "time", "duration": "7d"}),
+            serde_json::json!({"until": "time", "reopen_at": "2026-10-30T12:00:00.000Z", "count": null}),
+        ),
+        (
+            "--until escalating",
+            serde_json::json!({"until": "escalating"}),
+            serde_json::json!({"until": "escalating", "reopen_at": null, "count": 60}),
+        ),
+    ] {
+        let server = MockServer::start().await?;
+        Mock::auth("PATCH", format!("/api/telemetry/issues/{issue}"), "test-token")
+            .and(query_param("response_version", "5"))
+            .and(body_json(serde_json::json!({"status": "archived", "archive": archive})))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&serde_json::json!({
+                "id": issue, "status": "archived", "priority": "medium",
+                "priority_source": "severity", "assignee": null, "archive": label
+            })))
+            .mount(&server);
+        let args = ["logbrew", "issues", "archive", "223e4567-e89b-12d3-a456-426614174001"]
+            .into_iter()
+            .chain(flags.split_whitespace());
+        let text = successful_human_output(&server, args, "human-archive").await?;
+        let reopens = match flags {
+            "--events 100" => "reopens after 100 more events",
+            "--for 7d" => "reopens at 2026-10-30T12:00:00.000Z",
+            _ => "reopens when it escalates (60 events in 1 hour)",
+        };
+        assert_eq!(
+            text,
+            format!("Issue {issue} marked archived, {reopens}, priority medium, assignee unassigned.\n"),
+            "{flags}"
+        );
+    }
+    Ok(())
+});
+
 async fn successful_human_output<I>(
     server: &MockServer,
     args: I,
