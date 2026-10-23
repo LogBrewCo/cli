@@ -11,11 +11,11 @@ use super::contract::{
 use super::correlation::{
     validate_correlated_collection, validate_correlated_signal, validate_items_collection,
 };
+use super::evidence::{validate_evidence, validate_next_actions, validate_timeline};
 use super::{
     RELATED_ISSUE_LIMIT, append_actions, append_evidence, append_labeled_bool,
     append_labeled_integer, append_labeled_text, append_named_text, append_related_collections,
-    append_string_array, append_timeline, field_text, invalid_response, validate_evidence,
-    validate_next_actions, validate_timeline,
+    append_string_array, append_timeline, field_text, invalid_response,
 };
 use crate::RuntimeError;
 

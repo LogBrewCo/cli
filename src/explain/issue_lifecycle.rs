@@ -8,10 +8,8 @@ use super::contract::{
     optional_string, require_bool, require_exact_fields, require_string, require_timestamp,
     required_object, validate_name_version,
 };
-use super::{
-    append_labeled_bool, append_labeled_text, append_named_text, evidence_has_field,
-    invalid_response,
-};
+use super::evidence::evidence_has_field;
+use super::{append_labeled_bool, append_labeled_text, append_named_text, invalid_response};
 use crate::RuntimeError;
 use crate::ids::{is_trace_id, is_uuid};
 use crate::time::parse_utc_evidence as timestamp_key;

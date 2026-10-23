@@ -13,12 +13,13 @@ use super::contract::{
     validate_schema_version_value,
 };
 use super::correlation::{DeploymentExpectation, validate_deployment_boundary};
+use super::evidence::validate_evidence;
 use super::projection::{count_scalar_leaves, validate_projection};
 use super::{
     METRIC_POINT_LIMIT, METRIC_SERIES_LIMIT, NEXT_ACTION_LIMIT, append_actions, append_evidence,
     append_labeled_bool, append_labeled_integer, append_labeled_number, append_labeled_text,
     append_named_text, append_runtime_context, collect_scalar_fields, display_text, field_text,
-    invalid_response, validate_evidence,
+    invalid_response,
 };
 use crate::ids::{is_trace_id, is_uuid};
 use crate::{ExplainMetricTarget, RuntimeError};

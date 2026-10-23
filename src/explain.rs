@@ -5,6 +5,7 @@ mod context;
 mod contract;
 mod correction;
 mod correlation;
+mod evidence;
 mod issue;
 mod issue_exception_chain;
 mod issue_lifecycle;
@@ -16,8 +17,6 @@ mod release;
 mod span;
 mod trace;
 
-use std::collections::BTreeSet;
-
 use serde::de::{Error as _, MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer};
 use serde_json::{Map, Value};
@@ -26,11 +25,6 @@ use crate::api_path::explain_path;
 use crate::auth::{AuthCredential, send_account_authenticated_with_refresh};
 use crate::http::terminal_safe;
 use crate::{CliEnvironment, ExplainReleaseTarget, ExplainTarget, RuntimeError};
-use contract::{
-    nullable_w3c_id, require_known_fields, require_string, require_timestamp_millis, require_u64,
-    validate_strings,
-};
-use correlation::validate_items_collection;
 use issue::render::{append_issue_cause, append_issue_fix};
 
 /// Maximum accepted explanation response body.
@@ -55,13 +49,6 @@ const RELATED_ISSUE_LIMIT: usize = 20;
 const METRIC_SERIES_LIMIT: usize = 20;
 /// Maximum points returned for one metric series.
 const METRIC_POINT_LIMIT: usize = 500;
-/// Shared evidence receipt partitions in their wire order.
-const EVIDENCE_CATEGORIES: [&str; 4] = [
-    "captured_fields",
-    "missing_fields",
-    "redacted_fields",
-    "truncated_fields",
-];
 /// Duplicate-aware JSON value.
 struct UniqueValue(Value);
 
@@ -266,127 +253,6 @@ fn validate_release_response(
     let response = value.as_object().ok_or_else(invalid_response)?;
     release::validate::response(response, expected)?;
     release::next_actions::validate_release_next_actions(response)
-}
-
-/// Validates one bounded causal timeline shared by investigation responses.
-fn validate_timeline(value: &Map<String, Value>) -> Result<(), RuntimeError> {
-    let items = validate_items_collection(value, false)?;
-    let mut previous_time = None;
-    for item in items {
-        let item = item.as_object().ok_or_else(invalid_response)?;
-        let _kind = require_string(item, "kind")?;
-        let _span_id = nullable_w3c_id(item, "span_id", 16)?;
-        let occurred_at = require_timestamp_millis(item, "occurred_at")?;
-        if previous_time
-            .replace(occurred_at)
-            .is_some_and(|previous| previous > occurred_at)
-        {
-            return Err(invalid_response());
-        }
-    }
-    Ok(())
-}
-
-/// Validates common evidence coverage.
-fn validate_evidence(evidence: &Map<String, Value>) -> Result<(), RuntimeError> {
-    require_known_fields(evidence, &["status"], &EVIDENCE_CATEGORIES)?;
-    if !matches!(require_string(evidence, "status")?, "complete" | "partial") {
-        return Err(invalid_response());
-    }
-    for name in EVIDENCE_CATEGORIES {
-        let fields = evidence
-            .get(name)
-            .and_then(Value::as_array)
-            .ok_or_else(invalid_response)?;
-        if fields.len() > 256
-            || fields.iter().any(|field| field.as_str().is_none())
-            || fields
-                .iter()
-                .filter_map(Value::as_str)
-                .collect::<BTreeSet<_>>()
-                .len()
-                != fields.len()
-        {
-            return Err(invalid_response());
-        }
-    }
-    Ok(())
-}
-
-/// Rejects additions inside one privacy-sensitive evidence namespace.
-fn validate_evidence_vocabulary(
-    evidence: &Map<String, Value>,
-    prefix: &str,
-    known: &[&str],
-) -> Result<(), RuntimeError> {
-    let namespace = format!("{prefix}.");
-    if EVIDENCE_CATEGORIES.iter().any(|category| {
-        evidence[*category].as_array().is_none_or(|fields| {
-            fields.iter().filter_map(Value::as_str).any(|field| {
-                (field == prefix || field.starts_with(namespace.as_str()))
-                    && !known.contains(&field)
-            })
-        })
-    }) {
-        Err(invalid_response())
-    } else {
-        Ok(())
-    }
-}
-
-/// Returns whether one validated evidence array contains an exact field receipt.
-fn evidence_has_field(
-    evidence: &Map<String, Value>,
-    category: &str,
-    field: &str,
-) -> Result<bool, RuntimeError> {
-    let fields = evidence
-        .get(category)
-        .and_then(Value::as_array)
-        .ok_or_else(invalid_response)?;
-    Ok(fields.iter().any(|value| value.as_str() == Some(field)))
-}
-
-/// Requires one evidence field to occur exactly in its expected receipt partitions.
-fn validate_field_receipts(
-    evidence: &Map<String, Value>,
-    field: &str,
-    expected: [bool; 4],
-) -> Result<(), RuntimeError> {
-    for (category, expected) in EVIDENCE_CATEGORIES.into_iter().zip(expected) {
-        let count = evidence
-            .get(category)
-            .and_then(Value::as_array)
-            .ok_or_else(invalid_response)?
-            .iter()
-            .filter(|value| value.as_str() == Some(field))
-            .count();
-        if count != usize::from(expected) {
-            return Err(invalid_response());
-        }
-    }
-    Ok(())
-}
-
-/// Validates prioritized backend-generated actions.
-fn validate_next_actions(value: Option<&Value>) -> Result<(), RuntimeError> {
-    let actions = value
-        .and_then(Value::as_array)
-        .ok_or_else(invalid_response)?;
-    if actions.is_empty() || actions.len() > NEXT_ACTION_LIMIT {
-        return Err(invalid_response());
-    }
-    for action in actions {
-        let action = action.as_object().ok_or_else(invalid_response)?;
-        let priority = require_u64(action, "priority")?;
-        if !(1..=u64::try_from(NEXT_ACTION_LIMIT).map_err(|_error| invalid_response())?)
-            .contains(&priority)
-        {
-            return Err(invalid_response());
-        }
-        validate_strings(action, &["code", "target", "reason"])?;
-    }
-    Ok(())
 }
 
 /// Builds one bounded human projection after contract validation.
