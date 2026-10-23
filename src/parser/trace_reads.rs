@@ -1,13 +1,13 @@
 //! Recent trace discovery and trace-detail command parsing.
 
+use super::read::{
+    READ_TRACE_NEXT_STEP, READ_TRACES_NEXT_STEP, parse_detail_explain_suffix,
+    parse_detail_read_flags, reject_unsupported_read_flags, validate_read_filters,
+};
 use crate::flags::{Flags, parse_trace_flags};
 use crate::{CliError, Command, ExplainTarget, ReadTarget};
 
-use super::{
-    READ_TRACE_NEXT_STEP, READ_TRACES_NEXT_STEP, parse_detail_explain_suffix,
-    parse_detail_read_flags, reject_unsupported_read_flags, take_required_position,
-    validate_read_filters,
-};
+use super::take_required_position;
 
 /// Parses recent trace discovery with its target-specific status vocabulary.
 pub(super) fn parse_trace_list_read(rest: &[String]) -> Result<(ReadTarget, Flags), CliError> {
