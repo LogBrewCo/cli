@@ -17,10 +17,13 @@ use crate::explain::correlation::{
     validate_correlated_signal, validate_deployment_boundary, validate_items_collection,
     validate_release_scope, validate_shared_trace_summary, validate_trace_link,
 };
+use crate::explain::evidence::{
+    EVIDENCE_CATEGORIES, evidence_has_field, validate_evidence, validate_evidence_vocabulary,
+    validate_field_receipts, validate_next_actions,
+};
 use crate::explain::{
-    EVIDENCE_CATEGORIES, RELATED_ISSUE_LIMIT, evidence_has_field, invalid_response,
-    issue_exception_chain, issue_lifecycle, issue_occurrence_analysis, validate_evidence,
-    validate_evidence_vocabulary, validate_field_receipts, validate_next_actions,
+    RELATED_ISSUE_LIMIT, invalid_response, issue_exception_chain, issue_lifecycle,
+    issue_occurrence_analysis,
 };
 use crate::{IssueOccurrenceSelection, RuntimeError};
 use occurrence::{validate_issue_occurrence_selection, validate_selected_occurrence_correlations};

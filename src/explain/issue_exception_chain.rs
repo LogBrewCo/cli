@@ -8,10 +8,8 @@ use super::contract::{
     optional_safe_u64, optional_string, require_bool, require_exact_fields, require_known_fields,
     require_string, require_u64, required_object,
 };
-use super::{
-    append_labeled_bool, append_labeled_integer, append_labeled_text, invalid_response,
-    validate_field_receipts,
-};
+use super::evidence::validate_field_receipts;
+use super::{append_labeled_bool, append_labeled_integer, append_labeled_text, invalid_response};
 use crate::RuntimeError;
 
 /// Maximum parent-first exception nodes accepted from one selected occurrence.
