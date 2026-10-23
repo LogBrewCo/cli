@@ -1128,13 +1128,6 @@ fn safe_api_error(
                 "fix_request",
                 "request",
             ),
-            (429, "project_limit_exceeded") => (
-                "project_limit_exceeded",
-                "project limit reached",
-                "remove an unused project or review account limits",
-                "review_project_limit",
-                "projects",
-            ),
             (429, "rate_limited") => (
                 "rate_limited",
                 "project creation is rate limited",

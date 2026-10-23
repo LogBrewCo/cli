@@ -91,7 +91,7 @@ async_test!(usage_human_output_is_bounded_and_uses_cli_owned_guidance -> TestRes
     assert!(text.contains("Bytes: 4096 / unlimited"));
     assert!(text.contains("Projects: 2 / 3"));
     assert!(text.contains("Driving limit: events"));
-    assert!(text.contains("Next: reduce telemetry usage or review account options"));
+    assert!(text.contains("Next: reduce telemetry usage or email sales@logbrew.co for more volume"));
     assert!(!text.contains(PROJECT_ID));
     assert!(!text.contains("server-owned-next-text"));
     assert!(!text.contains("logs"));
