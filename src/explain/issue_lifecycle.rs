@@ -372,7 +372,7 @@ fn optional_timestamp<'a>(
     name: &str,
 ) -> Result<Option<&'a str>, RuntimeError> {
     let timestamp = optional_string(value, name)?;
-    if timestamp.is_none_or(crate::render::is_rfc3339_utc) {
+    if timestamp.is_none_or(crate::time::is_rfc3339_utc) {
         Ok(timestamp)
     } else {
         Err(invalid_response())

@@ -1,6 +1,7 @@
 //! Human-readable API response rendering.
 
 use crate::ids::{is_support_context_id, is_support_ticket_id, is_uuid};
+use crate::time::is_rfc3339_utc;
 use crate::{
     Command, ExplainTarget, ReadOptions, ReadTarget, RuntimeError, SetTarget, SupportTarget,
     SupportTicketListOptions,
@@ -909,31 +910,6 @@ fn invalid_list_message(title: &str) -> String {
     format!(
         "{title} response could not be rendered safely.\nNext: retry the same command with --json and inspect the public response shape.\n",
     )
-}
-
-/// Checks the UTC RFC3339 shape returned by cursor endpoints.
-pub(crate) fn is_rfc3339_utc(value: &str) -> bool {
-    let Some(without_zone) = value
-        .strip_suffix('Z')
-        .or_else(|| value.strip_suffix("+00:00"))
-    else {
-        return false;
-    };
-    let (seconds, fraction) = match without_zone.split_once('.') {
-        Some((seconds, fraction)) => (seconds, Some(fraction)),
-        None => (without_zone, None),
-    };
-    if fraction.is_some_and(|digits| {
-        digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit())
-    }) {
-        return false;
-    }
-
-    if seconds.len() != 19 || !crate::time::has_calendar_shape(seconds.as_bytes()) {
-        return false;
-    }
-
-    chrono::NaiveDateTime::parse_from_str(seconds, "%Y-%m-%dT%H:%M:%S").is_ok()
 }
 
 /// Formats one log list item.

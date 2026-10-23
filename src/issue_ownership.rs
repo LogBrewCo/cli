@@ -126,7 +126,7 @@ fn page_options(flags: &[&str]) -> Option<ReadOptions> {
     });
     let cursor_ok = match (&options.cursor_time, &options.cursor_id) {
         (None, None) => true,
-        (Some(time), Some(id)) => crate::render::is_rfc3339_utc(time) && is_uuid(id),
+        (Some(time), Some(id)) => crate::time::is_rfc3339_utc(time) && is_uuid(id),
         _ => false,
     };
     (limit_ok && cursor_ok).then_some(options)
@@ -342,7 +342,7 @@ pub fn ownership_summary(value: &serde_json::Value) -> Option<String> {
     if !updated.is_null() {
         let updated = updated
             .as_str()
-            .filter(|time| crate::render::is_rfc3339_utc(time))?;
+            .filter(|time| crate::time::is_rfc3339_utc(time))?;
         output.push_str(format!("Updated: {updated}\n").as_str());
     }
     for (name, title) in [("rules", "Ownership rules"), ("codeowners", "CODEOWNERS")] {
@@ -397,7 +397,7 @@ pub fn activity_summary(value: &serde_json::Value) -> Option<String> {
         output.push_str(
             format!(
                 "More: run logbrew issues activity {issue} --cursor-time {} --cursor-id {}\n",
-                text(cursor, "time").filter(|time| crate::render::is_rfc3339_utc(time))?,
+                text(cursor, "time").filter(|time| crate::time::is_rfc3339_utc(time))?,
                 id(cursor, "id")?
             )
             .as_str(),
@@ -476,7 +476,7 @@ pub fn inbox_summary(value: &serde_json::Value) -> Option<String> {
     let unread = value.get("unread")?.as_u64()?;
     let mut output = format!("Inbox ({}, {unread} unread)\n", notifications.len());
     for notification in notifications {
-        let at = text(notification, "at").filter(|time| crate::render::is_rfc3339_utc(time))?;
+        let at = text(notification, "at").filter(|time| crate::time::is_rfc3339_utc(time))?;
         let issue = id(notification, "issue_id")?;
         let title = notification.get("title")?;
         let title = if title.is_null() {
@@ -503,7 +503,7 @@ pub fn inbox_summary(value: &serde_json::Value) -> Option<String> {
         output.push_str(
             format!(
                 "More: run logbrew inbox --cursor-time {} --cursor-id {}\n",
-                text(cursor, "time").filter(|time| crate::render::is_rfc3339_utc(time))?,
+                text(cursor, "time").filter(|time| crate::time::is_rfc3339_utc(time))?,
                 id(cursor, "id")?
             )
             .as_str(),
@@ -518,7 +518,7 @@ pub fn inbox_summary(value: &serde_json::Value) -> Option<String> {
 /// Human summary of marking notifications read.
 #[must_use]
 pub fn inbox_read_summary(value: &serde_json::Value) -> Option<String> {
-    let read_at = text(value, "read_at").filter(|time| crate::render::is_rfc3339_utc(time))?;
+    let read_at = text(value, "read_at").filter(|time| crate::time::is_rfc3339_utc(time))?;
     let unread = value.get("unread")?.as_u64()?;
     Some(format!("Inbox read up to {read_at}; {unread} unread.\n"))
 }

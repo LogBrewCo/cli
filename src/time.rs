@@ -1,4 +1,4 @@
-//! Exact RFC 3339 parsing shared by deployment and investigation contracts.
+//! Exact RFC 3339 parsing and validation shared by every response contract.
 
 #![expect(
     clippy::redundant_pub_crate,
@@ -109,6 +109,31 @@ pub(crate) fn has_calendar_shape(bytes: &[u8]) -> bool {
     })
 }
 
+/// Checks the UTC RFC3339 shape returned by cursor endpoints.
+pub(crate) fn is_rfc3339_utc(value: &str) -> bool {
+    let Some(without_zone) = value
+        .strip_suffix('Z')
+        .or_else(|| value.strip_suffix("+00:00"))
+    else {
+        return false;
+    };
+    let (seconds, fraction) = match without_zone.split_once('.') {
+        Some((seconds, fraction)) => (seconds, Some(fraction)),
+        None => (without_zone, None),
+    };
+    if fraction.is_some_and(|digits| {
+        digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit())
+    }) {
+        return false;
+    }
+
+    if seconds.len() != 19 || !has_calendar_shape(seconds.as_bytes()) {
+        return false;
+    }
+
+    chrono::NaiveDateTime::parse_from_str(seconds, "%Y-%m-%dT%H:%M:%S").is_ok()
+}
+
 /// Parses the canonical UTC `Z` timestamps emitted by analytics contracts.
 pub(crate) fn parse_utc_timestamp(value: &str) -> Option<ParsedTimestamp> {
     ((20..=30).contains(&value.len()) && value.ends_with('Z'))
@@ -136,7 +161,7 @@ pub(crate) fn parse_utc_millis(value: &str) -> Option<i128> {
 #[cfg(test)]
 mod tests {
     use super::{
-        ParsedTimestamp, evidence_offset_millis, parse_rfc3339, parse_utc_evidence,
+        ParsedTimestamp, evidence_offset_millis, is_rfc3339_utc, parse_rfc3339, parse_utc_evidence,
         parse_utc_millis,
     };
 
@@ -194,14 +219,14 @@ mod tests {
                 "accepted evidence {value}"
             );
             assert_eq!(
-                crate::render::is_rfc3339_utc(value),
+                is_rfc3339_utc(value),
                 value == "2026-01-01T00:00:00.0000000001Z"
             );
         }
         for value in ["0000-01-01T00:00:00Z", "2016-12-31T23:59:60Z"] {
             assert!(parse_rfc3339(value).is_none());
             assert!(parse_utc_evidence(value).is_some());
-            assert!(crate::render::is_rfc3339_utc(value));
+            assert!(is_rfc3339_utc(value));
         }
         for (value, nanos) in [
             ("1970-01-01T00:00:00.000000001Z", 1),

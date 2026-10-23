@@ -59,7 +59,7 @@ impl Grant {
             && self.project_ids.iter().all(|id| is_uuid(id.as_str()))
             && [&self.created_at, &self.last_used_at, &self.expires_at]
                 .into_iter()
-                .all(|time| crate::render::is_rfc3339_utc(time.as_str()))
+                .all(|time| crate::time::is_rfc3339_utc(time.as_str()))
     }
 }
 

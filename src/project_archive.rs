@@ -199,7 +199,7 @@ fn validate_deletion_receipt(body: &str) -> Result<(), RuntimeError> {
         .map_err(|_| failure(Operation::Delete, Failure::Response))?;
     if !is_support_ticket_id(receipt.ticket_id.as_str())
         || receipt.status != "open"
-        || !crate::render::is_rfc3339_utc(receipt.created_at.as_str())
+        || !crate::time::is_rfc3339_utc(receipt.created_at.as_str())
         || receipt.next.len() > 512
         || !safe_text(receipt.next.as_str(), 512)
         || receipt.next_action.code != "review_ticket"

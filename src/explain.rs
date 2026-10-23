@@ -2924,7 +2924,7 @@ fn require_timestamp<'a>(
     name: &str,
 ) -> Result<&'a str, RuntimeError> {
     let timestamp = require_string(value, name)?;
-    crate::render::is_rfc3339_utc(timestamp)
+    time::is_rfc3339_utc(timestamp)
         .then_some(timestamp)
         .ok_or_else(invalid_response)
 }
