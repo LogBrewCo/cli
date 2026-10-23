@@ -66,12 +66,7 @@ pub(super) async fn execute<W: std::io::Write>(
     let body =
         analytics_request::send(env, path.as_str(), Kind::Properties, None, RESPONSE_LIMIT).await?;
     let response = validated_response(options, body.as_str())?;
-    if json {
-        writeln!(output, "{body}")?;
-    } else {
-        write!(output, "{}", render_response(&response))?;
-    }
-    Ok(())
+    analytics_request::write_response(output, json, body.as_str(), &response, render_response)
 }
 
 /// Complete response with unknown fields rejected at every level.

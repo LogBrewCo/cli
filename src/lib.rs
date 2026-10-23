@@ -6,11 +6,11 @@
 
 #![forbid(unsafe_code)]
 
-mod analytics;
 mod analytics_contract;
 mod analytics_funnel;
 mod analytics_lifecycle;
 mod analytics_overview;
+mod analytics_paths;
 mod analytics_properties;
 mod analytics_property_contract;
 mod analytics_request;
@@ -1770,7 +1770,7 @@ impl Command {
                 ..
             } => issue_ownership::request_body(target),
             Self::Deploy { options, .. } => serde_json::to_value(options).ok(),
-            Self::AnalyticsPaths { options, .. } => Some(analytics::request_body(options)),
+            Self::AnalyticsPaths { options, .. } => Some(analytics_paths::request_body(options)),
             Self::AnalyticsCompare { options, .. } => {
                 Some(analytics_segments::request_body(options))
             }
@@ -2037,7 +2037,7 @@ pub async fn execute_command<W: std::io::Write>(
             analytics_segments::execute(env, options, *json, output).await
         }
         Command::AnalyticsPaths { options, json } => {
-            analytics::execute(env, options, *json, output).await
+            analytics_paths::execute(env, options, *json, output).await
         }
         Command::AnalyticsFunnel { options, json } => {
             analytics_funnel::execute(env, options, *json, output).await
