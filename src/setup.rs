@@ -24,7 +24,7 @@ pub const RUBY_SDK_VERSION: &str = "0.1.16";
 /// Newest `LogBrew.AspNetCore` release on `NuGet`.
 pub const ASPNETCORE_VERSION: &str = "0.1.3";
 /// Newest Swift package release tag (`v<version>`) in the public SDK repository.
-pub const SWIFT_SDK_VERSION: &str = "0.1.23";
+pub const SWIFT_SDK_VERSION: &str = "0.1.24";
 /// Newest Objective-C release tag (`objc/logbrew-objc/v<version>`).
 pub const OBJC_VERSION: &str = "0.2.3";
 /// Newest C++ release tag (`cpp/logbrew-cpp/v<version>`).
