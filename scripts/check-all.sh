@@ -2,7 +2,6 @@
 set -euo pipefail
 
 if [[ "${LOGBREW_CLIPPY_WRAPPER:-0}" == "1" ]]; then
-  case " ${*:2} " in *" --test "*) exec "$@" ;; esac
   exec clippy-driver "$@"
 fi
 
