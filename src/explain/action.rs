@@ -11,15 +11,18 @@ use super::contract::{
     require_timestamp, require_u64, required_object, required_uuid_text, validate_name_version,
     validate_schema_version,
 };
+use super::correlation::{
+    validate_availability, validate_correlated_collection, validate_correlated_log,
+    validate_correlated_signal, validate_exact_release_scope, validate_shared_span_summary,
+    validate_shared_trace_summary,
+};
 use super::log::{append_log_analysis, append_log_correlations};
 use super::projection::{count_scalar_leaves, validate_projection};
 use super::{
     append_actions, append_evidence, append_labeled_bool, append_labeled_integer,
     append_labeled_text, append_named_pair, append_named_text, append_runtime_context,
-    append_timeline, collect_scalar_fields, field_text, invalid_response, validate_availability,
-    validate_correlated_collection, validate_correlated_log, validate_correlated_signal,
-    validate_evidence, validate_exact_release_scope, validate_next_actions,
-    validate_shared_span_summary, validate_shared_trace_summary, validate_timeline,
+    append_timeline, collect_scalar_fields, field_text, invalid_response, validate_evidence,
+    validate_next_actions, validate_timeline,
 };
 use crate::RuntimeError;
 use crate::ids::is_uuid;

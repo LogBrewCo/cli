@@ -7,13 +7,13 @@ use super::contract::{
     required_uuid_text, response_object, validate_name_version, validate_nullable_object,
     validate_schema_version, validate_string_array, validate_strings,
 };
+use super::correlation::{validate_items_collection, validate_release_scope, validate_trace_link};
 use super::trace::append_trace_receipt;
 use super::{
     append_actions, append_evidence, append_labeled_bool, append_labeled_integer,
     append_labeled_text, append_named_pair, append_named_text, append_related_collections,
     append_runtime_context, append_string_array, append_timeline, collect_scalar_fields,
-    field_text, invalid_response, validate_evidence, validate_items_collection,
-    validate_next_actions, validate_release_scope, validate_timeline, validate_trace_link,
+    field_text, invalid_response, validate_evidence, validate_next_actions, validate_timeline,
 };
 use crate::RuntimeError;
 
