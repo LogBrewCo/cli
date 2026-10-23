@@ -17,6 +17,7 @@ pub const fn help_text(topic: HelpTopic) -> &'static str {
         HelpTopic::Examples => EXAMPLES_HELP,
         HelpTopic::Projects => PROJECTS_HELP,
         HelpTopic::Usage => USAGE_HELP,
+        HelpTopic::Mcp => MCP_HELP,
         HelpTopic::Read => READ_HELP,
         HelpTopic::ReadLogs => READ_LOGS_HELP,
         HelpTopic::ReadIssues => READ_ISSUES_HELP,
@@ -106,6 +107,7 @@ Usage:
   logbrew read releases [--environment production] [--json]
   logbrew read metrics [--name http.server.duration] [--since 24h] [--json]
   logbrew traces [--service <service_name>] [--status error] [--since 24h] [--json]
+  logbrew read traces [--service <service_name>] [--status error] [--since 24h] [--json]
   logbrew read trace <trace_id> [--release <release>] [--environment production] [--json]
   logbrew trace <trace_id> [--release <release>] [--environment production] [--json]
   logbrew issue <issue_id> [--json]
@@ -409,6 +411,18 @@ Human output is bounded to plan, state, totals, limits, the driving limit, and o
 preserves the exact validated account-usage object for agents.
 The CLI does not calculate or persist usage/quota state from local files.
 Next: run logbrew usage to inspect current account usage.";
+
+/// MCP client grant help text.
+const MCP_HELP: &str = "\
+Usage:
+  logbrew mcp grants [--json]
+  logbrew mcp revoke <grant_id> --yes [--json]
+
+Lists the AI clients connected to the LogBrew MCP server with their client name, approved \
+projects, last use, and expiry, or revokes one client by grant ID.
+Both commands need account sign-in; project ingest keys are refused.
+A revoked client loses access at its next request. JSON returns the exact validated response.
+Next: run logbrew mcp grants to list connected clients.";
 
 /// Read command help text.
 const READ_HELP: &str = "\
