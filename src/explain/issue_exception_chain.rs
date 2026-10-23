@@ -9,7 +9,8 @@ use super::contract::{
     require_string, require_u64, required_object,
 };
 use super::evidence::validate_field_receipts;
-use super::{append_labeled_bool, append_labeled_integer, append_labeled_text, invalid_response};
+use super::invalid_response;
+use super::text::{append_labeled_bool, append_labeled_integer, append_labeled_text};
 use crate::RuntimeError;
 
 /// Maximum parent-first exception nodes accepted from one selected occurrence.

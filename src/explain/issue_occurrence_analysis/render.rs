@@ -1,10 +1,9 @@
 //! Bounded human projection for validated issue occurrence analysis.
 
-use serde_json::Value;
-
-use super::super::{
+use super::super::text::{
     append_labeled_basis_points, append_labeled_integer, append_labeled_text, field_text,
 };
+use serde_json::Value;
 
 /// Appends all validated fixed buckets and top values for human or agent inspection.
 pub(super) fn render(output: &mut String, value: Option<&Value>) {

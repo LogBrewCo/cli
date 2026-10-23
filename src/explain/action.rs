@@ -17,12 +17,13 @@ use super::correlation::{
     validate_shared_trace_summary,
 };
 use super::evidence::{validate_evidence, validate_next_actions, validate_timeline};
+use super::invalid_response;
 use super::log::{append_log_analysis, append_log_correlations};
 use super::projection::{count_scalar_leaves, validate_projection};
-use super::{
+use super::text::{
     append_actions, append_evidence, append_labeled_bool, append_labeled_integer,
     append_labeled_text, append_named_pair, append_named_text, append_runtime_context,
-    append_timeline, collect_scalar_fields, field_text, invalid_response,
+    append_timeline, collect_scalar_fields, field_text,
 };
 use crate::RuntimeError;
 use crate::ids::is_uuid;

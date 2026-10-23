@@ -4,11 +4,12 @@ use std::fmt::Write as _;
 
 use serde_json::Value;
 
-use super::super::{
-    RELATED_PREVIEW_LIMIT, append_actions, append_collection, append_evidence,
-    append_issue_previews, append_labeled_approximate_integer, append_labeled_bool,
-    append_labeled_integer, append_labeled_text, append_log_previews, append_metric_previews,
-    append_named_text, append_string_array, append_timeline, field_text,
+use super::super::RELATED_PREVIEW_LIMIT;
+use super::super::text::{
+    append_actions, append_collection, append_evidence, append_issue_previews,
+    append_labeled_approximate_integer, append_labeled_bool, append_labeled_integer,
+    append_labeled_text, append_log_previews, append_metric_previews, append_named_text,
+    append_string_array, append_timeline, field_text,
 };
 
 /// Appends comparison availability, boundaries, prior snapshot, exact deltas, and caveats.
