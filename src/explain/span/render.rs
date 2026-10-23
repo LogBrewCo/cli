@@ -1,12 +1,11 @@
 //! Bounded terminal-safe human rendering for validated exact-span evidence.
 
-use serde_json::Value;
-
-use super::super::{
+use super::super::text::{
     append_evidence, append_labeled_basis_points, append_labeled_bool, append_labeled_integer,
     append_labeled_number, append_labeled_text, append_named_pair, append_related_collections,
     append_runtime_context, append_string_array, collect_scalar_fields, field_text,
 };
+use serde_json::Value;
 
 /// Maximum topology children rendered in the compact human view.
 const CHILD_PREVIEW_LIMIT: usize = 5;

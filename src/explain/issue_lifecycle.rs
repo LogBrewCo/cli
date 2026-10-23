@@ -9,7 +9,8 @@ use super::contract::{
     required_object, validate_name_version,
 };
 use super::evidence::evidence_has_field;
-use super::{append_labeled_bool, append_labeled_text, append_named_text, invalid_response};
+use super::invalid_response;
+use super::text::{append_labeled_bool, append_labeled_text, append_named_text};
 use crate::RuntimeError;
 use crate::ids::{is_trace_id, is_uuid};
 use crate::time::parse_utc_evidence as timestamp_key;
