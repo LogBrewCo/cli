@@ -1,6 +1,6 @@
 //! CLI help text discovery tests.
 
-use logbrew_cli::{HelpTopic, help};
+use logbrew_cli::{Command, HelpTopic, help, parse_command};
 
 #[test]
 fn root_help_surfaces_release_environment_pairing() {
@@ -224,4 +224,30 @@ fn examples_help_gives_first_run_and_troubleshooting_workflows() {
     assert!(text.contains("logbrew watch --severity error,critical --json"));
     assert!(text.contains("logbrew --json status"));
     assert!(text.contains("logbrew help json"));
+}
+
+#[test]
+fn mcp_help_and_root_help_list_every_command_form() -> Result<(), Box<dyn std::error::Error>> {
+    for (args, json) in [
+        (&["logbrew", "mcp", "--help"][..], false),
+        (&["logbrew", "help", "mcp"][..], false),
+        (&["logbrew", "mcp", "grants", "--help", "--json"][..], true),
+        (&["logbrew", "mcp", "revoke", "--help"][..], false),
+    ] {
+        assert_eq!(
+            parse_command(args.iter().copied())?,
+            Command::Help {
+                topic: HelpTopic::Mcp,
+                json
+            },
+            "{args:?}"
+        );
+    }
+    let mcp = help::help_text(HelpTopic::Mcp);
+    assert!(mcp.contains("logbrew mcp grants [--json]"));
+    assert!(mcp.contains("logbrew mcp revoke <grant_id> --yes [--json]"));
+    let root = help::help_text(HelpTopic::Root);
+    assert!(root.contains("\n  logbrew traces [--service <service_name>]"));
+    assert!(root.contains("\n  logbrew read traces [--service <service_name>]"));
+    Ok(())
 }

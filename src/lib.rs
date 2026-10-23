@@ -427,6 +427,8 @@ pub enum HelpTopic {
     Projects,
     /// Backend-owned account usage and quota workflow overview.
     Usage,
+    /// Connected MCP client grant list and revoke workflow.
+    Mcp,
     /// Read command overview.
     Read,
     /// Log reading command.
@@ -493,6 +495,7 @@ impl HelpTopic {
             Self::Examples => "examples",
             Self::Projects => "projects",
             Self::Usage => "usage",
+            Self::Mcp => "mcp",
             Self::Read => "read",
             Self::ReadLogs => "read_logs",
             Self::ReadIssues => "read_issues",

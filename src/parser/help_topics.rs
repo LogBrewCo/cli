@@ -92,6 +92,7 @@ pub(super) fn help_topic(head: &str, tail: &[String]) -> Result<HelpTopic, CliEr
         }
         alias if is_project_help_alias(alias) => Ok(HelpTopic::Projects),
         "usage" => Ok(HelpTopic::Usage),
+        "mcp" => Ok(HelpTopic::Mcp),
         "support" => help_topic_without_positionals(HelpTopic::Support, positionals.as_slice()),
         "investigate" => Ok(HelpTopic::Investigate),
         "debug-artifacts" => Ok(HelpTopic::NativeDebugArtifacts),
@@ -566,6 +567,7 @@ fn explicit_help_topic(args: &[&str]) -> Result<HelpTopic, CliError> {
         }
         [topic, ..] if is_project_help_alias(topic) => Ok(HelpTopic::Projects),
         ["usage", tail @ ..] => help_topic_without_positionals(HelpTopic::Usage, tail),
+        ["mcp", ..] => Ok(HelpTopic::Mcp),
         [topic, tail @ ..] if is_watch_command_alias(topic) => subresource_help_topic(
             HelpTopic::Watch,
             tail,
