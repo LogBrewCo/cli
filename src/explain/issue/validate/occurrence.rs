@@ -3,11 +3,11 @@
 use serde_json::{Map, Value};
 
 use super::{ISSUE_OCCURRENCE_CANDIDATE_LIMIT, ISSUE_OCCURRENCE_FRAME_LIMIT};
-use crate::explain::{
-    context, invalid_response, optional_string, require_bool, require_safe_positive_u64,
-    require_safe_u64, require_string, require_string_equals, require_timestamp, require_u64,
-    required_object, validate_name_version,
+use crate::explain::contract::{
+    optional_string, require_bool, require_safe_positive_u64, require_safe_u64, require_string,
+    require_string_equals, require_timestamp, require_u64, required_object, validate_name_version,
 };
+use crate::explain::{context, invalid_response};
 use crate::ids::{is_trace_id, is_uuid};
 use crate::{IssueOccurrenceSelection, RuntimeError};
 

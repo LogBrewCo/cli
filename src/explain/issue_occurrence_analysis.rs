@@ -6,11 +6,11 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::{Map, Value};
 
-use super::{
-    invalid_response, optional_safe_u64, require_exact_fields, require_safe_positive_u64,
-    require_safe_u64, require_string, require_timestamp, required_object,
-    validate_evidence_vocabulary, validate_field_receipts,
+use super::contract::{
+    optional_safe_u64, require_exact_fields, require_safe_positive_u64, require_safe_u64,
+    require_string, require_timestamp, required_object,
 };
+use super::{invalid_response, validate_evidence_vocabulary, validate_field_receipts};
 use crate::RuntimeError;
 use crate::time::parse_utc_millis;
 

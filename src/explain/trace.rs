@@ -2,16 +2,18 @@
 
 use serde_json::{Map, Value};
 
+use super::contract::{
+    nullable_w3c_id, optional_object_value, optional_safe_u64, optional_string, require_bool,
+    require_exact_fields, require_string, require_string_equals, require_timestamp, require_u64,
+    required_object, required_uuid_text, response_object, validate_nullable_object,
+    validate_object_array, validate_schema_version_value, validate_string_array, validate_strings,
+};
 use super::{
     RELATED_ISSUE_LIMIT, append_actions, append_evidence, append_labeled_bool,
     append_labeled_integer, append_labeled_text, append_named_text, append_related_collections,
-    append_string_array, append_timeline, field_text, invalid_response, nullable_w3c_id,
-    optional_object_value, optional_safe_u64, optional_string, require_bool, require_exact_fields,
-    require_string, require_string_equals, require_timestamp, require_u64, required_object,
-    required_uuid_text, response_object, validate_correlated_collection,
-    validate_correlated_signal, validate_evidence, validate_items_collection,
-    validate_next_actions, validate_nullable_object, validate_object_array,
-    validate_schema_version_value, validate_string_array, validate_strings, validate_timeline,
+    append_string_array, append_timeline, field_text, invalid_response,
+    validate_correlated_collection, validate_correlated_signal, validate_evidence,
+    validate_items_collection, validate_next_actions, validate_timeline,
 };
 use crate::RuntimeError;
 

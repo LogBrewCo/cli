@@ -3,10 +3,10 @@
 use serde_json::{Map, Value};
 
 use crate::RuntimeError;
-use crate::explain::{
-    NEXT_ACTION_LIMIT, invalid_response, require_exact_fields, require_string, required_object,
-    required_uuid_text,
+use crate::explain::contract::{
+    require_exact_fields, require_string, required_object, required_uuid_text,
 };
+use crate::explain::{NEXT_ACTION_LIMIT, invalid_response};
 use crate::ids::{is_trace_id, is_uuid};
 
 /// Code, target, reason, issue, and trace for one deterministic release follow-up.

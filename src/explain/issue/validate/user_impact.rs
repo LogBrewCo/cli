@@ -5,9 +5,10 @@ use std::collections::BTreeSet;
 use serde_json::{Map, Value};
 
 use crate::RuntimeError;
-use crate::explain::{
-    invalid_response, optional_safe_u64, require_safe_u64, require_string, required_object,
+use crate::explain::contract::{
+    optional_safe_u64, require_safe_u64, require_string, required_object,
 };
+use crate::explain::invalid_response;
 
 /// Exact occurrence-level capture receipt used to validate affected-user semantics.
 #[derive(Clone, Copy)]

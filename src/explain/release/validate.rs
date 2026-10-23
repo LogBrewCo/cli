@@ -4,11 +4,13 @@ use std::collections::BTreeSet;
 
 use serde_json::{Map, Value};
 
+use super::super::contract::{
+    optional_string, require_bool, require_exact_fields, require_finite_number,
+    require_safe_positive_u64, require_safe_u64, require_string, require_string_equals,
+    require_timestamp, required_object,
+};
 use super::super::{
-    DeploymentBoundary, DeploymentExpectation, invalid_response, optional_string, require_bool,
-    require_exact_fields, require_finite_number, require_safe_positive_u64, require_safe_u64,
-    require_string, require_string_equals, require_timestamp, required_object,
-    validate_deployment_boundary,
+    DeploymentBoundary, DeploymentExpectation, invalid_response, validate_deployment_boundary,
 };
 use crate::ids::{is_trace_id, is_uuid};
 use crate::time::parse_utc_millis;
