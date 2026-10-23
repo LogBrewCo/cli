@@ -12,13 +12,15 @@ use crate::explain::contract::{
     validate_nullable_object, validate_object_array, validate_schema_version_value,
     validate_string_array, validate_strings,
 };
-use crate::explain::{
-    DeploymentExpectation, EVIDENCE_CATEGORIES, RELATED_ISSUE_LIMIT, evidence_has_field,
-    invalid_response, issue_exception_chain, issue_lifecycle, issue_occurrence_analysis,
-    validate_availability, validate_correlated_collection, validate_correlated_signal,
-    validate_deployment_boundary, validate_evidence, validate_evidence_vocabulary,
-    validate_field_receipts, validate_items_collection, validate_next_actions,
+use crate::explain::correlation::{
+    DeploymentExpectation, validate_availability, validate_correlated_collection,
+    validate_correlated_signal, validate_deployment_boundary, validate_items_collection,
     validate_release_scope, validate_shared_trace_summary, validate_trace_link,
+};
+use crate::explain::{
+    EVIDENCE_CATEGORIES, RELATED_ISSUE_LIMIT, evidence_has_field, invalid_response,
+    issue_exception_chain, issue_lifecycle, issue_occurrence_analysis, validate_evidence,
+    validate_evidence_vocabulary, validate_field_receipts, validate_next_actions,
 };
 use crate::{IssueOccurrenceSelection, RuntimeError};
 use occurrence::{validate_issue_occurrence_selection, validate_selected_occurrence_correlations};

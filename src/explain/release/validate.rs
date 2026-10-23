@@ -9,9 +9,10 @@ use super::super::contract::{
     require_safe_positive_u64, require_safe_u64, require_string, require_string_equals,
     require_timestamp, required_object,
 };
-use super::super::{
-    DeploymentBoundary, DeploymentExpectation, invalid_response, validate_deployment_boundary,
+use super::super::correlation::{
+    DeploymentBoundary, DeploymentExpectation, validate_deployment_boundary,
 };
+use super::super::invalid_response;
 use crate::ids::{is_trace_id, is_uuid};
 use crate::time::parse_utc_millis;
 use crate::{ExplainReleaseTarget, RuntimeError};

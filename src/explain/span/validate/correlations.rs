@@ -2,7 +2,7 @@
 
 use serde_json::{Map, Value};
 
-use super::super::super::{
+use super::super::super::correlation::{
     TraceSummaryExpectation, validate_correlated_collection, validate_correlated_log,
     validate_correlated_signal, validate_exact_release_scope, validate_shared_trace_summary,
 };
