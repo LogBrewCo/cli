@@ -10,7 +10,7 @@ use crate::{SupportContextReplyOptions, SupportTarget, SupportTicketCreateOption
 pub(super) fn path(target: &SupportTarget) -> String {
     match target {
         SupportTarget::Create(_) => String::from("/api/support/tickets"),
-        SupportTarget::List(options) => super::path_with_query(
+        SupportTarget::List(options) => crate::api_path::path_with_query(
             "/api/support/tickets",
             &[
                 ("project_id", options.project_id.as_deref()),
@@ -27,16 +27,16 @@ pub(super) fn path(target: &SupportTarget) -> String {
         SupportTarget::Detail(ticket_id) | SupportTarget::UpdateStatus { ticket_id, .. } => {
             format!(
                 "/api/support/tickets/{}",
-                super::encode_component(ticket_id)
+                crate::api_path::encode_component(ticket_id)
             )
         }
         SupportTarget::ContextHistory { ticket_id } => format!(
             "/api/support/tickets/{}/context",
-            super::encode_component(ticket_id)
+            crate::api_path::encode_component(ticket_id)
         ),
         SupportTarget::ReplyContext(options) => format!(
             "/api/support/tickets/{}/context",
-            super::encode_component(options.ticket_id.as_str())
+            crate::api_path::encode_component(options.ticket_id.as_str())
         ),
     }
 }
