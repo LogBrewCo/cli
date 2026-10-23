@@ -1,7 +1,10 @@
 //! CLI runtime error rendering tests.
 
 use crate::{Mock, MockServer, ResponseTemplate, TestResult, failed_command, runtime_error_text};
-use logbrew_cli::{CliEnvironment, RuntimeError, parse_command, write_runtime_error};
+use logbrew_cli::{
+    CliEnvironment, RuntimeError, parse_command, write_native_debug_runtime_error,
+    write_runtime_error,
+};
 
 async_test!(typed_read_error_recovery -> TestResult, {
     for (command_name, path) in [
@@ -484,3 +487,104 @@ async_test!(repository_errors_accept_only_typed_recovery -> TestResult, {
     }
     Ok(())
 });
+
+#[test]
+fn native_debug_errors_keep_status_codes_and_fixed_recovery() -> TestResult {
+    let restart = "start the native debug artifact upload session again with the same manifest";
+    let request_later = "retry the same native debug-artifact request later";
+    let command_later = "retry the same native debug-artifact command later";
+    for (status, code, next, expected_code, expected_next) in [
+        (404, "not_found", restart, "not_found", restart),
+        (
+            404,
+            "unauthorized",
+            "check the exact project and upload scope",
+            "not_found",
+            "check the exact project and upload scope",
+        ),
+        (
+            422,
+            "validation_failed",
+            "check the native debug-artifact manifest and retry",
+            "validation_failed",
+            "check the native debug-artifact manifest and retry",
+        ),
+        (
+            400,
+            "validation_failed",
+            "check the native debug-artifact manifest and retry",
+            "validation_failed",
+            "check the artifact identity and request scope, then retry",
+        ),
+        (
+            422,
+            "validation_failed",
+            restart,
+            "validation_failed",
+            "check the native debug-artifact request fields and retry",
+        ),
+        (
+            429,
+            "rate_limited",
+            request_later,
+            "rate_limited",
+            request_later,
+        ),
+        (
+            503,
+            "server_error",
+            request_later,
+            "server_error",
+            request_later,
+        ),
+        (
+            503,
+            "rate_limited",
+            command_later,
+            "server_error",
+            command_later,
+        ),
+        (
+            408,
+            "request_timeout",
+            request_later,
+            "request_timeout",
+            "retry the same native debug-artifact request",
+        ),
+        (
+            418,
+            "unexpected_response",
+            restart,
+            "unexpected_response",
+            "retry the native debug-artifact command",
+        ),
+        (
+            401,
+            "unauthorized",
+            "send token account-token to a private host",
+            "unauthorized",
+            "sign in and retry the native debug-artifact command",
+        ),
+    ] {
+        let error = RuntimeError::Api {
+            status,
+            body: serde_json::json!({"error": "hostile", "code": code, "next": next}).to_string(),
+            auth_source: "account_session",
+            auth_label: "account session",
+        };
+        let mut output = Vec::new();
+        write_native_debug_runtime_error(&error, &mut output)?;
+        let body: serde_json::Value = serde_json::from_slice(&output)?;
+        assert_eq!(
+            body,
+            serde_json::json!({
+                "ok": false,
+                "error": expected_code,
+                "status": status,
+                "next": expected_next,
+            }),
+            "{status} {code} {next}"
+        );
+    }
+    Ok(())
+}
