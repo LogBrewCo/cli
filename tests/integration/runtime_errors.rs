@@ -580,10 +580,43 @@ fn native_debug_errors_keep_status_codes_and_fixed_recovery() -> TestResult {
             serde_json::json!({
                 "ok": false,
                 "error": expected_code,
+                "message": format!("native debug-artifact request failed with status {status}"),
                 "status": status,
                 "next": expected_next,
             }),
             "{status} {code} {next}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn native_debug_local_errors_carry_a_fixed_message() -> TestResult {
+    for (error, code, message) in [
+        (
+            RuntimeError::NativeDebugArtifactInvalid,
+            "native_debug_artifact_invalid",
+            "native debug artifact is invalid",
+        ),
+        (
+            RuntimeError::NativeDebugVerificationFailed,
+            "native_debug_verification_failed",
+            "native debug-artifact verification failed",
+        ),
+        (
+            RuntimeError::MissingToken,
+            "not_logged_in",
+            "not logged in: run logbrew login",
+        ),
+    ] {
+        let mut output = Vec::new();
+        write_native_debug_runtime_error(&error, &mut output)?;
+        let body: serde_json::Value = serde_json::from_slice(&output)?;
+        assert_eq!(body["error"], code, "{code}");
+        assert_eq!(body["message"], message, "{code}");
+        assert!(
+            body["next"].as_str().is_some_and(|next| !next.is_empty()),
+            "{code}"
         );
     }
     Ok(())

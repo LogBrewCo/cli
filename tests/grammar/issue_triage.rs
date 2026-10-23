@@ -11,7 +11,7 @@ const PROJECT: &str = "123e4567-e89b-12d3-a456-426614174000";
 const ISSUE_A: &str = "223e4567-e89b-12d3-a456-426614174001";
 const ISSUE_B: &str = "223e4567-e89b-12d3-a456-426614174002";
 const USER: &str = "323e4567-e89b-12d3-a456-426614174003";
-const NEXT: &str = "use logbrew issues archive|resolve|reopen|unassign <issue_id>..., where archive takes one of --until escalating, --for <1m-365d>, --events <count>, or --users <count>, logbrew issues priority high|medium|low <issue_id>..., or logbrew issues assign <user_id|me> <issue_id>..., with --project <project_id> for more than one issue (up to 100), or logbrew issues assignees --project <project_id>, each with optional --json";
+const NEXT: &str = "use logbrew issues archive|resolve|reopen|unassign <issue_id>..., where archive takes one of --until escalating, --for <1m-365d>, --events <count>, or --users <count>, logbrew issues priority high|medium|low <issue_id>..., or logbrew issues assign <user_id|me|team:<team_id>> <issue_id>..., with --project <project_id> for more than one issue (up to 100), or logbrew issues assignees --project <project_id>, each with optional --json";
 
 fn parse(line: &str) -> TestResult<Command> {
     Ok(parse_command(line.split_whitespace())?)
