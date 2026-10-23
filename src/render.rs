@@ -474,12 +474,16 @@ fn set_summary(target: &SetTarget, value: &serde_json::Value) -> Option<String> 
         SetTarget::LogRule { .. } => crate::issue_ownership::rule_summary("Log", value),
         SetTarget::NotificationsRead => crate::issue_ownership::inbox_read_summary(value),
         SetTarget::IssueStatus { .. }
+        | SetTarget::IssueArchive { .. }
         | SetTarget::IssuePriority { .. }
         | SetTarget::IssueAssignee { .. } => {
             let issue = issue_value(value)?;
             let id = field(issue, "id")?;
             let status = field(issue, "status")?;
             let mut output = format!("Issue {id} marked {status}");
+            if matches!(target, SetTarget::IssueArchive { .. }) {
+                output.push_str(&crate::issue_triage::archive_label(issue.get("archive")?)?);
+            }
             if let Some(priority) = field(issue, "priority") {
                 output.push_str(", priority ");
                 output.push_str(priority);

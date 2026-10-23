@@ -65,7 +65,7 @@ use auth::{
 pub use error::{
     CliError, RuntimeError, write_cli_error, write_native_debug_runtime_error, write_runtime_error,
 };
-pub use issue_triage::IssueBulkOptions;
+pub use issue_triage::{IssueArchiveCondition, IssueBulkOptions};
 pub use parser::parse_command;
 use render::write_api_success;
 use setup::write_setup_plan;
@@ -1479,6 +1479,13 @@ pub enum SetTarget {
         /// New assignee: a user ID, `me`, or `none`.
         assignee: String,
     },
+    /// Archive one issue until a condition reopens it by itself.
+    IssueArchive {
+        /// Issue identifier.
+        id: String,
+        /// When the issue reopens.
+        archive: IssueArchiveCondition,
+    },
     /// Update status, priority, or assignee of several issues of one project in one request.
     IssueBulk(IssueBulkOptions),
     /// Replace a project's ownership rules, CODEOWNERS text, or both.
@@ -1722,6 +1729,10 @@ impl Command {
                 target: SetTarget::IssueStatus { status, .. },
                 ..
             } => Some(serde_json::json!({ "status": status })),
+            Self::Set {
+                target: SetTarget::IssueArchive { archive, .. },
+                ..
+            } => Some(serde_json::json!({ "status": "archived", "archive": archive.body() })),
             Self::Set {
                 target: SetTarget::IssuePriority { priority, .. },
                 ..

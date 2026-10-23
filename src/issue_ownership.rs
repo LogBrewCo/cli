@@ -267,6 +267,7 @@ pub(crate) fn request_body(target: &SetTarget) -> Option<serde_json::Value> {
         } => Some(serde_json::json!({ "severity": severity, "ignored": ignored })),
         SetTarget::NotificationsRead => Some(serde_json::json!({})),
         SetTarget::IssueStatus { .. }
+        | SetTarget::IssueArchive { .. }
         | SetTarget::IssuePriority { .. }
         | SetTarget::IssueAssignee { .. }
         | SetTarget::IssueBulk(_) => None,

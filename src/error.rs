@@ -689,7 +689,7 @@ const fn cli_error_next_step(error: &CliError) -> &'static str {
         CliError::InvalidSeverityRuleCommand => crate::issue_ownership::RULE_NEXT_STEP,
         CliError::InvalidInboxCommand => crate::issue_ownership::INBOX_NEXT_STEP,
         CliError::InvalidIssueTriageCommand => {
-            "use logbrew issues archive|resolve|reopen|unassign <issue_id>..., logbrew issues priority high|medium|low <issue_id>..., or logbrew issues assign <user_id|me> <issue_id>..., with --project <project_id> for more than one issue (up to 100), or logbrew issues assignees --project <project_id>, each with optional --json"
+            "use logbrew issues archive|resolve|reopen|unassign <issue_id>..., where archive takes one of --until escalating, --for <1m-365d>, --events <count>, or --users <count>, logbrew issues priority high|medium|low <issue_id>..., or logbrew issues assign <user_id|me> <issue_id>..., with --project <project_id> for more than one issue (up to 100), or logbrew issues assignees --project <project_id>, each with optional --json"
         }
         CliError::InvalidProjectDeletionCommand => {
             "use logbrew projects delete <project_id> --confirm <project_id> with optional --json"
