@@ -11,6 +11,17 @@ pub(super) fn log_shortcut_args(args: &[String]) -> Vec<String> {
     if let Some((search, rest)) = split_separator_log_search_tail(normalized.as_slice()) {
         return build_log_shortcut_args(None, Some(search), rest, normalized.len());
     }
+    if let Some(index) = normalized
+        .iter()
+        .position(|arg| arg == "--")
+        .filter(|index| *index > 0 && normalized[index - 1] != "--search")
+        && let Some((search, rest)) = split_separator_log_search_tail(&normalized[index..])
+    {
+        let mut rewritten = log_shortcut_args(&normalized[..index]);
+        push_search_filter(search, &mut rewritten);
+        rewritten.extend(rest);
+        return rewritten;
+    }
     let explicit = log_explicit_filter_shortcut_args(normalized.as_slice());
     if explicit != normalized {
         return explicit;

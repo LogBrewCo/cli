@@ -220,6 +220,28 @@ fn parses_filtered_logs_separator_without_losing_filters() -> Result<(), Box<dyn
             ],
             "/api/logs?search=--timeout%20failed&release=filtered%401",
         ),
+        (
+            &[
+                "logbrew",
+                "logs",
+                "--since",
+                "1h",
+                "--json",
+                "--",
+                "--timeout",
+            ],
+            "/api/logs?search=--timeout&since=1h",
+        ),
+        (
+            &["logbrew", "logs", "error", "--", "--timeout", "--json"],
+            "/api/logs?severity=error&search=--timeout",
+        ),
+        (
+            &[
+                "logbrew", "--json", "logs", "--limit", "5", "--", "--help", "failed",
+            ],
+            "/api/logs?search=--help%20failed&limit=5",
+        ),
     ] {
         assert_json_log_path(args, expected_path)?;
     }
