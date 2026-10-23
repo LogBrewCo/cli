@@ -230,6 +230,22 @@ pub(crate) async fn send(
         })
 }
 
+/// Writes the exact response body for agents, or its human rendering, after validation.
+pub(crate) fn write_response<T, W: std::io::Write>(
+    output: &mut W,
+    json: bool,
+    body: &str,
+    response: &T,
+    render: fn(&T) -> String,
+) -> Result<(), RuntimeError> {
+    if json {
+        writeln!(output, "{body}")?;
+    } else {
+        write!(output, "{}", render(response))?;
+    }
+    Ok(())
+}
+
 /// Builds the existing value-safe HTTP error without repeating status policy.
 fn api_error(status: u16, credential: &AuthCredential, text: ErrorText) -> RuntimeError {
     let request = if text.uses_request_word {
