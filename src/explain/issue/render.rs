@@ -2,12 +2,12 @@
 
 use serde_json::Value;
 
+use crate::explain::trace::append_trace_receipt;
 use crate::explain::{
     append_actions, append_evidence, append_labeled_basis_points, append_labeled_bool,
     append_labeled_integer, append_labeled_text, append_named_integer, append_named_pair,
     append_named_text, append_related_collections, append_runtime_context, append_string_array,
-    append_trace_receipt, field_text, integer_text, issue_exception_chain, issue_lifecycle,
-    issue_occurrence_analysis,
+    field_text, integer_text, issue_exception_chain, issue_lifecycle, issue_occurrence_analysis,
 };
 
 /// Builds a detailed issue investigation for direct human or agent follow-up.

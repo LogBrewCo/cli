@@ -5,17 +5,17 @@ use std::collections::BTreeSet;
 use serde_json::{Map, Value};
 
 use super::context::{self, Expected as ExpectedContext};
+use super::log::{append_log_analysis, append_log_correlations};
 use super::projection::{count_scalar_leaves, validate_projection};
 use super::{
     append_actions, append_evidence, append_labeled_bool, append_labeled_integer,
-    append_labeled_text, append_log_analysis, append_log_correlations, append_named_pair,
-    append_named_text, append_runtime_context, append_timeline, collect_scalar_fields,
-    exact_response_object, field_text, invalid_response, is_w3c_id, nullable_w3c_id,
-    optional_object_value, optional_string, require_bool, require_exact_fields, require_safe_u64,
-    require_string, require_string_equals, require_timestamp, require_u64, required_object,
-    required_uuid_text, validate_availability, validate_correlated_collection,
-    validate_correlated_log, validate_correlated_signal, validate_evidence,
-    validate_exact_release_scope, validate_name_version, validate_next_actions,
+    append_labeled_text, append_named_pair, append_named_text, append_runtime_context,
+    append_timeline, collect_scalar_fields, exact_response_object, field_text, invalid_response,
+    is_w3c_id, nullable_w3c_id, optional_object_value, optional_string, require_bool,
+    require_exact_fields, require_safe_u64, require_string, require_string_equals,
+    require_timestamp, require_u64, required_object, required_uuid_text, validate_availability,
+    validate_correlated_collection, validate_correlated_log, validate_correlated_signal,
+    validate_evidence, validate_exact_release_scope, validate_name_version, validate_next_actions,
     validate_schema_version, validate_shared_span_summary, validate_shared_trace_summary,
     validate_timeline,
 };
