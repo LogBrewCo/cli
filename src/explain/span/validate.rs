@@ -11,12 +11,13 @@ use serde_json::{Map, Value};
 use self::correlations::CorrelationFacts;
 use self::topology::{BaselineFacts, TopologyFacts};
 use super::super::context::{self, Expected as ExpectedContext};
-use super::super::projection::{count_scalar_leaves, validate_projection};
-use super::super::{
-    MAX_SAFE_JSON_INTEGER, exact_response_object, invalid_response, is_error_status, is_w3c_id,
-    nullable_w3c_id, require_bool, require_exact_fields, require_safe_u64, require_string,
-    require_timestamp, required_object, validate_schema_version,
+use super::super::contract::{
+    MAX_SAFE_JSON_INTEGER, exact_response_object, is_error_status, is_w3c_id, nullable_w3c_id,
+    require_bool, require_exact_fields, require_safe_u64, require_string, require_timestamp,
+    required_object, validate_schema_version,
 };
+use super::super::invalid_response;
+use super::super::projection::{count_scalar_leaves, validate_projection};
 use crate::ids::is_uuid;
 use crate::{ExplainSpanTarget, RuntimeError};
 

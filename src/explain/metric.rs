@@ -5,17 +5,20 @@ use std::collections::BTreeSet;
 use serde_json::{Map, Value};
 
 use super::context::{self, Expected as ExpectedContext};
+use super::contract::{
+    exact_response_object, is_w3c_id, nullable_w3c_id, optional_finite_number, optional_string,
+    require_bool, require_exact_fields, require_finite_number, require_known_fields,
+    require_safe_positive_u64, require_safe_u64, require_string, require_string_equals,
+    require_timestamp, require_u64, required_object, validate_name_version,
+    validate_schema_version_value,
+};
 use super::projection::{count_scalar_leaves, validate_projection};
 use super::{
     DeploymentExpectation, METRIC_POINT_LIMIT, METRIC_SERIES_LIMIT, NEXT_ACTION_LIMIT,
     append_actions, append_evidence, append_labeled_bool, append_labeled_integer,
     append_labeled_number, append_labeled_text, append_named_text, append_runtime_context,
-    collect_scalar_fields, display_text, exact_response_object, field_text, invalid_response,
-    is_w3c_id, nullable_w3c_id, optional_finite_number, optional_string, require_bool,
-    require_exact_fields, require_finite_number, require_known_fields, require_safe_positive_u64,
-    require_safe_u64, require_string, require_string_equals, require_timestamp, require_u64,
-    required_object, validate_deployment_boundary, validate_evidence, validate_name_version,
-    validate_schema_version_value,
+    collect_scalar_fields, display_text, field_text, invalid_response,
+    validate_deployment_boundary, validate_evidence,
 };
 use crate::ids::{is_trace_id, is_uuid};
 use crate::{ExplainMetricTarget, RuntimeError};

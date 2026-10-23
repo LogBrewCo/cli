@@ -4,10 +4,13 @@ use std::collections::BTreeSet;
 
 use serde_json::{Map, Value};
 
+use super::contract::{
+    optional_safe_u64, optional_string, require_bool, require_exact_fields, require_known_fields,
+    require_string, require_u64, required_object,
+};
 use super::{
     append_labeled_bool, append_labeled_integer, append_labeled_text, invalid_response,
-    optional_safe_u64, optional_string, require_bool, require_exact_fields, require_known_fields,
-    require_string, require_u64, required_object, validate_field_receipts,
+    validate_field_receipts,
 };
 use crate::RuntimeError;
 

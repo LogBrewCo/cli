@@ -12,7 +12,8 @@ use serde::Deserialize;
 use serde_json::Value;
 use std::fmt::Write as _;
 
-use super::{MAX_SAFE_JSON_INTEGER, invalid_response, is_w3c_id};
+use super::contract::{MAX_SAFE_JSON_INTEGER, is_w3c_id};
+use super::invalid_response;
 use crate::http::nonempty_display_safe as safe_text;
 use crate::{IssueCorrectionTarget, RuntimeError};
 

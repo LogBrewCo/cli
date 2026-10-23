@@ -2,11 +2,11 @@
 
 use serde_json::{Map, Value};
 
-use super::projection::{sensitive_context_tag_key, sensitive_key, sensitive_string};
-use super::{
-    invalid_response, is_w3c_id, nullable_w3c_id, require_exact_fields, require_string,
-    require_u64, required_object,
+use super::contract::{
+    is_w3c_id, nullable_w3c_id, require_exact_fields, require_string, require_u64, required_object,
 };
+use super::invalid_response;
+use super::projection::{sensitive_context_tag_key, sensitive_key, sensitive_string};
 use crate::RuntimeError;
 
 /// Maximum typed-context string or tag-value length.

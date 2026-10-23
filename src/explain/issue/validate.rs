@@ -4,19 +4,21 @@ use std::collections::BTreeSet;
 
 use serde_json::{Map, Value};
 
-use crate::explain::{
-    DeploymentExpectation, EVIDENCE_CATEGORIES, MAX_SAFE_JSON_INTEGER, RELATED_ISSUE_LIMIT,
-    evidence_has_field, exact_response_object, invalid_response, issue_exception_chain,
-    issue_lifecycle, issue_occurrence_analysis, optional_object_value, optional_safe_u64,
+use crate::explain::contract::{
+    MAX_SAFE_JSON_INTEGER, exact_response_object, optional_object_value, optional_safe_u64,
     optional_string, require_bool, require_exact_fields, require_safe_positive_u64,
     require_safe_u64, require_string, require_string_equals, require_timestamp,
-    require_timestamp_millis, required_object, required_uuid_text, validate_availability,
-    validate_correlated_collection, validate_correlated_signal, validate_deployment_boundary,
-    validate_evidence, validate_evidence_vocabulary, validate_field_receipts,
-    validate_items_collection, validate_name_version, validate_next_actions,
-    validate_nullable_object, validate_object_array, validate_release_scope,
-    validate_schema_version_value, validate_shared_trace_summary, validate_string_array,
-    validate_strings, validate_trace_link,
+    require_timestamp_millis, required_object, required_uuid_text, validate_name_version,
+    validate_nullable_object, validate_object_array, validate_schema_version_value,
+    validate_string_array, validate_strings,
+};
+use crate::explain::{
+    DeploymentExpectation, EVIDENCE_CATEGORIES, RELATED_ISSUE_LIMIT, evidence_has_field,
+    invalid_response, issue_exception_chain, issue_lifecycle, issue_occurrence_analysis,
+    validate_availability, validate_correlated_collection, validate_correlated_signal,
+    validate_deployment_boundary, validate_evidence, validate_evidence_vocabulary,
+    validate_field_receipts, validate_items_collection, validate_next_actions,
+    validate_release_scope, validate_shared_trace_summary, validate_trace_link,
 };
 use crate::{IssueOccurrenceSelection, RuntimeError};
 use occurrence::{validate_issue_occurrence_selection, validate_selected_occurrence_correlations};
