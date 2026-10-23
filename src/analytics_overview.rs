@@ -35,7 +35,7 @@ const LIMITATION_LIMIT: usize = 12;
 )]
 pub(super) fn request_path(options: &AnalyticsOverviewOptions) -> String {
     let top_limit = options.top_limit.to_string();
-    crate::path_with_query(
+    crate::api_path::path_with_query(
         "/api/telemetry/analytics/overview",
         &[
             ("project_id", Some(options.project_id.as_str())),

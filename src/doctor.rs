@@ -1,7 +1,8 @@
 //! Bounded, read-only project diagnostics.
 
+use crate::api_path::path_with_query;
 use crate::auth::send_authenticated_without_refresh;
-use crate::{CliEnvironment, RuntimeError, path_with_query};
+use crate::{CliEnvironment, RuntimeError};
 
 /// Maximum accepted response size for one diagnostic read.
 const RESPONSE_LIMIT: u64 = 256 * 1024;

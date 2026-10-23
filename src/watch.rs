@@ -4,8 +4,9 @@ use futures_util::StreamExt as _;
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::{Error as WebSocketError, Message};
 
+use crate::api_path::encode_component;
 use crate::auth::send_authenticated_with_refresh;
-use crate::{CliEnvironment, RuntimeError, WatchOptions, WatchTarget, encode_component, http};
+use crate::{CliEnvironment, RuntimeError, WatchOptions, WatchTarget, http};
 
 /// Initial delay before reconnecting a live watch stream.
 const WATCH_RECONNECT_INITIAL_DELAY: std::time::Duration = std::time::Duration::from_secs(1);

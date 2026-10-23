@@ -17,13 +17,13 @@ use serde::de::{Error as _, MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer};
 use serde_json::{Map, Value};
 
+use crate::api_path::explain_path;
 use crate::auth::{AuthCredential, send_account_authenticated_with_refresh};
 use crate::http::terminal_safe;
 use crate::ids::{is_trace_id, is_uuid};
 use crate::time;
 use crate::{
     CliEnvironment, ExplainReleaseTarget, ExplainTarget, IssueOccurrenceSelection, RuntimeError,
-    explain_path,
 };
 
 /// Maximum accepted explanation response body.
