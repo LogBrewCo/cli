@@ -546,9 +546,12 @@ fn limit_text(limit: Option<u64>) -> String {
 fn action_next(code: &str) -> &'static str {
     match code {
         "continue_sending_telemetry" => "continue sending telemetry",
-        "reduce_usage_or_upgrade" => "reduce telemetry usage or review account options",
-        "archive_project_or_upgrade" => "archive an unused project or review account options",
-        "wait_until_reset_or_upgrade" => "wait until usage resets or review account options",
+        "reduce_usage_or_upgrade" | "archive_project_or_upgrade" => {
+            "reduce telemetry usage or email sales@logbrew.co for more volume"
+        }
+        "wait_until_reset_or_upgrade" => {
+            "wait until usage resets or email sales@logbrew.co for more volume"
+        }
         "check_usage_limits" => "inspect account usage limits",
         _ => "retry logbrew usage",
     }

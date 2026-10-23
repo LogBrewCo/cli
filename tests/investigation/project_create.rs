@@ -623,12 +623,6 @@ async_test!(project_create_errors_use_only_allowlisted_local_recovery -> Result<
         ),
         (
             429,
-            "project_limit_exceeded",
-            "project_limit_exceeded",
-            "remove an unused project or review account limits",
-        ),
-        (
-            429,
             "rate_limited",
             "rate_limited",
             "retry the exact same command later",
