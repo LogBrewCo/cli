@@ -41,6 +41,33 @@ pub(crate) fn token_is_project_read_key(token: &str) -> bool {
     token.trim_start().starts_with("lbw_read_")
 }
 
+/// Validates the read-key scope response; `None` for any other shape.
+pub(crate) fn parse_read_key_scope(
+    credential: &AuthCredential,
+    body: &str,
+) -> Option<ReadKeyScope> {
+    /// Exact `GET /api/auth/read-key` response.
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Scope {
+        /// Credential kind, always `read`.
+        kind: String,
+        /// Project UUID.
+        project_id: String,
+        /// Project name.
+        project_name: String,
+    }
+    let scope = serde_json::from_str::<Scope>(body).ok()?;
+    (scope.kind == "read"
+        && crate::ids::is_uuid(&scope.project_id)
+        && crate::http::nonempty_display_safe(&scope.project_name, 256)
+        && !scope.project_name.contains(credential.token().trim()))
+    .then_some(ReadKeyScope {
+        project_id: scope.project_id,
+        project_name: scope.project_name,
+    })
+}
+
 /// Returns a stable error for an API base that cannot safely own credentials.
 const fn invalid_api_url() -> RuntimeError {
     RuntimeError::Unavailable {

@@ -4,7 +4,10 @@
     reason = "the parent command modules consume these private-module helpers"
 )]
 
-use crate::auth::{AuthCredential, send_authenticated_with_refresh};
+use crate::auth::{
+    AuthCredential, parse_read_key_scope, send_authenticated_with_refresh,
+    token_is_project_read_key,
+};
 use crate::{CliEnvironment, RuntimeError};
 
 /// Maximum accepted project catalog response body.
@@ -99,8 +102,16 @@ pub(crate) async fn execute<W: std::io::Write>(
     let origin =
         crate::http::normalized_origin(env.base_url.as_str()).ok_or_else(transport_error)?;
     let client = crate::http::api_client().map_err(|_| transport_error())?;
-    let url = format!("{origin}/api/projects");
+    let (url, read_key_url) = (
+        format!("{origin}/api/projects"),
+        format!("{origin}/api/auth/read-key"),
+    );
     let response = send_authenticated_with_refresh(&client, env, |client, credential| {
+        let url = if token_is_project_read_key(credential.token()) {
+            &read_key_url
+        } else {
+            &url
+        };
         client.get(url.as_str()).bearer_auth(credential.token())
     })
     .await
@@ -114,6 +125,9 @@ pub(crate) async fn execute<W: std::io::Write>(
             crate::http::BodyError::Transport => transport_error(),
         })?;
 
+    if token_is_project_read_key(credential.token()) {
+        return Err(read_key_error(status, body.as_str(), &credential)?);
+    }
     if status != 200 {
         return Err(validate_error(status, body.as_str(), &credential)?);
     }
@@ -240,6 +254,48 @@ pub(crate) fn validate_project_access(
         _ => false,
     };
     valid.then_some(()).ok_or_else(invalid_response)
+}
+
+/// Explains that a read key cannot list projects, naming the one project it reads.
+fn read_key_error(
+    status: u16,
+    body: &str,
+    credential: &AuthCredential,
+) -> Result<RuntimeError, RuntimeError> {
+    if status == 401 {
+        return Ok(RuntimeError::Api {
+            status,
+            body: serde_json::json!({
+                "error": "read key is invalid, expired, or revoked",
+                "code": "unauthorized",
+                "next": "create a new read key with logbrew projects keys create <project_id> \
+                         --kind read, then set LOGBREW_TOKEN to it",
+                "next_action": {"code": "create_read_key", "target": "auth"}
+            })
+            .to_string(),
+            auth_source: credential.source(),
+            auth_label: credential.label(),
+        });
+    }
+    if status != 200 {
+        return validate_error(status, body, credential);
+    }
+    let scope = parse_read_key_scope(credential, body).ok_or_else(invalid_response)?;
+    Ok(RuntimeError::Api {
+        status: 403,
+        body: serde_json::json!({
+            "error": format!(
+                "a read key cannot list projects; it reads project {} ({})",
+                scope.project_name, scope.project_id
+            ),
+            "code": "forbidden",
+            "next": "run logbrew issues or logbrew read traces",
+            "next_action": {"code": "use_read_key_reads", "target": "read_key"}
+        })
+        .to_string(),
+        auth_source: credential.source(),
+        auth_label: credential.label(),
+    })
 }
 
 /// Validates a duplicate-aware standard error before replacing its text.

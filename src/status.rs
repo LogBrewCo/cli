@@ -1,9 +1,8 @@
 //! Status command execution and diagnostics.
 
 use crate::auth::{
-    AuthCredential, AuthSnapshot, ReadKeyScope, inspect_auth_snapshot,
-    send_authenticated_with_refresh, token_is_project_read_key,
-    write_status_success_with_auth_snapshot,
+    AuthSnapshot, inspect_auth_snapshot, parse_read_key_scope, send_authenticated_with_refresh,
+    token_is_project_read_key, write_status_success_with_auth_snapshot,
 };
 use crate::{CliEnvironment, RuntimeError};
 
@@ -89,7 +88,7 @@ async fn validated_auth_snapshot(
     let read_key = token_is_project_read_key(credential.token());
 
     if status.is_success() && read_key {
-        let Some(scope) = read_key_scope(&credential, body.as_str()) else {
+        let Some(scope) = parse_read_key_scope(&credential, body.as_str()) else {
             return Err(status_unavailable_error(
                 env,
                 Some(status.as_u16()),
@@ -149,30 +148,6 @@ async fn validated_auth_snapshot(
         Some(credential.redact_response_body(body.as_str())),
         format!("account returned status {}", status.as_u16()),
     )?)
-}
-
-/// Validates the read-key scope response; `None` for any other shape.
-fn read_key_scope(credential: &AuthCredential, body: &str) -> Option<ReadKeyScope> {
-    /// Exact `GET /api/auth/read-key` response.
-    #[derive(serde::Deserialize)]
-    #[serde(deny_unknown_fields)]
-    struct Scope {
-        /// Credential kind, always `read`.
-        kind: String,
-        /// Project UUID.
-        project_id: String,
-        /// Project name.
-        project_name: String,
-    }
-    let scope = serde_json::from_str::<Scope>(body).ok()?;
-    (scope.kind == "read"
-        && crate::ids::is_uuid(&scope.project_id)
-        && crate::http::nonempty_display_safe(&scope.project_name, 256)
-        && !scope.project_name.contains(credential.token().trim()))
-    .then_some(ReadKeyScope {
-        project_id: scope.project_id,
-        project_name: scope.project_name,
-    })
 }
 
 /// Builds a redacted status failure error.

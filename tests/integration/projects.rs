@@ -249,3 +249,56 @@ fn project_catalog() -> serde_json::Value {
         "created_at": "2026-07-25T07:00:00Z"
     }])
 }
+
+async_test!(projects_with_a_read_key_names_its_project_and_points_to_reads -> TestResult, {
+    const READ_KEY: &str = "lbw_read_fixture-catalog-key";
+    let server = MockServer::start().await?;
+    Mock::auth("GET", "/api/projects", READ_KEY)
+        .respond_with(ResponseTemplate::new(403).set_body_json(&serde_json::json!({
+            "code": "forbidden", "error": "Forbidden"
+        })))
+        .mount(&server);
+    Mock::auth("GET", "/api/auth/read-key", READ_KEY)
+        .respond_with(ResponseTemplate::new(200).set_body_json(&serde_json::json!({
+            "kind": "read", "project_id": PROJECT_ID, "project_name": "checkout-web"
+        })))
+        .mount(&server);
+    let env = super::authenticated_env(&server, READ_KEY, None);
+
+    for json in [true, false] {
+        let args: &[&str] = if json { &["logbrew", "projects", "--json"] } else { &["logbrew", "projects"] };
+        let command = parse_command(args.iter().copied())?;
+        let error = crate::failed_command(&command, &env).await?;
+        let mut output = Vec::new();
+        write_runtime_error(&error, json, &mut output)?;
+        let text = String::from_utf8(output)?;
+        assert!(!text.contains("response was invalid"), "{text}");
+        assert!(text.contains("read key"), "{text}");
+        assert!(text.contains("checkout-web") && text.contains(PROJECT_ID), "{text}");
+        assert!(text.contains("logbrew issues or logbrew read traces"), "{text}");
+        assert!(!text.contains(READ_KEY), "{text}");
+    }
+    Ok(())
+});
+
+async_test!(projects_with_an_invalid_read_key_points_to_a_new_key -> TestResult, {
+    const READ_KEY: &str = "lbw_read_fixture-revoked-key";
+    let server = MockServer::start().await?;
+    Mock::auth("GET", "/api/auth/read-key", READ_KEY)
+        .respond_with(ResponseTemplate::new(401).set_body_json(&serde_json::json!({
+            "code": "unauthorized", "error": "Invalid or expired token", "next": READ_KEY,
+            "next_action": {"code": "authorize_request", "target": "auth"}
+        })))
+        .mount(&server);
+    let env = super::authenticated_env(&server, READ_KEY, None);
+    let command = parse_command(["logbrew", "projects"])?;
+    let error = crate::failed_command(&command, &env).await?;
+    for json in [true, false] {
+        let mut output = Vec::new();
+        write_runtime_error(&error, json, &mut output)?;
+        let text = String::from_utf8(output)?;
+        assert!(text.contains("create a new read key"), "{text}");
+        assert!(!text.contains("logbrew login") && !text.contains(READ_KEY), "{text}");
+    }
+    Ok(())
+});
