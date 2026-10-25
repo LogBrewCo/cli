@@ -298,6 +298,7 @@ Usage:
 
 Use login once, status to verify API/auth state, whoami/me to inspect the authenticated account,
 and logout to revoke the stored server session when possible and always remove local credentials.
+With a read key in LOGBREW_TOKEN, status names the one project the key reads.
 Use --json for agent-readable auth checks.";
 
 /// JSON output help text.
@@ -514,9 +515,12 @@ Issue shortcuts accept status words, such as logbrew issues open, logbrew issue 
                                 issues, logbrew open issue, or logbrew errors closed.
 Recency issue shortcuts can include status and count, such as logbrew last 5 open issues.
 --service-name <service_name> is accepted as an alias for --service <service_name>.
-Since accepts positive compact durations such as 24h or 7d, or an RFC3339 timestamp such as \
+Since accepts positive compact durations such as 30m, 24h, or 7d, or an RFC3339 timestamp such as \
                                 2026-05-01T00:00:00Z.
 Until is an exclusive RFC3339 upper bound, such as 2026-06-01T00:00:00Z, later than since.
+Issue JSON keeps structured stack frames in attributes; stack_trace appears only when an SDK \
+                                sent raw stack text.
+Run logbrew explain issue <issue_id> for resolved frames with source context.
 Cursor pagination preserves JSON as {issues,next_cursor}; next_cursor is either {time,id} or null.
 Use --pagination cursor alone for the first page. Continue with --cursor-time and --cursor-id from \
                                 next_cursor.
@@ -553,7 +557,7 @@ Usage:
 
 Reads release summaries with counts for issues, logs, trace spans, and actions.
 --service-name <service_name> is accepted as an alias for --service <service_name>.
-Since accepts positive compact durations such as 24h or 7d, or an RFC3339 timestamp such as \
+Since accepts positive compact durations such as 30m, 24h, or 7d, or an RFC3339 timestamp such as \
                                   2026-05-01T00:00:00Z.
 Until is an exclusive RFC3339 upper bound, such as 2026-06-01T00:00:00Z, later than since.
 Limit must be a positive whole number.";
@@ -571,7 +575,7 @@ Usage:
 Reads retained metric samples with their kind, value, unit, temporality, SDK, and exact trace/span \
                                  links when captured.
 --service-name <service_name> is accepted as an alias for --service <service_name>.
-Since accepts positive compact durations such as 24h or 7d, or an RFC3339 timestamp such as \
+Since accepts positive compact durations such as 30m, 24h, or 7d, or an RFC3339 timestamp such as \
                                  2026-05-01T00:00:00Z.
 Until is an exclusive RFC3339 upper bound, such as 2026-06-01T00:00:00Z, later than since.
 Cursor pagination preserves JSON as {metrics,next_cursor}; next_cursor is either {time,id} or null.
@@ -597,7 +601,7 @@ Usage:
 Lists recent distributed traces for incident investigation. JSON preserves the backend bare array \
                                unless cursor mode returns {traces,next_cursor,naming_quality}.
 Status accepts error or ok, case-insensitively. Minimum duration is a non-negative whole number.
-Since accepts positive compact durations such as 24h or 7d, or an RFC3339 timestamp such as \
+Since accepts positive compact durations such as 30m, 24h, or 7d, or an RFC3339 timestamp such as \
                                2026-05-01T00:00:00Z.
 Until is an exclusive RFC3339 upper bound, such as 2026-06-01T00:00:00Z, later than since.
 The backend defaults limit to 100 and clamps it to 1..500.

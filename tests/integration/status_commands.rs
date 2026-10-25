@@ -124,6 +124,107 @@ async_test!(status_json_reports_expired_token_as_unauthenticated -> TestResult, 
     Ok(())
 });
 
+const READ_KEY: &str = "lbw_read_fixture-read-key";
+const READ_PROJECT: &str = "2f769098-3aef-4f85-808b-c48223ec2c0b";
+
+async_test!(status_names_the_project_a_valid_read_key_reads -> TestResult, {
+    let server = MockServer::start().await?;
+    Mock::route("GET", "/health")
+        .respond_with(ResponseTemplate::new(200).set_body_string("ok"))
+        .mount(&server);
+    Mock::auth("GET", "/api/auth/read-key", READ_KEY)
+        .respond_with(ResponseTemplate::new(200).set_body_json(&serde_json::json!({
+            "kind": "read",
+            "project_id": READ_PROJECT,
+            "project_name": "checkout-web"
+        })))
+        .expect(2)
+        .mount(&server);
+    let env = environment(&server, Some(READ_KEY), "read-key-test");
+
+    let mut output = Vec::new();
+    execute_command(&parse_command(["logbrew", "status", "--json"])?, &env, &mut output).await?;
+    let text = String::from_utf8(output)?;
+    let body: serde_json::Value = serde_json::from_str(text.as_str())?;
+    assert_eq!(body["authenticated"], true);
+    assert_eq!(body["auth_source"], "env");
+    assert_eq!(body["credential"], "read_key");
+    assert_eq!(body["project_id"], READ_PROJECT);
+    assert_eq!(body["project_name"], "checkout-web");
+    assert_eq!(body["next"], "run logbrew issues or logbrew read traces");
+    assert!(body.get("agent_use").is_none(), "a read key cannot watch");
+    assert!(!text.contains(READ_KEY));
+
+    let mut output = Vec::new();
+    execute_command(&parse_command(["logbrew", "status"])?, &env, &mut output).await?;
+    let text = String::from_utf8(output)?;
+    assert_eq!(
+        text,
+        format!(
+            "LogBrew API reachable.\nAPI: {}\nAuth: read key for project checkout-web \
+             ({READ_PROJECT}) (env token)\nNext: run logbrew issues or logbrew read traces\n",
+            server.uri()
+        )
+    );
+    Ok(())
+});
+
+async_test!(status_sends_an_invalid_read_key_to_a_new_key_not_login -> TestResult, {
+    let server = MockServer::start().await?;
+    Mock::route("GET", "/health")
+        .respond_with(ResponseTemplate::new(200).set_body_string("ok"))
+        .mount(&server);
+    Mock::auth("GET", "/api/auth/read-key", READ_KEY)
+        .respond_with(ResponseTemplate::new(401).set_body_json(&serde_json::json!({
+            "code": "unauthorized",
+            "error": "Invalid or expired token"
+        })))
+        .mount(&server);
+    let env = environment(&server, Some(READ_KEY), "invalid-read-key-test");
+    let mut output = Vec::new();
+
+    execute_command(&parse_command(["logbrew", "status", "--json"])?, &env, &mut output).await?;
+
+    let text = String::from_utf8(output)?;
+    let body: serde_json::Value = serde_json::from_str(text.as_str())?;
+    assert_eq!(body["authenticated"], false);
+    assert_eq!(body["auth_source"], "invalid_read_key");
+    assert_eq!(
+        body["next"],
+        "create a new read key with logbrew projects keys create <project_id> --kind read, \
+         then set LOGBREW_TOKEN to it"
+    );
+    assert!(!text.contains(READ_KEY));
+    Ok(())
+});
+
+async_test!(status_rejects_a_malformed_read_key_scope -> TestResult, {
+    let server = MockServer::start().await?;
+    Mock::route("GET", "/health")
+        .respond_with(ResponseTemplate::new(200).set_body_string("ok"))
+        .mount(&server);
+    Mock::auth("GET", "/api/auth/read-key", READ_KEY)
+        .respond_with(ResponseTemplate::new(200).set_body_json(&serde_json::json!({
+            "kind": "read",
+            "project_id": "not-a-uuid",
+            "project_name": READ_KEY
+        })))
+        .mount(&server);
+    let env = environment(&server, Some(READ_KEY), "malformed-read-key-test");
+    let mut output = Vec::new();
+
+    let error = execute_command(&parse_command(["logbrew", "status", "--json"])?, &env, &mut output)
+        .await
+        .err()
+        .ok_or("a malformed scope must fail")?;
+    write_runtime_error(&error, true, &mut output)?;
+
+    let text = String::from_utf8(output)?;
+    assert!(text.contains("\"ok\":false"), "{text}");
+    assert!(!text.contains(READ_KEY), "{text}");
+    Ok(())
+});
+
 async_test!(status_refreshes_expired_local_auth_before_reporting_authenticated -> TestResult, {
     let server = MockServer::start().await?;
     Mock::route("GET", "/health")

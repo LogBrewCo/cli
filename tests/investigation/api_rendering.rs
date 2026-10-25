@@ -324,6 +324,43 @@ async_test!(collection_reads_preserve_json_shape_and_render_service_name -> Test
     Ok(())
 });
 
+async_test!(issue_list_json_omits_a_null_raw_stack_and_keeps_frames -> TestResult, {
+    let frames = serde_json::json!({"exceptionChain": {"entries": [{"stackFrames": [
+        {"filename": "src/checkout.ts", "function": "pay", "line": 12}
+    ]}]}});
+    let issue = |id: &str, stack: serde_json::Value| {
+        serde_json::json!({"id": id, "status": "unresolved", "stack_trace": stack, "attributes": frames})
+    };
+    for (args, body) in [
+        (
+            &["logbrew", "issues", "--json"][..],
+            serde_json::json!([issue("a", serde_json::Value::Null), issue("b", "Error: raw".into())]),
+        ),
+        (
+            &["logbrew", "issues", "--pagination", "cursor", "--json"][..],
+            serde_json::json!({
+                "issues": [issue("a", serde_json::Value::Null), issue("b", "Error: raw".into())],
+                "next_cursor": null
+            }),
+        ),
+    ] {
+        let server = MockServer::start().await?;
+        mount_authenticated_json(&server, "GET", "/api/telemetry/issues", [], &body);
+        let env = authenticated_env(&server, "issue-list-null-stack");
+        let mut output = Vec::new();
+
+        execute_command(&parse_command(args.iter().copied())?, &env, &mut output).await?;
+
+        let printed: serde_json::Value = serde_json::from_slice(&output)?;
+        let issues = printed.get("issues").unwrap_or(&printed);
+        assert!(issues[0].get("stack_trace").is_none(), "{printed}");
+        assert_eq!(issues[0]["attributes"], frames);
+        assert_eq!(issues[1]["stack_trace"], "Error: raw");
+        assert_eq!(printed.get("next_cursor"), body.get("next_cursor"));
+    }
+    Ok(())
+});
+
 async_test!(invalid_since_preserves_backend_validation_recovery_for_agents -> TestResult, {
     let server = MockServer::start().await?;
     Mock::route("GET", "/api/telemetry/issues")
