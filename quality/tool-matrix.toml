@@ -11,7 +11,7 @@
 # workflows hold each pin (a full commit and a version comment).
 
 gates = ["scripts/check-all.sh"]
-utilities = ["[[", "awk", "basename", "bash", "cd", "cmp", "command", "continue", "cp", "curl", "cut", "dirname", "echo", "exit", "export", "find", "gh", "git", "grep", "jq", "mapfile", "mkdir", "mktemp", "openssl", "printf", "rmdir", "sed", "set", "sh", "sleep", "sudo", "tar", "tee", "tr", "trap", "true", "uname", "unzip", "wait", "xargs"]
+utilities = ["[[", "awk", "basename", "bash", "cat", "cd", "cmp", "command", "continue", "cp", "curl", "cut", "dirname", "echo", "exit", "export", "find", "gh", "git", "grep", "jq", "mapfile", "mkdir", "mktemp", "openssl", "printf", "rmdir", "sed", "set", "sh", "sleep", "sudo", "tail", "tar", "tee", "tr", "trap", "true", "uname", "unzip", "wait", "xargs"]
 
 [[tool]]
 id = "rust"
@@ -64,20 +64,20 @@ checked = 2026-10-19
 
 [[tool]]
 id = "cargo-audit"
-risk = "dependency advisories"
-tool = "cargo-audit"
+risk = "dependency advisories, including ones published after the change that locked a dependency merged"
+tool = "cargo-audit, and scripts/advisory-issue.sh for the daily scan"
 version = "0.22.2"
-pins = ["scripts/cargo-audit-version.sh::LOGBREW_CARGO_AUDIT_VERSION:-@VERSION@}", ".github/workflows/ci.yml::tool: cargo-audit@@VERSION@"]
+pins = ["scripts/cargo-audit-version.sh::LOGBREW_CARGO_AUDIT_VERSION:-@VERSION@}", ".github/workflows/ci.yml::tool: cargo-audit@@VERSION@", ".github/workflows/advisories.yml::tool: cargo-audit@@VERSION@"]
 uses = ["taiki-e/install-action"]
-commands = ["cargo audit"]
-runs_in = "CI check job (scripts/check-all.sh); release preflight"
-config = "defaults"
+commands = ["cargo audit", "scripts/advisory-issue.sh"]
+runs_in = "CI check job (scripts/check-all.sh); release preflight; Advisories workflow every day at 05:17 UTC and on manual runs (opens, updates, or closes the issue \"Dependency advisories\")"
+config = ".cargo/audit.toml; the daily scan adds --deny warnings, so unsound, unmaintained, and yanked warnings fail it"
 conflicts = "none known"
-exceptions = "none"
+exceptions = "RUSTSEC-2026-0381 (webpki-roots 0.26.11 re-exports 1.x; .cargo/audit.toml)"
 runtime = "inside the check step; installing it takes at most 4 s (n=50)"
-findings = "unknown: no recorded finding"
+findings = "first daily-scan run 2026-10-25: RUSTSEC-2026-0386 (tokio 1.53.2, unsound), a warning the check job allows"
 replaces = "none"
-checked = 2026-10-19
+checked = 2026-10-25
 
 [[tool]]
 id = "cargo-dist"
