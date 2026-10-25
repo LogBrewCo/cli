@@ -36,7 +36,11 @@ fn resolve_credential(env: &CliEnvironment) -> Result<AuthCredential, RuntimeErr
         return Ok(AuthCredential {
             token: token.clone(),
             source: AuthSource::Env.key(),
-            label: AuthSource::Env.human_label(),
+            label: if super::token_is_project_read_key(token) {
+                "read key (env token)"
+            } else {
+                AuthSource::Env.human_label()
+            },
             refreshable: false,
         });
     }

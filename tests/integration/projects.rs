@@ -276,7 +276,7 @@ async_test!(projects_with_a_read_key_names_its_project_and_points_to_reads -> Te
         assert!(text.contains("read key"), "{text}");
         assert!(text.contains("checkout-web") && text.contains(PROJECT_ID), "{text}");
         assert!(text.contains("logbrew issues or logbrew read traces"), "{text}");
-        assert!(!text.contains(READ_KEY), "{text}");
+        assert!(!text.contains(READ_KEY) && !text.contains("logged in"), "{text}");
     }
     Ok(())
 });
