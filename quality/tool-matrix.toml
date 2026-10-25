@@ -75,7 +75,7 @@ config = ".cargo/audit.toml; the daily scan adds --deny warnings, so unsound, un
 conflicts = "none known"
 exceptions = "RUSTSEC-2026-0381 (webpki-roots 0.26.11 re-exports 1.x; .cargo/audit.toml)"
 runtime = "inside the check step; installing it takes at most 4 s (n=50)"
-findings = "first daily-scan run 2026-10-25: RUSTSEC-2026-0386 (tokio 1.53.2, unsound), a warning the check job allows"
+findings = "seeded 2026-10-25: a throwaway branch pinning base64 0.5.1 failed with RUSTSEC-2017-0004 and opened issue #392 (run 40185022571; branch deleted); local run on main 2026-10-25: RUSTSEC-2026-0386 (tokio 1.53.2, unsound), a warning the check job allows"
 replaces = "none"
 checked = 2026-10-25
 
