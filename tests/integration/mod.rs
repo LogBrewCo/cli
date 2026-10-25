@@ -23,6 +23,7 @@ mod package_contents;
 mod project_archive;
 mod project_doctor;
 mod project_ingest_key_create;
+mod project_key_revoke;
 mod projects;
 mod release_workflows;
 mod runtime_errors;
