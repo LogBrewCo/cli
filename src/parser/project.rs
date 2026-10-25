@@ -71,6 +71,11 @@ pub(super) fn parse_project(args: &[String]) -> Result<Command, CliError> {
         {
             parse_project_ingest_key_create(tail)
         }
+        [namespace, subcommand, tail @ ..]
+            if matches!(namespace.as_str(), "key" | "keys") && subcommand == "revoke" =>
+        {
+            parse_project_key_revoke(tail)
+        }
         [subcommand, tail @ ..] if subcommand == "create" => parse_project_create(tail),
         [subcommand, tail @ ..] if subcommand == "archive" => parse_project_archive(tail),
         [subcommand, tail @ ..] if subcommand == "delete" => parse_project_deletion(tail),
@@ -184,6 +189,7 @@ fn parse_project_ingest_key_create(args: &[String]) -> Result<Command, CliError>
                     "server" => String::from("server"),
                     "cli" => String::from("cli"),
                     "artifact" => String::from("artifact"),
+                    "read" => String::from("read"),
                     _ => return Err(CliError::InvalidProjectIngestKeyCreateCommand),
                 });
             }
@@ -219,6 +225,29 @@ fn parse_project_ingest_key_create(args: &[String]) -> Result<Command, CliError>
         },
         json,
     })
+}
+
+/// Parses the closed, explicitly confirmed project key revocation grammar.
+fn parse_project_key_revoke(args: &[String]) -> Result<Command, CliError> {
+    let normalized = move_leading_json_to_tail(args);
+    let json_count = normalized.iter().filter(|value| *value == "--json").count();
+    let values = normalized
+        .iter()
+        .map(String::as_str)
+        .filter(|value| *value != "--json")
+        .collect::<Vec<_>>();
+    match values.as_slice() {
+        [project_id, key_id, "--yes"]
+            if json_count <= 1 && is_uuid(project_id) && is_uuid(key_id) =>
+        {
+            Ok(Command::ProjectKeyRevoke {
+                project_id: project_id.to_ascii_lowercase(),
+                key_id: key_id.to_ascii_lowercase(),
+                json: json_count == 1,
+            })
+        }
+        _ => Err(CliError::InvalidProjectsCommand),
+    }
 }
 
 /// Parses the closed, explicitly confirmed project archival grammar.

@@ -60,7 +60,8 @@ Usage:
                          [--environment <environment>] [--provider <provider> --repository <id>] \
                          [--discovery <uuid> --component <uuid>]... [--json]
   logbrew projects keys create <project_id> --ingest-key-file <path> [--label <label>] \
-                         [--kind sdk|browser|server|cli|artifact] [--json]
+                         [--kind sdk|browser|server|cli|artifact|read] [--json]
+  logbrew projects keys revoke <project_id> <key_id> --yes [--json]
   logbrew projects archive <project_id> --yes [--json]
   logbrew projects delete <project_id> --confirm <project_id> [--json]
   logbrew usage [--json]
@@ -241,7 +242,8 @@ Authenticated project creation (no dashboard sign-in):
                            --repository <id>] [--discovery <uuid> --component <uuid>]... [--json]
 Existing-project key creation (no dashboard sign-in):
   logbrew projects keys create <project_id> --ingest-key-file <path> [--label <label>] \
-                           [--kind sdk|browser|server|cli|artifact] [--json]
+                           [--kind sdk|browser|server|cli|artifact|read] [--json]
+  logbrew projects keys revoke <project_id> <key_id> --yes [--json]
 Run either command after logbrew login. Each stores the one-time ingest key in the chosen \
 owner-only file and never prints the key or its path.
 logbrew setup --create-project shows secure project-creation help and does not create a project.
@@ -364,7 +366,8 @@ Usage:
                            --repository <id>] [--discovery <uuid> --component <uuid>]... \
                            [--abandon-retry] [--json]
   logbrew projects keys create <project_id> --ingest-key-file <path> [--label <label>] \
-                           [--kind sdk|browser|server|cli|artifact] [--abandon-retry] [--json]
+                           [--kind sdk|browser|server|cli|artifact|read] [--abandon-retry] [--json]
+  logbrew projects keys revoke <project_id> <key_id> --yes [--json]
   logbrew projects archive <project_id> --yes [--json]
   logbrew projects delete <project_id> --confirm <project_id> [--json]
   logbrew setup --create-project [--json]
@@ -388,6 +391,10 @@ Existing-project key creation uses the same storage and retry guarantees with in
 retry state.
 The artifact kind is write-only and project-scoped. It uploads release source maps and native \
 debug files but cannot read artifact metadata or submit telemetry.
+The read kind is read-only and project-scoped. Set LOGBREW_TOKEN to it to read that project's \
+issues, traces, logs, actions, metrics, releases, and analytics; it cannot submit telemetry, \
+change issues, manage projects, or read any other project.
+Key revocation requires explicit --yes and stops the key at its next request.
 Builds that cannot prove owner-only file permissions fail before sending the create request.
 No local install, quota, or usage state is created.
 Project setup uses POST /api/projects/{project_id}/setup/seen and preserves backend setup status JSON.

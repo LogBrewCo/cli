@@ -238,14 +238,27 @@ logbrew projects keys create <project_id> \
 ```
 
 The default kind is `sdk`; supported kinds are `sdk`, `browser`, `server`,
-`cli`, and `artifact`. An artifact key is project-scoped and write-only. It can
-upload release source maps and native debug files but cannot read artifact
-metadata or submit telemetry. The command sends one idempotent
+`cli`, `artifact`, and `read`. An artifact key is project-scoped and
+write-only. It can upload release source maps and native debug files but
+cannot read artifact metadata or submit telemetry. A read key is
+project-scoped and read-only: set `LOGBREW_TOKEN` to it to read that project's
+issues, traces, logs, and other telemetry, for example from a coding agent or
+a CI job. It cannot submit telemetry, change issues, manage projects, or read
+another project. The command sends one idempotent
 account-authenticated request and
 stores the one-time key in a new owner-only file before reporting success. It
 never prints the key or its path and does not create a duplicate project. An
 ambiguous retry reuses the same request and idempotency key. Use
 `--abandon-retry` only to intentionally discard that pending attempt.
+
+### Revoke a project key
+
+```bash
+logbrew projects keys revoke <project_id> <key_id> --yes --json
+```
+
+The key stops working at its next request. Use the key ID from the JSON output
+of `logbrew projects keys create`.
 
 ### Archive an inactive project safely
 

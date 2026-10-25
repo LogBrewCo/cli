@@ -126,7 +126,7 @@ fn existing_project_key_create_rejects_hostile_or_ambiguous_grammar_without_refl
         assert_eq!(body["message"], "invalid project ingest key create command");
         assert_eq!(
             body["next"],
-            "use logbrew projects keys create <project_id> --ingest-key-file <path> with optional --label, --kind sdk|browser|server|cli|artifact, --abandon-retry, and --json"
+            "use logbrew projects keys create <project_id> --ingest-key-file <path> with optional --label, --kind sdk|browser|server|cli|artifact|read, --abandon-retry, and --json"
         );
         assert!(!text.contains(invalid_project));
         assert!(!text.contains("hostile-secret"));
@@ -140,7 +140,7 @@ fn projects_help_documents_existing_project_key_creation_and_safe_retry() {
     let text = help::help_text(HelpTopic::Projects);
 
     assert!(text.contains("logbrew projects keys create <project_id> --ingest-key-file <path>"));
-    assert!(text.contains("--kind sdk|browser|server|cli|artifact"));
+    assert!(text.contains("--kind sdk|browser|server|cli|artifact|read"));
     assert!(text.contains("artifact kind is write-only and project-scoped"));
     assert!(text.contains("existing project without creating a duplicate project"));
     assert!(text.contains("never prints the one-time ingest key or its file path"));
@@ -197,6 +197,27 @@ async_test!(existing_project_key_create_posts_exact_request_then_persists_before
     let retry_key = request_retry_key(&requests[0])?;
     assert!((1..=128).contains(&retry_key.len()));
     assert!(retry_key.bytes().all(|byte| (0x21..=0x7e).contains(&byte)));
+    Ok(())
+});
+
+async_test!(read_key_create_stores_the_key_and_points_to_reads -> Result<(), Box<dyn std::error::Error>>, {
+    let server = MockServer::start().await?;
+    Mock::auth("POST", format!("/api/projects/{PROJECT_ID}/ingest-keys"), "account-token")
+        .and(body_json(serde_json::json!({"label": "agent", "kind": "read", "expires_at": null})))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&success_response("agent", "read")))
+        .mount(&server);
+    let fixture = Fixture::new("read")?;
+    let command = parse_command(fixture.args("agent", "read", false, true))?;
+    let mut output = Vec::new();
+
+    execute_command(&command, &fixture.env(&server), &mut output).await?;
+
+    let text = String::from_utf8(output)?;
+    let body: serde_json::Value = serde_json::from_str(text.as_str())?;
+    assert_eq!(body["ingest_key"]["kind"], "read");
+    assert_eq!(body["next"], "load the stored read key into LOGBREW_TOKEN, then run logbrew issues");
+    assert!(!text.contains(ONE_TIME_TOKEN));
+    assert_eq!(std::fs::read_to_string(fixture.key_file.as_path())?, ONE_TIME_TOKEN);
     Ok(())
 });
 
@@ -690,10 +711,14 @@ impl Fixture {
 }
 
 fn success_response(label: &str, kind: &str) -> serde_json::Value {
-    let next_action = if kind == "artifact" {
-        serde_json::json!({"code": "upload_release_artifacts", "target": "release_artifact_upload"})
-    } else {
-        serde_json::json!({"code": "send_first_telemetry", "target": "telemetry_ingest"})
+    let next_action = match kind {
+        "artifact" => {
+            serde_json::json!({"code": "upload_release_artifacts", "target": "release_artifact_upload"})
+        }
+        "read" => {
+            serde_json::json!({"code": "review_project_dashboard", "target": "project_dashboard"})
+        }
+        _ => serde_json::json!({"code": "send_first_telemetry", "target": "telemetry_ingest"}),
     };
     serde_json::json!({
         "id": INGEST_ID,

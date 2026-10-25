@@ -465,10 +465,10 @@ impl CreatedProjectIngestKey {
             }
             drop(required_safe(ingest, "next", 512)?);
             let (action_code, action_target) = safe_action(ingest.get("next_action"))?;
-            let expected_action = if kind == "artifact" {
-                ("upload_release_artifacts", "release_artifact_upload")
-            } else {
-                ("send_first_telemetry", "telemetry_ingest")
+            let expected_action = match kind.as_str() {
+                "artifact" => ("upload_release_artifacts", "release_artifact_upload"),
+                "read" => ("review_project_dashboard", "project_dashboard"),
+                _ => ("send_first_telemetry", "telemetry_ingest"),
             };
             if (action_code.as_str(), action_target.as_str()) != expected_action {
                 return Err(invalid_response());
@@ -664,10 +664,14 @@ fn write_ingest_key_success<W: std::io::Write>(
     json: bool,
     output: &mut W,
 ) -> Result<(), RuntimeError> {
-    let next = if created.kind == "artifact" {
-        "load the stored artifact key into LOGBREW_TOKEN, then run logbrew debug-artifacts upload"
-    } else {
-        "configure the SDK with the stored ingest key, then run logbrew doctor --project <project_id>"
+    let next = match created.kind.as_str() {
+        "artifact" => {
+            "load the stored artifact key into LOGBREW_TOKEN, then run logbrew debug-artifacts upload"
+        }
+        "read" => "load the stored read key into LOGBREW_TOKEN, then run logbrew issues",
+        _ => {
+            "configure the SDK with the stored ingest key, then run logbrew doctor --project <project_id>"
+        }
     };
     if json {
         let body = serde_json::json!({
