@@ -59,11 +59,19 @@ pub(crate) fn write_api_success<W: std::io::Write>(
     }
     let value = serde_json::from_str::<serde_json::Value>(body);
     if command.wants_json() {
-        let _validated = value.as_ref().map_err(|_| RuntimeError::Unavailable {
+        let validated = value.map_err(|_| RuntimeError::Unavailable {
             message: "API response was invalid",
             next: "retry the command; if it repeats, report the public response contract",
         })?;
-        writeln!(output, "{body}")?;
+        if let Command::Read {
+            target: ReadTarget::Issues,
+            ..
+        } = command
+        {
+            writeln!(output, "{}", without_null_raw_stacks(validated))?;
+        } else {
+            writeln!(output, "{body}")?;
+        }
         return Ok(());
     }
 
@@ -83,6 +91,30 @@ pub(crate) fn write_api_success<W: std::io::Write>(
         writeln!(output, "{body}")?;
     }
     Ok(())
+}
+
+/// Drops `stack_trace: null` from listed issues: the field holds only raw stack text an SDK
+/// sent, while structured frames stay in `attributes` and in `logbrew explain issue`.
+fn without_null_raw_stacks(mut value: serde_json::Value) -> serde_json::Value {
+    let issues = if value.is_object() {
+        value.get_mut("issues")
+    } else {
+        Some(&mut value)
+    };
+    if let Some(serde_json::Value::Array(issues)) = issues {
+        for issue in issues
+            .iter_mut()
+            .filter_map(serde_json::Value::as_object_mut)
+        {
+            if issue
+                .get("stack_trace")
+                .is_some_and(serde_json::Value::is_null)
+            {
+                drop(issue.remove("stack_trace"));
+            }
+        }
+    }
+    value
 }
 
 /// Returns the human title for a cursor-mode collection read.

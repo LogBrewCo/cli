@@ -36,6 +36,11 @@ pub(crate) fn token_is_project_ingest_key(token: Option<&str>) -> bool {
     token.is_some_and(|token| token.trim_start().starts_with("lbw_ingest_"))
 }
 
+/// Returns whether a token has the project-scoped read key prefix.
+pub(crate) fn token_is_project_read_key(token: &str) -> bool {
+    token.trim_start().starts_with("lbw_read_")
+}
+
 /// Returns a stable error for an API base that cannot safely own credentials.
 const fn invalid_api_url() -> RuntimeError {
     RuntimeError::Unavailable {
@@ -44,7 +49,7 @@ const fn invalid_api_url() -> RuntimeError {
     }
 }
 /// Redacted local authentication status for CLI diagnostics.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct AuthSnapshot {
     /// Whether a local credential is configured.
     pub(crate) authenticated: bool,
@@ -54,6 +59,17 @@ pub(crate) struct AuthSnapshot {
     pub(crate) label: &'static str,
     /// Suggested next step for the current auth state.
     pub(crate) next: &'static str,
+    /// The one project a valid read key reads.
+    pub(crate) read_key: Option<ReadKeyScope>,
+}
+
+/// Validated, display-safe project scope of a read key.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ReadKeyScope {
+    /// Project UUID.
+    pub(crate) project_id: String,
+    /// Project name.
+    pub(crate) project_name: String,
 }
 
 /// Bearer token plus redacted source metadata for API calls.
@@ -187,8 +203,15 @@ pub(crate) fn write_status_success_with_auth_snapshot<W: std::io::Write>(
             "auth_source": auth_status.source,
             "next": auth_status.next,
         });
-        if auth_status.authenticated {
-            if let Some(object) = response.as_object_mut() {
+        if let Some(object) = response.as_object_mut() {
+            if let Some(scope) = &auth_status.read_key {
+                drop(object.insert("credential".to_owned(), "read_key".into()));
+                drop(object.insert("project_id".to_owned(), scope.project_id.as_str().into()));
+                drop(object.insert(
+                    "project_name".to_owned(),
+                    scope.project_name.as_str().into(),
+                ));
+            } else if auth_status.authenticated {
                 drop(object.insert("agent_use".to_owned(), authenticated_agent_use()));
             }
         }
@@ -196,9 +219,19 @@ pub(crate) fn write_status_success_with_auth_snapshot<W: std::io::Write>(
     } else {
         writeln!(output, "LogBrew API reachable.")?;
         writeln!(output, "API: {}", env.base_url)?;
-        writeln!(output, "Auth: {}", auth_status.label)?;
-        if auth_status.authenticated {
-            write_authenticated_agent_use_prompt(output)?;
+        if let Some(scope) = &auth_status.read_key {
+            writeln!(
+                output,
+                "Auth: read key for project {} ({}) {}",
+                crate::http::terminal_safe(&scope.project_name),
+                scope.project_id,
+                auth_status.label
+            )?;
+        } else {
+            writeln!(output, "Auth: {}", auth_status.label)?;
+            if auth_status.authenticated {
+                write_authenticated_agent_use_prompt(output)?;
+            }
         }
         writeln!(output, "Next: {}", auth_status.next)?;
     }
@@ -276,6 +309,7 @@ pub(crate) fn inspect_auth_snapshot(env: &CliEnvironment) -> Result<AuthSnapshot
         source: status.source_key(),
         label: status.human_label(),
         next: status.next_step(),
+        read_key: None,
     })
 }
 
