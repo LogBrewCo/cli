@@ -694,10 +694,10 @@ async_test!(runtimes_without_structured_plans_get_truthful_recovery -> TestResul
         body["next"],
         "use the released SDK guidance for this runtime; this CLI version does not yet provide a structured install plan"
     );
-    let human = setup_text(root.as_path(), &["logbrew", "setup", "--auto", "--yes"]).await?;
+    let human = setup_text(root.as_path(), &["logbrew", "setup", "--auto"]).await?;
     assert_eq!(
         human,
-        "LogBrew setup plan\nMode: non-mutating plan\nPreferences: auto=true, yes=true\nNo files \
+        "LogBrew setup plan\nMode: non-mutating plan\nPreferences: auto=true, yes=false\nNo files \
          changed.\nInstall: not ready\nDetected runtimes:\n- Rust (cargo) at Cargo.toml\nNext: \
          use the released SDK guidance for this runtime; this CLI version does not yet provide a \
          structured install plan\n"

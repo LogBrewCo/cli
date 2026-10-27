@@ -26,6 +26,14 @@ it skips the binary.
 
 ## Get started
 
+Set up LogBrew in your project with one command:
+
+```bash
+npx logbrew-cli@latest setup
+```
+
+Other commands:
+
 ```bash
 logbrew examples
 logbrew login

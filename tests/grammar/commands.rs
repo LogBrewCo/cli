@@ -1474,8 +1474,54 @@ fn parses_setup_auto_yes() {
         Ok(Command::Setup {
             auto: true,
             yes: true,
-            json: true
+            json: true,
+            mcp: false,
+            project_id: None,
         })
     );
     assert_eq!(command.map(|command| command.http_path()), Ok(None));
+}
+
+#[test]
+fn parses_setup_mcp_and_project() {
+    let project = "123e4567-e89b-12d3-a456-426614174000";
+    let expected = Ok(Command::Setup {
+        auto: false,
+        yes: true,
+        json: false,
+        mcp: true,
+        project_id: Some(project.to_owned()),
+    });
+    assert_eq!(
+        parse_command(["logbrew", "setup", "--yes", "--mcp", "--project", project]),
+        expected
+    );
+    assert_eq!(
+        parse_command([
+            "logbrew",
+            "setup",
+            "--project-id=123e4567-e89b-12d3-a456-426614174000",
+            "--mcp",
+            "--yes"
+        ]),
+        expected
+    );
+    for args in [
+        &["logbrew", "setup", "--project", "not-a-project"][..],
+        &["logbrew", "setup", "--project"][..],
+        &[
+            "logbrew",
+            "setup",
+            "--project",
+            project,
+            "--project",
+            project,
+        ][..],
+        &["logbrew", "setup", "--mcp", "--mcp"][..],
+    ] {
+        assert!(
+            parse_command(args.iter().copied()).is_err(),
+            "{args:?} must fail closed"
+        );
+    }
 }

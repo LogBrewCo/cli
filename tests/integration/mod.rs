@@ -30,6 +30,7 @@ mod project_manage;
 mod projects;
 mod release_workflows;
 mod runtime_errors;
+mod setup_wizard;
 mod status_commands;
 mod support_context;
 mod support_tickets;

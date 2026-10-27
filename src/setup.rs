@@ -1,6 +1,10 @@
 //! Local SDK setup planning.
 
+mod recipe;
+mod wizard;
+
 use std::{collections::HashSet, path::Path};
+pub use wizard::{WizardOptions, run_wizard};
 
 /// Maximum directory depth scanned for nearby project manifests.
 const MAX_SCAN_DEPTH: usize = 3;
@@ -590,6 +594,32 @@ fn python_install_command(package_manager: &str, setup: PythonSetup) -> String {
 
 /// Returns the highest-priority released install plan.
 fn install_plan(detected: &[ProjectDetection]) -> Option<InstallPlan> {
+    install_target(detected).map(|(plan, _)| plan)
+}
+
+/// The project the setup wizard changes: its plan, runtime, and manifest.
+struct SetupTarget {
+    /// Stable install-plan JSON.
+    plan: serde_json::Value,
+    /// Stable runtime key.
+    runtime: &'static str,
+    /// Manifest path relative to the directory setup ran in.
+    manifest: String,
+}
+
+/// Detects the wizard target from the directory setup ran in.
+fn setup_target(root: &Path) -> Option<SetupTarget> {
+    let detected = detect_projects(root);
+    let (plan, detection) = install_target(detected.as_slice())?;
+    Some(SetupTarget {
+        plan: plan.json(),
+        runtime: detection.runtime,
+        manifest: detection.manifest.clone(),
+    })
+}
+
+/// Returns the highest-priority released install plan and the detection behind it.
+fn install_target(detected: &[ProjectDetection]) -> Option<(InstallPlan, &ProjectDetection)> {
     detected
         .iter()
         .filter_map(|detection| {
@@ -615,9 +645,10 @@ fn install_plan(detected: &[ProjectDetection]) -> Option<InstallPlan> {
                 ),
                 _ => return None,
             })
+            .map(|(priority, plan)| (priority, plan, detection))
         })
-        .min_by_key(|(priority, _)| *priority)
-        .map(|(_, plan)| plan)
+        .min_by_key(|(priority, _, _)| *priority)
+        .map(|(_, plan, detection)| (plan, detection))
 }
 
 /// One detected project manifest.

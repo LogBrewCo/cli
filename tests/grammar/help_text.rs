@@ -150,7 +150,9 @@ fn native_debug_help_documents_large_artifact_boundaries() {
 fn setup_help_advertises_first_contact_aliases() {
     let text = help::help_text(HelpTopic::Setup);
 
-    assert!(text.contains("logbrew setup [--auto] [--yes] [--json]"));
+    assert!(text.contains("logbrew setup [--auto] [--json]"));
+    assert!(text.contains("logbrew setup --yes [--mcp] [--project <project_id>] [--json]"));
+    assert!(text.contains("npx logbrew-cli@latest setup"));
     assert!(
         text.contains(
             "logbrew projects create <name> --ingest-key-file <path> [--runtime <runtime>]"
@@ -161,13 +163,13 @@ fn setup_help_advertises_first_contact_aliases() {
         "logbrew setup --create-project shows secure project-creation help and does not create a \
          project."
     ));
+    assert!(
+        text.contains("Aliases: logbrew init, logbrew install, logbrew configure, logbrew sdk.")
+    );
     assert!(text.contains(
-        "Aliases (same non-mutating plan): logbrew init, logbrew install, logbrew configure, \
-         logbrew sdk."
-    ));
-    assert!(text.contains(
-        "Options: --auto records automatic detection preference; --yes records confirmation \
-         preference; --json prints stable setup JSON."
+        "Options: --yes applies setup without questions; --mcp adds the MCP server to detected \
+         agent clients; --project <project_id> sets up an existing project; --auto records \
+         automatic detection preference; --json prints stable setup JSON."
     ));
 }
 

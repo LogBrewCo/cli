@@ -143,10 +143,33 @@ CLI output never prints token material. `logbrew logout` attempts to revoke the 
 session and always removes local credentials; `LOGBREW_TOKEN` must be unset
 separately.
 
+### Set up a project with one command
+
+Run this from your project directory:
+
+```bash
+npx logbrew-cli@latest setup
+```
+
+Setup detects the framework, signs you in if necessary, and lets you select or
+create a project. It installs the SDK with the project's package manager,
+writes `LOGBREW_SERVER_API_KEY` to the framework's env file (`.env`, or
+`.env.local` for Symfony) without replacing existing values, and adds the init
+code where the framework expects it. Then it sends a test event and reads it
+back. Setup shows each file change as a diff and asks before it applies them.
+It changes only files in the project directory and adds the env file to
+`.gitignore`. You can run it again at any time; it keeps what is already set up.
+
+Coding agents and scripts use `logbrew setup --yes --json`. It applies the same
+steps without questions and lists every step and file change. Add `--mcp` to
+add the hosted MCP server to the project config of detected agent clients
+(Claude Code, Cursor, and VS Code), and `--project <project_id>` to use an
+existing project.
+
 ### Plan SDK installation without changing files
 
-Run `logbrew setup --json` from a project directory to detect nearby manifests
-and receive a stable, non-mutating installation plan. SwiftPM and XcodeGen
+Without `--yes`, `logbrew setup --json` detects nearby manifests and returns a
+stable, non-mutating installation plan. SwiftPM and XcodeGen
 projects receive the released Swift package declaration. Python projects
 receive a package-index plan for the core SDK or the detected Django, Flask, or
 FastAPI integration, including the pip, uv, poetry, or pipenv command. Bundler

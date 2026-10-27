@@ -100,7 +100,28 @@ pub async fn run_process() -> std::process::ExitCode {
 
     let env = CliEnvironment::from_process();
     let mut stdout = std::io::stdout();
-    if let Err(error) = execute_command(&command, &env, &mut stdout).await {
+    let interactive = std::io::IsTerminal::is_terminal(&std::io::stdin())
+        && std::io::IsTerminal::is_terminal(&stdout);
+    let result = if let Command::Setup {
+        yes: false,
+        json: false,
+        mcp,
+        project_id,
+        ..
+    } = &command
+        && interactive
+    {
+        let options = setup::WizardOptions {
+            mcp: *mcp,
+            project_id: project_id.clone(),
+            ..setup::WizardOptions::default()
+        };
+        let mut input = std::io::BufReader::new(std::io::stdin());
+        setup::run_wizard(&env, &options, &mut input, &mut stdout).await
+    } else {
+        execute_command(&command, &env, &mut stdout).await
+    };
+    if let Err(error) = result {
         if matches!(command, Command::NativeDebugArtifacts { json: true, .. }) {
             let _result = write_native_debug_runtime_error(&error, &mut stdout);
         } else {
@@ -233,14 +254,18 @@ pub enum Command {
         /// Emit machine-readable JSON.
         json: bool,
     },
-    /// Detects the current project and prints a non-mutating SDK setup plan.
+    /// Plans SDK setup, or applies it with `--yes` or in an interactive terminal.
     Setup {
         /// Let the CLI pick the framework or runtime automatically.
         auto: bool,
-        /// Suppress confirmation prompts.
+        /// Apply setup without prompts.
         yes: bool,
         /// Emit machine-readable JSON.
         json: bool,
+        /// Add the hosted MCP server to detected agent clients without asking.
+        mcp: bool,
+        /// Existing project to set up instead of choosing or creating one.
+        project_id: Option<String>,
     },
     /// Checks local auth and server reachability.
     Status {
@@ -2108,7 +2133,7 @@ pub async fn execute_command<W: std::io::Write>(
             json,
         } => execute_login(env, *provider, *open_browser, *json, output).await,
         Command::Logout { json } => execute_logout(env, *json, output).await,
-        Command::Setup { auto, yes, json } => execute_setup(env, *auto, *yes, *json, output),
+        Command::Setup { .. } => execute_setup(env, command, output).await,
         Command::Status { json } => execute_status(env, *json, output).await,
         Command::WhoAmI { json } => execute_whoami(env, *json, output).await,
         Command::Doctor { project_id, json } => {
@@ -2217,14 +2242,31 @@ fn execute_help<W: std::io::Write>(
     Ok(())
 }
 
-/// Executes setup planning.
-fn execute_setup<W: std::io::Write>(
+/// Applies setup with `--yes`; otherwise prints the non-mutating plan.
+async fn execute_setup<W: std::io::Write>(
     env: &CliEnvironment,
-    auto: bool,
-    yes: bool,
-    json: bool,
+    command: &Command,
     output: &mut W,
 ) -> Result<(), RuntimeError> {
+    let Command::Setup {
+        auto,
+        yes,
+        json,
+        mcp,
+        project_id,
+    } = command.clone()
+    else {
+        return Err(CliError::UnknownCommand.into());
+    };
+    if yes {
+        let options = setup::WizardOptions {
+            yes,
+            json,
+            mcp,
+            project_id,
+        };
+        return setup::run_wizard(env, &options, &mut std::io::empty(), output).await;
+    }
     write_setup_plan(env.cwd.as_deref(), auto, yes, json, output)?;
     Ok(())
 }
