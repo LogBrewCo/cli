@@ -323,6 +323,18 @@ pub enum Command {
         /// Emit the exact validated server array.
         json: bool,
     },
+    /// Lists the newest archived projects the account can restore.
+    ProjectArchivedList {
+        /// Emit the exact validated server object.
+        json: bool,
+    },
+    /// Restores one archived project.
+    ProjectRestore {
+        /// Canonical lowercase project UUID.
+        project_id: String,
+        /// Emit machine-readable JSON.
+        json: bool,
+    },
     /// Renames one project.
     ProjectRename {
         /// Canonical lowercase project UUID.
@@ -1664,6 +1676,12 @@ impl Command {
             Self::ProjectKeyRevoke {
                 project_id, key_id, ..
             } => Some(format!("/api/projects/{project_id}/ingest-keys/{key_id}")),
+            Self::ProjectArchivedList { .. } => {
+                Some(String::from("/api/projects/archived?limit=100"))
+            }
+            Self::ProjectRestore { project_id, .. } => {
+                Some(format!("/api/projects/{project_id}/restore"))
+            }
             Self::ProjectKeyList { project_id, .. } => {
                 Some(format!("/api/projects/{project_id}/ingest-keys"))
             }
@@ -1719,6 +1737,8 @@ impl Command {
             | Self::ProjectKeyRevoke { json, .. }
             | Self::ProjectKeyList { json, .. }
             | Self::ProjectRename { json, .. }
+            | Self::ProjectRestore { json, .. }
+            | Self::ProjectArchivedList { json }
             | Self::Version { json }
             | Self::Read { json, .. }
             | Self::Watch { json, .. }
@@ -1773,6 +1793,7 @@ impl Command {
                 ..
             }
             | Self::ProjectDeletion { .. }
+            | Self::ProjectRestore { .. }
             | Self::Billing { .. } => Some(HttpMethod::Post),
             Self::Support {
                 target: SupportTarget::UpdateStatus { .. },
@@ -1786,6 +1807,7 @@ impl Command {
             Self::Projects { .. }
             | Self::McpGrants { .. }
             | Self::ProjectKeyList { .. }
+            | Self::ProjectArchivedList { .. }
             | Self::ProjectRepositories {
                 target: RepositorySetupTarget::Catalog,
                 ..
@@ -1907,6 +1929,8 @@ impl Command {
             | Self::ProjectKeyRevoke { .. }
             | Self::ProjectKeyList { .. }
             | Self::ProjectRename { .. }
+            | Self::ProjectRestore { .. }
+            | Self::ProjectArchivedList { .. }
             | Self::Version { .. }
             | Self::Read { .. }
             | Self::Watch { .. }
@@ -1944,6 +1968,8 @@ impl Command {
             | Self::ProjectKeyRevoke { .. }
             | Self::ProjectKeyList { .. }
             | Self::ProjectRename { .. }
+            | Self::ProjectRestore { .. }
+            | Self::ProjectArchivedList { .. }
             | Self::Version { .. }
             | Self::Read { .. }
             | Self::Watch { .. }
@@ -2112,6 +2138,12 @@ pub async fn execute_command<W: std::io::Write>(
             key_id,
             json,
         } => project_key_revoke::execute(env, project_id, key_id, *json, output).await,
+        Command::ProjectArchivedList { json } => {
+            project_manage::execute_archived_list(env, *json, output).await
+        }
+        Command::ProjectRestore { project_id, json } => {
+            project_manage::execute_restore(env, project_id, *json, output).await
+        }
         Command::ProjectKeyList { project_id, json } => {
             project_manage::execute_key_list(env, project_id, *json, output).await
         }

@@ -161,6 +161,8 @@ fn cursor_response_title(command: &Command) -> Option<&'static str> {
         | Command::ProjectKeyRevoke { .. }
         | Command::ProjectKeyList { .. }
         | Command::ProjectRename { .. }
+        | Command::ProjectRestore { .. }
+        | Command::ProjectArchivedList { .. }
         | Command::Version { .. }
         | Command::Watch { .. }
         | Command::Explain { .. }
@@ -400,6 +402,8 @@ fn human_summary(command: &Command, value: &serde_json::Value) -> Option<String>
         | Command::ProjectKeyRevoke { .. }
         | Command::ProjectKeyList { .. }
         | Command::ProjectRename { .. }
+        | Command::ProjectRestore { .. }
+        | Command::ProjectArchivedList { .. }
         | Command::Version { .. }
         | Command::Deploy { .. }
         | Command::AnalyticsOverview { .. }

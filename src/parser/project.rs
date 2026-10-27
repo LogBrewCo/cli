@@ -82,6 +82,12 @@ pub(super) fn parse_project(args: &[String]) -> Result<Command, CliError> {
             parse_project_key_list(tail)
         }
         [subcommand, tail @ ..] if subcommand == "rename" => parse_project_rename(tail),
+        [subcommand, tail @ ..] if subcommand == "restore" => parse_project_restore(tail),
+        [subcommand, tail @ ..] if subcommand == "archived" => match tail {
+            [] => Ok(Command::ProjectArchivedList { json: false }),
+            [flag] if flag == "--json" => Ok(Command::ProjectArchivedList { json: true }),
+            _ => Err(CliError::InvalidProjectsCommand),
+        },
         [subcommand, tail @ ..] if subcommand == "create" => parse_project_create(tail),
         [subcommand, tail @ ..] if subcommand == "archive" => parse_project_archive(tail),
         [subcommand, tail @ ..] if subcommand == "delete" => parse_project_deletion(tail),
@@ -267,6 +273,24 @@ fn parse_project_key_list(args: &[String]) -> Result<Command, CliError> {
         .collect::<Vec<_>>();
     match values.as_slice() {
         [project_id] if json_count <= 1 && is_uuid(project_id) => Ok(Command::ProjectKeyList {
+            project_id: project_id.to_ascii_lowercase(),
+            json: json_count == 1,
+        }),
+        _ => Err(CliError::InvalidProjectsCommand),
+    }
+}
+
+/// Parses `restore <project_id> [--json]`.
+fn parse_project_restore(args: &[String]) -> Result<Command, CliError> {
+    let normalized = move_leading_json_to_tail(args);
+    let json_count = normalized.iter().filter(|value| *value == "--json").count();
+    let values = normalized
+        .iter()
+        .map(String::as_str)
+        .filter(|value| *value != "--json")
+        .collect::<Vec<_>>();
+    match values.as_slice() {
+        [project_id] if json_count <= 1 && is_uuid(project_id) => Ok(Command::ProjectRestore {
             project_id: project_id.to_ascii_lowercase(),
             json: json_count == 1,
         }),
