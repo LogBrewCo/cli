@@ -65,6 +65,8 @@ Usage:
   logbrew projects keys revoke <project_id> <key_id> --yes [--json]
   logbrew projects rename <project_id> --name <name> [--json]
   logbrew projects archive <project_id> --yes [--json]
+  logbrew projects archived [--json]
+  logbrew projects restore <project_id> [--json]
   logbrew projects delete <project_id> --confirm <project_id> [--json]
   logbrew usage [--json]
   logbrew mcp grants [--json]
@@ -376,6 +378,8 @@ Usage:
   logbrew projects keys revoke <project_id> <key_id> --yes [--json]
   logbrew projects rename <project_id> --name <name> [--json]
   logbrew projects archive <project_id> --yes [--json]
+  logbrew projects archived [--json]
+  logbrew projects restore <project_id> [--json]
   logbrew projects delete <project_id> --confirm <project_id> [--json]
   logbrew setup --create-project [--json]
   logbrew projects setup <project_id> [--runtime <runtime>] [--source api|cli|sdk] \

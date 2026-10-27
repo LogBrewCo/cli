@@ -1,4 +1,4 @@
-//! Project key list and project rename.
+//! Project key list, rename, archived list, and restore.
 #![expect(
     clippy::redundant_pub_crate,
     reason = "the parent command executor consumes these private-module helpers"
@@ -23,6 +23,57 @@ struct Renamed {
     name: String,
 }
 
+/// HTTP request a project command sends.
+enum Request<'a> {
+    /// Read a resource.
+    Get,
+    /// Change fields of a resource.
+    Patch(&'a serde_json::Value),
+    /// Run an action without a body.
+    Post,
+}
+
+/// Archived project row; extra fields are refused.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ArchivedProject {
+    /// Project UUID.
+    id: String,
+    /// Display name.
+    name: String,
+    /// Telemetry service name.
+    service_name: String,
+    /// Creation time.
+    created_at: String,
+    /// Archive time.
+    archived_at: String,
+    /// Fixed restore action.
+    next_action: serde_json::Value,
+}
+
+impl ArchivedProject {
+    /// Whether every field is display-safe and well formed.
+    fn valid(&self) -> bool {
+        crate::ids::is_uuid(&self.id)
+            && crate::http::nonempty_display_safe(&self.name, 480)
+            && crate::http::nonempty_display_safe(&self.service_name, 480)
+            && crate::time::is_rfc3339_utc(&self.created_at)
+            && crate::time::is_rfc3339_utc(&self.archived_at)
+            && self.next_action
+                == serde_json::json!({"code": "restore_project", "target": "project_restore"})
+    }
+}
+
+/// Newest-first archived project page.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ArchivedPage {
+    /// Archived projects, newest first.
+    projects: Vec<ArchivedProject>,
+    /// Present when older archived projects exist.
+    next_cursor: Option<serde_json::Value>,
+}
+
 /// Lists one project's keys without secret material.
 pub(crate) async fn execute_key_list<W: std::io::Write>(
     env: &CliEnvironment,
@@ -31,7 +82,7 @@ pub(crate) async fn execute_key_list<W: std::io::Write>(
     output: &mut W,
 ) -> Result<(), RuntimeError> {
     let path = format!("/api/projects/{project_id}/ingest-keys");
-    let (status, body, credential) = send(env, path.as_str(), None).await?;
+    let (status, body, credential) = send(env, path.as_str(), Request::Get).await?;
     if status != 200 {
         return Err(api_error(status, body.as_str(), "keys", &credential));
     }
@@ -75,7 +126,7 @@ pub(crate) async fn execute_rename<W: std::io::Write>(
 ) -> Result<(), RuntimeError> {
     let path = format!("/api/projects/{project_id}");
     let request = serde_json::json!({ "name": name });
-    let (status, body, credential) = send(env, path.as_str(), Some(&request)).await?;
+    let (status, body, credential) = send(env, path.as_str(), Request::Patch(&request)).await?;
     if status != 200 {
         return Err(api_error(status, body.as_str(), "rename", &credential));
     }
@@ -99,21 +150,92 @@ pub(crate) async fn execute_rename<W: std::io::Write>(
     Ok(())
 }
 
-/// Sends a GET, or a PATCH with `body`, to `path` with account authentication.
+/// Lists the newest 100 archived projects the account can restore.
+pub(crate) async fn execute_archived_list<W: std::io::Write>(
+    env: &CliEnvironment,
+    json: bool,
+    output: &mut W,
+) -> Result<(), RuntimeError> {
+    let (status, body, credential) =
+        send(env, "/api/projects/archived?limit=100", Request::Get).await?;
+    if status != 200 {
+        return Err(api_error(status, body.as_str(), "archived", &credential));
+    }
+    let page = serde_json::from_str::<ArchivedPage>(body.as_str()).map_err(|_| invalid())?;
+    if page.projects.len() > HUMAN_ROW_LIMIT || !page.projects.iter().all(ArchivedProject::valid) {
+        return Err(invalid());
+    }
+    if json {
+        writeln!(output, "{body}")?;
+        return Ok(());
+    }
+    writeln!(output, "Archived projects ({})", page.projects.len())?;
+    for project in &page.projects {
+        writeln!(
+            output,
+            "- id={} name={} archived={}",
+            project.id, project.name, project.archived_at
+        )?;
+    }
+    if page.next_cursor.is_some() {
+        writeln!(
+            output,
+            "Older archived projects exist; this list shows the newest 100."
+        )?;
+    }
+    writeln!(
+        output,
+        "Next: run logbrew projects restore <project_id> to restore one"
+    )?;
+    Ok(())
+}
+
+/// Restores one archived project the account owns.
+pub(crate) async fn execute_restore<W: std::io::Write>(
+    env: &CliEnvironment,
+    project_id: &str,
+    json: bool,
+    output: &mut W,
+) -> Result<(), RuntimeError> {
+    let path = format!("/api/projects/{project_id}/restore");
+    let (status, body, credential) = send(env, path.as_str(), Request::Post).await?;
+    if status != 204 {
+        return Err(api_error(status, body.as_str(), "restore", &credential));
+    }
+    if !body.is_empty() {
+        return Err(invalid());
+    }
+    if json {
+        let receipt = serde_json::json!({
+            "ok": true,
+            "project_id": project_id,
+            "status": "active",
+            "next": "run logbrew projects --json",
+        });
+        writeln!(output, "{receipt}")?;
+    } else {
+        writeln!(output, "Project restored: {project_id}")?;
+        writeln!(output, "Next: run logbrew projects")?;
+    }
+    Ok(())
+}
+
+/// Sends `request` to `path` with account authentication.
 async fn send(
     env: &CliEnvironment,
     path: &str,
-    body: Option<&serde_json::Value>,
+    request: Request<'_>,
 ) -> Result<(u16, String, AuthCredential), RuntimeError> {
     let origin = crate::http::normalized_origin(env.base_url.as_str()).ok_or_else(transport)?;
     let client = crate::http::api_client().map_err(|_| transport())?;
     let url = format!("{origin}{path}");
     let (response, credential) =
         send_account_authenticated_with_refresh(&client, env, |client, credential| {
-            body.map_or_else(
-                || client.get(url.as_str()),
-                |body| client.patch(url.as_str()).json(body),
-            )
+            match request {
+                Request::Get => client.get(url.as_str()),
+                Request::Patch(body) => client.patch(url.as_str()).json(body),
+                Request::Post => client.post(url.as_str()),
+            }
             .bearer_auth(credential.token())
         })
         .await
@@ -144,9 +266,17 @@ fn api_error(status: u16, body: &str, action: &str, credential: &AuthCredential)
     let body = shape.rate_limit_body("projects").unwrap_or_else(|| {
         let (code, next) = match status {
             401 => ("unauthorized", "run logbrew login"),
+            404 if action == "restore" => (
+                "not_found",
+                "run logbrew projects archived and use a project that this account archived",
+            ),
             404 => (
                 "not_found",
                 "run logbrew projects and use an active project that this account owns",
+            ),
+            422 if action == "restore" => (
+                "deletion_requested",
+                "this project is scheduled for permanent deletion and cannot be restored",
             ),
             422 => ("invalid_name", "use a project name of 1 to 120 characters"),
             405 if action == "rename" => (

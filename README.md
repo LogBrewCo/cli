@@ -290,8 +290,18 @@ logbrew projects archive <project_id> --yes --json
 The command requires explicit `--yes`, sends one account-authenticated archive
 request, and reports success only after an empty `204` response. The project
 then leaves the active catalog and its project-scoped ingest keys no longer
-authorize new ingestion. This is a soft archive; the CLI makes no hard-delete
-or restoration promise.
+authorize new ingestion. This is a soft archive, not a deletion.
+
+### Restore an archived project
+
+```bash
+logbrew projects archived --json
+logbrew projects restore <project_id> --json
+```
+
+`archived` lists the newest 100 archived projects with their IDs, names, and
+archive times. `restore` returns one to the active project list. A project
+scheduled for permanent deletion cannot be restored.
 
 ### Upgrade the plan or manage billing
 
