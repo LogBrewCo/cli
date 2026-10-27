@@ -11,26 +11,43 @@ use crate::{CliEnvironment, CliError, RuntimeError};
 /// Maximum accepted revocation response body.
 const RESPONSE_LIMIT: usize = 64 * 1024;
 
-/// Revoked key metadata; the raw key is never returned.
+/// Key metadata from the list and revocation routes; the raw key is never returned.
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
-struct KeyMetadata {
+pub(crate) struct KeyMetadata {
     /// Key UUID.
-    id: String,
-    /// Key label, validated and discarded.
-    label: String,
+    pub(crate) id: String,
+    /// Key label.
+    pub(crate) label: String,
     /// Key kind.
-    kind: String,
-    /// Short non-secret key prefix, validated and discarded.
-    token_prefix: String,
-    /// Key state after the request.
-    status: String,
-    /// Creation time, validated and discarded.
-    created_at: String,
-    /// Optional expiry, validated and discarded.
-    expires_at: Option<String>,
+    pub(crate) kind: String,
+    /// Short non-secret key prefix.
+    pub(crate) token_prefix: String,
+    /// Key state: `active`, `expired`, or `revoked`.
+    pub(crate) status: String,
+    /// Creation time.
+    pub(crate) created_at: String,
+    /// Optional expiry.
+    pub(crate) expires_at: Option<String>,
     /// Revocation time.
-    revoked_at: Option<String>,
+    pub(crate) revoked_at: Option<String>,
+}
+
+impl KeyMetadata {
+    /// Whether every field holds the documented value shape.
+    pub(crate) fn valid(&self) -> bool {
+        let safe = |text: &str| crate::http::nonempty_display_safe(text, 128);
+        is_uuid(self.id.as_str())
+            && matches!(self.status.as_str(), "active" | "expired" | "revoked")
+            && (self.status == "revoked") == self.revoked_at.is_some()
+            && std::iter::once(Some(self.created_at.as_str()))
+                .chain([self.expires_at.as_deref(), self.revoked_at.as_deref()])
+                .flatten()
+                .all(crate::time::is_rfc3339_utc)
+            && [&self.label, &self.kind, &self.token_prefix]
+                .into_iter()
+                .all(|text| safe(text))
+    }
 }
 
 /// Revokes one project key: it stops working at its next request.
@@ -65,23 +82,7 @@ pub(crate) async fn execute<W: std::io::Write>(
         return Err(api_error(status, body.as_str(), &credential));
     }
     let revoked = serde_json::from_str::<KeyMetadata>(body.as_str()).map_err(|_| invalid())?;
-    let safe = |text: &str| crate::http::nonempty_display_safe(text, 128);
-    let timestamps = std::iter::once(Some(revoked.created_at.as_str()))
-        .chain([revoked.expires_at.as_deref(), revoked.revoked_at.as_deref()])
-        .flatten()
-        .all(crate::time::is_rfc3339_utc);
-    if revoked.id != key_id
-        || revoked.status != "revoked"
-        || revoked.revoked_at.is_none()
-        || !timestamps
-        || ![
-            revoked.label.as_str(),
-            revoked.kind.as_str(),
-            revoked.token_prefix.as_str(),
-        ]
-        .into_iter()
-        .all(safe)
-    {
+    if revoked.id != key_id || revoked.status != "revoked" || !revoked.valid() {
         return Err(invalid());
     }
     if json {

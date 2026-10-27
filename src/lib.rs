@@ -44,6 +44,7 @@ mod parser;
 mod project_archive;
 mod project_create;
 mod project_key_revoke;
+mod project_manage;
 mod projects;
 #[doc(hidden)]
 pub mod render;
@@ -313,6 +314,22 @@ pub enum Command {
     /// Lists the account's connected MCP clients (grants).
     McpGrants {
         /// Emit the exact validated server object.
+        json: bool,
+    },
+    /// Lists one project's keys without secret material.
+    ProjectKeyList {
+        /// Canonical lowercase project UUID.
+        project_id: String,
+        /// Emit the exact validated server array.
+        json: bool,
+    },
+    /// Renames one project.
+    ProjectRename {
+        /// Canonical lowercase project UUID.
+        project_id: String,
+        /// New display name, 1 to 120 characters.
+        name: String,
+        /// Emit machine-readable JSON.
         json: bool,
     },
     /// Revokes one project key after explicit confirmation.
@@ -1634,7 +1651,9 @@ impl Command {
             Self::ProjectSetupSeen { project_id, .. } => {
                 Some(format!("/api/projects/{project_id}/setup/seen"))
             }
-            Self::ProjectArchive { project_id, .. } => Some(format!("/api/projects/{project_id}")),
+            Self::ProjectArchive { project_id, .. } | Self::ProjectRename { project_id, .. } => {
+                Some(format!("/api/projects/{project_id}"))
+            }
             Self::McpGrants { .. } => Some(String::from("/api/mcp/grants?response_version=2")),
             Self::Billing { tier, .. } => Some(String::from(if tier.is_some() {
                 "/api/billing/checkout"
@@ -1645,6 +1664,9 @@ impl Command {
             Self::ProjectKeyRevoke {
                 project_id, key_id, ..
             } => Some(format!("/api/projects/{project_id}/ingest-keys/{key_id}")),
+            Self::ProjectKeyList { project_id, .. } => {
+                Some(format!("/api/projects/{project_id}/ingest-keys"))
+            }
             Self::ProjectDeletion { .. } => Some(String::from("/api/support/tickets")),
             Self::ProjectRepositories { target, .. } => Some(String::from(match target {
                 RepositorySetupTarget::Catalog => "/api/projects/repositories",
@@ -1695,6 +1717,8 @@ impl Command {
             | Self::Billing { json, .. }
             | Self::McpRevoke { json, .. }
             | Self::ProjectKeyRevoke { json, .. }
+            | Self::ProjectKeyList { json, .. }
+            | Self::ProjectRename { json, .. }
             | Self::Version { json }
             | Self::Read { json, .. }
             | Self::Watch { json, .. }
@@ -1754,12 +1778,14 @@ impl Command {
                 target: SupportTarget::UpdateStatus { .. },
                 ..
             }
-            | Self::Set { .. } => Some(HttpMethod::Patch),
+            | Self::Set { .. }
+            | Self::ProjectRename { .. } => Some(HttpMethod::Patch),
             Self::ProjectArchive { .. }
             | Self::McpRevoke { .. }
             | Self::ProjectKeyRevoke { .. } => Some(HttpMethod::Delete),
             Self::Projects { .. }
             | Self::McpGrants { .. }
+            | Self::ProjectKeyList { .. }
             | Self::ProjectRepositories {
                 target: RepositorySetupTarget::Catalog,
                 ..
@@ -1879,6 +1905,8 @@ impl Command {
             | Self::Billing { .. }
             | Self::McpRevoke { .. }
             | Self::ProjectKeyRevoke { .. }
+            | Self::ProjectKeyList { .. }
+            | Self::ProjectRename { .. }
             | Self::Version { .. }
             | Self::Read { .. }
             | Self::Watch { .. }
@@ -1914,6 +1942,8 @@ impl Command {
             | Self::Billing { .. }
             | Self::McpRevoke { .. }
             | Self::ProjectKeyRevoke { .. }
+            | Self::ProjectKeyList { .. }
+            | Self::ProjectRename { .. }
             | Self::Version { .. }
             | Self::Read { .. }
             | Self::Watch { .. }
@@ -2082,6 +2112,14 @@ pub async fn execute_command<W: std::io::Write>(
             key_id,
             json,
         } => project_key_revoke::execute(env, project_id, key_id, *json, output).await,
+        Command::ProjectKeyList { project_id, json } => {
+            project_manage::execute_key_list(env, project_id, *json, output).await
+        }
+        Command::ProjectRename {
+            project_id,
+            name,
+            json,
+        } => project_manage::execute_rename(env, project_id, name, *json, output).await,
         Command::Version { json } => execute_version(*json, output),
         Command::InvestigateIssue {
             issue_id,

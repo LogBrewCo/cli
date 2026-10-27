@@ -159,6 +159,8 @@ fn cursor_response_title(command: &Command) -> Option<&'static str> {
         | Command::Billing { .. }
         | Command::McpRevoke { .. }
         | Command::ProjectKeyRevoke { .. }
+        | Command::ProjectKeyList { .. }
+        | Command::ProjectRename { .. }
         | Command::Version { .. }
         | Command::Watch { .. }
         | Command::Explain { .. }
@@ -396,6 +398,8 @@ fn human_summary(command: &Command, value: &serde_json::Value) -> Option<String>
         | Command::Billing { .. }
         | Command::McpRevoke { .. }
         | Command::ProjectKeyRevoke { .. }
+        | Command::ProjectKeyList { .. }
+        | Command::ProjectRename { .. }
         | Command::Version { .. }
         | Command::Deploy { .. }
         | Command::AnalyticsOverview { .. }
