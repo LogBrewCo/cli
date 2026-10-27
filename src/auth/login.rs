@@ -1,4 +1,4 @@
-//! Interactive browser login and loopback callback handling.
+//! Browser login with a loopback callback, and the choice of device sign-in.
 
 use crate::{CliEnvironment, LoginProvider, RuntimeError};
 /// Loopback callback path accepted by the CLI listener.
@@ -10,7 +10,8 @@ const CALLBACK_REQUEST_LIMIT: usize = 8 * 1024;
 /// Lowercase hexadecimal alphabet for OAuth state encoding.
 const HEX: &[u8; 16] = b"0123456789abcdef";
 
-/// Executes interactive login or a non-mutating handoff mode.
+/// Signs in through the browser, or through device sign-in for `--device`,
+/// `--json`, and shells where no local browser can open.
 pub(super) async fn execute_login<W: std::io::Write>(
     env: &CliEnvironment,
     provider: LoginProvider,
@@ -18,11 +19,11 @@ pub(super) async fn execute_login<W: std::io::Write>(
     json: bool,
     output: &mut W,
 ) -> Result<(), RuntimeError> {
+    if json || !should_open_browser {
+        return super::device::execute(env, json, output).await;
+    }
     let origin = super::normalized_api_base(env.base_url.as_str())?;
     ensure_offered(origin.as_str(), provider).await?;
-    if json || !should_open_browser {
-        return write_auth_handoff(env, provider, json, output);
-    }
     execute_interactive(env, provider, output).await
 }
 
@@ -103,37 +104,6 @@ const OFFERED_NEXT_STEPS: [&str; 16] = [
     "use --provider github, gitlab, bitbucket, or google",
 ];
 
-/// Writes the legacy agent/manual handoff without binding or persisting state.
-fn write_auth_handoff<W: std::io::Write>(
-    env: &CliEnvironment,
-    provider: LoginProvider,
-    json: bool,
-    output: &mut W,
-) -> Result<(), RuntimeError> {
-    let origin = super::normalized_api_base(env.base_url.as_str())?;
-    let mut auth_url = reqwest::Url::parse(format!("{origin}/api/auth/cli/login").as_str())
-        .map_err(|_| login_unavailable("the configured API URL is invalid"))?;
-    let _query = auth_url
-        .query_pairs_mut()
-        .append_pair("provider", provider.as_str());
-    if json {
-        let body = serde_json::json!({
-            "ok": true,
-            "auth_url": auth_url.as_str(),
-            "provider": provider.as_str(),
-            "browser_opened": false,
-            "next": "open auth_url in a browser",
-        });
-        writeln!(output, "{body}")?;
-    } else {
-        writeln!(output, "Open this URL to log in: {auth_url}")?;
-        writeln!(output, "Provider: {}", provider.as_str())?;
-        writeln!(output, "Browser: not opened")?;
-        writeln!(output, "Next: open the URL in a browser")?;
-    }
-    Ok(())
-}
-
 /// Opens a URL in the user's default browser.
 fn open_browser(url: &str) -> bool {
     let command = if cfg!(target_os = "macos") {
@@ -172,8 +142,17 @@ async fn execute_interactive<W: std::io::Write>(
     )?;
     let client = crate::http::api_client()?;
 
-    if !open_browser(auth_url.as_str()) {
-        return Err(login_unavailable("could not open the browser for login"));
+    // Over SSH a browser would open on the remote machine, out of the person's sight.
+    let remote = ["SSH_CONNECTION", "SSH_TTY"]
+        .iter()
+        .any(|name| std::env::var_os(name).is_some());
+    if remote || !open_browser(auth_url.as_str()) {
+        drop(listener);
+        writeln!(
+            output,
+            "No browser opened here. Sign in from another device."
+        )?;
+        return super::device::execute(env, false, output).await;
     }
     writeln!(output, "Waiting for browser login...")?;
 
@@ -195,8 +174,28 @@ async fn execute_interactive<W: std::io::Write>(
         .json::<serde_json::Value>()
         .await
         .map_err(|_| login_unavailable("browser login returned an invalid response"))?;
-    let access_token = token_field(&value, "access_token")?;
-    let refresh_token = token_field(&value, "refresh_token")?;
+    store_session(
+        home,
+        origin,
+        &value,
+        "browser login returned an invalid response",
+    )
+    .await?;
+
+    writeln!(output, "Logged in to LogBrew.")?;
+    writeln!(output, "Next: run logbrew status")?;
+    Ok(())
+}
+
+/// Stores the access and refresh tokens of a sign-in response for `origin`.
+pub(super) async fn store_session(
+    home: std::path::PathBuf,
+    origin: String,
+    value: &serde_json::Value,
+    invalid: &'static str,
+) -> Result<(), RuntimeError> {
+    let access_token = token_field(value, "access_token", invalid)?;
+    let refresh_token = token_field(value, "refresh_token", invalid)?;
     tokio::task::spawn_blocking(move || {
         let lock = super::store::CredentialStoreLock::exclusive(home.as_path())?;
         lock.persist(
@@ -206,11 +205,7 @@ async fn execute_interactive<W: std::io::Write>(
         )
     })
     .await
-    .map_err(|_| login_unavailable("local authentication storage failed"))??;
-
-    writeln!(output, "Logged in to LogBrew.")?;
-    writeln!(output, "Next: run logbrew status")?;
-    Ok(())
+    .map_err(|_| login_unavailable("local authentication storage failed"))?
 }
 
 /// Builds the provider-login URL without rendering state to CLI output.
@@ -407,14 +402,18 @@ async fn write_browser_response(
 }
 
 /// Extracts one non-empty token without exposing its value in errors.
-fn token_field(value: &serde_json::Value, field: &str) -> Result<String, RuntimeError> {
+fn token_field(
+    value: &serde_json::Value,
+    field: &str,
+    invalid: &'static str,
+) -> Result<String, RuntimeError> {
     value
         .get(field)
         .and_then(serde_json::Value::as_str)
         .map(str::trim)
         .filter(|token| !token.is_empty())
         .map(ToOwned::to_owned)
-        .ok_or_else(|| login_unavailable("browser login returned an invalid response"))
+        .ok_or_else(|| login_unavailable(invalid))
 }
 
 /// Secret-free callback classification.
@@ -427,8 +426,8 @@ enum Callback {
     Invalid,
 }
 
-/// Builds stable interactive-login recovery without provider details or credentials.
-const fn login_unavailable(message: &'static str) -> RuntimeError {
+/// Builds stable login recovery without provider details or credentials.
+pub(super) const fn login_unavailable(message: &'static str) -> RuntimeError {
     RuntimeError::Unavailable {
         message,
         next: "retry logbrew login",

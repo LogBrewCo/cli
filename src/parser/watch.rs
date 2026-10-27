@@ -197,7 +197,7 @@ const fn target_allows_severity(target: WatchTarget) -> bool {
 fn known_unsupported_watch_flag(arg: &str) -> Option<&str> {
     let flag = arg.split_once('=').map_or(arg, |(name, _)| name);
     match flag {
-        "--auto" | "--yes" | "--no-open" | "--status" => Some(flag),
+        "--auto" | "--yes" | "--no-open" | "--device" | "--status" => Some(flag),
         _ => None,
     }
 }

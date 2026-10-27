@@ -178,6 +178,11 @@ fn rejects_common_human_parse_errors_with_exact_recovery() -> TestResult {
             "use --no-open once",
         ),
         (
+            &["logbrew", "login", "--device", "--device"][..],
+            "duplicate flag: --device",
+            "use --device once",
+        ),
+        (
             &["logbrew", "logs", "checkout@1"][..],
             "unexpected argument for read: checkout@1",
             "use --release <release> or run logbrew read --help",

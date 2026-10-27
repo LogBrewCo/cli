@@ -45,70 +45,12 @@ pub(super) fn mount_providers(server: &crate::MockServer, available: &[&str]) {
         .mount(server);
 }
 
-async_test!(
-    login_no_open_json_prints_auth_url_without_browser_side_effect -> TestResult,
-    {
-        let server = crate::MockServer::start().await?;
-        mount_providers(&server, &["github", "gitlab", "google"]);
-        let env = test_env(server.uri(), None, "login-no-open");
-        for (args, provider) in [
-            (&["logbrew", "login", "--no-open", "--json"][..], "github"),
-            (&["logbrew", "--json", "login"][..], "github"),
-            (&["logbrew", "login", "--provider", "gitlab", "--no-open", "--json"][..], "gitlab"),
-            (&["logbrew", "login", "--provider=google", "--json"][..], "google"),
-        ] {
-            let command = parse_command(args.iter().copied())?;
-            let mut output = Vec::new();
-
-            execute_command(&command, &env, &mut output)
-                .await?;
-
-            let body: serde_json::Value =
-                serde_json::from_slice(output.as_slice())?;
-            assert_eq!(body["ok"], true);
-            assert_eq!(
-                body["auth_url"],
-                format!("{}/api/auth/cli/login?provider={provider}", server.uri())
-            );
-            assert_eq!(body["provider"], provider);
-            assert_eq!(body["browser_opened"], false);
-            assert_eq!(body["next"], "open auth_url in a browser");
-        }
-        Ok(())
-    }
-);
-
-async_test!(login_no_open_human_prints_browser_state_and_next_step -> TestResult, {
-    let server = crate::MockServer::start().await?;
-    mount_providers(&server, &["bitbucket"]);
-    let command = parse_command(["logbrew", "login", "--provider", "bitbucket", "--no-open"])?;
-    let env = test_env(server.uri(), None, "login-no-open-human");
-    let mut output = Vec::new();
-
-    execute_command(&command, &env, &mut output)
-        .await?;
-
-    let text = String::from_utf8(output)?;
-    assert_eq!(
-        text,
-        format!(
-            "Open this URL to log in: {}/api/auth/cli/login?provider=bitbucket\nProvider: \
-             bitbucket\nBrowser: not opened\nNext: open the URL in a browser\n",
-            server.uri()
-        )
-    );
-    Ok(())
-});
-
 async_test!(login_stops_when_the_server_does_not_offer_the_provider -> TestResult, {
     let server = crate::MockServer::start().await?;
     mount_providers(&server, &["github", "gitlab", "bitbucket"]);
     let env = test_env(server.uri(), None, "login-provider-not-offered");
-    for args in [
-        &["logbrew", "login", "--provider", "google", "--json"][..],
-        &["logbrew", "login", "--provider", "google", "--no-open"][..],
-    ] {
-        let command = parse_command(args.iter().copied())?;
+    {
+        let command = parse_command(["logbrew", "login", "--provider", "google"])?;
         let mut output = Vec::new();
 
         let error = execute_command(&command, &env, &mut output)
@@ -134,7 +76,7 @@ async_test!(login_stops_when_the_server_does_not_offer_the_provider -> TestResul
 
     let none = crate::MockServer::start().await?;
     mount_providers(&none, &[]);
-    let command = parse_command(["logbrew", "login", "--json"])?;
+    let command = parse_command(["logbrew", "login"])?;
     let error = execute_command(&command, &test_env(none.uri(), None, "login-none"), &mut Vec::new())
         .await
         .err()
@@ -160,7 +102,7 @@ async_test!(login_fails_closed_when_providers_cannot_be_read -> TestResult, {
         crate::Mock::route("GET", "/api/auth/providers")
             .respond_with(response)
             .mount(&server);
-        let command = parse_command(["logbrew", "login", "--json"])?;
+        let command = parse_command(["logbrew", "login"])?;
         let mut output = Vec::new();
 
         let error = execute_command(&command, &test_env(server.uri(), None, "login-unreadable"), &mut output)

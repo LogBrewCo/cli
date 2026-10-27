@@ -362,7 +362,10 @@ fn parse_login_provider(
 
 /// Returns whether a flag is a valueless common flag.
 pub(crate) fn is_simple_flag(flag: &str) -> bool {
-    matches!(flag, "--json" | "--auto" | "--yes" | "--no-open")
+    matches!(
+        flag,
+        "--json" | "--auto" | "--yes" | "--no-open" | "--device"
+    )
 }
 
 /// Parses output, setup, confirmation, and login flags.
@@ -388,9 +391,14 @@ fn parse_simple_flag(
             mark_seen(seen, "--yes")?;
             flags.confirmation = ConfirmationMode::Skip;
         }
-        "--no-open" => {
-            scope.ensure_allows(FlagKind::Login, "--no-open")?;
-            mark_seen(seen, "--no-open")?;
+        "--no-open" | "--device" => {
+            let flag = if flag == "--device" {
+                "--device"
+            } else {
+                "--no-open"
+            };
+            scope.ensure_allows(FlagKind::Login, flag)?;
+            mark_seen(seen, flag)?;
             flags.browser = BrowserLaunch::PrintOnly;
         }
         _ => return Ok(false),
@@ -594,6 +602,7 @@ fn duplicate_flag_next(flag: &'static str) -> &'static str {
         "--auto" => "use --auto once",
         "--yes" => "use --yes once",
         "--no-open" => "use --no-open once",
+        "--device" => "use --device once",
         "--provider" => "use --provider once",
         "--name" => "use --name once",
         "--service" => "use --service once",
@@ -818,7 +827,7 @@ enum BrowserLaunch {
     /// Open the login URL in a browser.
     #[default]
     Open,
-    /// Print the login URL without opening a browser.
+    /// Sign in from another device with a printed link and code.
     PrintOnly,
 }
 
