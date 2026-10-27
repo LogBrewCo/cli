@@ -155,6 +155,9 @@ pub enum CliError {
     /// MCP grant list or confirmed revocation syntax is malformed.
     #[error("invalid mcp command")]
     InvalidMcpCommand,
+    /// Plan checkout or billing management syntax is malformed.
+    #[error("invalid billing command")]
+    InvalidBillingCommand,
     /// Issue archive, resolve, reopen, priority, or assignment syntax is malformed.
     #[error("invalid issue command")]
     InvalidIssueTriageCommand,
@@ -622,6 +625,7 @@ const fn cli_error_code(error: &CliError) -> &'static str {
         }
         CliError::InvalidProjectArchiveCommand => "invalid_project_archive_command",
         CliError::InvalidMcpCommand => "invalid_mcp_command",
+        CliError::InvalidBillingCommand => "invalid_billing_command",
         CliError::InvalidIssueTriageCommand => "invalid_issue_command",
         CliError::InvalidOwnershipCommand => "invalid_ownership_command",
         CliError::InvalidOwnershipFile => "invalid_ownership_file",
@@ -688,6 +692,9 @@ const fn cli_error_next_step(error: &CliError) -> &'static str {
         }
         CliError::InvalidMcpCommand => {
             "use logbrew mcp grants or logbrew mcp revoke <grant_id> --yes, with optional --json"
+        }
+        CliError::InvalidBillingCommand => {
+            "use logbrew billing upgrade pro|business or logbrew billing portal, with optional --json"
         }
         CliError::InvalidOwnershipCommand => crate::issue_ownership::OWNERSHIP_NEXT_STEP,
         CliError::InvalidOwnershipFile => {

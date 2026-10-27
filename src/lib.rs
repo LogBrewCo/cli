@@ -21,6 +21,7 @@ mod api_path;
 pub mod auth;
 #[doc(hidden)]
 pub mod auth_namespace;
+mod billing;
 mod deployment;
 #[doc(hidden)]
 pub mod doctor;
@@ -169,6 +170,44 @@ impl std::str::FromStr for LoginProvider {
     }
 }
 
+/// Paid plan offered through self-serve checkout.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BillingTier {
+    /// Pro (`team` in the API).
+    Pro,
+    /// Business.
+    Business,
+}
+
+impl BillingTier {
+    /// API request value.
+    #[must_use]
+    pub const fn api_value(self) -> &'static str {
+        match self {
+            Self::Pro => "team",
+            Self::Business => "business",
+        }
+    }
+
+    /// Display name.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Pro => "Pro",
+            Self::Business => "Business",
+        }
+    }
+
+    /// Command-line name.
+    #[must_use]
+    pub const fn label_lowercase(self) -> &'static str {
+        match self {
+            Self::Pro => "pro",
+            Self::Business => "business",
+        }
+    }
+}
+
 /// Parsed `LogBrew` command.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
@@ -262,6 +301,13 @@ pub enum Command {
     /// Reads authenticated account usage and configured limits.
     Usage {
         /// Emit the exact validated server object.
+        json: bool,
+    },
+    /// Requests a checkout link for a paid plan, or a billing management link.
+    Billing {
+        /// Plan to buy; `None` asks for the billing management link.
+        tier: Option<BillingTier>,
+        /// Emit machine-readable JSON.
         json: bool,
     },
     /// Lists the account's connected MCP clients (grants).
@@ -1590,6 +1636,11 @@ impl Command {
             }
             Self::ProjectArchive { project_id, .. } => Some(format!("/api/projects/{project_id}")),
             Self::McpGrants { .. } => Some(String::from("/api/mcp/grants?response_version=2")),
+            Self::Billing { tier, .. } => Some(String::from(if tier.is_some() {
+                "/api/billing/checkout"
+            } else {
+                "/api/billing/portal"
+            })),
             Self::McpRevoke { grant_id, .. } => Some(format!("/api/mcp/grants/{grant_id}")),
             Self::ProjectKeyRevoke {
                 project_id, key_id, ..
@@ -1641,6 +1692,7 @@ impl Command {
             | Self::Projects { json }
             | Self::Usage { json }
             | Self::McpGrants { json }
+            | Self::Billing { json, .. }
             | Self::McpRevoke { json, .. }
             | Self::ProjectKeyRevoke { json, .. }
             | Self::Version { json }
@@ -1696,7 +1748,8 @@ impl Command {
                 target: SetTarget::IssueBulk(_) | SetTarget::NotificationsRead,
                 ..
             }
-            | Self::ProjectDeletion { .. } => Some(HttpMethod::Post),
+            | Self::ProjectDeletion { .. }
+            | Self::Billing { .. } => Some(HttpMethod::Post),
             Self::Support {
                 target: SupportTarget::UpdateStatus { .. },
                 ..
@@ -1823,6 +1876,7 @@ impl Command {
             | Self::Projects { .. }
             | Self::Usage { .. }
             | Self::McpGrants { .. }
+            | Self::Billing { .. }
             | Self::McpRevoke { .. }
             | Self::ProjectKeyRevoke { .. }
             | Self::Version { .. }
@@ -1857,6 +1911,7 @@ impl Command {
             | Self::Doctor { .. }
             | Self::Usage { .. }
             | Self::McpGrants { .. }
+            | Self::Billing { .. }
             | Self::McpRevoke { .. }
             | Self::ProjectKeyRevoke { .. }
             | Self::Version { .. }
@@ -2018,6 +2073,7 @@ pub async fn execute_command<W: std::io::Write>(
         Command::Projects { json } => projects::execute(env, *json, output).await,
         Command::Usage { json } => usage::execute(env, *json, output).await,
         Command::McpGrants { json } => mcp_grants::execute_list(env, *json, output).await,
+        Command::Billing { tier, json } => billing::execute(env, *tier, *json, output).await,
         Command::McpRevoke { grant_id, json } => {
             mcp_grants::execute_revoke(env, grant_id.as_str(), *json, output).await
         }

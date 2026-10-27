@@ -156,6 +156,7 @@ fn cursor_response_title(command: &Command) -> Option<&'static str> {
         | Command::Projects { .. }
         | Command::Usage { .. }
         | Command::McpGrants { .. }
+        | Command::Billing { .. }
         | Command::McpRevoke { .. }
         | Command::ProjectKeyRevoke { .. }
         | Command::Version { .. }
@@ -392,6 +393,7 @@ fn human_summary(command: &Command, value: &serde_json::Value) -> Option<String>
         | Command::Doctor { .. }
         | Command::Usage { .. }
         | Command::McpGrants { .. }
+        | Command::Billing { .. }
         | Command::McpRevoke { .. }
         | Command::ProjectKeyRevoke { .. }
         | Command::Version { .. }
