@@ -411,14 +411,14 @@ change issues, manage projects, or read any other project.
 Key revocation requires explicit --yes and stops the key at its next request.
 Builds that cannot prove owner-only file permissions fail before sending the create request.
 No local install, quota, or usage state is created.
-Project setup uses POST /api/projects/{project_id}/setup/seen and preserves backend setup status JSON.
+Project setup uses POST /api/projects/{project_id}/setup/seen and returns the setup status JSON unchanged.
 Project archival requires explicit --yes, removes it from the active project catalog, and returns \
 success only for an empty 204 response.
 Project-scoped ingest keys stop authorizing new ingestion after archival.
-This soft-archive command does not claim hard deletion or restoration.
+Archiving does not delete data. Run logbrew projects restore to undo it.
 Permanent deletion requires repeating the exact project_id. An accepted request immediately makes \
 the project inactive and schedules permanent deletion automatically; it cannot be restored.
-Project-scoped SDK/ingest credentials are shown only when backend returns one-time credentials.
+Project-scoped SDK/ingest credentials are shown only when the server returns one-time credentials.
 Never use an account bearer token as SDK or ingest configuration.
 Next: run logbrew setup for the current non-mutating local plan.";
 
