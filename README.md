@@ -257,8 +257,27 @@ ambiguous retry reuses the same request and idempotency key. Use
 logbrew projects keys revoke <project_id> <key_id> --yes --json
 ```
 
-The key stops working at its next request. Use the key ID from the JSON output
-of `logbrew projects keys create`.
+The key stops working at its next request. Use the key ID from
+`logbrew projects keys list <project_id>` or from the JSON output of
+`logbrew projects keys create`.
+
+### List a project's keys
+
+```bash
+logbrew projects keys list <project_id> --json
+```
+
+Shows each key's ID, label, kind, token prefix, status, and creation, expiry,
+and revocation times. It never shows a full key.
+
+### Rename a project
+
+```bash
+logbrew projects rename <project_id> --name "Checkout Web" --json
+```
+
+Changes the display name of an active project the account owns. The service
+name that telemetry reports stays the same. A name has 1 to 120 characters.
 
 ### Archive an inactive project safely
 

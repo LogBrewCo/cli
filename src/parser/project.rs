@@ -76,6 +76,12 @@ pub(super) fn parse_project(args: &[String]) -> Result<Command, CliError> {
         {
             parse_project_key_revoke(tail)
         }
+        [namespace, subcommand, tail @ ..]
+            if matches!(namespace.as_str(), "key" | "keys") && subcommand == "list" =>
+        {
+            parse_project_key_list(tail)
+        }
+        [subcommand, tail @ ..] if subcommand == "rename" => parse_project_rename(tail),
         [subcommand, tail @ ..] if subcommand == "create" => parse_project_create(tail),
         [subcommand, tail @ ..] if subcommand == "archive" => parse_project_archive(tail),
         [subcommand, tail @ ..] if subcommand == "delete" => parse_project_deletion(tail),
@@ -248,6 +254,49 @@ fn parse_project_key_revoke(args: &[String]) -> Result<Command, CliError> {
         }
         _ => Err(CliError::InvalidProjectsCommand),
     }
+}
+
+/// Parses `keys list <project_id> [--json]`.
+fn parse_project_key_list(args: &[String]) -> Result<Command, CliError> {
+    let normalized = move_leading_json_to_tail(args);
+    let json_count = normalized.iter().filter(|value| *value == "--json").count();
+    let values = normalized
+        .iter()
+        .map(String::as_str)
+        .filter(|value| *value != "--json")
+        .collect::<Vec<_>>();
+    match values.as_slice() {
+        [project_id] if json_count <= 1 && is_uuid(project_id) => Ok(Command::ProjectKeyList {
+            project_id: project_id.to_ascii_lowercase(),
+            json: json_count == 1,
+        }),
+        _ => Err(CliError::InvalidProjectsCommand),
+    }
+}
+
+/// Parses `rename <project_id> --name <name> [--json]`.
+fn parse_project_rename(args: &[String]) -> Result<Command, CliError> {
+    let normalized = move_leading_json_to_tail(args);
+    let json_count = normalized.iter().filter(|value| *value == "--json").count();
+    let values = normalized
+        .iter()
+        .map(String::as_str)
+        .filter(|value| *value != "--json")
+        .collect::<Vec<_>>();
+    let [project_id, "--name", name] = values.as_slice() else {
+        return Err(CliError::InvalidProjectsCommand);
+    };
+    let name = bounded_project_create_value(name, 120, false)
+        .filter(|name| !name.starts_with('-'))
+        .ok_or(CliError::InvalidProjectsCommand)?;
+    if json_count > 1 || !is_uuid(project_id) {
+        return Err(CliError::InvalidProjectsCommand);
+    }
+    Ok(Command::ProjectRename {
+        project_id: project_id.to_ascii_lowercase(),
+        name,
+        json: json_count == 1,
+    })
 }
 
 /// Parses the closed, explicitly confirmed project archival grammar.

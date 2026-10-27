@@ -61,7 +61,9 @@ Usage:
                          [--discovery <uuid> --component <uuid>]... [--json]
   logbrew projects keys create <project_id> --ingest-key-file <path> [--label <label>] \
                          [--kind sdk|browser|server|cli|artifact|read] [--json]
+  logbrew projects keys list <project_id> [--json]
   logbrew projects keys revoke <project_id> <key_id> --yes [--json]
+  logbrew projects rename <project_id> --name <name> [--json]
   logbrew projects archive <project_id> --yes [--json]
   logbrew projects delete <project_id> --confirm <project_id> [--json]
   logbrew usage [--json]
@@ -370,7 +372,9 @@ Usage:
                            [--abandon-retry] [--json]
   logbrew projects keys create <project_id> --ingest-key-file <path> [--label <label>] \
                            [--kind sdk|browser|server|cli|artifact|read] [--abandon-retry] [--json]
+  logbrew projects keys list <project_id> [--json]
   logbrew projects keys revoke <project_id> <key_id> --yes [--json]
+  logbrew projects rename <project_id> --name <name> [--json]
   logbrew projects archive <project_id> --yes [--json]
   logbrew projects delete <project_id> --confirm <project_id> [--json]
   logbrew setup --create-project [--json]
