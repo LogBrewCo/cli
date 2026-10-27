@@ -29,7 +29,8 @@ use watch::parse_watch;
 use crate::flags::{FlagScope, normalize_status, parse_flags};
 use crate::ids::{is_pasted_detail_id, is_trace_id, is_uuid};
 use crate::{
-    CliError, Command, HelpTopic, ISSUE_STATUS_ARGUMENT_NEXT_STEP, SetTarget, auth_namespace,
+    BillingTier, CliError, Command, HelpTopic, ISSUE_STATUS_ARGUMENT_NEXT_STEP, SetTarget,
+    auth_namespace,
 };
 use explain::{parse_explain, parse_investigate};
 use native_debug::parse_native_debug_artifacts;
@@ -118,7 +119,7 @@ fn parse_values(values: &[String]) -> Result<Command, CliError> {
         alias if is_examples_help_alias(alias) => parse_help_alias(HelpTopic::Examples, tail),
         alias if is_project_help_alias(alias) => parse_project(tail),
         "usage" => parse_usage(tail),
-        "mcp" => parse_mcp(tail),
+        "mcp" | "billing" => parse_account_namespace(head, tail),
         "support" => parse_support(tail),
         "investigate" => parse_investigate(tail),
         "debug-artifacts" => parse_native_debug_artifacts(tail),
@@ -384,6 +385,37 @@ fn is_issue_triage_action(args: &[String]) -> bool {
                 "archive" | "resolve" | "reopen" | "priority" | "assign" | "unassign" | "assignees"
             )
         })
+}
+
+/// Parses the account-scoped `mcp` and `billing` namespaces.
+fn parse_account_namespace(head: &str, args: &[String]) -> Result<Command, CliError> {
+    if head == "mcp" {
+        parse_mcp(args)
+    } else {
+        parse_billing(args)
+    }
+}
+
+/// Parses the closed plan checkout and billing management grammar.
+fn parse_billing(args: &[String]) -> Result<Command, CliError> {
+    let normalized = move_leading_json_to_tail(args);
+    let json_count = normalized.iter().filter(|value| *value == "--json").count();
+    let values = normalized
+        .iter()
+        .map(String::as_str)
+        .filter(|value| *value != "--json")
+        .collect::<Vec<_>>();
+    let tier = match values.as_slice() {
+        _ if json_count > 1 => return Err(CliError::InvalidBillingCommand),
+        ["upgrade", "pro"] => Some(BillingTier::Pro),
+        ["upgrade", "business"] => Some(BillingTier::Business),
+        ["portal"] => None,
+        _ => return Err(CliError::InvalidBillingCommand),
+    };
+    Ok(Command::Billing {
+        tier,
+        json: json_count == 1,
+    })
 }
 
 /// Parses the closed authenticated account-usage read grammar.

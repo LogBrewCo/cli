@@ -67,6 +67,8 @@ Usage:
   logbrew usage [--json]
   logbrew mcp grants [--json]
   logbrew mcp revoke <grant_id> --yes [--json]
+  logbrew billing upgrade pro|business [--json]
+  logbrew billing portal [--json]
   logbrew status [--json]
   logbrew health [--json]
   logbrew doctor [--json]

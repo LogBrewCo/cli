@@ -274,6 +274,22 @@ then leaves the active catalog and its project-scoped ingest keys no longer
 authorize new ingestion. This is a soft archive; the CLI makes no hard-delete
 or restoration promise.
 
+### Upgrade the plan or manage billing
+
+Payment stays with the account owner. These commands return one short-lived
+Stripe link to open in a browser:
+
+```bash
+logbrew billing upgrade pro --json
+logbrew billing upgrade business --json
+logbrew billing portal --json
+```
+
+`upgrade` opens checkout for the chosen plan. `portal` opens billing
+management for an account that already has a paid plan: change the plan, the
+payment method, or download invoices. Run `logbrew usage` to see the plan
+after paying.
+
 ### Review and revoke connected MCP clients
 
 List the AI clients that you connected to the LogBrew MCP server:
