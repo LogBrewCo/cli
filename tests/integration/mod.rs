@@ -12,6 +12,7 @@ mod auth_store_windows;
 mod billing;
 mod confidentiality;
 mod deployment;
+mod device_login;
 mod execution_commands;
 mod hosted_runners;
 mod login_loopback;

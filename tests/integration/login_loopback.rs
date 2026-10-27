@@ -89,6 +89,63 @@ async_test!(browser_login_does_not_forward_exchange_codes_across_redirects -> Te
     Ok(())
 });
 
+async_test!(built_binary_signs_in_from_another_device_when_no_browser_can_open -> TestResult, {
+    use super::device_login::{assert_signed_in, mount_polls, mount_start, tokens, waiting};
+    // A browser that fails to open, then a working one over a remote shell.
+    for (label, opener, remote) in [
+        ("no-browser", "#!/bin/sh\nexit 1\n", false),
+        (
+            "remote-shell",
+            "#!/bin/sh\nprintf '%s' \"$1\" > \"$LOGBREW_TEST_BROWSER_URL_FILE\"\n",
+            true,
+        ),
+    ] {
+        drop(rustls::crypto::ring::default_provider().install_default());
+        let server = MockServer::start().await?;
+        super::execution_commands::mount_providers(&server, &["github"]);
+        mount_start(&server, 60);
+        mount_polls(&server, vec![tokens()]);
+        let root = super::isolated_home("logbrew-cli-binary-device", label)?;
+        let home = root.join("home");
+        let bin_dir = root.join("bin");
+        let call_file = root.join("browser-url");
+        std::fs::create_dir_all(home.as_path())?;
+        std::fs::create_dir_all(bin_dir.as_path())?;
+        let opener_path = bin_dir.join(if cfg!(target_os = "macos") { "open" } else { "xdg-open" });
+        std::fs::write(opener_path.as_path(), opener)?;
+        std::fs::set_permissions(opener_path.as_path(), std::fs::Permissions::from_mode(0o700))?;
+        let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_logbrew"));
+        let _command = command
+            .env_clear()
+            .arg("login")
+            .env("HOME", home.as_os_str())
+            .env("LOGBREW_API_URL", server.uri())
+            .env("LOGBREW_TEST_BROWSER_URL_FILE", call_file.as_os_str())
+            .env("PATH", bin_dir.as_os_str());
+        if remote {
+            let _command = command.env("SSH_CONNECTION", "192.0.2.1 50000 192.0.2.2 22");
+        }
+
+        let result = tokio::task::spawn_blocking(move || command.output()).await??;
+
+        assert!(result.status.success(), "{label}");
+        let stdout = String::from_utf8(result.stdout)?;
+        assert_eq!(
+            stdout,
+            format!(
+                "No browser opened here. Sign in from another device.\n{}Logged in to \
+                 LogBrew.\nNext: run logbrew status\n",
+                waiting(&server)
+            ),
+            "{label}"
+        );
+        assert_eq!(String::from_utf8(result.stderr)?, "", "{label}");
+        assert!(!call_file.exists(), "{label}: no browser opens over a remote shell");
+        assert_signed_in(home.as_path(), &server, stdout.as_str())?;
+    }
+    Ok(())
+});
+
 async fn run_binary_login(
     server: &MockServer,
     code: &str,

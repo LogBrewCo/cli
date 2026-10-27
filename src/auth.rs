@@ -2,6 +2,7 @@
 
 use crate::{CliEnvironment, LoginProvider, RuntimeError};
 
+mod device;
 mod identity;
 mod login;
 mod logout;
@@ -145,7 +146,7 @@ impl std::fmt::Debug for AuthCredential {
     }
 }
 
-/// Executes interactive login or a non-mutating handoff mode.
+/// Signs in through the browser or from another device.
 pub(crate) async fn execute_login<W: std::io::Write>(
     env: &CliEnvironment,
     provider: LoginProvider,

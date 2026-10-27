@@ -50,7 +50,7 @@ const ROOT_HELP: &str = "\
 LogBrew CLI
 
 Usage:
-  logbrew login [--provider <name>] [--no-open] [--json]
+  logbrew login [--provider <name>] [--device] [--json]
   logbrew logout [--json]
   logbrew setup [--auto] [--yes] [--json]
   logbrew projects [--json]
@@ -207,14 +207,17 @@ Use --json for stable machine-readable output.";
 /// Login command help text.
 const LOGIN_HELP: &str = "\
 Usage:
-  logbrew login [--provider <name>] [--no-open] [--json]
+  logbrew login [--provider <name>] [--device] [--json]
 
-Starts browser login for the native CLI and stores a private local access/refresh pair.
+Signs in (or signs up) in your browser and stores a private local access/refresh pair.
 Authenticated commands refresh local auth once after an expired-token response.
 Use --provider <name> to sign in with a provider your LogBrew server offers (default: github).
 If the server does not offer it, login stops and names the providers it offers.
-Use --no-open to print the URL without opening a browser.
---json prints the auth handoff without opening a browser.";
+Use --device to sign in from another device: login prints a link and a code, then waits
+while you approve the sign-in there. Login does this on its own when no browser can open,
+such as in a container, a CI job, or a remote shell. --no-open does the same as --device.
+--json signs in the same way and prints the link and code as one JSON line, then one more
+line when the sign-in completes.";
 
 /// Logout command help text.
 const LOGOUT_HELP: &str = "\
@@ -291,8 +294,8 @@ The CLI is a native Rust binary.";
 /// Auth workflow help text.
 const AUTH_HELP: &str = "\
 Usage:
-  logbrew login [--provider <name>] [--no-open] [--json]
-  logbrew auth login [--provider <name>] [--no-open] [--json]
+  logbrew login [--provider <name>] [--device] [--json]
+  logbrew auth login [--provider <name>] [--device] [--json]
   logbrew status [--json]
   logbrew auth status [--json]
   logbrew auth whoami [--json]

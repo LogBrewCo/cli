@@ -124,6 +124,7 @@ logbrew examples
 logbrew status
 logbrew login
 logbrew login --provider gitlab
+logbrew login --device
 logbrew whoami
 logbrew logout
 logbrew projects repositories --json
@@ -151,9 +152,15 @@ pick, login stops and names the ones it offers. Login receives the result on a
 loopback-only callback and stores the pair under `~/.logbrew`. `logbrew
 whoami` and `logbrew me` return the authenticated account identity.
 Authenticated commands rotate local credentials once after an expired-token
-response; environment tokens are never persisted or refreshed. `--json` and
-`--no-open` remain non-mutating handoff modes. CLI output never prints token
-material. `logbrew logout` attempts to revoke the stored refresh-backed server
+response; environment tokens are never persisted or refreshed.
+
+Where no browser can open, such as in a container, a CI job, or a remote shell,
+`logbrew login` signs you in from another device: it prints one link and one
+code, and waits while you open the link anywhere, check the code, and approve.
+Run `logbrew login --device` to choose this yourself. `logbrew login --json`
+does the same for agents, printing the link and code as one JSON line and the
+result as a second line. Device sign-in stores the same pair as browser login.
+CLI output never prints token material. `logbrew logout` attempts to revoke the stored refresh-backed server
 session and always removes local credentials; `LOGBREW_TOKEN` must be unset
 separately.
 

@@ -200,7 +200,9 @@ fn help_keeps_agent_auth_watch_and_investigation_contracts() {
         "refresh local auth once after an expired-token response",
         "--provider <name>",
         "a provider your LogBrew server offers",
-        "--json prints the auth handoff without opening a browser.");
+        "Use --device to sign in from another device",
+        "in a container, a CI job, or a remote shell",
+        "--json signs in the same way and prints the link and code as one JSON line");
     assert_help!(HelpTopic::Watch;
         "logbrew watch --json",
         "logbrew watch issues [--json]",
@@ -499,14 +501,20 @@ fn parses_auth_namespace_as_token_safe_command_aliases() {
         );
     }
 
-    assert_command(
-        &["logbrew", "auth", "login", "--no-open"],
-        Command::Login {
-            provider: LoginProvider::GitHub,
-            open_browser: false,
-            json: false,
-        },
-    );
+    for args in [
+        &["logbrew", "auth", "login", "--no-open"][..],
+        &["logbrew", "auth", "login", "--device"],
+        &["logbrew", "login", "--device", "--no-open"],
+    ] {
+        assert_command(
+            args,
+            Command::Login {
+                provider: LoginProvider::GitHub,
+                open_browser: false,
+                json: false,
+            },
+        );
+    }
     for args in [
         &["logbrew", "auth", "login", "--json"][..],
         &["logbrew", "auth", "--json", "login"],
@@ -763,9 +771,11 @@ fn parses_prefix_help_words_as_real_user_topics() {
 }
 
 #[test]
-fn parses_agent_login_handoff_forms_without_opening_a_browser() {
+fn parses_device_login_forms_without_opening_a_browser() {
     for args in [
         &["logbrew", "login", "--no-open", "--json"][..],
+        &["logbrew", "login", "--device", "--json"],
+        &["logbrew", "--json", "auth", "login", "--device"],
         &["logbrew", "login", "--json"],
         &["logbrew", "--json", "login"][..],
         &["logbrew", "--json", "auth", "login"][..],
@@ -811,12 +821,18 @@ fn parses_login_provider_in_separate_or_inline_form() {
             &["logbrew", "login", "--provider", "google"][..],
             LoginProvider::Google,
         ),
+        (
+            &["logbrew", "login", "--device", "--provider=google"][..],
+            LoginProvider::Google,
+        ),
     ] {
         assert_command(
             args,
             Command::Login {
                 provider,
-                open_browser: !args.contains(&"--no-open") && !args.contains(&"--json"),
+                open_browser: !["--no-open", "--device", "--json"]
+                    .iter()
+                    .any(|flag| args.contains(flag)),
                 json: args.contains(&"--json"),
             },
         );
