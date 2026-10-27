@@ -99,6 +99,31 @@ pub(crate) async fn execute<W: std::io::Write>(
     json: bool,
     output: &mut W,
 ) -> Result<(), RuntimeError> {
+    let body = catalog_body(env).await?;
+    let value =
+        serde_json::from_str::<serde_json::Value>(body.as_str()).map_err(|_| invalid_response())?;
+    let projects = validate_catalog(&value)?;
+    if json {
+        writeln!(output, "{body}")?;
+    } else {
+        write_human(projects.as_slice(), output)?;
+    }
+    Ok(())
+}
+
+/// Returns the validated active projects as `(id, name)` pairs.
+pub(crate) async fn list(env: &CliEnvironment) -> Result<Vec<(String, String)>, RuntimeError> {
+    let body = catalog_body(env).await?;
+    let value =
+        serde_json::from_str::<serde_json::Value>(body.as_str()).map_err(|_| invalid_response())?;
+    Ok(validate_catalog(&value)?
+        .into_iter()
+        .map(|project| (project.id.to_owned(), project.name.to_owned()))
+        .collect())
+}
+
+/// Reads the project catalog and checks its exact row shape.
+async fn catalog_body(env: &CliEnvironment) -> Result<String, RuntimeError> {
     let origin =
         crate::http::normalized_origin(env.base_url.as_str()).ok_or_else(transport_error)?;
     let client = crate::http::api_client().map_err(|_| transport_error())?;
@@ -133,15 +158,7 @@ pub(crate) async fn execute<W: std::io::Write>(
     }
     let _shape =
         serde_json::from_str::<Vec<ProjectShape>>(body.as_str()).map_err(|_| invalid_response())?;
-    let value =
-        serde_json::from_str::<serde_json::Value>(body.as_str()).map_err(|_| invalid_response())?;
-    let projects = validate_catalog(&value)?;
-    if json {
-        writeln!(output, "{body}")?;
-    } else {
-        write_human(projects.as_slice(), output)?;
-    }
-    Ok(())
+    Ok(body)
 }
 
 /// Converts request failures into fixed, host-free project recovery.

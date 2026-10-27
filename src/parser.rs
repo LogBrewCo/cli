@@ -314,11 +314,45 @@ fn parse_setup(args: &[String]) -> Result<Command, CliError> {
     if args.iter().any(|arg| arg == "--create-project") {
         return parse_setup_create_project(args);
     }
-    let flags = parse_flags(args, FlagScope::Setup)?;
+    let (mut mcp, mut project_id, mut rest) = (false, None, Vec::new());
+    let mut args = args.iter();
+    while let Some(arg) = args.next() {
+        let value = match arg.as_str() {
+            "--mcp" if !mcp => {
+                mcp = true;
+                continue;
+            }
+            "--project" | "--project-id" => args.next().map(String::as_str),
+            other => {
+                let value = other
+                    .strip_prefix("--project=")
+                    .or_else(|| other.strip_prefix("--project-id="));
+                if value.is_none() {
+                    rest.push(arg.clone());
+                    continue;
+                }
+                value
+            }
+        };
+        match value {
+            Some(value) if project_id.is_none() && is_uuid(value) => {
+                project_id = Some(value.to_owned());
+            }
+            _ => {
+                return Err(CliError::MissingFlagValue {
+                    flag: "--project",
+                    next: "use --project once with a project UUID from logbrew projects",
+                });
+            }
+        }
+    }
+    let flags = parse_flags(rest.as_slice(), FlagScope::Setup)?;
     Ok(Command::Setup {
         auto: flags.is_auto(),
         yes: flags.skip_prompts(),
         json: flags.is_json(),
+        mcp,
+        project_id,
     })
 }
 

@@ -160,7 +160,7 @@ fn setup_alias_help_is_discoverable() {
 }
 
 #[test]
-fn setup_aliases_are_non_mutating_setup() -> TestResult {
+fn setup_aliases_parse_as_setup() -> TestResult {
     for alias in ["init", "install", "configure", "sdk"] {
         let command = parse_command(["logbrew", alias, "--auto", "--yes", "--json"])?;
 
@@ -169,7 +169,9 @@ fn setup_aliases_are_non_mutating_setup() -> TestResult {
             Command::Setup {
                 auto: true,
                 yes: true,
-                json: true
+                json: true,
+                mcp: false,
+                project_id: None,
             }
         );
         assert!(command.http_path().is_none());

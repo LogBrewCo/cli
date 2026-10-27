@@ -197,21 +197,13 @@ pub(super) async fn execute<W: std::io::Write>(
         options.abandon_retry,
     )?;
 
-    let client = credential_client(operation)?;
-    let url = format!("{origin}/api/projects");
-    let response = send_authenticated_with_refresh(&client, env, |client, credential| {
-        client
-            .post(url.as_str())
-            .bearer_auth(credential.token())
-            .header(reqwest::header::CONTENT_TYPE, "application/json")
-            .header("Idempotency-Key", pending.retry_key.as_str())
-            .body(pending.request_body.clone())
-    })
-    .await
-    .map_err(|error| request_error(error, operation))?;
-    let (response, credential) = response;
-    let status = response.status();
-    let response_body = bounded_response_body(response, operation).await?;
+    let (status, response_body, credential) = post_credential_request(
+        env,
+        operation,
+        format!("{origin}/api/projects").as_str(),
+        &pending,
+    )
+    .await?;
     if !status.is_success() {
         return Err(safe_api_error(
             status.as_u16(),
@@ -271,21 +263,13 @@ pub(super) async fn execute_ingest_key_create<W: std::io::Write>(
         options.abandon_retry,
     )?;
 
-    let client = credential_client(operation)?;
-    let url = format!("{origin}/api/projects/{}/ingest-keys", options.project_id);
-    let response = send_authenticated_with_refresh(&client, env, |client, credential| {
-        client
-            .post(url.as_str())
-            .bearer_auth(credential.token())
-            .header(reqwest::header::CONTENT_TYPE, "application/json")
-            .header("Idempotency-Key", pending.retry_key.as_str())
-            .body(pending.request_body.clone())
-    })
-    .await
-    .map_err(|error| request_error(error, operation))?;
-    let (response, credential) = response;
-    let status = response.status();
-    let response_body = bounded_response_body(response, operation).await?;
+    let (status, response_body, credential) = post_credential_request(
+        env,
+        operation,
+        format!("{origin}/api/projects/{}/ingest-keys", options.project_id).as_str(),
+        &pending,
+    )
+    .await?;
     if !status.is_success() {
         return Err(safe_ingest_key_api_error(
             status.as_u16(),
@@ -304,6 +288,98 @@ pub(super) async fn execute_ingest_key_create<W: std::io::Write>(
     lock.clear_retry()?;
     write_ingest_key_success(&created, options.project_id.as_str(), json, output)?;
     Ok(())
+}
+
+/// Creates a project for setup and returns its id and one-time ingest key.
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "the setup wizard consumes this private-module helper"
+)]
+pub(crate) async fn create_project_for_setup(
+    env: &CliEnvironment,
+    options: &ProjectCreateOptions,
+) -> Result<(String, String), RuntimeError> {
+    let operation = CredentialOperation::ProjectCreate;
+    let (origin, pending) = setup_request(env, operation, &crate::project_create_body(options))?;
+    let (status, body, credential) = post_credential_request(
+        env,
+        operation,
+        format!("{origin}/api/projects").as_str(),
+        &pending,
+    )
+    .await?;
+    if !status.is_success() {
+        return Err(safe_api_error(status.as_u16(), body.as_str(), &credential)?);
+    }
+    let created = CreatedProject::parse(body.as_str(), options)?;
+    Ok((created.project_id, created.token))
+}
+
+/// Creates an ingest key for setup and returns the one-time key.
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "the setup wizard consumes this private-module helper"
+)]
+pub(crate) async fn create_ingest_key_for_setup(
+    env: &CliEnvironment,
+    options: &ProjectIngestKeyCreateOptions,
+) -> Result<String, RuntimeError> {
+    let operation = CredentialOperation::ProjectIngestKeyCreate;
+    let (origin, pending) = setup_request(env, operation, &project_ingest_key_body(options))?;
+    let url = format!("{origin}/api/projects/{}/ingest-keys", options.project_id);
+    let (status, body, credential) =
+        post_credential_request(env, operation, url.as_str(), &pending).await?;
+    if !status.is_success() {
+        return Err(safe_ingest_key_api_error(
+            status.as_u16(),
+            body.as_str(),
+            &credential,
+        )?);
+    }
+    Ok(CreatedProjectIngestKey::parse(body.as_str(), options)?.token)
+}
+
+/// Builds the origin and a fresh single-attempt request for setup.
+fn setup_request(
+    env: &CliEnvironment,
+    operation: CredentialOperation,
+    body: &serde_json::Value,
+) -> Result<(String, PreparedRetry), RuntimeError> {
+    let origin = crate::http::normalized_origin(env.base_url.as_str())
+        .ok_or_else(|| operation.invalid_request())?;
+    let pending = PreparedRetry {
+        request_body: serde_json::to_string(body).map_err(|_| operation.invalid_request())?,
+        retry_key: random_retry_key().map_err(|_| operation.transport_unavailable())?,
+        allow_existing_target: false,
+    };
+    Ok((origin, pending))
+}
+
+/// Posts one credential-issuing request and reads its bounded response.
+async fn post_credential_request(
+    env: &CliEnvironment,
+    operation: CredentialOperation,
+    url: &str,
+    pending: &PreparedRetry,
+) -> Result<(reqwest::StatusCode, String, AuthCredential), RuntimeError> {
+    let client = credential_client(operation)?;
+    let (response, credential) =
+        send_authenticated_with_refresh(&client, env, |client, credential| {
+            client
+                .post(url)
+                .bearer_auth(credential.token())
+                .header(reqwest::header::CONTENT_TYPE, "application/json")
+                .header("Idempotency-Key", pending.retry_key.as_str())
+                .body(pending.request_body.clone())
+        })
+        .await
+        .map_err(|error| request_error(error, operation))?;
+    let status = response.status();
+    Ok((
+        status,
+        bounded_response_body(response, operation).await?,
+        credential,
+    ))
 }
 
 /// Reads a response incrementally without buffering beyond the public limit.
