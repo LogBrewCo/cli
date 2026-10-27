@@ -20,9 +20,9 @@ const PACKAGE_NEXT_STEP: &str =
 /// Newest `co.logbrew:logbrew-sdk` release on Maven Central.
 pub const JAVA_SDK_VERSION: &str = "0.1.13";
 /// Newest `logbrew-sdk` gem release on `RubyGems`.
-pub const RUBY_SDK_VERSION: &str = "0.1.16";
+pub const RUBY_SDK_VERSION: &str = "0.1.17";
 /// Newest `LogBrew.AspNetCore` release on `NuGet`.
-pub const ASPNETCORE_VERSION: &str = "0.1.3";
+pub const ASPNETCORE_VERSION: &str = "0.1.4";
 /// Newest Swift package release tag (`v<version>`) in the public SDK repository.
 pub const SWIFT_SDK_VERSION: &str = "0.1.24";
 /// Newest Objective-C release tag (`objc/logbrew-objc/v<version>`).
