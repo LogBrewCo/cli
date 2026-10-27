@@ -61,8 +61,6 @@ gh attestation verify logbrew-cli-x86_64-unknown-linux-gnu.tar.xz --repo LogBrew
 
 After any update, compare `logbrew version --json` with the
 [latest public release](https://github.com/LogBrewCo/cli/releases/latest).
-CMake setup planning requires CLI 0.1.39 or newer; correct Objective-C
-classification for XcodeGen projects requires CLI 0.1.40 or newer.
 
 Cargo installs and source builds require Rust 1.87 or newer. The npm,
 Homebrew, shell, PowerShell, and MSI installers use native release artifacts and
@@ -97,25 +95,6 @@ framework SDK packages in `LogBrewCo/sdk`. SDK packages such as JavaScript
 framework integrations, Python framework middleware, Swift, .NET, Go, Java,
 Kotlin, Ruby, Rust SDK crates, and Unity packages remain SDK-owned. This repo
 only publishes the `logbrew` CLI binary and its install wrappers.
-
-Trusted publishing requires each npm package and the crates.io crate to already
-exist, so brand-new package names need one manual first publish before CI release
-tags can publish future versions without long-lived registry tokens. This
-applies to `logbrew-cli` and to each `@logbrew/cli-<os>-<cpu>` package. After
-the first publish, add the trusted publisher with
-`npm trust github <package> --repo LogBrewCo/cli --file release.yml --allow-publish`.
-Homebrew publishing requires the GitHub Actions secret `HOMEBREW_TAP_TOKEN`.
-
-Before pushing a release tag, run the release preflight:
-
-```bash
-bash scripts/release-preflight.sh vX.Y.Z
-```
-
-The preflight checks the tag/version match, clean synced `main`, public
-crates.io/npm package bootstrap and version collisions, the public Homebrew tap
-repository, green CI, required GitHub Actions secret names, and existing
-release/tag collisions.
 
 ## Basic Usage
 
@@ -347,8 +326,8 @@ logbrew mcp revoke <grant_id> --yes
 The client loses access at its next request. To connect again, it must sign in
 again.
 
-For AI sessions, the default mode should be checking only when requested because
-it uses fewer AI tokens. `logbrew watch --json` opens a live WebSocket stream for
+Coding agents use fewer tokens when they read on request instead of streaming.
+`logbrew watch --json` opens a live WebSocket stream for
 the current session, and `logbrew watch --severity error,critical --json`
 filters live logs/issues client-side to actionable severities. The watch stream
 reconnects after transient disconnects with a fresh feed ticket and backoff.
@@ -358,7 +337,3 @@ reconnects after transient disconnects with a fresh feed ticket and backoff.
 ```bash
 bash scripts/pre-commit.sh
 ```
-
-Public-repo rule: keep this repository CLI-only. Do not add backend code,
-hostnames, IP addresses, secrets, deployment files, database configuration, or
-operational details here.

@@ -10,11 +10,3 @@ __pycache__/
 !.env.example
 .logbrew-confidential-denylist.local
 /work/
-
-# Local-only agent guidance and planning artifacts.
-CLAUDE.md
-.agents/
-skills-lock.json
-docs/private-plans/
-plans/
-*plan*.md

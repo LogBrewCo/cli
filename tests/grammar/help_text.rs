@@ -119,7 +119,10 @@ fn project_and_usage_help_are_honest_about_supported_behavior() {
     assert!(projects.contains("requires explicit --yes"));
     assert!(projects.contains("removes it from the active project catalog"));
     assert!(projects.contains("Project-scoped ingest keys stop authorizing new ingestion"));
-    assert!(projects.contains("does not claim hard deletion or restoration"));
+    assert!(
+        projects
+            .contains("Archiving does not delete data. Run logbrew projects restore to undo it.")
+    );
     assert!(projects.contains("Never use an account bearer token as SDK or ingest configuration."));
 
     assert!(usage.contains("logbrew usage [--json]"));
