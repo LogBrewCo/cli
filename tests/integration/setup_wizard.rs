@@ -7,7 +7,9 @@ use crate::matchers::body_json;
 use crate::{
     Mock, MockServer, Request, ResponseTemplate, TestResult, cli_command, run_cli_command,
 };
-use logbrew_cli::setup::{ASPNETCORE_VERSION, JAVA_SDK_VERSION, RUBY_SDK_VERSION, WizardOptions};
+use logbrew_cli::setup::{
+    ASPNETCORE_VERSION, JAVA_SDK_VERSION, RUBY_SDK_VERSION, WizardExtras, WizardOptions,
+};
 use logbrew_cli::{CliEnvironment, RuntimeError};
 
 const PROJECT_ID: &str = "123e4567-e89b-12d3-a456-426614174000";
@@ -15,6 +17,8 @@ const OTHER_PROJECT_ID: &str = "423e4567-e89b-12d3-a456-426614174000";
 const INGEST_ID: &str = "223e4567-e89b-12d3-a456-426614174000";
 const ACCOUNT: &str = "account-token";
 const NEW_KEY: &str = "lbw_ingest_setup_fixture_value";
+const EVENT_ID: &str = "523e4567-e89b-12d3-a456-426614174000";
+const TRACE_ID: &str = "0af7651916cd43dd8448eb211c80319c";
 const PACKAGE_MANAGERS: [&str; 12] = [
     "npm", "pnpm", "yarn", "bun", "python3", "uv", "poetry", "pipenv", "go", "composer", "bundle",
     "dotnet",
@@ -33,7 +37,7 @@ struct Case {
     edited: Option<(&'static str, &'static str)>,
 }
 
-const CASES: [Case; 18] = [
+const CASES: [Case; 19] = [
     Case {
         label: "node",
         files: &[
@@ -62,6 +66,28 @@ const CASES: [Case; 18] = [
         install: "done",
         init: "done",
         edited: Some(("src/hooks.server.js", "createLogBrewSvelteKitHooks(")),
+    },
+    Case {
+        label: "express",
+        files: &[
+            (
+                "package.json",
+                r#"{"name":"api","main":"app.js","dependencies":{"express":"5.1.0"}}"#,
+            ),
+            (
+                "app.js",
+                "import express from \"express\";\n\nconst app = express();\napp.listen(3000);\n",
+            ),
+        ],
+        integration: "express",
+        env_file: ".env",
+        command: "npm install @logbrew/sdk @logbrew/node @logbrew/express",
+        install: "done",
+        init: "done",
+        edited: Some((
+            "app.js",
+            "import { logbrewMiddleware } from \"@logbrew/express\";\n",
+        )),
     },
     Case {
         label: "react-express",
@@ -401,12 +427,13 @@ async_test!(setup_yes_covers_every_planned_framework_and_reruns_without_changes 
                     .is_some_and(|text| !text.is_empty())
             );
         }
-        let sent = sent_event(&server)?;
-        assert_eq!(sent["sdk"]["name"], "logbrew-cli");
         assert_eq!(
-            sent["events"][0]["attributes"]["context"]["resource"]["deployment"]["environment"],
-            "development"
+            sent_event(&server)?,
+            serde_json::json!({"ingest_key": NEW_KEY}),
+            "{}",
+            case.label
         );
+        assert_eq!(step(&body, "verify")["event_id"], EVENT_ID, "{}", case.label);
 
         let second = run_setup(&server, &dir, &bin).await?;
         assert!(
@@ -434,7 +461,9 @@ async_test!(setup_yes_covers_every_planned_framework_and_reruns_without_changes 
             .received_requests()
             .iter()
             .filter(|request| {
-                request.method == "POST" && request.url.path().starts_with("/api/projects")
+                request.method == "POST"
+                    && request.url.path().starts_with("/api/projects")
+                    && !request.url.path().ends_with("/test-event")
             })
             .count();
         assert_eq!(
@@ -504,7 +533,8 @@ async_test!(interactive_setup_shows_diffs_then_applies_after_confirmation -> Tes
         "--- a/build.gradle\n+++ b/build.gradle\n dependencies {\n+    implementation 'co.logbrew:logbrew-sdk:",
         "Apply these changes? [Y/n] ",
         "Wrote .env",
-        "Test event: arrived in LogBrew",
+        "Test event: arrived in LogBrew in 41 ms",
+        "Read it back: logbrew read logs --project 123e4567-e89b-12d3-a456-426614174000 --trace 0af7651916cd43dd8448eb211c80319c",
         "Next: load the env file into your app's environment, then start it",
     ] {
         assert!(text.contains(expected), "missing {expected:?} in\n{text}");
@@ -667,7 +697,7 @@ async_test!(an_existing_key_and_other_env_values_are_kept_and_never_printed -> T
         server
             .received_requests()
             .iter()
-            .all(|request| request.method != "POST" || request.url.path() == "/v1/events"),
+            .all(|request| request.method != "POST" || request.url.path().ends_with("/test-event")),
         "an existing key must not create a project or key"
     );
     Ok(())
@@ -710,7 +740,10 @@ async_test!(setup_never_writes_through_a_symlinked_env_file -> TestResult, {
     std::os::unix::fs::symlink(linked.join("elsewhere/ignore"), linked.join(".gitignore"))?;
     let options = WizardOptions {
         yes: true,
-        mcp: true,
+        extras: WizardExtras {
+            mcp: true,
+            ..WizardExtras::default()
+        },
         ..WizardOptions::default()
     };
     let result = logbrew_cli::setup::run_wizard(
@@ -798,6 +831,200 @@ async_test!(a_rejected_test_event_fails_setup_with_a_json_report -> TestResult, 
     Ok(())
 });
 
+async_test!(setup_loads_sample_data_before_the_test_event -> TestResult, {
+    let dir = fixture("sample-data", &[("build.gradle", "dependencies {\n}\n")])?;
+    let server = MockServer::start().await?;
+    Mock::auth("POST", format!("/api/projects/{PROJECT_ID}/sample-data"), ACCOUNT)
+        .respond_with(ResponseTemplate::new(200).set_body_json(&serde_json::json!({
+            "project_id": PROJECT_ID,
+            "loaded": true,
+            "issue_events": 1,
+            "logs": 3,
+            "trace_spans": 3,
+            "actions": 2
+        })))
+        .mount(&server);
+    mount_api(&server, &[], NEW_KEY);
+    let options = WizardOptions {
+        yes: true,
+        json: true,
+        extras: WizardExtras {
+            sample_data: true,
+            ..WizardExtras::default()
+        },
+        ..WizardOptions::default()
+    };
+    let mut output = Vec::new();
+    logbrew_cli::setup::run_wizard(
+        &environment(&server, &dir),
+        &options,
+        &mut std::io::empty(),
+        &mut output,
+    )
+    .await?;
+    let body: serde_json::Value = serde_json::from_slice(&output)?;
+    assert_eq!(body["ok"], true);
+    assert_eq!(
+        step(&body, "sample_data"),
+        &serde_json::json!({
+            "step": "sample_data",
+            "status": "loaded",
+            "counts": {"issue_events": 1, "logs": 3, "trace_spans": 3, "actions": 2}
+        })
+    );
+    let paths = server
+        .received_requests()
+        .iter()
+        .map(|request| request.url.path().to_owned())
+        .filter(|path| path.ends_with("/sample-data") || path.ends_with("/test-event"))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        paths,
+        [
+            format!("/api/projects/{PROJECT_ID}/sample-data"),
+            format!("/api/projects/{PROJECT_ID}/test-event")
+        ],
+        "sample data must load while the project has no events"
+    );
+
+    for (status, response, expected) in [
+        (
+            422,
+            serde_json::json!({"error": "project already has events", "code": "validation_failed"}),
+            "skipped",
+        ),
+        (
+            200,
+            serde_json::json!({"project_id": OTHER_PROJECT_ID, "loaded": true, "issue_events": 1,
+                "logs": 3, "trace_spans": 3, "actions": 2}),
+            "failed",
+        ),
+        (500, serde_json::json!({"error": "hostile detail"}), "failed"),
+    ] {
+        server.reset();
+        Mock::auth("POST", format!("/api/projects/{PROJECT_ID}/sample-data"), ACCOUNT)
+            .respond_with(ResponseTemplate::new(status).set_body_json(&response))
+            .mount(&server);
+        mount_api(&server, &[(PROJECT_ID, "Kept project")], NEW_KEY);
+        let options = WizardOptions {
+            project_id: Some(PROJECT_ID.to_owned()),
+            ..options.clone()
+        };
+        let mut output = Vec::new();
+        logbrew_cli::setup::run_wizard(
+            &environment(&server, &dir),
+            &options,
+            &mut std::io::empty(),
+            &mut output,
+        )
+        .await?;
+        let text = String::from_utf8(output)?;
+        assert!(!text.contains("hostile detail"), "{text}");
+        let body: serde_json::Value = serde_json::from_str(&text)?;
+        assert_eq!(step(&body, "sample_data")["status"], expected, "{status}");
+        assert_eq!(step(&body, "verify")["status"], "arrived", "{status}");
+        let mut output = Vec::new();
+        logbrew_cli::setup::run_wizard(
+            &environment(&server, &dir),
+            &WizardOptions {
+                json: false,
+                ..options
+            },
+            &mut std::io::empty(),
+            &mut output,
+        )
+        .await?;
+        let line = match expected {
+            "skipped" => "Sample data: skipped; the project already has events",
+            _ => "Sample data: failed to load",
+        };
+        assert!(String::from_utf8(output)?.contains(line), "{status}");
+    }
+    server.reset();
+    Mock::auth("POST", format!("/api/projects/{PROJECT_ID}/sample-data"), ACCOUNT)
+        .respond_with(ResponseTemplate::new(200).set_body_json(&serde_json::json!({
+            "project_id": PROJECT_ID, "loaded": true, "issue_events": 1, "logs": 3,
+            "trace_spans": 3, "actions": 2
+        })))
+        .mount(&server);
+    mount_api(&server, &[(PROJECT_ID, "Kept project")], NEW_KEY);
+    let mut output = Vec::new();
+    logbrew_cli::setup::run_wizard(
+        &environment(&server, &dir),
+        &WizardOptions {
+            json: false,
+            project_id: Some(PROJECT_ID.to_owned()),
+            ..options
+        },
+        &mut std::io::empty(),
+        &mut output,
+    )
+    .await?;
+    let text = String::from_utf8(output)?;
+    assert!(
+        text.contains("Sample data: loaded (issues 1, logs 3, trace spans 3, actions 2)"),
+        "{text}"
+    );
+    Ok(())
+});
+
+async_test!(setup_resends_once_then_fails_closed_on_test_event_responses -> TestResult, {
+    let dir = fixture("test-event-failed", &[("build.gradle", "dependencies {\n}\n")])?;
+    let server = MockServer::start().await?;
+    let mut extra = test_event("passed");
+    extra["raw"] = serde_json::json!("hostile detail");
+    let mut other_project = test_event("passed");
+    other_project["project_id"] = serde_json::json!(OTHER_PROJECT_ID);
+    let mut account = test_event("passed");
+    account["credential"] = serde_json::json!("account");
+    let mut missing_id = test_event("passed");
+    missing_id["event_id"] = serde_json::Value::Null;
+    for (response, sends) in [
+        (test_event("failed"), 2),
+        (extra, 1),
+        (other_project, 1),
+        (account, 1),
+        (missing_id, 1),
+    ] {
+        server.reset();
+        Mock::auth("POST", format!("/api/projects/{PROJECT_ID}/test-event"), ACCOUNT)
+            .respond_with(ResponseTemplate::new(200).set_body_json(&response))
+            .mount(&server);
+        mount_api(&server, &[], NEW_KEY);
+        let options = WizardOptions {
+            yes: true,
+            json: true,
+            ..WizardOptions::default()
+        };
+        let _removed = std::fs::remove_file(dir.join(".env"));
+        let mut output = Vec::new();
+        let result = logbrew_cli::setup::run_wizard(
+            &environment(&server, &dir),
+            &options,
+            &mut std::io::empty(),
+            &mut output,
+        )
+        .await;
+        assert!(result.is_err(), "{response}");
+        let sent = server
+            .received_requests()
+            .iter()
+            .filter(|request| request.url.path().ends_with("/test-event"))
+            .count();
+        assert_eq!(sent, sends, "{response}");
+        let text = String::from_utf8(output)?;
+        assert!(!text.contains("hostile detail"), "{text}");
+        let body: serde_json::Value = serde_json::from_str(&text)?;
+        assert_eq!(body["ok"], false);
+        assert_eq!(
+            step(&body, "verify"),
+            &serde_json::json!({"step": "verify", "status": "not_arrived"}),
+            "{response}"
+        );
+    }
+    Ok(())
+});
+
 async_test!(setup_without_a_supported_project_changes_nothing -> TestResult, {
     let dir = fixture("empty", &[("notes.txt", "")])?;
     let server = MockServer::start().await?;
@@ -860,24 +1087,35 @@ fn mount_api(server: &MockServer, projects: &[(&str, &str)], ingest_key: &str) {
         })),
     )
     .mount(server);
-    Mock::auth("POST", "/v1/events", ingest_key)
-        .respond_with(ResponseTemplate::new(200).set_body_json(&serde_json::json!({"logs": 1})))
-        .mount(server);
-    Mock::auth("GET", "/api/logs", ACCOUNT)
-        .respond_with(|request: &Request| {
-            let search = request
-                .url
-                .query_pairs()
-                .find(|(name, _)| name == "search")
-                .map(|(_, value)| value.into_owned())
-                .unwrap_or_default();
-            ResponseTemplate::new(200).set_body_json(&serde_json::json!([{
-                "id": "523e4567-e89b-12d3-a456-426614174000",
-                "project_id": PROJECT_ID,
-                "message": format!("LogBrew setup check {search}"),
-            }]))
-        })
-        .mount(server);
+    let ingest_key = ingest_key.to_owned();
+    Mock::auth(
+        "POST",
+        format!("/api/projects/{PROJECT_ID}/test-event"),
+        ACCOUNT,
+    )
+    .respond_with(move |request: &Request| {
+        let body: serde_json::Value = serde_json::from_slice(&request.body).unwrap_or_default();
+        if body != serde_json::json!({"ingest_key": ingest_key}) {
+            return ResponseTemplate::new(401).set_body_json(
+                &serde_json::json!({"error": "hostile detail", "code": "unauthorized"}),
+            );
+        }
+        ResponseTemplate::new(200).set_body_json(&test_event("passed"))
+    })
+    .mount(server);
+}
+
+/// A test-event response that the server read back when `result` is `passed`.
+fn test_event(result: &str) -> serde_json::Value {
+    serde_json::json!({
+        "project_id": PROJECT_ID,
+        "result": result,
+        "event_id": (result == "passed").then_some(EVENT_ID),
+        "trace_id": TRACE_ID,
+        "credential": "ingest_key",
+        "elapsed_ms": 41,
+        "next": "open the project's logs to see the test event"
+    })
 }
 
 fn project_row(id: &str, name: &str) -> serde_json::Value {
@@ -948,7 +1186,7 @@ fn sent_event(server: &MockServer) -> TestResult<serde_json::Value> {
     let request = server
         .received_requests()
         .into_iter()
-        .rfind(|request| request.url.path() == "/v1/events")
+        .rfind(|request| request.url.path().ends_with("/test-event"))
         .ok_or("setup must send a test event")?;
     Ok(serde_json::from_slice(&request.body)?)
 }

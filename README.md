@@ -155,16 +155,24 @@ Setup detects the framework, signs you in if necessary, and lets you select or
 create a project. It installs the SDK with the project's package manager,
 writes `LOGBREW_SERVER_API_KEY` to the framework's env file (`.env`, or
 `.env.local` for Symfony) without replacing existing values, and adds the init
-code where the framework expects it. Then it sends a test event and reads it
-back. Setup shows each file change as a diff and asks before it applies them.
+code where the framework expects it. Then it sends a test event with the
+project's ingest key, LogBrew reads it back, and setup prints the command that
+reads it again:
+
+```bash
+logbrew read logs --project <project_id> --trace <trace_id>
+```
+
+Setup shows each file change as a diff and asks before it applies them.
 It changes only files in the project directory and adds the env file to
 `.gitignore`. You can run it again at any time; it keeps what is already set up.
 
 Coding agents and scripts use `logbrew setup --yes --json`. It applies the same
 steps without questions and lists every step and file change. Add `--mcp` to
 add the hosted MCP server to the project config of detected agent clients
-(Claude Code, Cursor, and VS Code), and `--project <project_id>` to use an
-existing project.
+(Claude Code, Cursor, and VS Code), `--project <project_id>` to use an existing
+project, and `--sample-data` to load a removable sample trace, logs, actions,
+and issue into a project that has no events yet. Sample data is never billed.
 
 ### Plan SDK installation without changing files
 
@@ -178,10 +186,12 @@ identified from `config/application.rb` without reading application source.
 SvelteKit projects receive the public core, browser, and Svelte integration
 packages with the detected npm, pnpm, yarn, or bun command. Detection requires
 an exact `@sveltejs/kit` dependency in a standard `package.json` dependency map.
-React and Express dependencies receive the released browser/React or
-Node/Express packages. Mixed projects receive one deduplicated install command
-plus separate browser and server key scopes and explicit service, environment,
-and release requirements on both surfaces.
+An Express server receives the Node and Express packages, and setup adds the
+Express middleware where the app is created. React and Express dependencies
+receive the released browser/React or Node/Express packages. Mixed projects
+receive one deduplicated install command plus separate browser and server key
+scopes and explicit service, environment, and release requirements on both
+surfaces.
 
 Python plans report the public package compatibility requirements separately.
 Review them before running the command, especially when a library supports

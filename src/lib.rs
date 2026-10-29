@@ -107,12 +107,16 @@ pub async fn run_process() -> std::process::ExitCode {
         json: false,
         mcp,
         project_id,
+        sample_data,
         ..
     } = &command
         && interactive
     {
         let options = setup::WizardOptions {
-            mcp: *mcp,
+            extras: setup::WizardExtras {
+                mcp: *mcp,
+                sample_data: *sample_data,
+            },
             project_id: project_id.clone(),
             ..setup::WizardOptions::default()
         };
@@ -266,6 +270,8 @@ pub enum Command {
         mcp: bool,
         /// Existing project to set up instead of choosing or creating one.
         project_id: Option<String>,
+        /// Load removable sample data into a project that has no events yet.
+        sample_data: bool,
     },
     /// Checks local auth and server reachability.
     Status {
@@ -2254,6 +2260,7 @@ async fn execute_setup<W: std::io::Write>(
         json,
         mcp,
         project_id,
+        sample_data,
     } = command.clone()
     else {
         return Err(CliError::UnknownCommand.into());
@@ -2262,7 +2269,7 @@ async fn execute_setup<W: std::io::Write>(
         let options = setup::WizardOptions {
             yes,
             json,
-            mcp,
+            extras: setup::WizardExtras { mcp, sample_data },
             project_id,
         };
         return setup::run_wizard(env, &options, &mut std::io::empty(), output).await;

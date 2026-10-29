@@ -241,7 +241,7 @@ pub(super) fn init(dir: &Path, plan: &serde_json::Value, service: &str) -> Actio
                     |file| edit(file, None),
                 )
         }
-        "react_express" => first_edit(
+        "react_express" | "express" => first_edit(
             &edit,
             dir,
             [
@@ -495,7 +495,7 @@ fn manual_init(integration: &str, service: &str) -> String {
     const STARTUP: &str = "Create the client once at startup";
     const MOBILE: &str = "Pass the key from .env to the app through your build settings, then create the client once";
     let (intro, code) = match integration {
-        "node" | "react_express" => (
+        "node" | "react_express" | "express" => (
             STARTUP,
             "const { createLogBrewNodeClient } = require(\"@logbrew/node\");\n\
              const logbrew = createLogBrewNodeClient();",

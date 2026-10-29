@@ -172,6 +172,7 @@ fn setup_aliases_parse_as_setup() -> TestResult {
                 json: true,
                 mcp: false,
                 project_id: None,
+                sample_data: false,
             }
         );
         assert!(command.http_path().is_none());

@@ -596,7 +596,7 @@ async_test!(framework_detection_is_bounded_and_exact -> TestResult, {
         r#"{"dependencies":{"react":"18","next":"1"}}"#,
         r#"{"dependencies":{"react":"18","react-native":"1"}}"#,
         r#"{"dependencies":{"react":"18"}}"#,
-        r#"{"dependencies":{"express":"4"}}"#,
+        r#"{"dependencies":{"express":"4","next":"1"}}"#,
         r#"{"bin":""}"#,
         r#"{"bin":{}}"#,
         r#"{"bin":{"fixture":""}}"#,
@@ -607,6 +607,18 @@ async_test!(framework_detection_is_bounded_and_exact -> TestResult, {
         assert_eq!(body["detected"][0]["runtime"], "node");
         assert_eq!(body["install_plan"], serde_json::Value::Null);
     }
+
+    let express = fixture(
+        "express-server",
+        &[("package.json", r#"{"dependencies":{"express":"4"}}"#)],
+    )?;
+    let body = setup_json(&express).await?;
+    assert_eq!(body["detected"][0]["runtime"], "node");
+    assert_eq!(body["install_plan"]["integration"], "express");
+    assert_eq!(
+        body["install_plan"]["install_command"],
+        "npm install @logbrew/sdk @logbrew/node @logbrew/express"
+    );
     Ok(())
 });
 

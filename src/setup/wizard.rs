@@ -9,12 +9,10 @@ use std::path::Path;
 const KEY_PLACEHOLDER: &str = "<new ingest key>";
 /// Shown where the id of a project setup creates goes.
 const PROJECT_PLACEHOLDER: &str = "<new project id>";
-/// Lowercase hex digits for the test-event nonce.
-const HEX: &[u8; 16] = b"0123456789abcdef";
-/// Read-back attempts after the test event is accepted.
-const VERIFY_ATTEMPTS: u32 = 15;
-/// Delay between read-back attempts.
-const VERIFY_DELAY: std::time::Duration = std::time::Duration::from_secs(2);
+/// Test-event attempts; the server reads each event back before it answers.
+const VERIFY_ATTEMPTS: u32 = 2;
+/// Largest first-run response setup reads.
+const FIRST_RUN_RESPONSE_LIMIT: usize = 16 * 1024;
 
 /// Choices for one setup run.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -23,10 +21,19 @@ pub struct WizardOptions {
     pub yes: bool,
     /// Print one JSON report instead of human output.
     pub json: bool,
-    /// Add the hosted MCP server to detected agent clients.
-    pub mcp: bool,
+    /// Optional additions to the project.
+    pub extras: WizardExtras,
     /// Existing project to set up.
     pub project_id: Option<String>,
+}
+
+/// Optional additions setup makes only when asked.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct WizardExtras {
+    /// Add the hosted MCP server to detected agent clients.
+    pub mcp: bool,
+    /// Load removable sample data into a project that has no events yet.
+    pub sample_data: bool,
 }
 
 /// The project setup sends events to.
@@ -178,19 +185,35 @@ pub async fn run_wizard<R: BufRead, W: Write>(
         .unwrap_or_default()
         .replace('_', " ");
     report.step(plan.mcp, &format!("MCP server: {mcp}"))?;
+    if options.extras.sample_data {
+        let step = sample_data(env, project_id.as_str()).await?;
+        let counts = &step["counts"];
+        let line = match step["status"].as_str() {
+            Some("loaded") => format!(
+                "Sample data: loaded (issues {}, logs {}, trace spans {}, actions {})",
+                counts["issue_events"], counts["logs"], counts["trace_spans"], counts["actions"]
+            ),
+            Some("skipped") => String::from("Sample data: skipped; the project already has events"),
+            _ => String::from("Sample data: failed to load"),
+        };
+        report.step(step, line.as_str())?;
+    }
     report.say("Test event: sending…")?;
     let send_key = key.or_else(|| project.existing_key()).unwrap_or_default();
-    let arrived = verify(env, project_id.as_str(), send_key.as_str()).await?;
-    report.step(
-        serde_json::json!({
-            "step": "verify",
-            "status": if arrived { "arrived" } else { "not_arrived" },
-        }),
-        if arrived {
-            "Test event: arrived in LogBrew"
-        } else {
-            "Test event: did not arrive"
+    let verified = verify(env, project_id.as_str(), send_key.as_str()).await?;
+    let arrived = verified.is_some();
+    let line = verified.as_ref().map_or_else(
+        || String::from("Test event: did not arrive"),
+        |step| {
+            format!(
+                "Test event: arrived in LogBrew in {} ms\nRead it back: logbrew read logs --project {project_id} --trace {}",
+                step["elapsed_ms"], step["trace_id"].as_str().unwrap_or_default()
+            )
         },
+    );
+    report.step(
+        verified.unwrap_or_else(|| serde_json::json!({"step": "verify", "status": "not_arrived"})),
+        line.as_str(),
     )?;
     finish(&project, &mut report, &files, installed, arrived)
 }
@@ -314,7 +337,7 @@ fn plan<R: BufRead, W: Write>(
         .collect::<Vec<_>>()
         .join(" & ");
     let add_mcp = !edits.is_empty()
-        && (options.mcp
+        && (options.extras.mcp
             || (!options.yes
                 && confirm(
                     report,
@@ -798,84 +821,115 @@ async fn run(dir: &Path, command_line: &[String]) -> bool {
         .is_ok_and(|status| status.is_ok_and(|status| status.success()))
 }
 
-/// Sends one test log with the ingest key and reads it back with the account.
-async fn verify(env: &CliEnvironment, project_id: &str, key: &str) -> Result<bool, RuntimeError> {
+/// Sends one test event with the ingest key; the server reads it back before it answers.
+///
+/// Returns the verify step, or `None` when the event did not arrive.
+async fn verify(
+    env: &CliEnvironment,
+    project_id: &str,
+    key: &str,
+) -> Result<Option<serde_json::Value>, RuntimeError> {
+    let body = serde_json::json!({"ingest_key": key});
+    for _attempt in 0..VERIFY_ATTEMPTS {
+        let (status, value) = first_run_post(env, project_id, "test-event", Some(&body)).await?;
+        let Some(object) = value
+            .as_ref()
+            .and_then(serde_json::Value::as_object)
+            .filter(|object| status == 200 && object.len() == 7)
+        else {
+            return Ok(None);
+        };
+        let text = |name: &str| object.get(name).and_then(serde_json::Value::as_str);
+        let trace_id = text("trace_id").filter(|trace| {
+            trace.len() == 32 && trace.bytes().all(|byte| byte.is_ascii_hexdigit())
+        });
+        let elapsed_ms = object.get("elapsed_ms").and_then(serde_json::Value::as_u64);
+        let (Some(trace_id), Some(elapsed_ms), Some(_next), Some("ingest_key")) =
+            (trace_id, elapsed_ms, text("next"), text("credential"))
+        else {
+            return Ok(None);
+        };
+        if text("project_id") != Some(project_id) {
+            return Ok(None);
+        }
+        match (text("result"), object.get("event_id")) {
+            (Some("passed"), Some(serde_json::Value::String(event_id)))
+                if crate::ids::is_uuid(event_id) =>
+            {
+                return Ok(Some(serde_json::json!({
+                    "step": "verify",
+                    "status": "arrived",
+                    "event_id": event_id,
+                    "trace_id": trace_id,
+                    "elapsed_ms": elapsed_ms,
+                })));
+            }
+            (Some("failed"), Some(serde_json::Value::Null)) => {}
+            _ => return Ok(None),
+        }
+    }
+    Ok(None)
+}
+
+/// Loads the removable sample data; a project that already has events keeps none.
+async fn sample_data(
+    env: &CliEnvironment,
+    project_id: &str,
+) -> Result<serde_json::Value, RuntimeError> {
+    let (status, value) = first_run_post(env, project_id, "sample-data", None).await?;
+    let counts = value
+        .as_ref()
+        .and_then(serde_json::Value::as_object)
+        .filter(|object| {
+            status == 200
+                && object.len() == 6
+                && object.get("project_id").and_then(serde_json::Value::as_str) == Some(project_id)
+                && object.get("loaded") == Some(&serde_json::Value::Bool(true))
+        })
+        .and_then(|object| {
+            ["issue_events", "logs", "trace_spans", "actions"]
+                .into_iter()
+                .map(|name| Some((name.to_owned(), object.get(name)?.as_u64()?.into())))
+                .collect::<Option<serde_json::Map<_, _>>>()
+        });
+    Ok(match (status, counts) {
+        (200, Some(counts)) => {
+            serde_json::json!({"step": "sample_data", "status": "loaded", "counts": counts})
+        }
+        (422, _) => serde_json::json!({"step": "sample_data", "status": "skipped"}),
+        _ => serde_json::json!({"step": "sample_data", "status": "failed"}),
+    })
+}
+
+/// Posts to one project's first-run route with the account; returns the status and JSON body.
+async fn first_run_post(
+    env: &CliEnvironment,
+    project_id: &str,
+    route: &str,
+    body: Option<&serde_json::Value>,
+) -> Result<(u16, Option<serde_json::Value>), RuntimeError> {
     let origin =
         crate::http::normalized_origin(env.base_url.as_str()).ok_or(RuntimeError::Unavailable {
             message: "the configured API URL is invalid",
             next: "set LOGBREW_API_URL to an http or https API origin and retry",
         })?;
     let client = crate::http::api_client()?;
-    let mut nonce = [0_u8; 8];
-    getrandom::fill(&mut nonce).map_err(|_| canceled())?;
-    let nonce = nonce.iter().fold(String::new(), |mut text, byte| {
-        text.push(char::from(HEX[usize::from(byte >> 4)]));
-        text.push(char::from(HEX[usize::from(byte & 15)]));
-        text
-    });
-    let message = format!("LogBrew setup check {nonce}");
-    let timestamp = chrono::DateTime::<chrono::Utc>::from(std::time::SystemTime::now())
-        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
-    let batch = serde_json::json!({
-        "sdk": {"name": "logbrew-cli", "language": "rust", "version": env!("CARGO_PKG_VERSION")},
-        "events": [{
-            "type": "log",
-            "id": format!("setup-{nonce}"),
-            "timestamp": timestamp,
-            "attributes": {
-                "message": message,
-                "level": "info",
-                "context": {
-                    "schemaVersion": 1,
-                    "resource": {
-                        "service": {"name": "logbrew-setup"},
-                        "deployment": {"environment": "development"},
-                    },
-                },
-            },
-        }],
-    });
-    let accepted = client
-        .post(format!("{origin}/v1/events"))
-        .bearer_auth(key)
-        .json(&batch)
-        .send()
-        .await
-        .is_ok_and(|response| response.status().is_success());
-    if !accepted {
-        return Ok(false);
-    }
-    let url = format!("{origin}/api/logs?project_id={project_id}&search={nonce}&since=1h&limit=10");
-    for attempt in 0..VERIFY_ATTEMPTS {
-        if attempt > 0 {
-            tokio::time::sleep(VERIFY_DELAY).await;
-        }
-        let (response, _credential) = crate::auth::send_account_authenticated_with_refresh(
-            &client,
-            env,
-            |client, credential| client.get(url.as_str()).bearer_auth(credential.token()),
-        )
+    let url = format!("{origin}/api/projects/{project_id}/{route}");
+    let (response, _credential) =
+        crate::auth::send_account_authenticated_with_refresh(&client, env, |client, credential| {
+            let request = client.post(url.as_str()).bearer_auth(credential.token());
+            match body {
+                Some(body) => request.json(body),
+                None => request,
+            }
+        })
         .await?;
-        if !response.status().is_success() {
-            continue;
-        }
-        let Ok(body) = crate::http::bounded_body(response, 1024 * 1024).await else {
-            continue;
-        };
-        let found = serde_json::from_str::<serde_json::Value>(body.as_str())
-            .ok()
-            .and_then(|value| value.as_array().cloned())
-            .is_some_and(|logs| {
-                logs.iter().any(|log| {
-                    log["message"].as_str() == Some(message.as_str())
-                        && log["project_id"].as_str() == Some(project_id)
-                })
-            });
-        if found {
-            return Ok(true);
-        }
-    }
-    Ok(false)
+    let status = response.status().as_u16();
+    let value = crate::http::bounded_body(response, FIRST_RUN_RESPONSE_LIMIT)
+        .await
+        .ok()
+        .and_then(|text| serde_json::from_str(text.as_str()).ok());
+    Ok((status, value))
 }
 
 /// Derives a safe project and service name from the project directory.
