@@ -21,6 +21,7 @@ mod mcp_grants;
 mod native_debug_artifact_upload;
 mod native_debug_artifact_upload_bounds;
 mod native_debug_artifacts;
+mod operations;
 mod package_contents;
 mod project_archive;
 mod project_doctor;

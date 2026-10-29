@@ -6,6 +6,7 @@ mod help_topics;
 mod issue_shortcuts;
 mod log_shortcuts;
 mod native_debug;
+mod operations;
 mod project;
 mod read;
 mod support;
@@ -23,6 +24,7 @@ use issue_shortcuts::{
     parse_status_first_issue_id_shortcut,
 };
 use log_shortcuts::literal_log_search_separator_index;
+use operations::parse_operations;
 use support::parse_support;
 use watch::parse_watch;
 
@@ -119,7 +121,7 @@ fn parse_values(values: &[String]) -> Result<Command, CliError> {
         alias if is_examples_help_alias(alias) => parse_help_alias(HelpTopic::Examples, tail),
         alias if is_project_help_alias(alias) => parse_project(tail),
         "usage" => parse_usage(tail),
-        "mcp" | "billing" => parse_account_namespace(head, tail),
+        "mcp" | "billing" | "operations" => parse_account_namespace(head, tail),
         "support" => parse_support(tail),
         "investigate" => parse_investigate(tail),
         "debug-artifacts" => parse_native_debug_artifacts(tail),
@@ -426,12 +428,12 @@ fn is_issue_triage_action(args: &[String]) -> bool {
         })
 }
 
-/// Parses the account-scoped `mcp` and `billing` namespaces.
+/// Parses the account-scoped `mcp`, `billing`, and `operations` namespaces.
 fn parse_account_namespace(head: &str, args: &[String]) -> Result<Command, CliError> {
-    if head == "mcp" {
-        parse_mcp(args)
-    } else {
-        parse_billing(args)
+    match head {
+        "mcp" => parse_mcp(args),
+        "operations" => parse_operations(args),
+        _ => parse_billing(args),
     }
 }
 
