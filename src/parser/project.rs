@@ -6,7 +6,7 @@ use super::{
 };
 use crate::ids::{is_non_nil_uuid, is_uuid};
 use crate::{
-    CliError, Command, HelpTopic, LoginProvider, ProjectCreateOptions,
+    CliError, Command, HelpTopic, LoginProvider, ProjectCreateOptions, ProjectFiltersUpdate,
     ProjectIngestKeyCreateOptions, ProjectRepositoryOptions, ProjectSetupSeenOptions,
     RepositoryDiscoveryOptions, RepositorySetupTarget,
 };
@@ -82,6 +82,7 @@ pub(super) fn parse_project(args: &[String]) -> Result<Command, CliError> {
             parse_project_key_list(tail)
         }
         [subcommand, tail @ ..] if subcommand == "rename" => parse_project_rename(tail),
+        [subcommand, tail @ ..] if subcommand == "filters" => parse_project_filters(tail),
         [subcommand, tail @ ..] if subcommand == "restore" => parse_project_restore(tail),
         [subcommand, tail @ ..] if subcommand == "archived" => match tail {
             [] => Ok(Command::ProjectArchivedList { json: false }),
@@ -320,6 +321,81 @@ fn parse_project_rename(args: &[String]) -> Result<Command, CliError> {
         project_id: project_id.to_ascii_lowercase(),
         name,
         json: json_count == 1,
+    })
+}
+
+/// Parses `filters <project_id> [filter flags] [--json]`: no filter flag reads the filters.
+///
+/// `--message`, `--release`, and `--environment` repeat and replace their list; `--no-messages`,
+/// `--no-releases`, and `--no-environments` clear it. `--localhost`, `--browser-extensions`, and
+/// `--bots` take `on` or `off`.
+fn parse_project_filters(args: &[String]) -> Result<Command, CliError> {
+    let normalized = move_leading_json_to_tail(args);
+    let Some((project_id, tail)) = normalized.split_first() else {
+        return Err(CliError::InvalidProjectsCommand);
+    };
+    if !is_uuid(project_id) {
+        return Err(CliError::InvalidProjectsCommand);
+    }
+    let mut update = ProjectFiltersUpdate::default();
+    let mut json = false;
+    let mut index = 0;
+    while let Some(argument) = tail.get(index) {
+        let (flag, inline) = argument
+            .split_once('=')
+            .map_or((argument.as_str(), None), |(flag, value)| {
+                (flag, Some(value))
+            });
+        let list = match flag {
+            "--message" | "--no-messages" => Some(&mut update.messages),
+            "--release" | "--no-releases" => Some(&mut update.releases),
+            "--environment" | "--no-environments" => Some(&mut update.environments),
+            _ => None,
+        };
+        let switch = match flag {
+            "--localhost" => Some(&mut update.localhost),
+            "--browser-extensions" => Some(&mut update.browser_extensions),
+            "--bots" => Some(&mut update.bots),
+            _ => None,
+        };
+        if let Some(list) = list {
+            if flag.starts_with("--no-") {
+                if inline.is_some() || list.replace(Vec::new()).is_some() {
+                    return Err(CliError::InvalidProjectsCommand);
+                }
+            } else {
+                let value = flag_value(tail, &mut index, inline)
+                    .and_then(|value| bounded_project_create_value(value, 200, false))
+                    .ok_or(CliError::InvalidProjectsCommand)?;
+                // A cleared list stays empty, and the server takes at most 50 patterns.
+                if list
+                    .as_ref()
+                    .is_some_and(|patterns| patterns.is_empty() || patterns.len() >= 50)
+                {
+                    return Err(CliError::InvalidProjectsCommand);
+                }
+                list.get_or_insert_with(Vec::new).push(value);
+            }
+        } else if let Some(switch) = switch {
+            let value = match flag_value(tail, &mut index, inline) {
+                Some("on") => true,
+                Some("off") => false,
+                _ => return Err(CliError::InvalidProjectsCommand),
+            };
+            if switch.replace(value).is_some() {
+                return Err(CliError::InvalidProjectsCommand);
+            }
+        } else if flag == "--json" && inline.is_none() && !json {
+            json = true;
+        } else {
+            return Err(CliError::InvalidProjectsCommand);
+        }
+        index += 1;
+    }
+    Ok(Command::ProjectFilters {
+        project_id: project_id.to_ascii_lowercase(),
+        update: (update != ProjectFiltersUpdate::default()).then_some(update),
+        json,
     })
 }
 

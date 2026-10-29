@@ -24,6 +24,7 @@ mod native_debug_artifacts;
 mod package_contents;
 mod project_archive;
 mod project_doctor;
+mod project_filters;
 mod project_ingest_key_create;
 mod project_key_revoke;
 mod project_manage;
