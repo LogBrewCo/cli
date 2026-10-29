@@ -54,10 +54,10 @@ fn public_grammar_help_and_request_model_stay_aligned() -> Result<(), Box<dyn st
 
     let text = help::help_text(HelpTopic::AnalyticsPaths);
     assert!(text.contains("explicit opaque session boundaries"));
-    assert!(text.contains("never return session or user identifiers"));
+    assert!(text.contains("Each path lists its sessions"));
     assert!(text.contains("Property predicates are exact case-sensitive matches"));
     assert!(text.contains("same-trace evidence, never a root-cause claim"));
-    assert!(text.contains("JSON emits the exact validated schema-version-1 response"));
+    assert!(text.contains("JSON emits the exact validated schema-version-2 response"));
     let overview = help::help_text(HelpTopic::Analytics);
     assert!(overview.contains("logbrew analytics retention --help"));
     Ok(())
@@ -68,6 +68,7 @@ async_test!(built_binary_posts_exact_scope_and_preserves_validated_json -> Resul
     let response = paths_response();
     Mock::auth("POST", "/api/telemetry/analytics/paths", "account-token")
         .and(body_json(serde_json::json!({
+            "response_version": 2,
             "project_id": PROJECT_ID,
             "since": "24h",
             "environment": "production",
@@ -163,10 +164,16 @@ async fn run_binary(
     super::run_cli(server, args.as_slice()).await
 }
 
-/// Stable schema-version-1 fixture matching the private API contract.
+/// Stable schema-version-2 fixture matching the API contract.
 fn paths_response() -> serde_json::Value {
     serde_json::json!({
-        "schema_version": 1,
+        "schema_version": 2,
+        "detail": super::analytics_detail(
+            "session",
+            "2026-08-01T00:00:00Z",
+            "2026-08-02T00:00:00Z",
+            ("path:1", "/pricing > signup_started", 5, 10),
+        ),
         "query": {
             "project_id": PROJECT_ID,
             "since": "2026-08-02T00:00:00Z",

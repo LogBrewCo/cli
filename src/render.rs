@@ -457,7 +457,8 @@ fn read_summary(
                 None,
             ))
         }
-        ReadTarget::Actions => list_summary("Actions", list_items(value, "actions")?, action_line),
+        ReadTarget::Actions => list_summary("Actions", list_items(value, "actions")?, action_line)
+            .map(|summary| summary + PAGE_VIEW_NOTE),
         ReadTarget::Releases => {
             list_summary("Releases", list_items(value, "releases")?, release_line)
         }
@@ -861,6 +862,10 @@ fn list_summary(
     }
     Some(output)
 }
+
+/// Where page views live, since they are trace spans rather than product actions.
+const PAGE_VIEW_NOTE: &str = "Page views are trace spans, not actions. Count them with logbrew \
+analytics overview and read one visit with logbrew read trace <trace_id>.\n";
 
 /// Builds an empty-state message for list responses.
 fn empty_list_message(title: &str) -> String {

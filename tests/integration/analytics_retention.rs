@@ -30,9 +30,9 @@ fn public_grammar_help_and_request_model_stay_aligned() -> Result<(), Box<dyn st
 
     let text = help::help_text(HelpTopic::AnalyticsRetention);
     assert!(text.contains("Maturity-aware denominators"));
-    assert!(text.contains("Raw IDs are never returned"));
+    assert!(text.contains("Returned and not-returned users list example user IDs"));
     assert!(text.contains("first-in-range does not prove"));
-    assert!(text.contains("exact validated schema-version-1 response"));
+    assert!(text.contains("exact validated schema-version-3 response"));
     Ok(())
 }
 
@@ -45,6 +45,7 @@ async_test!(built_binary_posts_exact_scope_and_preserves_validated_json -> Resul
         "account-token",
     )
     .and(body_json(serde_json::json!({
+        "response_version": 3,
         "project_id": PROJECT_ID,
         "since": "30d",
         "environment": "production",
@@ -146,10 +147,16 @@ fn retention_args(json: bool) -> Vec<&'static str> {
     args
 }
 
-/// Stable schema-version-1 fixture matching the API contract.
+/// Stable schema-version-3 fixture matching the API contract.
 fn retention_response() -> serde_json::Value {
     serde_json::json!({
-        "schema_version": 1,
+        "schema_version": 3,
+        "detail": super::analytics_detail(
+            "identified_user",
+            "2026-07-31T00:00:00Z",
+            "2026-08-01T00:00:00Z",
+            ("returned", "Returned", 5, 10),
+        ),
         "query": {
             "project_id": PROJECT_ID,
             "since": "2026-08-01T00:00:00Z",

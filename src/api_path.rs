@@ -21,6 +21,8 @@ struct ReadPathFilters<'a> {
     until: Option<&'a str>,
     /// Optional user or actor filter.
     user: Option<&'a str>,
+    /// Optional exact session filter.
+    session: Option<&'a str>,
     /// Optional trace ID filter.
     trace: Option<&'a str>,
     /// Optional log severity filter.
@@ -61,6 +63,7 @@ pub(crate) fn read_path(target: &ReadTarget, options: &ReadOptions) -> String {
             since: options.since.as_deref(),
             until: options.until.as_deref(),
             user: options.user.as_deref(),
+            session: options.session.as_deref(),
             trace: options.trace.as_deref(),
             level: options.level.as_deref(),
             search: options.search.as_deref(),
@@ -109,6 +112,7 @@ fn filtered_read_path(target: &ReadTarget, filters: &ReadPathFilters<'_>) -> Str
                 ("since", filters.since),
                 ("until", filters.until),
                 ("distinct_id", filters.user),
+                ("session_id", filters.session),
                 ("project_id", filters.project),
                 ("release", filters.release),
                 ("environment", filters.environment),

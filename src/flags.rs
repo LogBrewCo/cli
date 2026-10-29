@@ -118,6 +118,9 @@ impl FlagScope {
             (Self::Read, "user" | "distinct-id") => {
                 "use --user <distinct_id> or --distinct-id <distinct_id>"
             }
+            (Self::Read, "session" | "session-id") => {
+                "use --session <session_id> or --session-id <session_id>"
+            }
             (Self::Read, "name") => "use --name <name>",
             (Self::Read, "service" | "service-name") => {
                 "use --service <service_name> or --service-name <service_name>"
@@ -292,6 +295,8 @@ pub(crate) fn is_read_filter_word(value: &str) -> bool {
             | "search"
             | "user"
             | "distinct-id"
+            | "session"
+            | "session-id"
             | "name"
             | "service"
             | "service-name"
@@ -445,6 +450,8 @@ enum ReadFilterKind {
     Assignee,
     /// Actor/distinct-id filter.
     User,
+    /// Exact session filter.
+    Session,
     /// Trace correlation filter.
     Trace,
     /// Log severity filter.
@@ -483,6 +490,8 @@ fn read_filter_spec(flag: &str) -> Option<ReadFilterSpec> {
         "--assignee" => (ReadFilterKind::Assignee, "--assignee", "--assignee"),
         "--user" => (ReadFilterKind::User, "--user", "--user"),
         "--distinct-id" => (ReadFilterKind::User, "--user", "--distinct-id"),
+        "--session" => (ReadFilterKind::Session, "--session", "--session"),
+        "--session-id" => (ReadFilterKind::Session, "--session", "--session-id"),
         "--trace" => (ReadFilterKind::Trace, "--trace", "--trace"),
         "--trace-id" => (ReadFilterKind::Trace, "--trace", "--trace-id"),
         "--level" | "--severity" => (ReadFilterKind::Level, "--severity", "--severity"),
@@ -526,6 +535,7 @@ fn apply_read_filter(
         ReadFilterKind::Priority => read.priority = Some(normalize_priority(&value)?),
         ReadFilterKind::Assignee => read.assignee = Some(normalize_assignee(&value)?),
         ReadFilterKind::User => read.user = Some(value),
+        ReadFilterKind::Session => read.session = Some(value),
         ReadFilterKind::Trace => read.trace = Some(value),
         ReadFilterKind::Level => read.level = Some(normalize_log_level(&value)?),
         ReadFilterKind::Search => read.search = Some(value),
@@ -611,6 +621,7 @@ fn duplicate_flag_next(flag: &'static str) -> &'static str {
         "--priority" => "use --priority once",
         "--assignee" => "use --assignee once",
         "--user" => "use --user once",
+        "--session" => "use --session once",
         "--trace" => "use --trace once",
         "--severity" => "use --severity once",
         "--search" => "use --search once",
@@ -747,6 +758,8 @@ fn missing_flag_value_next(flag: &'static str) -> &'static str {
         "--assignee" => "provide a value after --assignee",
         "--user" => "provide a value after --user",
         "--distinct-id" => "provide a value after --distinct-id",
+        "--session" => "provide a value after --session",
+        "--session-id" => "provide a value after --session-id",
         "--trace" => "provide a value after --trace",
         "--trace-id" => "provide a value after --trace-id",
         "--level" => "provide a value after --level",

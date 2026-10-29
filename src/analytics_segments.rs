@@ -11,6 +11,7 @@
 use serde::Deserialize;
 
 use crate::analytics_contract::{NextAction, bounded_counts, ratio_matches};
+use crate::analytics_detail::{self, Detail, DetailUnit};
 use crate::analytics_request::{self, Kind, insert_optional, valid_event_name};
 use crate::http::{nonempty_control_safe as bounded_contract_text, terminal_safe as display_text};
 use crate::render::{filter_label, percentage};
@@ -21,7 +22,7 @@ use crate::{
 };
 
 /// Public response version implemented by this CLI.
-const SCHEMA_VERSION: u8 = 2;
+const SCHEMA_VERSION: u8 = 3;
 /// Maximum accepted response body, matching the API result-byte bound.
 const RESPONSE_LIMIT: usize = 10 * 1024 * 1024;
 /// Maximum UTC-aligned buckets returned for one segment.
@@ -148,6 +149,7 @@ struct ComparisonResponse {
     confidence: ComparisonConfidence,
     segments: Vec<SegmentResult>,
     next_action: NextAction,
+    detail: Detail,
 }
 
 /// Normalized effective query echoed by the backend.
@@ -380,7 +382,15 @@ struct BaselineComparison {
     relative_reach_rate_lift: Option<f64>,
 }
 
-/// Parses and proves the complete schema-version-1 response.
+/// Maps the comparison unit to the detail unit.
+const fn segment_unit(unit: AnalyticsSegmentUnit) -> DetailUnit {
+    match unit {
+        AnalyticsSegmentUnit::Session => DetailUnit::Session,
+        AnalyticsSegmentUnit::IdentifiedUser => DetailUnit::IdentifiedUser,
+    }
+}
+
+/// Parses and proves the complete response in the requested schema version.
 fn validated_response(
     options: &AnalyticsSegmentComparisonOptions,
     body: &str,
@@ -392,6 +402,11 @@ fn validated_response(
             && valid_confidence(&response.confidence)
             && valid_summary_and_segments(options, response)
             && valid_next_action(response)
+            && analytics_detail::valid(
+                &response.detail,
+                segment_unit(response.query.analysis_unit),
+                response.query.since.as_str(),
+            )
     })
 }
 
@@ -984,6 +999,7 @@ fn render_response(response: &ComparisonResponse) -> String {
     output.push_str(
         "Series note: bucket-level unique counts are recalculated per bucket and must not be added across time.\n",
     );
+    analytics_detail::render(&response.detail, &mut output);
     output.push_str("Next: ");
     output.push_str(next_step(response.next_action.code.as_str()));
     output.push('\n');

@@ -11,13 +11,14 @@
 use serde::Deserialize;
 
 use crate::analytics_contract::{NextAction, bounded_counts, ratio_matches};
+use crate::analytics_detail::{self, Detail, DetailUnit};
 use crate::analytics_request::{self, Kind};
 use crate::http::{nonempty_control_safe as bounded_contract_text, terminal_safe as display_text};
 use crate::render::{filter_label, percentage};
 use crate::{AnalyticsPropertyOptions, CliEnvironment, RuntimeError};
 
 /// Public response version implemented by this CLI.
-const SCHEMA_VERSION: u8 = 2;
+const SCHEMA_VERSION: u8 = 3;
 /// Maximum accepted response body.
 const RESPONSE_LIMIT: usize = 1024 * 1024;
 /// Conservative bound for approximate cross-event cardinalities.
@@ -46,7 +47,7 @@ pub(super) fn request_path(options: &AnalyticsPropertyOptions) -> String {
             ("release", options.release.as_deref()),
             ("environment", options.environment.as_deref()),
             ("limit", Some(limit.as_str())),
-            ("response_version", Some("2")),
+            ("response_version", Some("3")),
         ],
     )
 }
@@ -81,6 +82,7 @@ struct PropertyCatalogResponse {
     estimation: PropertyEstimation,
     properties: Vec<PropertyDescriptor>,
     next_action: NextAction,
+    detail: Detail,
 }
 
 /// Normalized effective scope echoed by the backend.
@@ -179,7 +181,7 @@ struct PropertyEstimation {
     description: String,
 }
 
-/// Parses and proves the complete schema-version-1 response.
+/// Parses and proves the complete response in the requested schema version.
 fn validated_response(
     options: &AnalyticsPropertyOptions,
     body: &str,
@@ -192,6 +194,11 @@ fn validated_response(
             && valid_properties(response)
             && valid_estimation(&response.estimation)
             && valid_next_action(response)
+            && analytics_detail::valid(
+                &response.detail,
+                DetailUnit::Session,
+                response.query.since.as_str(),
+            )
     })
 }
 
@@ -385,6 +392,7 @@ fn render_response(response: &PropertyCatalogResponse) -> String {
             .as_str(),
         );
     }
+    analytics_detail::render(&response.detail, &mut output);
     output.push_str("Next: ");
     output.push_str(next_step(response.next_action.code.as_str()));
     output.push('\n');
@@ -433,7 +441,8 @@ mod tests {
     /// One internally consistent key-only property response.
     fn body() -> String {
         serde_json::json!({
-            "schema_version": 2,
+            "schema_version": 3,
+            "detail": analytics_detail::test_detail("session", "2026-08-02T00:00:00Z", "2026-08-03T00:00:00Z"),
             "query": {
                 "project_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
                 "since": "2026-08-03T00:00:00Z",

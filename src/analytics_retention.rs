@@ -11,6 +11,7 @@
 use serde::Deserialize;
 
 use crate::analytics_contract::{NextAction, bounded_counts, ratio_matches};
+use crate::analytics_detail::{self, Detail, DetailUnit};
 use crate::analytics_request::{self, Kind, scoped_body};
 use crate::http::{nonempty_control_safe as bounded_contract_text, terminal_safe as display_text};
 use crate::time::{ParsedTimestamp as UtcTimestamp, parse_utc_timestamp};
@@ -20,7 +21,7 @@ use crate::{
 };
 
 /// Public response version implemented by this CLI.
-const SCHEMA_VERSION: u8 = 1;
+const SCHEMA_VERSION: u8 = 3;
 /// Maximum accepted response body.
 const RESPONSE_LIMIT: usize = 1024 * 1024;
 /// Maximum returned cohort-period matrix cells.
@@ -44,6 +45,7 @@ pub(super) fn request_body(options: &AnalyticsRetentionOptions) -> serde_json::V
         options.release.as_deref(),
         options.environment.as_deref(),
     );
+    drop(body.insert("response_version".to_owned(), SCHEMA_VERSION.into()));
     drop(body.insert(
         "start_event".to_owned(),
         serde_json::json!({
@@ -110,6 +112,7 @@ struct RetentionResponse {
     curve: Vec<RetentionPeriod>,
     cohorts: Vec<RetentionCohort>,
     next_action: NextAction,
+    detail: Detail,
 }
 
 /// Normalized effective query echoed by the backend.
@@ -209,7 +212,7 @@ struct RetentionCohort {
     periods: Vec<RetentionCell>,
 }
 
-/// Parses and proves the complete schema-version-1 response.
+/// Parses and proves the complete response in the requested schema version.
 fn validated_response(
     options: &AnalyticsRetentionOptions,
     body: &str,
@@ -223,6 +226,11 @@ fn validated_response(
             && valid_summary(response)
             && valid_curve(response)
             && valid_next_action(response)
+            && analytics_detail::valid(
+                &response.detail,
+                DetailUnit::IdentifiedUser,
+                response.query.since.as_str(),
+            )
     })
 }
 
@@ -634,6 +642,7 @@ fn render_response(response: &RetentionResponse) -> String {
     render_curve(response, &mut output);
     render_cohorts(response, &mut output);
     render_coverage(response, &mut output);
+    analytics_detail::render(&response.detail, &mut output);
     output.push_str("Next: ");
     output.push_str(next_step(response.next_action.code.as_str()));
     output.push('\n');
@@ -863,7 +872,8 @@ mod tests {
     /// Builds a complete internally consistent response fixture.
     fn response() -> serde_json::Value {
         serde_json::json!({
-            "schema_version": 1,
+            "schema_version": 3,
+            "detail": analytics_detail::test_detail("identified_user", "2026-07-31T00:00:00Z", "2026-08-01T00:00:00Z"),
             "query": {
                 "project_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
                 "since": "2026-08-01T00:00:00Z",

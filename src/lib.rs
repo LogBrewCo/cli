@@ -7,6 +7,7 @@
 #![forbid(unsafe_code)]
 
 mod analytics_contract;
+mod analytics_detail;
 mod analytics_funnel;
 mod analytics_lifecycle;
 mod analytics_overview;
@@ -712,7 +713,9 @@ impl ReadTarget {
     pub(crate) fn supports_filter(&self, flag: &str) -> bool {
         match flag {
             "--name" => matches!(self, Self::Actions | Self::Metrics),
-            "--user" | "--distinct-id" => matches!(self, Self::Actions),
+            "--user" | "--distinct-id" | "--session" | "--session-id" => {
+                matches!(self, Self::Actions)
+            }
             "--service" | "--service-name" | "--since" | "--until" | "--limit" => matches!(
                 self,
                 Self::Logs
@@ -755,6 +758,8 @@ pub struct ReadOptions {
     pub until: Option<String>,
     /// Optional user or actor filter.
     pub user: Option<String>,
+    /// Optional exact session filter.
+    pub session: Option<String>,
     /// Optional trace ID filter.
     pub trace: Option<String>,
     /// Optional log severity filter.
@@ -795,6 +800,7 @@ impl ReadOptions {
             (self.since.is_some(), "--since"),
             (self.until.is_some(), "--until"),
             (self.user.is_some(), "--user"),
+            (self.session.is_some(), "--session"),
             (self.trace.is_some(), "--trace"),
             (self.level.is_some(), "--severity"),
             (self.search.is_some(), "--search"),
@@ -1490,6 +1496,8 @@ pub struct AnalyticsFunnelOptions {
     pub conversion_window_seconds: Option<u32>,
     /// Two through eight exact ordered event selectors.
     pub steps: Vec<AnalyticsFunnelStep>,
+    /// Optional safe property key that splits every step by its first captured value.
+    pub breakdown_property: Option<String>,
 }
 
 /// Supported version-1 classified event kind used in retention queries.

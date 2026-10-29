@@ -41,6 +41,7 @@ fn read_options_default_has_no_filters() {
             since: None,
             until: None,
             user: None,
+            session: None,
             trace: None,
             level: None,
             search: None,

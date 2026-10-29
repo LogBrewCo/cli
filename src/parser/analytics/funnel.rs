@@ -4,7 +4,7 @@ use super::{Grammar, ScopeFlags};
 use crate::{AnalyticsFunnelOptions, AnalyticsFunnelStep, AnalyticsFunnelUnit, CliError, Command};
 
 /// Exact recovery text shared by every malformed funnel invocation.
-pub(super) const ANALYTICS_FUNNEL_NEXT_STEP: &str = "use logbrew analytics funnel --project <project_id> --since <24h|RFC3339> --step <page-view|screen-view|interaction> <name> --step <kind> <name> with two through eight ordered --step values and optional --until, --service, --release, --environment, --unit session|identified-user, --conversion-window <seconds|1h|1d>, and --json";
+pub(super) const ANALYTICS_FUNNEL_NEXT_STEP: &str = "use logbrew analytics funnel --project <project_id> --since <24h|RFC3339> --step <page-view|screen-view|interaction> <name> --step <kind> <name> with two through eight ordered --step values and optional --until, --service, --release, --environment, --unit session|identified-user, --conversion-window <seconds|1h|1d>, --breakdown <property-key>, and --json";
 
 /// Canonical parser behavior for funnels.
 const GRAMMAR: Grammar = Grammar::new("analytics funnel", ANALYTICS_FUNNEL_NEXT_STEP);
@@ -34,6 +34,11 @@ pub(super) fn parse_funnel(args: &[String]) -> Result<Command, CliError> {
                 GRAMMAR.mark_seen(&mut seen, "--conversion-window")?;
                 parsed.conversion_window =
                     Some(GRAMMAR.flag_value(args, &mut index, "--conversion-window", inline)?);
+            }
+            "--breakdown" | "--breakdown-property" => {
+                GRAMMAR.mark_seen(&mut seen, "--breakdown")?;
+                parsed.breakdown =
+                    Some(GRAMMAR.flag_value(args, &mut index, "--breakdown", inline)?);
             }
             "--step" => {
                 if parsed.steps.len() >= 8 {
@@ -79,6 +84,7 @@ struct ParsedFunnelFlags {
     scope: ScopeFlags,
     analysis_unit: Option<String>,
     conversion_window: Option<String>,
+    breakdown: Option<String>,
     steps: Vec<(String, String)>,
 }
 
@@ -93,6 +99,18 @@ impl ParsedFunnelFlags {
             .conversion_window
             .as_deref()
             .map(parse_duration_seconds)
+            .transpose()?;
+        let breakdown_property = self
+            .breakdown
+            .as_deref()
+            .map(|key| {
+                let key = key.trim();
+                if crate::analytics_property_contract::is_safe_key(key) {
+                    Ok(key.to_owned())
+                } else {
+                    Err(GRAMMAR.invalid_argument("invalid funnel breakdown property key"))
+                }
+            })
             .transpose()?;
         if !(2..=8).contains(&self.steps.len()) {
             return Err(GRAMMAR.invalid_argument("funnel requires two through eight steps"));
@@ -125,6 +143,7 @@ impl ParsedFunnelFlags {
             analysis_unit,
             conversion_window_seconds,
             steps,
+            breakdown_property,
         })
     }
 }
