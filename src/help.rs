@@ -781,7 +781,9 @@ how well they convert, and whether they come back.
 The browser SDK tags every event of a visit with tag.utm_source, tag.utm_medium, \
 tag.utm_campaign, and tag.referrer_domain automatically. You do not need to add attribution.
 Every result gives the change from the previous period of equal length, the sample size, and up \
-to 5 example session or user IDs behind each number, each with its action and trace IDs.
+to 5 example session or user IDs behind each number, each with its action and trace IDs. Every \
+rate change carries a two-proportion test: trust a change only when it is significant.
+Funnel breakdowns list the 10 values with the most entries and one group for all other values.
 Overview discovers captured activity, exact event names, surfaces, capture quality, and analysis \
 readiness before a more specific query.
 Properties lists captured property keys with their top values and sessions per value, such as \

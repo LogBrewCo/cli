@@ -97,6 +97,12 @@ pub(crate) struct DetailGroup {
     /// The same rate before.
     #[serde(default)]
     previous_rate: Option<f64>,
+    /// Two-sided p-value of the two-proportion test of the rate change.
+    #[serde(default)]
+    rate_change_p_value: Option<f64>,
+    /// Whether the p-value is below 0.05.
+    #[serde(default)]
+    rate_change_significant: Option<bool>,
     /// Matching events.
     #[serde(default)]
     events: Option<u64>,
@@ -170,6 +176,7 @@ fn valid_group(group: &DetailGroup) -> bool {
         && group.change_rate.is_none_or(f64::is_finite)
         && (group.previous_units == 0) == group.change_rate.is_none()
         && rate_ok
+        && valid_significance(group)
         && group.breakdown.as_ref().is_none_or(|breakdown| {
             nonempty_control_safe(breakdown.property_key.as_str(), TEXT_LIMIT)
                 && breakdown
@@ -179,6 +186,20 @@ fn valid_group(group: &DetailGroup) -> bool {
         })
         && group.examples.len() <= usize::from(EXAMPLE_LIMIT)
         && group.examples.iter().all(valid_example)
+}
+
+/// Requires a p-value in 0 through 1 that agrees with its 0.05 verdict, and only beside rates.
+fn valid_significance(group: &DetailGroup) -> bool {
+    match (group.rate_change_p_value, group.rate_change_significant) {
+        (None, None) => true,
+        (Some(p_value), Some(significant)) => {
+            (0.0..=1.0).contains(&p_value)
+                && significant == (p_value < 0.05)
+                && group.rate.is_some()
+                && group.previous_rate.is_some()
+        }
+        _ => false,
+    }
 }
 
 /// Accepts an absent rate or a finite non-negative one; approximate unique counts can exceed 1.
@@ -236,6 +257,14 @@ pub(crate) fn render(detail: &Detail, output: &mut String) {
                 percentage(group.rate),
                 percentage(group.previous_rate),
             );
+            if let Some(p_value) = group.rate_change_p_value {
+                let verdict = if p_value < 0.05 {
+                    "significant"
+                } else {
+                    "not significant"
+                };
+                let _ = write!(output, ", rate change {verdict} at p={p_value:.3}");
+            }
         }
         if let Some(events) = group.events {
             let _ = write!(output, "; {events} events");
@@ -343,6 +372,8 @@ mod tests {
                 "base_units": 12,
                 "rate": 0.5,
                 "previous_rate": 0.8,
+                "rate_change_p_value": 0.145,
+                "rate_change_significant": false,
                 "examples": [{
                     "unit_id": "s-1",
                     "action_ids": ["11111111-1111-4111-8111-111111111111"],
@@ -364,7 +395,9 @@ mod tests {
         render(&value, &mut output);
         assert!(output.contains("12 sessions now, 10 before"));
         assert!(output.contains("page_view /pricing: 6 sessions (before 8, change -2, -25.0%)"));
-        assert!(output.contains("50.0% of 12 (before 80.0%)"));
+        assert!(
+            output.contains("50.0% of 12 (before 80.0%), rate change not significant at p=0.145")
+        );
         assert!(output.contains("Examples: s-1"));
         assert!(output.contains("s-1 actions 11111111-1111-4111-8111-111111111111 traces abc"));
         assert!(output.contains("logbrew read actions --session <id>"));
@@ -389,6 +422,8 @@ mod tests {
             ("/groups/0/change", serde_json::json!(2)),
             ("/groups/0/change_rate", serde_json::Value::Null),
             ("/groups/0/rate", serde_json::json!(-0.5)),
+            ("/groups/0/rate_change_significant", serde_json::json!(true)),
+            ("/groups/0/rate_change_p_value", serde_json::json!(1.5)),
             (
                 "/groups/0/examples/0/action_ids/0",
                 serde_json::json!("not-a-uuid"),
