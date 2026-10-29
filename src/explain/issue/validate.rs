@@ -30,6 +30,7 @@ use occurrence::{validate_issue_occurrence_selection, validate_selected_occurren
 use user_impact::validate_issue_user_impact;
 
 mod occurrence;
+mod source;
 mod user_impact;
 
 /// Fixed backend candidate cap for algorithm-version-1 issue occurrence recommendations.
@@ -37,7 +38,7 @@ const ISSUE_OCCURRENCE_CANDIDATE_LIMIT: u64 = 50;
 /// Maximum structured frames projected into one issue occurrence summary.
 const ISSUE_OCCURRENCE_FRAME_LIMIT: u64 = 32;
 
-/// Exact top-level vocabulary for the schema-version-10 issue response.
+/// Exact top-level vocabulary for the schema-version-17 issue response.
 const ISSUE_RESPONSE_FIELDS: &[&str] = &[
     "schema_version",
     "subject",
@@ -49,6 +50,7 @@ const ISSUE_RESPONSE_FIELDS: &[&str] = &[
     "cause",
     "fix",
     "source_locator",
+    "suspect_commits",
     "reproduction",
     "impact",
     "correlations",
@@ -101,7 +103,7 @@ pub(in crate::explain) fn validate_issue_response(
     expected_occurrence: &IssueOccurrenceSelection,
 ) -> Result<(), RuntimeError> {
     let response = exact_response_object(value, ISSUE_RESPONSE_FIELDS)?;
-    validate_schema_version_value(response, 14)?;
+    validate_schema_version_value(response, 17)?;
     let subject = required_object(response, "subject")?;
     require_string_equals(subject, "kind", "issue")?;
     require_string_equals(subject, "id", expected_id)?;
@@ -165,18 +167,7 @@ pub(in crate::explain) fn validate_issue_response(
         evidence,
     )?;
 
-    let cause = required_object(response, "cause")?;
-    let _cause_status = require_string(cause, "status")?;
-    let _cause_summary = optional_string(cause, "summary")?;
-    let _cause_provenance = optional_string(cause, "provenance")?;
-    validate_string_array(cause, "signals", 32)?;
-
-    let fix = required_object(response, "fix")?;
-    let _fix_status = require_string(fix, "status")?;
-    validate_nullable_object(fix, "location")?;
-    let _fix_provenance = optional_string(fix, "provenance")?;
-    issue_exception_chain::validate(event, evidence, cause, fix)?;
-    validate_issue_source_locator(required_object(response, "source_locator")?, evidence, fix)?;
+    let fix = validate_issue_cause_and_source(response, event, evidence)?;
 
     let impact = required_object(response, "impact")?;
     let impact_occurrence_count = require_safe_positive_u64(impact, "occurrence_count")?;
@@ -205,6 +196,31 @@ pub(in crate::explain) fn validate_issue_response(
         reproduction_ready,
         regression_detected,
     )
+}
+
+/// Validates cause, fix, source locator, frame links, and suspect commits; returns the fix.
+fn validate_issue_cause_and_source<'a>(
+    response: &'a Map<String, Value>,
+    event: &Map<String, Value>,
+    evidence: &Map<String, Value>,
+) -> Result<&'a Map<String, Value>, RuntimeError> {
+    let cause = required_object(response, "cause")?;
+    let _cause_status = require_string(cause, "status")?;
+    let _cause_summary = optional_string(cause, "summary")?;
+    let _cause_provenance = optional_string(cause, "provenance")?;
+    validate_string_array(cause, "signals", 32)?;
+
+    let fix = required_object(response, "fix")?;
+    let _fix_status = require_string(fix, "status")?;
+    validate_nullable_object(fix, "location")?;
+    let _fix_provenance = optional_string(fix, "provenance")?;
+    issue_exception_chain::validate(event, evidence, cause, fix)?;
+    let locator = required_object(response, "source_locator")?;
+    validate_issue_source_locator(locator, evidence, fix)?;
+    source::validate_frame_links(locator, event)?;
+    let suspects = required_object(response, "suspect_commits")?;
+    source::validate_suspect_commits(suspects, event, evidence)?;
+    Ok(fix)
 }
 
 /// Validates exact reproducer readiness and its phased evidence receipt.
@@ -284,6 +300,7 @@ fn validate_issue_source_locator(
             "revision",
             "revision_source",
             "repository_relative_file",
+            "frame_links",
             "evidence",
         ],
     )?;
@@ -305,12 +322,7 @@ fn validate_issue_source_locator(
         || repository.is_some_and(|value| !safe_repository_name(value))
         || component.is_some_and(|value| !safe_source_path(value, true))
         || revision.is_some() != revision_source.is_some()
-        || revision.is_some_and(|value| {
-            value.len() > 128
-                || !value
-                    .bytes()
-                    .all(|byte| byte.is_ascii_alphanumeric() || b"-._".contains(&byte))
-        })
+        || revision.is_some_and(|value| !safe_revision(value))
         || revision_source
             .is_some_and(|value| !matches!(value, "deployment_commit" | "setup_snapshot"))
         || file.is_some_and(|value| !value.contains('/') || !safe_source_path(value, false))
@@ -417,6 +429,15 @@ fn validate_source_locator_evidence(
         )?;
     }
     Ok(!missing.is_empty())
+}
+
+/// Accepts one bounded provider revision.
+fn safe_revision(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 128
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"-._".contains(&byte))
 }
 
 /// Accepts one bounded owner-qualified repository name.
@@ -606,7 +627,7 @@ fn safe_route_template(route: &str) -> bool {
             })
 }
 
-/// Typed nullable `data` fields of every version-14 issue breadcrumb.
+/// Typed nullable `data` fields of every version-14-and-later issue breadcrumb.
 const ISSUE_BREADCRUMB_DATA_FIELDS: &[&str] =
     &["method", "url", "status_code", "from", "to", "logger"];
 
@@ -694,8 +715,9 @@ fn validate_related_issues(
     let mut issue_ids = BTreeSet::new();
     let (status, truncated, _) =
         validate_correlated_collection(value, RELATED_ISSUE_LIMIT, true, |item| {
+            let signal = related_issue_signal(item)?;
             let issue_id = validate_correlated_signal(
-                item,
+                &signal,
                 project_id,
                 environment,
                 release,
@@ -707,7 +729,8 @@ fn validate_related_issues(
                 .then_some(())
                 .ok_or_else(invalid_response)
         })?;
-    if (status == "not_linked") != (trace_status == "not_linked") {
+    // Same-frame relations need no trace, so only an unlinked read requires an unlinked trace.
+    if status == "not_linked" && trace_status != "not_linked" {
         return Err(invalid_response());
     }
     validate_field_receipts(
@@ -720,6 +743,33 @@ fn validate_related_issues(
             truncated,
         ],
     )
+}
+
+/// Validates the relation fields of one related issue and returns the remaining signal fields.
+fn related_issue_signal(item: &Map<String, Value>) -> Result<Map<String, Value>, RuntimeError> {
+    let basis = item
+        .get("basis")
+        .and_then(Value::as_array)
+        .ok_or_else(invalid_response)?;
+    if basis.is_empty()
+        || basis.len() > 2
+        || basis
+            .iter()
+            .any(|value| !matches!(value.as_str(), Some("first_in_app_frame" | "same_trace")))
+        || basis.first() == basis.get(1)
+    {
+        return Err(invalid_response());
+    }
+    let _count = require_safe_positive_u64(item, "occurrence_count")?;
+    let first_seen = require_timestamp_millis(item, "first_seen_at")?;
+    if first_seen > require_timestamp_millis(item, "last_seen_at")? {
+        return Err(invalid_response());
+    }
+    let mut signal = item.clone();
+    for name in ["basis", "occurrence_count", "first_seen_at", "last_seen_at"] {
+        let _removed = signal.remove(name);
+    }
+    Ok(signal)
 }
 
 /// Validates the exact deployment preceding the selected occurrence and its evidence receipts.

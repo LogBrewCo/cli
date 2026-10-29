@@ -52,6 +52,7 @@ pub(in crate::explain) fn render_issue(value: &Value) -> Option<String> {
     append_issue_cause(&mut output, value.get("cause"));
     append_issue_fix(&mut output, value.get("fix"));
     append_issue_source_locator(&mut output, value.get("source_locator"));
+    append_issue_suspect_commits(&mut output, value.get("suspect_commits"));
     append_issue_reproduction(&mut output, value.get("reproduction"));
     append_issue_impact(&mut output, value.get("impact"));
     append_issue_correlations(&mut output, value.get("correlations"));
@@ -93,6 +94,68 @@ fn append_issue_source_locator(output: &mut String, locator: Option<&Value>) {
         append_labeled_text(output, "evidence", evidence, "status", 32);
     }
     output.push('\n');
+    for link in locator
+        .get("frame_links")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        output.push_str("Source link:");
+        append_labeled_integer(output, "frame", link, "frame_index");
+        append_labeled_text(output, "file", link, "repository_relative_file", 512);
+        append_labeled_integer(output, "line", link, "line");
+        append_labeled_text(output, "url", link, "url", 1024);
+        output.push('\n');
+    }
+}
+
+/// Appends the deploy range and its ranked suspect commits.
+fn append_issue_suspect_commits(output: &mut String, suspects: Option<&Value>) {
+    let Some(suspects) = suspects else { return };
+    output.push_str("Suspect commits:");
+    append_labeled_text(output, "status", suspects, "status", 40);
+    append_labeled_text(output, "deployment", suspects, "deployment_id", 256);
+    append_labeled_text(output, "base", suspects, "base_revision", 128);
+    append_labeled_text(output, "head", suspects, "head_revision", 128);
+    append_labeled_bool(output, "truncated", suspects, "truncated");
+    if let Some(evidence) = suspects.get("evidence") {
+        append_labeled_text(output, "evidence", evidence, "status", 32);
+    }
+    output.push('\n');
+    if let Some(evidence) = suspects.get("evidence") {
+        append_string_array(
+            output,
+            "Suspect commits missing",
+            evidence.get("missing_fields"),
+            4,
+        );
+    }
+    for commit in suspects
+        .get("commits")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        output.push_str("Suspect commit:");
+        append_labeled_integer(output, "rank", commit, "rank");
+        append_labeled_text(output, "sha", commit, "sha", 128);
+        append_labeled_text(output, "title", commit, "title", 200);
+        append_labeled_text(output, "author", commit, "author_name", 200);
+        append_labeled_text(output, "committed", commit, "committed_at", 64);
+        append_labeled_text(output, "url", commit, "url", 1024);
+        output.push('\n');
+        for file in commit
+            .get("files")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            output.push_str("Suspect file:");
+            append_labeled_text(output, "file", file, "repository_relative_file", 512);
+            append_labeled_integer(output, "frame", file, "frame_index");
+            output.push('\n');
+        }
+    }
 }
 
 /// Appends the proven grouping rule without repeating captured values.

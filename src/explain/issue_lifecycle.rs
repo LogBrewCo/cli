@@ -65,7 +65,10 @@ pub(super) fn validate(
     }
     let effective = optional_string(lifecycle, "effective_status")?;
     if effective.is_some_and(|status| {
-        !matches!(status, "unresolved" | "resolved" | "ignored" | "regressed")
+        !matches!(
+            status,
+            "unresolved" | "resolved" | "ignored" | "archived" | "regressed"
+        )
     }) {
         return Err(invalid_response());
     }
@@ -228,7 +231,7 @@ fn not_detected_shape_is_valid(
         "unresolved" if activity.latest.is_none() => {
             regression.reason == "no_resolution_recorded" && regression.resolution.is_none()
         }
-        "unresolved" | "ignored" => {
+        "unresolved" | "ignored" | "archived" => {
             latest_matches
                 && regression.reason == "current_status_not_resolved"
                 && regression.resolution.is_none()
@@ -365,7 +368,7 @@ fn validate_evidence_receipts(
 
 /// Returns whether a status belongs to the public persisted-state vocabulary.
 pub(super) fn is_persisted_status(status: &str) -> bool {
-    matches!(status, "unresolved" | "resolved" | "ignored")
+    matches!(status, "unresolved" | "resolved" | "ignored" | "archived")
 }
 
 /// Validates one required nullable UTC RFC 3339 timestamp.
