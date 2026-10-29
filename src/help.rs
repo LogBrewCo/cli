@@ -64,6 +64,10 @@ Usage:
   logbrew projects keys list <project_id> [--json]
   logbrew projects keys revoke <project_id> <key_id> --yes [--json]
   logbrew projects rename <project_id> --name <name> [--json]
+  logbrew projects filters <project_id> [--message <pattern>]... [--release <pattern>]... \
+                         [--environment <pattern>]... [--no-messages] [--no-releases] \
+                         [--no-environments] [--localhost on|off] [--browser-extensions on|off] \
+                         [--bots on|off] [--json]
   logbrew projects archive <project_id> --yes [--json]
   logbrew projects archived [--json]
   logbrew projects restore <project_id> [--json]
@@ -397,6 +401,10 @@ Usage:
   logbrew projects keys list <project_id> [--json]
   logbrew projects keys revoke <project_id> <key_id> --yes [--json]
   logbrew projects rename <project_id> --name <name> [--json]
+  logbrew projects filters <project_id> [--message <pattern>]... [--release <pattern>]... \
+                           [--environment <pattern>]... [--no-messages] [--no-releases] \
+                           [--no-environments] [--localhost on|off] [--browser-extensions on|off] \
+                           [--bots on|off] [--json]
   logbrew projects archive <project_id> --yes [--json]
   logbrew projects archived [--json]
   logbrew projects restore <project_id> [--json]

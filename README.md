@@ -298,6 +298,30 @@ logbrew projects rename <project_id> --name "Checkout Web" --json
 Changes the display name of an active project the account owns. The service
 name that telemetry reports stays the same. A name has 1 to 120 characters.
 
+### Drop unwanted events with inbound filters
+
+```bash
+logbrew projects filters <project_id> --json
+logbrew projects filters <project_id> --message "*ResizeObserver loop*" --environment staging --bots on
+```
+
+Inbound filters drop matching events before they are stored, so they never
+count toward your plan or spike protection limits. Without filter flags the
+command shows the project's filters and how many events each one dropped this
+billing period.
+
+- `--message`, `--release`, and `--environment` take a pattern where `*`
+  matches any text and `?` matches one character, case-insensitive. Repeat a
+  flag to give several patterns; the new list replaces the old one. A list
+  takes at most 50 patterns of 1 to 200 characters.
+- `--no-messages`, `--no-releases`, and `--no-environments` clear a list.
+- `--localhost on` drops events sent from a local machine, `--browser-extensions
+  on` drops errors raised in browser extensions, and `--bots on` drops events
+  from crawlers, link previews, uptime checks, and headless browsers.
+
+Filters you leave out keep their value. Anyone who can read the project sees
+its filters; changing them needs issue management on the project.
+
 ### Archive an inactive project safely
 
 Archive an account-owned project only after reviewing its UUID:

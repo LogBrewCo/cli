@@ -1,4 +1,4 @@
-//! Project key list, rename, archived list, and restore.
+//! Project key list, rename, inbound filters, archived list, and restore.
 #![expect(
     clippy::redundant_pub_crate,
     reason = "the parent command executor consumes these private-module helpers"
@@ -23,12 +23,69 @@ struct Renamed {
     name: String,
 }
 
+/// One project's inbound filters; extra fields are refused.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Filters {
+    /// Project UUID.
+    project_id: String,
+    /// Message patterns.
+    messages: Vec<String>,
+    /// Release patterns.
+    releases: Vec<String>,
+    /// Environment patterns.
+    environments: Vec<String>,
+    /// Whether events from a local machine are dropped.
+    localhost: bool,
+    /// Whether errors raised in browser extensions are dropped.
+    browser_extensions: bool,
+    /// Whether events from bots are dropped.
+    bots: bool,
+    /// Events dropped this billing period, by reason and meter.
+    dropped_events: Vec<DroppedEvents>,
+}
+
+/// Events one filter dropped for one meter; extra fields are refused.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DroppedEvents {
+    /// Filter that dropped them.
+    reason: String,
+    /// Meter they would have counted toward.
+    meter: String,
+    /// Dropped events.
+    events: u64,
+    /// Last drop.
+    last_dropped_at: String,
+}
+
+impl Filters {
+    /// Whether every field is display-safe and well formed.
+    fn valid(&self) -> bool {
+        let patterns = [&self.messages, &self.releases, &self.environments];
+        crate::ids::is_uuid(&self.project_id)
+            && patterns.iter().all(|list| {
+                list.len() <= 50
+                    && list
+                        .iter()
+                        .all(|value| crate::http::nonempty_display_safe(value, 200))
+            })
+            && self.dropped_events.iter().all(|row| {
+                crate::http::nonempty_display_safe(&row.reason, 64)
+                    && crate::http::nonempty_display_safe(&row.meter, 64)
+                    && crate::time::is_rfc3339_utc(&row.last_dropped_at)
+            })
+    }
+}
+
 /// HTTP request a project command sends.
 enum Request<'a> {
     /// Read a resource.
     Get,
     /// Change fields of a resource.
     Patch(&'a serde_json::Value),
+    /// Replace fields of a resource.
+    Put(&'a serde_json::Value),
     /// Run an action without a body.
     Post,
 }
@@ -150,6 +207,73 @@ pub(crate) async fn execute_rename<W: std::io::Write>(
     Ok(())
 }
 
+/// Reads one project's inbound filters, or changes the fields in `update`.
+pub(crate) async fn execute_filters<W: std::io::Write>(
+    env: &CliEnvironment,
+    command: &crate::Command,
+    output: &mut W,
+) -> Result<(), RuntimeError> {
+    let crate::Command::ProjectFilters {
+        project_id, json, ..
+    } = command
+    else {
+        return Err(invalid());
+    };
+    let (project_id, json) = (project_id.as_str(), *json);
+    let path = format!("/api/projects/{project_id}/inbound-filters");
+    let body = command.request_body();
+    let request = body.as_ref().map_or(Request::Get, Request::Put);
+    let (status, body, credential) = send(env, path.as_str(), request).await?;
+    if status != 200 {
+        return Err(api_error(status, body.as_str(), "filters", &credential));
+    }
+    let filters = serde_json::from_str::<Filters>(body.as_str()).map_err(|_| invalid())?;
+    if filters.project_id != project_id || !filters.valid() {
+        return Err(invalid());
+    }
+    if json {
+        writeln!(output, "{body}")?;
+        return Ok(());
+    }
+    let list = |values: &[String]| {
+        if values.is_empty() {
+            String::from("none")
+        } else {
+            values.join(", ")
+        }
+    };
+    let switch = |on: bool| if on { "on" } else { "off" };
+    writeln!(output, "Inbound filters for {project_id}")?;
+    writeln!(output, "Messages: {}", list(&filters.messages))?;
+    writeln!(output, "Releases: {}", list(&filters.releases))?;
+    writeln!(output, "Environments: {}", list(&filters.environments))?;
+    writeln!(output, "Local machines: {}", switch(filters.localhost))?;
+    writeln!(
+        output,
+        "Browser extensions: {}",
+        switch(filters.browser_extensions)
+    )?;
+    writeln!(output, "Bots: {}", switch(filters.bots))?;
+    let dropped = filters
+        .dropped_events
+        .iter()
+        .map(|row| row.events)
+        .sum::<u64>();
+    writeln!(output, "Dropped this billing period: {dropped}")?;
+    for row in &filters.dropped_events {
+        writeln!(
+            output,
+            "- reason={} meter={} events={} last={}",
+            row.reason, row.meter, row.events, row.last_dropped_at
+        )?;
+    }
+    writeln!(
+        output,
+        "Next: run logbrew projects filters {project_id} --bots on (or --message <pattern>) to change a filter"
+    )?;
+    Ok(())
+}
+
 /// Lists the newest 100 archived projects the account can restore.
 pub(crate) async fn execute_archived_list<W: std::io::Write>(
     env: &CliEnvironment,
@@ -234,6 +358,7 @@ async fn send(
             match request {
                 Request::Get => client.get(url.as_str()),
                 Request::Patch(body) => client.patch(url.as_str()).json(body),
+                Request::Put(body) => client.put(url.as_str()).json(body),
                 Request::Post => client.post(url.as_str()),
             }
             .bearer_auth(credential.token())
@@ -270,6 +395,10 @@ fn api_error(status: u16, body: &str, action: &str, credential: &AuthCredential)
                 "not_found",
                 "run logbrew projects archived and use a project that this account archived",
             ),
+            404 if action == "filters" => (
+                "not_found",
+                "run logbrew projects and use a project you can read; changes need issue management",
+            ),
             404 => (
                 "not_found",
                 "run logbrew projects and use an active project that this account owns",
@@ -278,10 +407,18 @@ fn api_error(status: u16, body: &str, action: &str, credential: &AuthCredential)
                 "deletion_requested",
                 "this project is scheduled for permanent deletion and cannot be restored",
             ),
+            422 if action == "filters" => (
+                "invalid_filters",
+                "use at most 50 patterns per list, each 1 to 200 characters",
+            ),
             422 => ("invalid_name", "use a project name of 1 to 120 characters"),
             405 if action == "rename" => (
                 "method_not_allowed",
                 "this server cannot rename projects yet; retry later",
+            ),
+            405 if action == "filters" => (
+                "method_not_allowed",
+                "this server cannot manage inbound filters yet; retry later",
             ),
             405 => ("method_not_allowed", "update logbrew and retry"),
             _ => ("server_error", "retry the same command later"),

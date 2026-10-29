@@ -366,6 +366,15 @@ pub enum Command {
         /// Emit machine-readable JSON.
         json: bool,
     },
+    /// Reads or changes one project's inbound filters.
+    ProjectFilters {
+        /// Canonical lowercase project UUID.
+        project_id: String,
+        /// Fields to change; `None` reads the filters.
+        update: Option<ProjectFiltersUpdate>,
+        /// Emit the exact validated server object.
+        json: bool,
+    },
     /// Renames one project.
     ProjectRename {
         /// Canonical lowercase project UUID.
@@ -797,6 +806,56 @@ pub enum WatchTarget {
 pub struct WatchOptions {
     /// Canonical severity filters for logs and issues.
     pub severity: Vec<String>,
+}
+
+/// Inbound filter fields to change; a field left as `None` keeps its value.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ProjectFiltersUpdate {
+    /// Message patterns that replace the list.
+    pub messages: Option<Vec<String>>,
+    /// Release patterns that replace the list.
+    pub releases: Option<Vec<String>>,
+    /// Environment patterns that replace the list.
+    pub environments: Option<Vec<String>>,
+    /// Whether to drop events sent from a local machine.
+    pub localhost: Option<bool>,
+    /// Whether to drop errors raised in browser extensions.
+    pub browser_extensions: Option<bool>,
+    /// Whether to drop events from crawlers and other bots.
+    pub bots: Option<bool>,
+}
+
+impl ProjectFiltersUpdate {
+    /// The request body: only the fields to change.
+    #[must_use]
+    pub fn body(&self) -> serde_json::Value {
+        let fields = [
+            (
+                "messages",
+                self.messages.as_ref().map(|v| serde_json::json!(v)),
+            ),
+            (
+                "releases",
+                self.releases.as_ref().map(|v| serde_json::json!(v)),
+            ),
+            (
+                "environments",
+                self.environments.as_ref().map(|v| serde_json::json!(v)),
+            ),
+            ("localhost", self.localhost.map(serde_json::Value::Bool)),
+            (
+                "browser_extensions",
+                self.browser_extensions.map(serde_json::Value::Bool),
+            ),
+            ("bots", self.bots.map(serde_json::Value::Bool)),
+        ];
+        serde_json::Value::Object(
+            fields
+                .into_iter()
+                .filter_map(|(key, value)| Some((key.to_owned(), value?)))
+                .collect(),
+        )
+    }
 }
 
 /// Optional metadata for backend-owned project setup tracking.
@@ -1716,6 +1775,9 @@ impl Command {
             Self::ProjectKeyList { project_id, .. } => {
                 Some(format!("/api/projects/{project_id}/ingest-keys"))
             }
+            Self::ProjectFilters { project_id, .. } => {
+                Some(format!("/api/projects/{project_id}/inbound-filters"))
+            }
             Self::ProjectDeletion { .. } => Some(String::from("/api/support/tickets")),
             Self::ProjectRepositories { target, .. } => Some(String::from(match target {
                 RepositorySetupTarget::Catalog => "/api/projects/repositories",
@@ -1768,6 +1830,7 @@ impl Command {
             | Self::ProjectKeyRevoke { json, .. }
             | Self::ProjectKeyList { json, .. }
             | Self::ProjectRename { json, .. }
+            | Self::ProjectFilters { json, .. }
             | Self::ProjectRestore { json, .. }
             | Self::ProjectArchivedList { json }
             | Self::Version { json }
@@ -1802,6 +1865,9 @@ impl Command {
                     | SetTarget::IssueRule { .. }
                     | SetTarget::LogRule { .. },
                 ..
+            }
+            | Self::ProjectFilters {
+                update: Some(_), ..
             } => Some(HttpMethod::Put),
             Self::ProjectCreate { .. }
             | Self::ProjectIngestKeyCreate { .. }
@@ -1838,6 +1904,7 @@ impl Command {
             Self::Projects { .. }
             | Self::McpGrants { .. }
             | Self::ProjectKeyList { .. }
+            | Self::ProjectFilters { update: None, .. }
             | Self::ProjectArchivedList { .. }
             | Self::ProjectRepositories {
                 target: RepositorySetupTarget::Catalog,
@@ -1873,34 +1940,8 @@ impl Command {
     #[must_use]
     fn request_body_for_token(&self, token: Option<&str>) -> Option<serde_json::Value> {
         match self {
-            Self::Set {
-                target: SetTarget::IssueStatus { status, .. },
-                ..
-            } => Some(serde_json::json!({ "status": status })),
-            Self::Set {
-                target: SetTarget::IssueArchive { archive, .. },
-                ..
-            } => Some(serde_json::json!({ "status": "archived", "archive": archive.body() })),
-            Self::Set {
-                target: SetTarget::IssuePriority { priority, .. },
-                ..
-            } => Some(serde_json::json!({ "priority": priority })),
-            Self::Set {
-                target: SetTarget::IssueAssignee { assignee, .. },
-                ..
-            } => Some(serde_json::json!({ "assignee": assignee })),
-            Self::Set {
-                target: SetTarget::IssueBulk(options),
-                ..
-            } => Some(issue_triage::request_body(options)),
-            Self::Set {
-                target:
-                    target @ (SetTarget::IssueOwnership { .. }
-                    | SetTarget::NotificationsRead
-                    | SetTarget::IssueRule { .. }
-                    | SetTarget::LogRule { .. }),
-                ..
-            } => issue_ownership::request_body(target),
+            Self::ProjectFilters { update, .. } => update.as_ref().map(ProjectFiltersUpdate::body),
+            Self::Set { target, .. } => set_request_body(target),
             Self::Deploy { options, .. } => serde_json::to_value(options).ok(),
             Self::AnalyticsPaths { options, .. } => Some(analytics_paths::request_body(options)),
             Self::AnalyticsCompare { options, .. } => {
@@ -1999,6 +2040,7 @@ impl Command {
             | Self::ProjectKeyRevoke { .. }
             | Self::ProjectKeyList { .. }
             | Self::ProjectRename { .. }
+            | Self::ProjectFilters { .. }
             | Self::ProjectRestore { .. }
             | Self::ProjectArchivedList { .. }
             | Self::Version { .. }
@@ -2041,6 +2083,27 @@ pub enum HttpMethod {
     Patch,
     /// DELETE request.
     Delete,
+}
+
+/// Builds the JSON request body of one `set` command.
+fn set_request_body(target: &SetTarget) -> Option<serde_json::Value> {
+    match target {
+        SetTarget::IssueStatus { status, .. } => Some(serde_json::json!({ "status": status })),
+        SetTarget::IssueArchive { archive, .. } => {
+            Some(serde_json::json!({ "status": "archived", "archive": archive.body() }))
+        }
+        SetTarget::IssuePriority { priority, .. } => {
+            Some(serde_json::json!({ "priority": priority }))
+        }
+        SetTarget::IssueAssignee { assignee, .. } => {
+            Some(serde_json::json!({ "assignee": assignee }))
+        }
+        SetTarget::IssueBulk(options) => Some(issue_triage::request_body(options)),
+        SetTarget::IssueOwnership { .. }
+        | SetTarget::NotificationsRead
+        | SetTarget::IssueRule { .. }
+        | SetTarget::LogRule { .. } => issue_ownership::request_body(target),
+    }
 }
 
 /// Builds the `setup/seen` request body without local setup state.
@@ -2183,6 +2246,9 @@ pub async fn execute_command<W: std::io::Write>(
             name,
             json,
         } => project_manage::execute_rename(env, project_id, name, *json, output).await,
+        Command::ProjectFilters { .. } => {
+            project_manage::execute_filters(env, command, output).await
+        }
         Command::Version { json } => execute_version(*json, output),
         Command::InvestigateIssue {
             issue_id,
