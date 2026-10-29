@@ -36,8 +36,8 @@ fn public_grammar_help_and_get_model_stay_aligned() -> Result<(), Box<dyn std::e
     let text = help::help_text(HelpTopic::AnalyticsProperties);
     for expected in [
         "non-sensitive tag.* keys",
-        "Property values",
-        "never returned",
+        "top 5 values",
+        "tag.utm_source",
         "--segment-property",
     ] {
         assert!(text.contains(expected), "missing help detail: {expected}");
@@ -59,7 +59,7 @@ async_test!(built_binary_gets_exact_scope_and_preserves_validated_json -> Result
     .and(query_param("since", "24h"))
     .and(query_param("environment", "production"))
     .and(query_param("limit", "2"))
-    .and(query_param("response_version", "2"))
+    .and(query_param("response_version", "3"))
     .respond_with(
         ResponseTemplate::new(200).set_body_raw(response_body.clone(), "application/json"),
     )
@@ -149,10 +149,16 @@ fn properties_args(json: bool) -> Vec<&'static str> {
     args
 }
 
-/// Stable schema-version-2 fixture matching the API contract.
+/// Stable schema-version-3 fixture matching the API contract.
 fn property_response() -> serde_json::Value {
     serde_json::json!({
-        "schema_version": 2,
+        "schema_version": 3,
+        "detail": super::analytics_detail(
+            "session",
+            "2026-08-02T00:00:00Z",
+            "2026-08-03T00:00:00Z",
+            ("property:tag.plan=pro", "tag.plan=pro", 5, 10),
+        ),
         "query": {
             "project_id": PROJECT_ID,
             "since": "2026-08-03T00:00:00Z",

@@ -11,12 +11,13 @@
 use serde::Deserialize;
 
 use crate::analytics_contract::{NextAction, bounded_counts, ratio_matches};
+use crate::analytics_detail::{self, Detail, DetailUnit};
 use crate::analytics_request::{self, Kind, valid_event_name};
 use crate::http::{nonempty_control_safe as bounded_contract_text, terminal_safe as display_text};
 use crate::{AnalyticsOverviewOptions, AnalyticsPathEventKind, CliEnvironment, RuntimeError};
 
 /// Public response version implemented by this CLI.
-const SCHEMA_VERSION: u8 = 3;
+const SCHEMA_VERSION: u8 = 4;
 /// Subject-kind index required by typed-subject response schemas.
 const SUBJECT_INDEX_VERSION: u8 = 1;
 /// Maximum accepted response body.
@@ -46,7 +47,7 @@ pub(super) fn request_path(options: &AnalyticsOverviewOptions) -> String {
             ("release", options.release.as_deref()),
             ("environment", options.environment.as_deref()),
             ("top_limit", Some(top_limit.as_str())),
-            ("response_version", Some("3")),
+            ("response_version", Some("4")),
         ],
     )
 }
@@ -84,6 +85,7 @@ struct OverviewResponse {
     top_actions: Vec<TopAction>,
     classified_activity: ClassifiedActivity,
     next_action: NextAction,
+    detail: Detail,
 }
 
 /// Normalized effective query echoed by the backend.
@@ -299,7 +301,7 @@ struct TopEvent {
     share_of_classified_events: f64,
 }
 
-/// Parses and proves the complete schema-version-2 response.
+/// Parses and proves the complete response in the requested schema version.
 fn validated_response(
     options: &AnalyticsOverviewOptions,
     body: &str,
@@ -313,6 +315,11 @@ fn validated_response(
             && valid_classified_activity(response)
             && valid_analysis_level(response)
             && valid_next_action(response)
+            && analytics_detail::valid(
+                &response.detail,
+                DetailUnit::Session,
+                response.query.since.as_str(),
+            )
     })
 }
 
@@ -942,6 +949,7 @@ fn render_response(response: &OverviewResponse) -> String {
         "Accuracy: unique user, anonymous-subject, session, action-name, surface, and event-name \
          counts are approximate; event and coverage totals are exact.\n",
     );
+    analytics_detail::render(&response.detail, &mut output);
     output.push_str("Next: ");
     output.push_str(next_step(response.next_action.code.as_str()));
     output.push('\n');

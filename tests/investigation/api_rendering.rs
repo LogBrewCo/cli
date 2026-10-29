@@ -141,7 +141,7 @@ async_test!(human_read_actions_and_issues_summarize_pivot_context -> TestResult,
             ],
             home: "human-read-actions-context",
             expected: "Actions (1)\n- checkout_failed warning user=user_123 trace=trace_123 \
-                           [checkout@1.2.3 / production]\n",
+                           [checkout@1.2.3 / production]\nPage views are trace spans, not actions. Count them with logbrew analytics overview and read one visit with logbrew read trace <trace_id>.\n",
         },
         ContextCase {
             route: "/api/telemetry/issues",
@@ -265,7 +265,7 @@ async_test!(collection_reads_preserve_json_shape_and_render_service_name -> Test
                 "24h",
             ],
             home: "human-service-actions",
-            expected: "Actions (1)\n- checkout_failed warning service=checkout-api user=user_123\n",
+            expected: "Actions (1)\n- checkout_failed warning service=checkout-api user=user_123\nPage views are trace spans, not actions. Count them with logbrew analytics overview and read one visit with logbrew read trace <trace_id>.\n",
         },
         ServiceCase {
             route: "/api/telemetry/releases",

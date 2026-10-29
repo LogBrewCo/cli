@@ -189,3 +189,41 @@ pub(crate) async fn run_command<const N: usize>(
     .await?;
     Ok(String::from_utf8(output)?)
 }
+
+/// One consistent analytics detail block for a window that starts at `since`.
+pub(crate) fn analytics_detail(
+    unit: &str,
+    previous_since: &str,
+    since: &str,
+    group: (&str, &str, u64, u64),
+) -> serde_json::Value {
+    let (key, label, units, base) = group;
+    serde_json::json!({
+        "unit": unit,
+        "previous_since": previous_since,
+        "previous_until": since,
+        "sample_size": base,
+        "previous_sample_size": base,
+        "example_limit": 5,
+        "groups": [{
+            "key": key,
+            "label": label,
+            "units": units,
+            "previous_units": 0,
+            "change": units,
+            "base_units": base,
+            "rate": if base == 0 { serde_json::Value::Null } else {
+                let ratio = |value: u64| f64::from(u32::try_from(value).unwrap_or(u32::MAX));
+                serde_json::json!(ratio(units) / ratio(base))
+            },
+            "examples": [{
+                "unit_id": "example-unit-1",
+                "action_ids": ["11111111-1111-4111-8111-111111111111"],
+                "trace_ids": ["0123456789abcdef0123456789abcdef"],
+                "first_seen_at": since,
+                "last_seen_at": since
+            }]
+        }],
+        "evidence_hint": "Page views are trace spans."
+    })
+}

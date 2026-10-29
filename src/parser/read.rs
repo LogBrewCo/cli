@@ -514,6 +514,7 @@ fn read_value_canonical_flag(flag: &str) -> Option<&'static str> {
         "--priority" => "--priority",
         "--assignee" => "--assignee",
         "--user" | "--distinct-id" => "--user",
+        "--session" | "--session-id" => "--session",
         "--trace" | "--trace-id" => "--trace",
         "--level" | "--severity" => "--severity",
         "--search" => "--search",
@@ -580,6 +581,8 @@ fn is_read_value_flag(flag: &str) -> bool {
             | "--assignee"
             | "--user"
             | "--distinct-id"
+            | "--session"
+            | "--session-id"
             | "--trace"
             | "--trace-id"
             | "--level"

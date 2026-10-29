@@ -47,8 +47,8 @@ fn public_grammar_help_and_request_model_stay_aligned() -> Result<(), Box<dyn st
     let text = help::help_text(HelpTopic::AnalyticsFunnel);
     assert!(text.contains("two through eight exact classified events"));
     assert!(text.contains("strictly greater timestamp"));
-    assert!(text.contains("Raw IDs are never returned"));
-    assert!(text.contains("exact validated schema-version-1 response"));
+    assert!(text.contains("--breakdown <property-key>"));
+    assert!(text.contains("exact validated schema-version-2 response"));
     Ok(())
 }
 
@@ -60,6 +60,8 @@ async_test!(built_binary_posts_exact_scope_and_preserves_validated_json -> Resul
             "project_id": PROJECT_ID,
             "since": "24h",
             "environment": "production",
+            "response_version": 2,
+            "breakdown_property": "tag.utm_source",
             "analysis_unit": "session",
             "conversion_window_seconds": 3600,
             "steps": [
@@ -101,6 +103,9 @@ async_test!(built_binary_human_output_explains_conversion_drop_off_coverage_and_
         "Capture gap: 20 matching events lacked an explicit session ID and were excluded.",
         "counts are visits or app sessions, not people",
         "Next: compare the same exact funnel across bounded releases, environments, or services",
+        "Step 1: 50 sessions (before 0, change +50); 83.3% of 60 (before n/a)",
+        "Examples: example-unit-1",
+        "logbrew read actions --session <id>",
     ] {
         assert!(text.contains(expected), "missing human detail: {expected}");
     }
@@ -149,6 +154,8 @@ async fn run_binary(
         "production",
         "--conversion-window",
         "1h",
+        "--breakdown",
+        "tag.utm_source",
     ];
     if json {
         args.push("--json");
@@ -156,17 +163,18 @@ async fn run_binary(
     super::run_cli(server, args.as_slice()).await
 }
 
-/// Stable schema-version-1 fixture matching the API contract.
+/// Stable schema-version-2 fixture matching the API contract.
 fn funnel_response() -> serde_json::Value {
     serde_json::json!({
-        "schema_version": 1,
+        "schema_version": 2,
         "query": {
             "project_id": PROJECT_ID,
             "since": "2026-08-01T00:00:00Z",
             "until": "2026-08-02T00:00:00Z",
             "environment": "production",
             "analysis_unit": "session",
-            "conversion_window_seconds": 3600
+            "conversion_window_seconds": 3600,
+            "breakdown_property": "tag.utm_source"
         },
         "purpose": "Measures exact ordered conversion without returning raw identity.",
         "summary": {
@@ -224,6 +232,12 @@ fn funnel_response() -> serde_json::Value {
             "code": "compare_funnel_contexts",
             "target": "/api/telemetry/analytics/funnel",
             "reason": "Repeat this server-authored reason verbatim."
-        }
+        },
+        "detail": super::analytics_detail(
+            "session",
+            "2026-07-31T00:00:00Z",
+            "2026-08-01T00:00:00Z",
+            ("step:1", "Step 1", 50, 60),
+        )
     })
 }

@@ -22,7 +22,7 @@ fn public_grammar_help_and_request_model_stay_aligned() -> Result<(), Box<dyn st
     assert_eq!(command.http_method(), Some(HttpMethod::Post));
     assert!(command.wants_json());
     let body = command.request_body().ok_or("comparison body missing")?;
-    assert_eq!(body["response_version"], 2);
+    assert_eq!(body["response_version"], 3);
     assert_eq!(body["analysis_unit"], "session");
     assert_eq!(body["target"]["kind"], "interaction");
     assert_eq!(body["target"]["event_name"], "checkout_completed");
@@ -34,7 +34,7 @@ fn public_grammar_help_and_request_model_stay_aligned() -> Result<(), Box<dyn st
     assert!(text.contains("first segment is the descriptive baseline"));
     assert!(text.contains("Segments are evaluated independently and may overlap"));
     assert!(text.contains("no causal inference or statistical significance"));
-    assert!(text.contains("exact validated schema-version-2 response"));
+    assert!(text.contains("exact validated schema-version-3 response"));
     Ok(())
 }
 
@@ -75,7 +75,7 @@ async_test!(built_binary_posts_exact_segments_and_preserves_validated_json -> Re
         "account-token",
     )
     .and(body_json(serde_json::json!({
-        "response_version": 2,
+        "response_version": 3,
         "project_id": PROJECT_ID,
         "since": "7d",
         "interval": "1h",
@@ -145,6 +145,7 @@ async_test!(built_binary_accepts_typed_user_identity_coverage_target -> Result<(
     let server = MockServer::start().await?;
     let mut response = comparison_response("Old release");
     response["query"]["analysis_unit"] = "identified_user".into();
+    response["detail"]["unit"] = "identified_user".into();
     response["segments"][0]["coverage"]["unit_identified_events"] = 70.into();
     response["segments"][0]["coverage"]["excluded_events"] = 30.into();
     response["segments"][0]["coverage"]["unit_coverage_rate"] = 0.7.into();
@@ -333,10 +334,16 @@ fn compare_args(json: bool, baseline: &str) -> Vec<String> {
     args
 }
 
-/// Stable schema-version-2 fixture matching the API contract.
+/// Stable schema-version-3 fixture matching the API contract.
 fn comparison_response(baseline_label: &str) -> serde_json::Value {
     serde_json::json!({
-        "schema_version": 2,
+        "schema_version": 3,
+        "detail": super::analytics_detail(
+            "session",
+            "2026-07-31T00:00:00Z",
+            "2026-08-01T00:00:00Z",
+            ("segment:old", "Old release", 10, 50),
+        ),
         "query": {
             "project_id": PROJECT_ID,
             "since": "2026-08-01T00:00:00Z",

@@ -29,7 +29,7 @@ fn public_grammar_help_and_get_model_stay_aligned() -> Result<(), Box<dyn std::e
         "interval=5m",
         "environment=production",
         "top_limit=2",
-        "response_version=3",
+        "response_version=4",
     ] {
         assert!(path.contains(expected), "missing request scope: {expected}");
     }
@@ -41,7 +41,7 @@ fn public_grammar_help_and_get_model_stay_aligned() -> Result<(), Box<dyn std::e
         "subject-kind coverage",
         "exact event names",
         "Capture-quality counts disclose",
-        "without user or session identifiers",
+        "example session IDs",
     ] {
         assert!(text.contains(expected), "missing help detail: {expected}");
     }
@@ -60,7 +60,7 @@ async_test!(built_binary_gets_exact_scope_and_preserves_validated_json -> Result
         .and(query_param("interval", "5m"))
         .and(query_param("environment", "production"))
         .and(query_param("top_limit", "2"))
-        .and(query_param("response_version", "3"))
+        .and(query_param("response_version", "4"))
         .respond_with(
             ResponseTemplate::new(200).set_body_raw(response_body.clone(), "application/json"),
         )
@@ -187,10 +187,21 @@ fn overview_args(json: bool) -> Vec<&'static str> {
     args
 }
 
-/// Stable schema-version-3 fixture matching the public API contract.
+/// Detail block of the overview fixture.
+fn overview_detail() -> serde_json::Value {
+    super::analytics_detail(
+        "session",
+        "2026-08-01T00:00:00Z",
+        "2026-08-02T00:00:00Z",
+        ("event:page_view:/pricing", "page_view /pricing", 5, 10),
+    )
+}
+
+/// Stable schema-version-4 fixture matching the public API contract.
 fn overview_response() -> serde_json::Value {
     serde_json::json!({
-        "schema_version": 3,
+        "schema_version": 4,
+        "detail": overview_detail(),
         "query": {
             "project_id": PROJECT_ID,
             "since": "2026-08-02T00:00:00Z",

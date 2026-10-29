@@ -584,14 +584,19 @@ Limit must be a positive whole number.";
 const READ_ACTIONS_HELP: &str = "\
 Usage:
   logbrew read actions [--release <release>] [--environment production] [--name checkout_failed] \
-                                 [--user <distinct_id>] [--service <service_name>] [--since 24h] \
+                                 [--user <distinct_id>] [--session <session_id>] [--service \
+                                 <service_name>] [--since 24h] \
                                  [--until <RFC3339>] [--project <project_id>] [--pagination \
                                  cursor] [--limit 100] [--json]
   logbrew read actions [filters] --pagination cursor --cursor-time <RFC3339> --cursor-id <uuid> \
                                  [--limit 100] [--json]
   logbrew events checkout_failed [--release <release>] [--environment production] [--json]
 
-Reads product actions. Use distinct_id to follow one actor or session.
+Reads product actions. Use --user to follow one actor and --session to follow one session.
+Page views are trace spans, not actions, so this list leaves them out. Count page views with \
+logbrew analytics overview and read one visit with logbrew read trace <trace_id>.
+Questions about traffic sources, funnels, conversion, or returning users belong to logbrew \
+analytics.
 Action/event aliases accept one positional name as the same filter as --name.
 Until is an exclusive RFC3339 upper bound, such as 2026-06-01T00:00:00Z, later than since.
 --service-name <service_name> is accepted as an alias for --service <service_name>.
@@ -771,26 +776,34 @@ Usage:
   logbrew analytics retention --help
   logbrew analytics lifecycle --help
 
+Use these commands for questions about where users come from, what they do, where they drop off, \
+how well they convert, and whether they come back.
+The browser SDK tags every event of a visit with tag.utm_source, tag.utm_medium, \
+tag.utm_campaign, and tag.referrer_domain automatically. You do not need to add attribution.
+Every result gives the change from the previous period of equal length, the sample size, and up \
+to 5 example session or user IDs behind each number, each with its action and trace IDs.
 Overview discovers captured activity, exact event names, surfaces, capture quality, and analysis \
 readiness before a more specific query.
-Properties discovers privacy-safe typed-context and custom-tag keys, aggregate capture coverage, \
-and migration gaps without exposing property values or identities.
+Properties lists captured property keys with their top values and sessions per value, such as \
+traffic sources from tag.utm_source and tag.referrer_domain.
 Compare measures one exact outcome across two through four named service, release, environment, or \
 exact-property segments, with the first segment as a descriptive baseline.
-Paths shows the most common aggregate journeys around one exact event without returning session \
-or user identifiers.
+Paths shows the most common journeys before or after one exact event.
 Funnels measure exact ordered conversion and drop-off across two through eight product events \
-using explicit session or typed opaque user boundaries.
+using explicit session or typed opaque user boundaries, optionally split by a property such as \
+tag.utm_source.
 Retention measures whether typed opaque users return after one exact start event, with \
 maturity-aware denominators that do not classify unobservable users as churned.
 Lifecycle classifies typed opaque users as new in observed history, returning, resurrected, or \
 dormant for one exact event, with explicit history and capture bounds.
 All commands return bounded human guidance and exact validated JSON contracts for AI agents. \
-Overview uses schema version 3, properties and compare use schema version 2, and the other \
-commands use schema version 1.
-Next: start with overview, inspect properties before property-based comparisons, then choose compare \
-for context differences, paths for journeys, funnels for conversion, retention for return behavior, \
-or lifecycle for population change.";
+Overview uses schema version 4, properties, compare, and retention use schema version 3, paths \
+and funnel use schema version 2, and lifecycle uses schema version 1.
+Read the events behind an example with logbrew read actions --session <id> or --user <id>, and \
+its page views with logbrew read trace <trace_id>.
+Next: start with overview, inspect properties for traffic sources, then choose funnel with \
+--breakdown tag.utm_source for conversion by source, compare for context differences, paths for \
+journeys, retention for return behavior, or lifecycle for population change.";
 
 /// Product-analytics project overview help text.
 const ANALYTICS_OVERVIEW_HELP: &str = "\
@@ -814,7 +827,8 @@ untraced events, unnamed events, and unclassified activity remain separate.
 Unique user, anonymous-subject, session, name, and surface counts are approximate; event and \
 coverage totals are exact within the selected window.
 Human output is terminal-safe and recommends the next useful capture or analysis action.
-JSON emits the exact validated schema-version-3 response without user or session identifiers.
+Every top event lists its sessions, the change from the previous period, and example session IDs.
+JSON emits the exact validated schema-version-4 response.
 Next: use exact event names from the overview with analytics compare, paths, funnel, retention, or \
 lifecycle.";
 
@@ -834,12 +848,14 @@ Shows bounded standard runtime, framework, operating-system, device, and applica
 non-sensitive tag.* keys captured on classified product events. Results include exact per-key event \
 coverage, approximate distinct-value counts, current-index and historical migration coverage, \
 privacy filtering, truncation, and the next useful action.
-Property values and user, session, subject, trace, network-address, or credential identifiers are \
-never returned by this command. Use a value already known by your application with \
---segment-property <segment-key>:<property-key>=<exact-value> in analytics compare.
-Human output is terminal-safe. JSON emits the exact validated schema-version-2 aggregate response.
-Next: copy an exact returned key into an analytics compare property predicate; verify value spelling \
-and case locally because catalog discovery intentionally does not reveal values.";
+The browser SDK captures tag.utm_source, tag.utm_medium, tag.utm_campaign, and \
+tag.referrer_domain on every event of a visit, so this command answers where traffic comes from.
+Each key lists its top 5 values with events and sessions per value, the change from the previous \
+period, and example session IDs. Sensitive keys and network or credential identifiers are never \
+returned.
+Human output is terminal-safe. JSON emits the exact validated schema-version-3 response.
+Next: split a funnel by a returned key with analytics funnel --breakdown <key>, or compare exact \
+values with --segment-property <segment-key>:<property-key>=<exact-value> in analytics compare.";
 
 /// Product-analytics context segment comparison help text.
 const ANALYTICS_COMPARE_HELP: &str = "\
@@ -874,7 +890,8 @@ statistical significance test is claimed.
 Human output shows segment reach, baseline differences, missing-key coverage versus nonmatching-value \
 coverage, capture and trace-link coverage, bounded \
 time-series evidence, interpretation limits, and the next useful action. JSON emits the exact \
-validated schema-version-2 response without raw session or subject identifiers.
+validated schema-version-3 response with the change from the previous period and example units \
+for each segment.
 Next: choose an exact captured target from Product Analytics overview, compare meaningful exact \
 contexts, then inspect paths and correlated traces in the weakest segment.";
 
@@ -901,12 +918,13 @@ Aliases after/before map to following/preceding; page_view and screen_view are a
 Property predicates are exact case-sensitive matches applied only to the anchor occurrence. Copy \
 keys from analytics properties; values remain application-known and are not suggested or repeated \
 in human output. Surrounding events remain unfiltered so the session journey stays truthful.
-Results use explicit opaque session boundaries and never return session or user identifiers.
+Results use explicit opaque session boundaries. Each path lists its sessions, the change from the \
+previous period, and example session IDs.
 Human output highlights represented sessions, property-ready versus missing-key and value-mismatch \
 populations, trace-link coverage, bounded trace investigation commands, capture gaps, truncation, \
 and the next useful action. Trace exemplars are same-trace evidence, never a root-cause claim, and \
 their usefulness depends on retained spans.
-JSON emits the exact validated schema-version-1 response for AI agents.
+JSON emits the exact validated schema-version-2 response for AI agents.
 Next: choose an exact captured page, screen, or interaction from Product Analytics, optionally \
 classify its anchor with safe properties, then inspect a returned trace exemplar.";
 
@@ -916,7 +934,7 @@ Usage:
   logbrew analytics funnel --project <project_id> --since <24h|RFC3339> \
       --step <page-view|screen-view|interaction> <name> \
       --step <page-view|screen-view|interaction> <name> [--step <kind> <name>]... \
-      [options] [--json]
+      [--breakdown <property-key>] [options] [--json]
 
 Options:
   --until <RFC3339>                 Exclusive upper time bound.
@@ -925,6 +943,8 @@ Options:
   --environment <name>             Exact environment context.
   --unit <session|identified-user>  Counting boundary (default: session).
   --conversion-window <duration>   First-to-final window as seconds, 30m, 1h, or 1d.
+  --breakdown <property-key>        Split every step by the unit's first captured value of one key,
+                                     such as tag.utm_source or tag.referrer_domain (top 10 values).
 
 Measures where explicit sessions or opaque subjects explicitly typed as users enter, progress, \
 complete, and drop off across two through eight exact classified events. Repeat --step in the \
@@ -936,10 +956,11 @@ steps.
 Session funnels count visits or app sessions, not people. Identified-user funnels require stable \
 application-supplied opaque subject IDs with context.subject.kind=user and can connect separate \
 sessions. Anonymous, legacy-untyped, historical-unindexed, and missing subjects are reported as \
-capture gaps. Raw IDs are never returned.
+capture gaps.
 Human output shows candidate, entered, and completed units; every step's conversion and drop-off; \
-capture coverage; interpretation limits; and the next useful action. JSON emits the exact \
-validated schema-version-1 response for AI agents.
+units reached and stopped at each step, per breakdown value, with the change from the previous \
+period and example unit IDs; capture coverage; interpretation limits; and the next useful action. \
+JSON emits the exact validated schema-version-2 response for AI agents.
 Next: use exact captured event names from Product Analytics overview and inspect correlated traces \
 around the earliest material drop-off.";
 
@@ -965,14 +986,15 @@ Options:
 Returns a typed-user retention curve and a query-relative cohort matrix for two exact classified \
 events. page_view, screen_view, exact, rolling, 1h, 1d, 1w, and 30d are accepted aliases.
 Only stable opaque subject IDs with context.subject.kind=user qualify. Anonymous, legacy-untyped, \
-historical-unindexed, and missing subjects are reported as capture gaps. Raw IDs are never \
-returned.
+historical-unindexed, and missing subjects are reported as capture gaps. Returned and \
+not-returned users list example user IDs.
 Returns must occur strictly after each subject's start anchor. Maturity-aware denominators exclude \
 subjects whose selected period cannot yet be observed instead of reporting them as churned.
 thirty-day is a fixed 30-day duration, not a calendar month. first-in-range does not prove a \
 subject's first-ever historical start.
 Human output shows headline return rate, every eligible period, cohort maturity, capture gaps, and \
-the next useful action. JSON emits the exact validated schema-version-1 response for AI agents.
+the change from the previous period, and the next useful action. JSON emits the exact validated \
+schema-version-3 response for AI agents.
 Next: use exact captured start and return event names from Product Analytics overview.";
 
 /// Product-analytics lifecycle help text.

@@ -11,6 +11,7 @@
 use serde::Deserialize;
 
 use crate::analytics_contract::{COUNT_LIMIT, NextAction, bounded_counts, ratio_matches};
+use crate::analytics_detail::{self, Detail, DetailUnit};
 use crate::analytics_request::{self, Kind, scoped_body, valid_event_name};
 use crate::http::{nonempty_control_safe as bounded_contract_text, terminal_safe as display_text};
 use crate::{
@@ -19,7 +20,7 @@ use crate::{
 };
 
 /// Public version implemented by this CLI.
-const SCHEMA_VERSION: u8 = 1;
+const SCHEMA_VERSION: u8 = 2;
 /// Maximum accepted response body.
 const RESPONSE_LIMIT: usize = 1024 * 1024;
 /// Storage contract's direction-nearest event cap.
@@ -43,6 +44,7 @@ pub(super) fn request_body(options: &AnalyticsPathOptions) -> serde_json::Value 
         options.release.as_deref(),
         options.environment.as_deref(),
     );
+    drop(body.insert("response_version".to_owned(), SCHEMA_VERSION.into()));
     drop(body.insert(
         "direction".to_owned(),
         serde_json::Value::String(options.direction.as_str().to_owned()),
@@ -112,6 +114,7 @@ struct PathsResponse {
     coverage: PathCoverage,
     paths: Vec<AggregatePath>,
     next_action: NextAction,
+    detail: Detail,
 }
 
 /// Normalized effective query echoed by the backend.
@@ -217,7 +220,7 @@ struct PathNode {
     event_name: String,
 }
 
-/// Parses and proves the complete schema-version-1 response.
+/// Parses and proves the complete response in the requested schema version.
 fn validated_response(
     options: &AnalyticsPathOptions,
     body: &str,
@@ -234,6 +237,11 @@ fn validated_response(
             && response.summary.anchored_sessions <= response.coverage.usable_anchor_events
             && valid_paths(options, response)
             && valid_next_action(response)
+            && analytics_detail::valid(
+                &response.detail,
+                DetailUnit::Session,
+                response.query.since.as_str(),
+            )
     })
 }
 
@@ -543,6 +551,7 @@ fn render_response(response: &PathsResponse) -> String {
         output
             .push_str("Limit: lower-volume or per-session-capped journeys are not represented.\n");
     }
+    analytics_detail::render(&response.detail, &mut output);
     output.push_str("Next: ");
     output.push_str(next_step(response.next_action.code.as_str()));
     output.push('\n');
@@ -753,7 +762,8 @@ mod tests {
 
     fn response(direction: &str, nodes: &serde_json::Value) -> serde_json::Value {
         serde_json::json!({
-            "schema_version": 1,
+            "schema_version": 2,
+            "detail": analytics_detail::test_detail("session", "2026-08-01T00:00:00Z", "2026-08-02T00:00:00Z"),
             "query": {
                 "project_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
                 "since": "2026-08-02T00:00:00Z",

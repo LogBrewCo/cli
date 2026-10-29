@@ -11,6 +11,7 @@
 use serde::Deserialize;
 
 use crate::analytics_contract::{NextAction, bounded_counts, ratio_matches};
+use crate::analytics_detail::{self, Detail, DetailUnit};
 use crate::analytics_request::{self, Kind, scoped_body, valid_event_name};
 use crate::http::{nonempty_control_safe as bounded_contract_text, terminal_safe as display_text};
 use crate::render::percentage;
@@ -21,7 +22,7 @@ use crate::{
 };
 
 /// Public response version implemented by this CLI.
-const SCHEMA_VERSION: u8 = 1;
+const SCHEMA_VERSION: u8 = 2;
 /// Maximum accepted response body.
 const RESPONSE_LIMIT: usize = 1024 * 1024;
 /// Maximum ordered funnel steps returned by the public API.
@@ -49,6 +50,10 @@ pub(super) fn request_body(options: &AnalyticsFunnelOptions) -> serde_json::Valu
         options.release.as_deref(),
         options.environment.as_deref(),
     );
+    drop(body.insert("response_version".to_owned(), SCHEMA_VERSION.into()));
+    if let Some(key) = &options.breakdown_property {
+        drop(body.insert("breakdown_property".to_owned(), key.as_str().into()));
+    }
     drop(body.insert(
         "analysis_unit".to_owned(),
         serde_json::Value::String(options.analysis_unit.as_str().to_owned()),
@@ -111,6 +116,7 @@ struct FunnelResponse {
     coverage: FunnelCoverage,
     steps: Vec<FunnelStep>,
     next_action: NextAction,
+    detail: Detail,
 }
 
 /// Normalized effective query echoed by the backend.
@@ -125,6 +131,8 @@ struct FunnelQuery {
     environment: Option<String>,
     analysis_unit: AnalyticsFunnelUnit,
     conversion_window_seconds: u32,
+    #[serde(default)]
+    breakdown_property: Option<String>,
 }
 
 /// Aggregate conversion outcome for the selected identity boundary.
@@ -168,7 +176,7 @@ struct FunnelStep {
     drop_off_to_next_rate: Option<f64>,
 }
 
-/// Parses and proves the complete schema-version-1 response.
+/// Parses and proves the complete schema-version-2 response.
 fn validated_response(
     options: &AnalyticsFunnelOptions,
     body: &str,
@@ -180,7 +188,20 @@ fn validated_response(
             && valid_coverage(&response.coverage)
             && valid_summary_and_steps(options, response)
             && valid_next_action(response)
+            && analytics_detail::valid(
+                &response.detail,
+                detail_unit(response.query.analysis_unit),
+                response.query.since.as_str(),
+            )
     })
+}
+
+/// Maps the funnel counting boundary to the detail unit.
+const fn detail_unit(unit: AnalyticsFunnelUnit) -> DetailUnit {
+    match unit {
+        AnalyticsFunnelUnit::Session => DetailUnit::Session,
+        AnalyticsFunnelUnit::IdentifiedUser => DetailUnit::IdentifiedUser,
+    }
 }
 
 /// Requires the backend echo to match every exact client-selected scope field.
@@ -210,6 +231,7 @@ fn valid_query(options: &AnalyticsFunnelOptions, query: &FunnelQuery) -> bool {
         && query.release == options.release
         && query.environment == options.environment
         && query.analysis_unit == options.analysis_unit
+        && query.breakdown_property == options.breakdown_property
         && range_nanos > 0
         && range_nanos <= MAX_RANGE_SECONDS * NANOS_PER_SECOND
         && (1..=range_seconds).contains(&query.conversion_window_seconds)
@@ -403,6 +425,7 @@ fn render_response(response: &FunnelResponse) -> String {
         .as_str(),
     );
     render_steps(response, &mut output);
+    analytics_detail::render(&response.detail, &mut output);
     render_coverage(response, &mut output);
     output.push_str("Next: ");
     output.push_str(next_step(response.next_action.code.as_str()));
@@ -488,12 +511,12 @@ fn render_coverage(response: &FunnelResponse, output: &mut String) {
     }
     match response.query.analysis_unit {
         AnalyticsFunnelUnit::Session => output.push_str(
-            "Interpretation: candidates matched at least one selected event; counts are visits or app sessions, not people; steps require strictly increasing timestamps; one event cannot satisfy multiple steps; raw IDs are not returned.\n",
+            "Interpretation: candidates matched at least one selected event; counts are visits or app sessions, not people; steps require strictly increasing timestamps; one event cannot satisfy multiple steps; example session IDs follow each step.\n",
         ),
         AnalyticsFunnelUnit::IdentifiedUser => output.push_str(
             "Interpretation: candidates matched at least one selected event; counts use stable \
              application-supplied opaque subjects explicitly typed as users and can cross \
-             sessions; steps require strictly increasing timestamps; raw IDs are not returned.\n",
+             sessions; steps require strictly increasing timestamps; example user IDs follow each step.\n",
         ),
     }
 }
@@ -553,13 +576,14 @@ mod tests {
                     event_name: "signup_completed".to_owned(),
                 },
             ],
+            breakdown_property: None,
         }
     }
 
     /// Returns one internally consistent response fixture.
     fn response() -> serde_json::Value {
         serde_json::json!({
-            "schema_version": 1,
+            "schema_version": 2,
             "query": {
                 "project_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
                 "since": "2026-08-01T00:00:00Z",
@@ -611,6 +635,31 @@ mod tests {
                 "code": "compare_funnel_contexts",
                 "target": "/api/telemetry/analytics/funnel",
                 "reason": "Compare the same steps across contexts."
+            },
+            "detail": {
+                "unit": "session",
+                "previous_since": "2026-07-31T00:00:00Z",
+                "previous_until": "2026-08-01T00:00:00Z",
+                "sample_size": 60,
+                "previous_sample_size": 40,
+                "example_limit": 5,
+                "groups": [{
+                    "key": "step:1",
+                    "label": "Step 1 page_view /pricing",
+                    "units": 50,
+                    "previous_units": 25,
+                    "change": 25,
+                    "change_rate": 1.0,
+                    "base_units": 60,
+                    "rate": 0.833_333_333_333_333_4,
+                    "previous_rate": 0.625,
+                    "examples": [{
+                        "unit_id": "session-1",
+                        "action_ids": [],
+                        "trace_ids": ["0123456789abcdef0123456789abcdef"]
+                    }]
+                }],
+                "evidence_hint": "Page views are trace spans."
             }
         })
     }
@@ -622,12 +671,16 @@ mod tests {
         assert_eq!(body["analysis_unit"], "session");
         assert_eq!(body["conversion_window_seconds"], 3_600);
         assert_eq!(body["steps"].as_array().map(Vec::len), Some(2));
+        assert_eq!(body["response_version"], 2);
+        assert!(body.get("breakdown_property").is_none());
 
         let response = validated_response(&options, response().to_string().as_str())?;
         let human = render_response(&response);
         assert!(human.contains("50 entered of 60 candidates"));
         assert!(human.contains("35 drop before next (70.0%)"));
-        assert!(human.contains("raw IDs are not returned"));
+        assert!(human.contains("example session IDs follow each step"));
+        assert!(human.contains("Step 1 page_view /pricing: 50 sessions (before 25, change +25"));
+        assert!(human.contains("session-1 traces 0123456789abcdef0123456789abcdef"));
         Ok(())
     }
 
