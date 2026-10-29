@@ -332,6 +332,56 @@ the current session, and `logbrew watch --severity error,critical --json`
 filters live logs/issues client-side to actionable severities. The watch stream
 reconnects after transient disconnects with a fresh feed ticket and backoff.
 
+## GitHub Action
+
+This repository is also a GitHub Action. In a deploy workflow, it uploads
+JavaScript source maps and native debug files, then records the deploy, so
+LogBrew can map stack frames and compare the release with the one before it.
+
+Create an artifact key for the project and save it as the repository secret
+`LOGBREW_ARTIFACT_KEY`:
+
+```bash
+logbrew projects keys create <project_id> --kind artifact --label "GitHub deploys" \
+  --ingest-key-file ~/.logbrew/github-deploys.artifact
+```
+
+Add a step after the deploy step. Pin the action to a release tag; the tag
+also selects the CLI version it installs:
+
+```yaml
+- uses: LogBrewCo/cli@v<version>
+  if: always()
+  with:
+    token: ${{ secrets.LOGBREW_ARTIFACT_KEY }}
+    project: <project_id>
+    release: checkout@${{ github.sha }}
+    environment: production
+    service: checkout-web
+    sourcemaps: dist
+    debug-files: build/App.dSYM
+    status: ${{ job.status == 'success' && 'succeeded' || 'failed' }}
+```
+
+| Input | Default | Meaning |
+|---|---|---|
+| `token` | required | Artifact key for the project |
+| `project`, `release`, `environment`, `service` | required | The same values your app sends at runtime |
+| `sourcemaps` | empty | Build directory with the manifest from the LogBrew Vite plugin; `@logbrew/sdk` must be installed |
+| `sourcemaps-manifest` | `<sourcemaps>/logbrew-release-artifacts.json` | Manifest path |
+| `debug-files` | empty | dSYM, ZIP, Mach-O, or Android ELF path |
+| `deploy` | `true` | Record a deploy marker |
+| `deployment-id` | `github-<run_id>-<run_attempt>` | Deploy ID; the same ID with the same values is safe to send again |
+| `status` | `succeeded` | `succeeded` or `failed` |
+| `started-at` | when the step started | RFC 3339 start time of the deploy |
+| `commit-sha` | `github.sha` | Commit of the deployed build |
+| `cli-version` | the tag version, or `latest` | CLI version to install from npm |
+| `working-directory` | `.` | Directory to run in |
+
+The action runs on Linux, macOS, and Windows runners with Node.js. It sets the
+`deployment-id` output. An artifact key can upload artifacts and record deploys
+for its project only. It cannot read data or send telemetry.
+
 ## Development
 
 ```bash

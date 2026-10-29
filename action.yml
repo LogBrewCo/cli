@@ -1,0 +1,151 @@
+name: LogBrew release
+description: Upload JavaScript source maps and native debug files, then record a deploy in LogBrew.
+author: LogBrew
+branding:
+  icon: upload-cloud
+  color: orange
+
+inputs:
+  token:
+    description: Artifact key for the project. Store it as a secret.
+    required: true
+  project:
+    description: Project ID.
+    required: true
+  release:
+    description: Release name. Use the same value your app sends at runtime.
+    required: true
+  environment:
+    description: Environment name, such as production.
+    required: true
+  service:
+    description: Service name. Use the same value your app sends at runtime.
+    required: true
+  sourcemaps:
+    description: Build directory with the manifest from the LogBrew Vite plugin. Leave empty to skip.
+    required: false
+    default: ""
+  sourcemaps-manifest:
+    description: Manifest path. Defaults to logbrew-release-artifacts.json in the build directory.
+    required: false
+    default: ""
+  debug-files:
+    description: Path to dSYM, ZIP, Mach-O, or Android ELF debug files. Leave empty to skip.
+    required: false
+    default: ""
+  deploy:
+    description: Record a deploy marker after the uploads. Set to false to skip.
+    required: false
+    default: "true"
+  deployment-id:
+    description: Deploy ID. Defaults to the workflow run ID and attempt.
+    required: false
+    default: ""
+  status:
+    description: Deploy result, succeeded or failed.
+    required: false
+    default: succeeded
+  started-at:
+    description: RFC 3339 time the deploy started. Defaults to when this step started.
+    required: false
+    default: ""
+  commit-sha:
+    description: Commit of the deployed build.
+    required: false
+    default: ${{ github.sha }}
+  cli-version:
+    description: LogBrew CLI version. Defaults to the version in the action tag, or the latest release.
+    required: false
+    default: ""
+  working-directory:
+    description: Directory to run in.
+    required: false
+    default: .
+
+outputs:
+  deployment-id:
+    description: ID of the recorded deploy.
+    value: ${{ steps.deploy.outputs.deployment-id }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install the LogBrew CLI
+      id: install
+      shell: bash
+      env:
+        ACTION_REF: ${{ github.action_ref }}
+        CLI_VERSION: ${{ inputs.cli-version }}
+      run: |
+        set -euo pipefail
+        echo "started-at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+        version="$CLI_VERSION"
+        if [ -z "$version" ]; then
+          if [[ "$ACTION_REF" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            version="${ACTION_REF#v}"
+          else
+            version=latest
+          fi
+        fi
+        prefix="$RUNNER_TEMP/logbrew-cli"
+        npm install --no-save --no-audit --no-fund --prefix "$prefix" "logbrew-cli@$version" > /dev/null
+        echo "$prefix/node_modules/.bin" >> "$GITHUB_PATH"
+        "$prefix/node_modules/.bin/logbrew" --version
+
+    - name: Upload source maps
+      if: inputs.sourcemaps != ''
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        LOGBREW_RELEASE_ARTIFACT_TOKEN: ${{ inputs.token }}
+        BUILD_DIR: ${{ inputs.sourcemaps }}
+        MANIFEST: ${{ inputs.sourcemaps-manifest }}
+      run: |
+        set -euo pipefail
+        npx --no-install logbrew-release-artifacts upload-js \
+          --build-dir "$BUILD_DIR" \
+          --manifest "${MANIFEST:-$BUILD_DIR/logbrew-release-artifacts.json}" \
+          --endpoint https://api.logbrew.co/api/release-artifacts \
+          --allow-hosted
+
+    - name: Upload debug files
+      if: inputs.debug-files != ''
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        LOGBREW_TOKEN: ${{ inputs.token }}
+        DEBUG_FILES: ${{ inputs.debug-files }}
+        PROJECT: ${{ inputs.project }}
+        RELEASE: ${{ inputs.release }}
+        ENVIRONMENT: ${{ inputs.environment }}
+        SERVICE: ${{ inputs.service }}
+      run: |
+        set -euo pipefail
+        logbrew debug-artifacts upload "$DEBUG_FILES" --project "$PROJECT" --release "$RELEASE" \
+          --environment "$ENVIRONMENT" --service "$SERVICE"
+
+    - name: Record the deploy
+      id: deploy
+      if: inputs.deploy == 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        LOGBREW_TOKEN: ${{ inputs.token }}
+        DEPLOYMENT_ID: ${{ inputs.deployment-id }}
+        RUN_ID: ${{ github.run_id }}
+        RUN_ATTEMPT: ${{ github.run_attempt }}
+        PROJECT: ${{ inputs.project }}
+        RELEASE: ${{ inputs.release }}
+        ENVIRONMENT: ${{ inputs.environment }}
+        SERVICE: ${{ inputs.service }}
+        STATUS: ${{ inputs.status }}
+        STARTED_AT: ${{ inputs.started-at || steps.install.outputs.started-at }}
+        COMMIT_SHA: ${{ inputs.commit-sha }}
+      run: |
+        set -euo pipefail
+        id="${DEPLOYMENT_ID:-github-$RUN_ID-$RUN_ATTEMPT}"
+        logbrew deploy "$id" --project "$PROJECT" --release "$RELEASE" \
+          --environment "$ENVIRONMENT" --service "$SERVICE" --status "$STATUS" \
+          --started-at "$STARTED_AT" --finished-at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+          ${COMMIT_SHA:+--commit-sha "$COMMIT_SHA"}
+        echo "deployment-id=$id" >> "$GITHUB_OUTPUT"

@@ -1,6 +1,6 @@
 //! Strict completed-deployment capture for release comparison.
 
-use crate::auth::{AuthCredential, send_account_authenticated_with_refresh};
+use crate::auth::{AuthCredential, send_authenticated_with_refresh};
 use crate::http::nonempty_display_safe as safe_text;
 use crate::time::parse_rfc3339;
 use crate::{
@@ -181,7 +181,7 @@ fn parse_status(value: &str) -> Result<DeploymentStatus, CliError> {
     }
 }
 
-/// Executes one strict account-authenticated deployment record.
+/// Executes one deployment record with account sign-in or a project artifact key.
 #[expect(
     clippy::redundant_pub_crate,
     reason = "the parent command executor consumes this private-module helper"
@@ -201,7 +201,7 @@ pub(crate) async fn execute<W: std::io::Write>(
         normalized.options.deployment_id
     );
     let request_body = serde_json::to_value(&normalized.options).map_err(|_| invalid_response())?;
-    let response = send_account_authenticated_with_refresh(&client, env, |client, credential| {
+    let response = send_authenticated_with_refresh(&client, env, |client, credential| {
         client
             .put(url.as_str())
             .bearer_auth(credential.token())
@@ -401,7 +401,7 @@ fn safe_api_error(status: u16, credential: &AuthCredential) -> RuntimeError {
 const fn safe_error_body(status: u16) -> &'static str {
     match status {
         401 => {
-            r#"{"error":"account authentication is invalid","code":"unauthorized","next":"run logbrew login"}"#
+            r#"{"error":"authentication is invalid","code":"unauthorized","next":"run logbrew login, or set LOGBREW_TOKEN to an artifact key for this project"}"#
         }
         403 => {
             r#"{"error":"deployment access is forbidden","code":"forbidden","next":"use an account with project access"}"#

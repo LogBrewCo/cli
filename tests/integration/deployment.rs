@@ -97,7 +97,7 @@ fn deployment_help_is_discoverable_and_explains_idempotency() -> TestResult {
     assert!(topic.contains("Records one completed deployment boundary"));
     assert!(topic.contains("deployment_id is caller-owned and idempotent"));
     assert!(topic.contains("retry the exact same record safely"));
-    assert!(topic.contains("requires account authentication"));
+    assert!(topic.contains("a project artifact key in LOGBREW_TOKEN"));
     assert!(topic.contains("versioned receipt"));
     assert!(help::help_text(HelpTopic::Root).contains("logbrew deploy <deployment_id>"));
     Ok(())
@@ -313,18 +313,39 @@ async_test!(deployment_conflict_uses_fixed_retry_without_reflecting_server_conte
     Ok(())
 });
 
-async_test!(deployment_rejects_project_ingest_keys_before_network -> TestResult, {
+async_test!(deployment_sends_a_project_artifact_key_as_the_bearer -> TestResult, {
     let server = MockServer::start().await?;
+    Mock::auth("PUT", DEPLOYMENT_PATH, "lbw_ingest_release-artifact-key")
+        .respond_with(ResponseTemplate::new(200).set_body_json(&deployment_response()))
+        .expect(1)
+        .mount(&server);
+
+    let mut output = Vec::new();
+    execute_command(
+        &deployment_command(true),
+        &super::authenticated_env(&server, "lbw_ingest_release-artifact-key", None),
+        &mut output,
+    )
+    .await?;
+    let receipt: Value = serde_json::from_slice(output.as_slice())?;
+    assert_eq!(receipt["deployment_id"], "ci-run-42");
+    Ok(())
+});
+
+async_test!(deployment_refused_project_key_points_to_an_artifact_key -> TestResult, {
+    let server = MockServer::start().await?;
+    Mock::auth("PUT", DEPLOYMENT_PATH, "lbw_ingest_hostile-private-value")
+        .respond_with(ResponseTemplate::new(401).set_body_string("lbw_ingest_hostile-private-value"))
+        .expect(1)
+        .mount(&server);
     let error = failed_command(
         &deployment_command(true),
         &super::authenticated_env(&server, "lbw_ingest_hostile-private-value", None),
     )
     .await?;
-    let requests = server.received_requests();
     let text = runtime_error_text(&error)?;
 
-    assert!(requests.is_empty());
-    assert!(text.contains("account authentication is required"));
+    assert!(text.contains("set LOGBREW_TOKEN to an artifact key for this project"));
     assert!(!text.contains("hostile-private-value"));
     assert!(!text.contains("lbw_ingest_"));
     Ok(())
