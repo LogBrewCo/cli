@@ -231,18 +231,21 @@ If LOGBREW_TOKEN is set, unset it separately to fully log out.";
 const SETUP_HELP: &str = "\
 Usage:
   logbrew setup [--auto] [--json]
-  logbrew setup --yes [--mcp] [--project <project_id>] [--json]
+  logbrew setup --yes [--mcp] [--sample-data] [--project <project_id>] [--json]
   npx logbrew-cli@latest setup
 
 In a terminal, setup asks which project to use, shows each file change as a diff, and applies \
 the changes after you confirm. --yes applies setup without questions, for scripts and agents.
 Setup signs in if necessary, selects or creates the project, installs the SDK with the project's \
 package manager, writes LOGBREW_SERVER_API_KEY to the framework's env file without replacing \
-existing values, adds init code where the framework expects it, and sends a test event that it \
-reads back. It changes only files in the project directory. Run it again at any time; it keeps \
-what is already set up. --json lists every step and file change.
+existing values, adds init code where the framework expects it, and sends a test event with the \
+ingest key, which LogBrew reads back. It prints the command that reads the event back. It \
+changes only files in the project directory. Run it again at any time; it keeps what is already \
+set up. --json lists every step and file change.
 --mcp adds the hosted MCP server to the project config of detected agent clients: Claude Code \
 (.mcp.json), Cursor (.cursor/mcp.json), and VS Code (.vscode/mcp.json). In a terminal, setup asks first.
+--sample-data loads a removable sample trace, logs, actions, and issue into a project that has no \
+events yet, so the dashboard has data to explore. Sample data is never billed.
 Without --yes and outside a terminal, setup detects supported project manifests and prints a \
 non-mutating SDK setup plan.
 No files are changed. SwiftPM planning uses compatible releases from the newest SDK release for \
@@ -255,8 +258,8 @@ released logbrew-sdk or a later compatible release without changing Gemfile.
 CMake planning pins the newest released C++ SDK tag, source subdirectory \
 cpp/logbrew-cpp, core target LogBrew::LogBrew, and optional libcurl target \
 LogBrew::HttpTransport. It prints a copyable FetchContent block without editing CMakeLists.txt.
-JavaScript planning detects exact @sveltejs/kit and mixed React + Express dependencies, then emits \
-released packages, detected install commands, compatibility, key scopes, and service-name requirements.
+JavaScript planning detects exact @sveltejs/kit, Express, and mixed React + Express dependencies, \
+then emits released packages, detected install commands, compatibility, key scopes, and service-name requirements.
 Authenticated project creation (no dashboard sign-in):
   logbrew projects create <name> --ingest-key-file <path> [--runtime <runtime>] \
                            [--environment <environment>] [--provider <provider> \
@@ -272,8 +275,9 @@ Python packages: logbrew-sdk, logbrew-django, logbrew-flask, logbrew-fastapi. Ru
 Other detected runtimes use released SDK guidance until a structured CLI install plan is enabled.
 Aliases: logbrew init, logbrew install, logbrew configure, logbrew sdk.
 Options: --yes applies setup without questions; --mcp adds the MCP server to detected agent \
-                          clients; --project <project_id> sets up an existing project; --auto \
-                          records automatic detection preference; --json prints stable setup JSON.
+                          clients; --sample-data loads removable sample data; --project \
+                          <project_id> sets up an existing project; --auto records automatic \
+                          detection preference; --json prints stable setup JSON.
 Supported manifests: package.json, pyproject.toml, Pipfile, Cargo.toml, Package.swift, \
                           project.yml, project.yaml, .xcodeproj, .xcworkspace, CMakeLists.txt, \
                           go.mod, composer.json, Gemfile.

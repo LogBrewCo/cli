@@ -314,12 +314,16 @@ fn parse_setup(args: &[String]) -> Result<Command, CliError> {
     if args.iter().any(|arg| arg == "--create-project") {
         return parse_setup_create_project(args);
     }
-    let (mut mcp, mut project_id, mut rest) = (false, None, Vec::new());
+    let (mut mcp, mut sample_data, mut project_id, mut rest) = (false, false, None, Vec::new());
     let mut args = args.iter();
     while let Some(arg) = args.next() {
         let value = match arg.as_str() {
             "--mcp" if !mcp => {
                 mcp = true;
+                continue;
+            }
+            "--sample-data" if !sample_data => {
+                sample_data = true;
                 continue;
             }
             "--project" | "--project-id" => args.next().map(String::as_str),
@@ -353,6 +357,7 @@ fn parse_setup(args: &[String]) -> Result<Command, CliError> {
         json: flags.is_json(),
         mcp,
         project_id,
+        sample_data,
     })
 }
 

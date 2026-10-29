@@ -1477,6 +1477,7 @@ fn parses_setup_auto_yes() {
             json: true,
             mcp: false,
             project_id: None,
+            sample_data: false,
         })
     );
     assert_eq!(command.map(|command| command.http_path()), Ok(None));
@@ -1491,6 +1492,7 @@ fn parses_setup_mcp_and_project() {
         json: false,
         mcp: true,
         project_id: Some(project.to_owned()),
+        sample_data: false,
     });
     assert_eq!(
         parse_command(["logbrew", "setup", "--yes", "--mcp", "--project", project]),
@@ -1524,4 +1526,20 @@ fn parses_setup_mcp_and_project() {
             "{args:?} must fail closed"
         );
     }
+}
+
+#[test]
+fn parses_setup_sample_data() {
+    assert_eq!(
+        parse_command(["logbrew", "setup", "--sample-data", "--yes", "--json"]),
+        Ok(Command::Setup {
+            auto: false,
+            yes: true,
+            json: true,
+            mcp: false,
+            project_id: None,
+            sample_data: true,
+        })
+    );
+    assert!(parse_command(["logbrew", "setup", "--sample-data", "--sample-data"]).is_err());
 }
