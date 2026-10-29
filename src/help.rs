@@ -404,7 +404,7 @@ it never prints the one-time ingest key or its file path. An ambiguous attempt r
 Existing-project key creation uses the same storage and retry guarantees with independent private \
 retry state.
 The artifact kind is write-only and project-scoped. It uploads release source maps and native \
-debug files but cannot read artifact metadata or submit telemetry.
+debug files and records deploys but cannot read artifact metadata or submit telemetry.
 The read kind is read-only and project-scoped. Set LOGBREW_TOKEN to it to read that project's \
 issues, traces, logs, actions, metrics, releases, and analytics; it cannot submit telemetry, \
 change issues, manage projects, or read any other project.
@@ -715,8 +715,9 @@ Records one completed deployment boundary for release timelines and before/after
 Use the exact project, release, environment, and service values sent by runtime telemetry.
 deployment_id is caller-owned and idempotent: retry the exact same record safely; use a new id \
                            for different content.
-The command requires account authentication, never accepts a project ingest key, and validates \
-                           the complete versioned receipt before printing it.
+The command uses your account sign-in, or a project artifact key in LOGBREW_TOKEN for release \
+                           automation. Other project keys are refused. It validates the complete \
+                           versioned receipt before printing it.
 Run this from release automation after the deployment attempt reaches succeeded or failed.";
 
 /// Product-analytics command overview.
