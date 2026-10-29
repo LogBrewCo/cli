@@ -990,12 +990,12 @@ Usage:
   logbrew investigate issue <issue_id> verify --baseline-occurrence <occurrence_id> \
                          --candidate-deployment <deployment_id> [--json]
 
-Reads one schema-version-14 bounded issue investigation with deterministic grouping, exact preceding-deployment and customer-source locator evidence, and privacy-bounded request evidence, plus explicit selected, first, latest, and \
+Reads one schema-version-17 bounded issue investigation with deterministic grouping, exact preceding-deployment and customer-source locator evidence, in-app frame links to the deployed source, ranked suspect commits from the deploy range where the issue first appeared or regressed, and privacy-bounded request evidence, plus explicit selected, first, latest, and \
 recommended occurrence receipts; parent-first runtime exception evidence with per-node message and \
 stack capture states, frames, breadcrumbs with HTTP method, URL, and status and route changes, \
 typed runtime context, honest \
 cause and fix assessments, approximate affected-user \
-coverage and limitations, trace, sibling issues, related logs, actions, metric exemplars, release scope, evidence \
+coverage and limitations, trace, related issues from the same trace or crash site, related logs, actions, metric exemplars, release scope, evidence \
 completeness, bounded status activity and server-observed regression evidence, and prioritized next \
 actions. It also returns an exact zero-filled occurrence trend and bounded release, environment, \
 service, and SDK distributions with explicit availability and truncation receipts.
@@ -1003,7 +1003,7 @@ The default is the bounded context-rich recommendation. --occurrence accepts fir
 recommended, or an exact retained occurrence UUID copied from a previous occurrence receipt.
 The command is read-only and uses the same contract as logbrew explain issue.
 Human output is bounded and marks application telemetry as untrusted evidence. JSON emits the exact \
-validated schema-version-14 response for AI agents.
+validated schema-version-17 response for AI agents.
 The verify form compares the exact failing occurrence with one successful candidate deployment. It \
 returns schema-version-1 recurrence and candidate-trace evidence, never treats bounded absence as \
 proof, and gives a stable next action for recurrence, observation, traffic, or unavailable evidence.";

@@ -189,7 +189,7 @@ fn parses_only_the_explicit_issue_investigation_grammar() -> TestResult {
         exact.http_path().as_deref(),
         Some(
             "/api/telemetry/issues/11111111-1111-4111-8111-111111111111/investigation?\
-             response_version=14&occurrence_id=22222222-2222-4222-8222-222222222222"
+             response_version=17&occurrence_id=22222222-2222-4222-8222-222222222222"
         )
     );
     assert!(exact.wants_json());
@@ -205,7 +205,7 @@ fn parses_only_the_explicit_issue_investigation_grammar() -> TestResult {
         latest.http_path().as_deref(),
         Some(
             "/api/telemetry/issues/11111111-1111-4111-8111-111111111111/investigation?\
-             response_version=14&selection=latest"
+             response_version=17&selection=latest"
         )
     );
     Ok(())
@@ -292,9 +292,12 @@ fn help_describes_the_complete_versioned_bundle() -> TestResult {
     assert!(text.contains("parent-first runtime exception evidence"));
     assert!(text.contains("per-node message and stack capture states"));
     assert!(text.contains("approximate affected-user coverage and limitations"));
-    assert!(text.contains("trace, sibling issues, related logs, actions, metric exemplars"));
+    assert!(text.contains(
+        "trace, related issues from the same trace or crash site, related logs, actions, metric exemplars"
+    ));
+    assert!(text.contains("ranked suspect commits from the deploy range"));
     assert!(text.contains("same contract as logbrew explain issue"));
-    assert!(text.contains("exact validated schema-version-14 response"));
+    assert!(text.contains("exact validated schema-version-17 response"));
     assert!(text.contains("deterministic grouping"));
     assert!(text.contains("exact preceding-deployment and customer-source locator evidence"));
     assert!(text.contains("explicit selected, first, latest, and recommended occurrence"));
@@ -436,6 +439,52 @@ async_test!(coverage_and_source_locator_states_preserve_exact_json -> Result<(),
     Ok(())
 });
 
+async_test!(archived_issues_and_unread_suspect_commits_stay_valid -> Result<(), Box<dyn std::error::Error>>, {
+    let mut bundle = rich_investigation_bundle();
+    bundle["subject"]["status"] = serde_json::json!("archived");
+    bundle["lifecycle"] = serde_json::json!({
+        "persisted_status": "archived",
+        "effective_status": "archived",
+        "activity": {
+            "status": "available",
+            "changes": [{
+                "id": "66666666-6666-4666-8666-666666666666",
+                "status": "archived",
+                "changed_at": "2026-08-04T07:45:00Z"
+            }],
+            "truncated": false
+        },
+        "regression": {
+            "status": "not_detected",
+            "reason": "current_status_not_resolved",
+            "resolution_changed_at": null,
+            "first_reappeared_occurrence": null
+        }
+    });
+    add_evidence_field(&mut bundle, "missing_fields", "suspect_commits.complete")?;
+    bundle["suspect_commits"] = serde_json::json!({
+        "status": "unavailable",
+        "deployment_id": "deploy-123",
+        "base_revision": "fedcba9876543210",
+        "head_revision": "0123456789abcdef",
+        "commits": [],
+        "truncated": false,
+        "evidence": {
+            "status": "partial",
+            "captured_fields": [],
+            "missing_fields": ["suspect_commits.authorization"],
+            "redacted_fields": [],
+            "truncated_fields": []
+        }
+    });
+    drop(assert_bundle_outputs(bundle, &[
+        "Issue 11111111-1111-4111-8111-111111111111 archived",
+        "Suspect commits: status=unavailable deployment=deploy-123",
+        "Suspect commits missing: suspect_commits.authorization",
+    ]).await?);
+    Ok(())
+});
+
 async_test!(human_output_surfaces_failure_fix_timeline_correlations_and_limits -> Result<(), Box<dyn std::error::Error>>, {
     assert_bundle_outputs(rich_investigation_bundle(), &[
         "Issue 11111111-1111-4111-8111-111111111111 unresolved severity=error",
@@ -477,6 +526,13 @@ async_test!(human_output_surfaces_failure_fix_timeline_correlations_and_limits -
         "Source locator: status=available provider=github repository=example/checkout \
          component=apps/checkout revision=0123456789abcdef \
          revision_source=deployment_commit file=apps/checkout/payment_gateway.ts evidence=complete",
+        "Source link: frame=0 file=apps/checkout/payment_gateway.ts line=87 \
+         url=https://github.com/example/checkout/blob/0123456789abcdef/apps/checkout/payment_gateway.ts#L87",
+        "Suspect commits: status=available deployment=deploy-123 base=fedcba9876543210 \
+         head=0123456789abcdef truncated=false evidence=complete",
+        "Suspect commit: rank=1 sha=1111111111111111 title=Retry captures author=Ada Lovelace \
+         committed=2026-08-03T09:00:00Z url=https://github.com/example/checkout/commit/1111111111111111",
+        "Suspect file: file=apps/checkout/payment_gateway.ts frame=0",
         "Reproducer: status=ready \
          baseline=22222222-2222-4222-8222-222222222222 evidence=complete",
         "Known affected users: ~2 status=partial",
@@ -489,7 +545,7 @@ async_test!(human_output_surfaces_failure_fix_timeline_correlations_and_limits -
          commit=0123456789abcdef before_occurrence_ms=479000 causality=evidence_only",
         "Trace: status=available trace=4bf92f3577b34da6a3ce929d0e0e4736 spans=3 errors=1",
         "Related issues: status=available count=1",
-        "Issue: title=Sibling checkout failure severity=error issue=66666666-6666-4666-8666-666666666666",
+        "Issue: title=Sibling checkout failure severity=error occurrences=2 issue=66666666-6666-4666-8666-666666666666",
         "Related logs: status=available count=1",
         "Log: message=provider returned 503 severity=error source=payments service=checkout-api",
         "Related actions: status=available count=1",
@@ -778,7 +834,7 @@ fn mount_bundle(
         "GET",
         format!("/api/telemetry/issues/{ISSUE_ID}/investigation"),
     )
-    .and(query_param("response_version", "14"))
+    .and(query_param("response_version", "17"))
     .and(query_param(selector.0, selector.1))
     .and(header("authorization", "Bearer test-token"))
     .respond_with(ResponseTemplate::new(200).set_body_json(bundle))
@@ -896,7 +952,7 @@ fn rich_investigation_bundle() -> serde_json::Value {
         "0.1.4",
     );
     serde_json::json!({
-        "schema_version": 14,
+        "schema_version": 17,
         "subject": {
             "kind": "issue",
             "id": ISSUE_ID,
@@ -972,6 +1028,7 @@ fn rich_investigation_bundle() -> serde_json::Value {
             "provenance": "application_reported"
         },
         "source_locator": captured_source_locator(),
+        "suspect_commits": captured_suspect_commits(),
         "reproduction": captured_reproduction(),
         "impact": captured_impact(),
         "correlations": captured_correlations(),
@@ -1078,12 +1135,44 @@ fn captured_source_locator() -> serde_json::Value {
         "revision": "0123456789abcdef",
         "revision_source": "deployment_commit",
         "repository_relative_file": "apps/checkout/payment_gateway.ts",
+        "frame_links": [{
+            "frame_index": 0,
+            "repository_relative_file": "apps/checkout/payment_gateway.ts",
+            "line": 87,
+            "url": "https://github.com/example/checkout/blob/0123456789abcdef/apps/checkout/payment_gateway.ts#L87"
+        }],
         "evidence": {
             "status": "complete",
             "captured_fields": [
                 "source.component", "source.deployment_revision", "source.repository",
                 "source.repository_relative_file", "source.service"
             ],
+            "missing_fields": [],
+            "redacted_fields": [],
+            "truncated_fields": []
+        }
+    })
+}
+
+fn captured_suspect_commits() -> serde_json::Value {
+    serde_json::json!({
+        "status": "available",
+        "deployment_id": "deploy-123",
+        "base_revision": "fedcba9876543210",
+        "head_revision": "0123456789abcdef",
+        "commits": [{
+            "rank": 1,
+            "sha": "1111111111111111",
+            "url": "https://github.com/example/checkout/commit/1111111111111111",
+            "title": "Retry captures",
+            "author_name": "Ada Lovelace",
+            "committed_at": "2026-08-03T09:00:00Z",
+            "files": [{"repository_relative_file": "apps/checkout/payment_gateway.ts", "frame_index": 0}]
+        }],
+        "truncated": false,
+        "evidence": {
+            "status": "complete",
+            "captured_fields": ["suspect_commits.frames", "suspect_commits.range"],
             "missing_fields": [],
             "redacted_fields": [],
             "truncated_fields": []
@@ -1214,7 +1303,11 @@ fn captured_correlations() -> serde_json::Value {
             "occurred_at": "2026-08-04T07:59:58Z",
             "service_name": "payment-worker",
             "environment": "production",
-            "release": "checkout@1.2.3"
+            "release": "checkout@1.2.3",
+            "basis": ["same_trace"],
+            "occurrence_count": 2,
+            "first_seen_at": "2026-08-04T07:59:58Z",
+            "last_seen_at": "2026-08-04T08:00:00Z"
         })),
         "release": {
             "release": "checkout@1.2.3",
@@ -1279,6 +1372,7 @@ fn captured_evidence() -> serde_json::Value {
             "request.route_template",
             "stack_frames",
             "source_locator",
+            "suspect_commits",
             "trace",
             "affected_users.known"
         ],
@@ -2000,8 +2094,63 @@ fn invalid_selection_field_bundles() -> TestResult<Vec<serde_json::Value>> {
     ])
 }
 
+fn invalid_source_and_relation_bundles() -> TestResult<Vec<serde_json::Value>> {
+    mutated_bundles(vec![
+        (
+            "/source_locator/frame_links/0/frame_index",
+            serde_json::json!(1),
+        ),
+        ("/source_locator/frame_links/0/line", serde_json::json!(88)),
+        (
+            "/source_locator/frame_links/0/url",
+            serde_json::json!("http://example.com/a"),
+        ),
+        (
+            "/source_locator/revision_source",
+            serde_json::json!("setup_snapshot"),
+        ),
+        ("/suspect_commits/status", serde_json::json!("unavailable")),
+        ("/suspect_commits/truncated", serde_json::json!(true)),
+        (
+            "/suspect_commits/head_revision",
+            serde_json::json!("../main"),
+        ),
+        ("/suspect_commits/commits/0/rank", serde_json::json!(2)),
+        ("/suspect_commits/commits/0/files", serde_json::json!([])),
+        (
+            "/suspect_commits/commits/0/files/0/frame_index",
+            serde_json::json!(5),
+        ),
+        (
+            "/suspect_commits/commits/0/committed_at",
+            serde_json::json!("yesterday"),
+        ),
+        (
+            "/suspect_commits/evidence/captured_fields",
+            serde_json::json!(["suspect_commits.raw"]),
+        ),
+        (
+            "/correlations/related_issues/items/0/basis",
+            serde_json::json!([]),
+        ),
+        (
+            "/correlations/related_issues/items/0/basis",
+            serde_json::json!(["same_trace", "same_trace"]),
+        ),
+        (
+            "/correlations/related_issues/items/0/occurrence_count",
+            serde_json::json!(0),
+        ),
+        (
+            "/correlations/related_issues/items/0/last_seen_at",
+            serde_json::json!("2026-08-04T07:00:00Z"),
+        ),
+    ])
+}
+
 fn invalid_occurrence_selection_bundles() -> TestResult<Vec<serde_json::Value>> {
     let mut cases = invalid_selection_field_bundles()?;
+    cases.extend(invalid_source_and_relation_bundles()?);
 
     let mut unknown_context = rich_investigation_bundle();
     let _previous = unknown_context["event"]["context"]
@@ -2225,6 +2374,7 @@ fn complete_user_impact_bundle() -> TestResult<serde_json::Value> {
     bundle["source_locator"]["revision"] = serde_json::json!("setup-snapshot-123");
     bundle["source_locator"]["revision_source"] = serde_json::json!("setup_snapshot");
     bundle["source_locator"]["repository_relative_file"] = serde_json::Value::Null;
+    bundle["source_locator"]["frame_links"] = serde_json::json!([]);
     bundle["source_locator"]["evidence"] = serde_json::json!({
         "status": "partial",
         "captured_fields": ["source.component", "source.repository", "source.service", "source.setup_snapshot_revision"],
@@ -2248,6 +2398,7 @@ fn unavailable_user_impact_bundle() -> TestResult<serde_json::Value> {
         "status": "not_found",
         "repository_provider": null, "repository_full_name": null, "component_path": null,
         "revision": null, "revision_source": null, "repository_relative_file": null,
+        "frame_links": [],
         "evidence": {
             "status": "partial", "captured_fields": ["source.service"],
             "missing_fields": ["source.component"], "redacted_fields": [], "truncated_fields": []
