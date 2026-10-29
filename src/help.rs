@@ -18,6 +18,7 @@ pub const fn help_text(topic: HelpTopic) -> &'static str {
         HelpTopic::Projects => PROJECTS_HELP,
         HelpTopic::Usage => USAGE_HELP,
         HelpTopic::Mcp => MCP_HELP,
+        HelpTopic::Operations => OPERATIONS_HELP,
         HelpTopic::Read => READ_HELP,
         HelpTopic::ReadLogs => READ_LOGS_HELP,
         HelpTopic::ReadIssues => READ_ISSUES_HELP,
@@ -459,6 +460,20 @@ Human output is bounded to plan, state, totals, limits, the driving limit, and o
 preserves the exact validated account-usage object for agents.
 The CLI does not calculate or persist usage/quota state from local files.
 Next: run logbrew usage to inspect current account usage.";
+
+/// Operations view help text.
+const OPERATIONS_HELP: &str = "\
+Usage:
+  logbrew operations [list] [--since <24h|7d|time>] [--until <time>] [--environment <name>] \
+[--release <release>] [--json]
+  logbrew operations show <operation_id> [same flags]
+
+Shows how fast LogBrew's own operations run: for each operation its samples, p50, p95, p99, \
+max, errors, timeouts, freshness, and target, ranked with breaches first, then gaps. p99 needs \
+100 samples; below that the view lists every observation instead.
+show adds the breakdown per span name. The window defaults to the last 24 hours, at most 31 days.
+Needs account sign-in with access to LogBrew's own operations; other accounts get not found.
+Next: run logbrew operations list to rank every operation.";
 
 /// MCP client grant help text.
 const MCP_HELP: &str = "\

@@ -40,6 +40,7 @@ pub mod issue_ownership;
 pub mod issue_triage;
 mod mcp_grants;
 mod native_debug_artifacts;
+mod operations;
 mod parser;
 mod project_archive;
 mod project_create;
@@ -70,6 +71,7 @@ pub use error::{
 };
 pub use issue_triage::{IssueArchiveCondition, IssueBulkOptions};
 pub use parser::parse_command;
+use project_manage::execute_filters;
 use render::write_api_success;
 use setup::write_setup_plan;
 use status::execute_status;
@@ -234,6 +236,21 @@ impl BillingTier {
     }
 }
 
+/// Filters of the operations performance view.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct OperationsOptions {
+    /// One operation id (`operations show`); `None` lists every operation.
+    pub operation: Option<String>,
+    /// Window start: a duration such as `24h` or `7d`, or an RFC 3339 time.
+    pub since: Option<String>,
+    /// Window end, RFC 3339.
+    pub until: Option<String>,
+    /// Exact deployment environment.
+    pub environment: Option<String>,
+    /// Exact release.
+    pub release: Option<String>,
+}
+
 /// Parsed `LogBrew` command.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
@@ -340,6 +357,13 @@ pub enum Command {
         /// Plan to buy; `None` asks for the billing management link.
         tier: Option<BillingTier>,
         /// Emit machine-readable JSON.
+        json: bool,
+    },
+    /// Reads the operations performance view.
+    Operations {
+        /// Operation and window filters.
+        options: OperationsOptions,
+        /// Emit the exact validated server object.
         json: bool,
     },
     /// Lists the account's connected MCP clients (grants).
@@ -554,6 +578,8 @@ pub enum HelpTopic {
     Usage,
     /// Connected MCP client grant list and revoke workflow.
     Mcp,
+    /// Operations performance view.
+    Operations,
     /// Read command overview.
     Read,
     /// Log reading command.
@@ -621,6 +647,7 @@ impl HelpTopic {
             Self::Projects => "projects",
             Self::Usage => "usage",
             Self::Mcp => "mcp",
+            Self::Operations => "operations",
             Self::Read => "read",
             Self::ReadLogs => "read_logs",
             Self::ReadIssues => "read_issues",
@@ -1757,6 +1784,7 @@ impl Command {
                 Some(format!("/api/projects/{project_id}"))
             }
             Self::McpGrants { .. } => Some(String::from("/api/mcp/grants?response_version=2")),
+            Self::Operations { .. } => Some(String::from("/api/operations?response_version=1")),
             Self::Billing { tier, .. } => Some(String::from(if tier.is_some() {
                 "/api/billing/checkout"
             } else {
@@ -1825,6 +1853,7 @@ impl Command {
             | Self::Projects { json }
             | Self::Usage { json }
             | Self::McpGrants { json }
+            | Self::Operations { json, .. }
             | Self::Billing { json, .. }
             | Self::McpRevoke { json, .. }
             | Self::ProjectKeyRevoke { json, .. }
@@ -1903,6 +1932,7 @@ impl Command {
             | Self::ProjectKeyRevoke { .. } => Some(HttpMethod::Delete),
             Self::Projects { .. }
             | Self::McpGrants { .. }
+            | Self::Operations { .. }
             | Self::ProjectKeyList { .. }
             | Self::ProjectFilters { update: None, .. }
             | Self::ProjectArchivedList { .. }
@@ -1996,6 +2026,7 @@ impl Command {
             | Self::Projects { .. }
             | Self::Usage { .. }
             | Self::McpGrants { .. }
+            | Self::Operations { .. }
             | Self::Billing { .. }
             | Self::McpRevoke { .. }
             | Self::ProjectKeyRevoke { .. }
@@ -2035,6 +2066,7 @@ impl Command {
             | Self::Doctor { .. }
             | Self::Usage { .. }
             | Self::McpGrants { .. }
+            | Self::Operations { .. }
             | Self::Billing { .. }
             | Self::McpRevoke { .. }
             | Self::ProjectKeyRevoke { .. }
@@ -2223,6 +2255,7 @@ pub async fn execute_command<W: std::io::Write>(
         Command::Projects { json } => projects::execute(env, *json, output).await,
         Command::Usage { json } => usage::execute(env, *json, output).await,
         Command::McpGrants { json } => mcp_grants::execute_list(env, *json, output).await,
+        Command::Operations { .. } => operations::execute(env, command, output).await,
         Command::Billing { tier, json } => billing::execute(env, *tier, *json, output).await,
         Command::McpRevoke { grant_id, json } => {
             mcp_grants::execute_revoke(env, grant_id.as_str(), *json, output).await
@@ -2246,9 +2279,7 @@ pub async fn execute_command<W: std::io::Write>(
             name,
             json,
         } => project_manage::execute_rename(env, project_id, name, *json, output).await,
-        Command::ProjectFilters { .. } => {
-            project_manage::execute_filters(env, command, output).await
-        }
+        Command::ProjectFilters { .. } => execute_filters(env, command, output).await,
         Command::Version { json } => execute_version(*json, output),
         Command::InvestigateIssue {
             issue_id,

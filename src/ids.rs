@@ -91,3 +91,12 @@ pub(crate) fn is_support_context_id(value: &str) -> bool {
                 .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
     })
 }
+
+/// Returns whether a value is an operation or target identifier: 1 to 64 lowercase letters,
+/// digits, dots, and hyphens.
+pub(crate) fn is_operation_id(value: &str) -> bool {
+    (1..=64).contains(&value.len())
+        && value.bytes().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'.' | b'-')
+        })
+}
