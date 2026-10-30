@@ -15,11 +15,14 @@ on:
 permissions:
   actions: read
   contents: read
-  id-token: write
 
 jobs:
   publish:
     runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
     env:
       RELEASE_TAG: ${{ inputs.release_tag }}
       ARTIFACTS_RUN_ID: ${{ inputs.artifacts_run_id }}
