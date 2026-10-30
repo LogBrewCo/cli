@@ -46,7 +46,7 @@ for pair in "$@"; do
     name: $name,
     version: $version,
     description: "The \($os)-\($cpu) binary for logbrew-cli, the official LogBrew CLI.",
-    homepage: "https://logbrew.co",
+    homepage: "https://docs.logbrew.co/guides/cli",
     repository: {type: "git", url: "git+https://github.com/LogBrewCo/cli.git"},
     license: "MIT",
     os: [$os],
