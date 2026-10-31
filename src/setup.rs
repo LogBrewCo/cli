@@ -22,7 +22,7 @@ const PACKAGE_NEXT_STEP: &str =
 // version appears; `scripts/check-sdk-versions.sh` fails CI when one is not the newest
 // release on its registry or tag list.
 /// Newest `co.logbrew:logbrew-sdk` release on Maven Central.
-pub const JAVA_SDK_VERSION: &str = "0.1.14";
+pub const JAVA_SDK_VERSION: &str = "0.1.15";
 /// Newest `logbrew-sdk` gem release on `RubyGems`.
 pub const RUBY_SDK_VERSION: &str = "0.1.18";
 /// Newest `LogBrew.AspNetCore` release on `NuGet`.
