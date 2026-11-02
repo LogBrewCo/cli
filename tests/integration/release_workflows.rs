@@ -113,7 +113,7 @@ fn publication_requires_verified_source_and_single_upload() {
         "--branch main",
         "--commit \"$GITHUB_SHA\"",
         "--status success",
-        "uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5",
+        "uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9 # v1.0.6",
         "cargo publish --locked --no-verify",
     ] {
         assert!(CRATES.contains(required), "missing {required}");
