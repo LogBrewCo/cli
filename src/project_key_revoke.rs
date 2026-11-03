@@ -63,7 +63,7 @@ pub(crate) async fn execute<W: std::io::Write>(
     }
     let (project_id, key_id) = (project_id.to_ascii_lowercase(), key_id.to_ascii_lowercase());
     let origin = crate::http::normalized_origin(env.base_url.as_str()).ok_or_else(transport)?;
-    let client = crate::http::api_client().map_err(|_| transport())?;
+    let client = crate::http::api_client()?;
     let url = format!("{origin}/api/projects/{project_id}/ingest-keys/{key_id}");
     let (response, credential) =
         send_account_authenticated_with_refresh(&client, env, |client, credential| {

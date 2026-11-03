@@ -351,7 +351,7 @@ async fn send(
     request: Request<'_>,
 ) -> Result<(u16, String, AuthCredential), RuntimeError> {
     let origin = crate::http::normalized_origin(env.base_url.as_str()).ok_or_else(transport)?;
-    let client = crate::http::api_client().map_err(|_| transport())?;
+    let client = crate::http::api_client()?;
     let url = format!("{origin}{path}");
     let (response, credential) =
         send_account_authenticated_with_refresh(&client, env, |client, credential| {

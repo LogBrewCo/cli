@@ -195,7 +195,7 @@ pub(crate) async fn execute<W: std::io::Write>(
     let normalized = normalize(options)?;
     let origin =
         crate::http::normalized_origin(env.base_url.as_str()).ok_or_else(transport_error)?;
-    let client = crate::http::api_client().map_err(|_error| transport_error())?;
+    let client = crate::http::api_client()?;
     let url = format!(
         "{origin}/api/telemetry/deployments/{}",
         normalized.options.deployment_id

@@ -223,7 +223,7 @@ pub(crate) async fn execute<W: std::io::Write>(
 ) -> Result<(), RuntimeError> {
     let origin =
         crate::http::normalized_origin(env.base_url.as_str()).ok_or_else(transport_error)?;
-    let client = crate::http::api_client().map_err(|_| transport_error())?;
+    let client = crate::http::api_client()?;
     let url = format!("{origin}/api/account/usage");
     let response = send_authenticated_with_refresh(&client, env, |client, credential| {
         client.get(url.as_str()).bearer_auth(credential.token())

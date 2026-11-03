@@ -362,7 +362,7 @@ async fn post_credential_request(
     url: &str,
     pending: &PreparedRetry,
 ) -> Result<(reqwest::StatusCode, String, AuthCredential), RuntimeError> {
-    let client = credential_client(operation)?;
+    let client = crate::http::api_client()?;
     let (response, credential) =
         send_authenticated_with_refresh(&client, env, |client, credential| {
             client
@@ -413,11 +413,6 @@ fn request_error(error: RuntimeError, operation: CredentialOperation) -> Runtime
     } else {
         error.auth_or(operation.transport_unavailable())
     }
-}
-
-/// Builds one bounded client that never follows credential-issuing redirects.
-fn credential_client(operation: CredentialOperation) -> Result<reqwest::Client, RuntimeError> {
-    crate::http::api_client().map_err(|_| operation.transport_unavailable())
 }
 
 /// Builds the byte-stable existing-project ingest-key request.
