@@ -195,6 +195,56 @@ async_test!(human_read_actions_and_issues_summarize_pivot_context -> TestResult,
     Ok(())
 });
 
+async_test!(issue_lists_show_how_many_users_each_issue_reached -> TestResult,
+{
+    let issue = |impact: serde_json::Value| {
+        serde_json::json!({
+            "id": "issue_123",
+            "status": "unresolved",
+            "severity": "error",
+            "title": "ZeroDivisionError",
+            "occurrence_count": 8,
+            "user_impact": impact
+        })
+    };
+    let cases = [
+        (
+            serde_json::json!({"status": "complete", "known_affected_users": 5}),
+            "human-issue-users-complete",
+            " users=5\n",
+        ),
+        (
+            serde_json::json!({"status": "partial", "known_affected_users": 2}),
+            "human-issue-users-partial",
+            " users=2+\n",
+        ),
+        (
+            serde_json::json!({"status": "not_captured", "known_affected_users": null}),
+            "human-issue-users-unknown",
+            " users=unknown\n",
+        ),
+    ];
+
+    for (impact, home, users) in cases {
+        let server = MockServer::start().await?;
+        let body = serde_json::json!([issue(impact)]);
+        mount_authenticated_json(
+            &server,
+            "GET",
+            "/api/telemetry/issues",
+            [("response_version", "7")],
+            &body,
+        );
+        let text = successful_human_output(&server, ["logbrew", "issues"], home).await?;
+
+        let expected = format!(
+            "Issues (1)\n- issue_123 unresolved error ZeroDivisionError occurrences=8{users}"
+        );
+        assert_eq!(text, expected);
+    }
+    Ok(())
+});
+
 async_test!(collection_reads_preserve_json_shape_and_render_service_name -> TestResult,
 {
     struct ServiceCase {
@@ -1188,7 +1238,7 @@ async_test!(human_issue_reads_and_changes_show_the_assignee -> TestResult, {
         &server,
         "GET",
         "/api/telemetry/issues",
-        [("assignee", "none"), ("response_version", "4")],
+        [("assignee", "none"), ("response_version", "7")],
         &serde_json::json!([
             {"id": "issue_1", "status": "unresolved", "title": "PaymentError", "assignee": null},
             {"id": "issue_2", "status": "resolved", "title": "Timeout",

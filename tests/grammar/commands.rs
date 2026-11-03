@@ -948,7 +948,7 @@ fn sends_an_exclusive_until_with_every_collection_read() -> Result<(), Box<dyn s
         ("logs", format!("/api/logs?{window}")),
         (
             "issues",
-            format!("/api/telemetry/issues?{window}&response_version=4"),
+            format!("/api/telemetry/issues?{window}&response_version=7"),
         ),
         ("actions", format!("/api/telemetry/actions?{window}")),
         ("releases", format!("/api/telemetry/releases?{window}")),
@@ -1005,7 +1005,7 @@ fn parses_common_incident_scope_filters_for_collection_reads()
         ("logs", "/api/logs?service_name=checkout-api&since=24h"),
         (
             "issues",
-            "/api/telemetry/issues?service_name=checkout-api&since=24h&response_version=4",
+            "/api/telemetry/issues?service_name=checkout-api&since=24h&response_version=7",
         ),
         (
             "actions",
@@ -1040,7 +1040,7 @@ fn parses_common_incident_scope_filters_for_collection_reads()
             "2026-05-01T00:00:00Z",
             "--json",
         ],
-        "/api/telemetry/issues?service_name=checkout-api&since=2026-05-01T00%3A00%3A00Z&response_version=4",
+        "/api/telemetry/issues?service_name=checkout-api&since=2026-05-01T00%3A00%3A00Z&response_version=7",
     );
 
     let duplicate = parse_command([
@@ -1274,11 +1274,11 @@ fn parses_common_normalized_read_paths() {
         ),
         (
             &["logbrew", "issues", "--status", "Open", "--json"][..],
-            "/api/telemetry/issues?status=unresolved&response_version=4",
+            "/api/telemetry/issues?status=unresolved&response_version=7",
         ),
         (
             &["logbrew", "issues", "--status", "Closed", "--json"][..],
-            "/api/telemetry/issues?status=resolved&response_version=4",
+            "/api/telemetry/issues?status=resolved&response_version=7",
         ),
     ] {
         assert_path(args, path);
