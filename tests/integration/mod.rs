@@ -36,6 +36,8 @@ mod setup_wizard;
 mod status_commands;
 mod support_context;
 mod support_tickets;
+#[cfg(target_os = "linux")]
+mod tls_roots;
 mod trace_discovery;
 mod usage;
 mod whoami;
