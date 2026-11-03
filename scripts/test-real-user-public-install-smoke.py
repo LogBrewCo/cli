@@ -25,7 +25,7 @@ from unittest import mock
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 VERIFIER = ROOT / "scripts" / "real_user_public_install_smoke.py"
-VERSION = "0.1.94"
+VERSION = "0.1.95"
 sys.dont_write_bytecode = True
 
 
