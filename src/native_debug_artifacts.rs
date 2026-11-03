@@ -374,7 +374,7 @@ fn build_client(timeout: std::time::Duration) -> Result<reqwest::Client, Runtime
         .timeout(timeout)
         .connect_timeout(CONNECT_TIMEOUT)
         .build()
-        .map_err(|_| transport_error())
+        .map_err(|_| crate::http::client_setup_error())
 }
 
 /// Applies one fixed end-to-end deadline without changing the operation's error.
@@ -395,14 +395,6 @@ const fn overall_timeout_error() -> RuntimeError {
     RuntimeError::Unavailable {
         message: "native debug-artifact upload exceeded its overall time limit",
         next: "rerun the same command; resumable upload will request only missing chunks",
-    }
-}
-
-/// Returns a fixed URL-free transport error.
-const fn transport_error() -> RuntimeError {
-    RuntimeError::Unavailable {
-        message: "native debug-artifact request could not be completed",
-        next: "check network connectivity and retry the native debug-artifact command",
     }
 }
 

@@ -256,7 +256,7 @@ pub(crate) async fn execute<W: std::io::Write>(
     };
     let json = *json;
     let origin = crate::http::normalized_origin(env.base_url.as_str()).ok_or_else(transport)?;
-    let client = crate::http::api_client().map_err(|_| transport())?;
+    let client = crate::http::api_client()?;
     let mut url = reqwest::Url::parse(format!("{origin}/api/operations").as_str())
         .map_err(|_| transport())?;
     {

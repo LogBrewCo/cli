@@ -145,7 +145,7 @@ async fn send(
     grant_id: Option<&str>,
 ) -> Result<(u16, String, AuthCredential), RuntimeError> {
     let origin = crate::http::normalized_origin(env.base_url.as_str()).ok_or_else(transport)?;
-    let client = crate::http::api_client().map_err(|_| transport())?;
+    let client = crate::http::api_client()?;
     let url = grant_id.map_or_else(
         || format!("{origin}/api/mcp/grants?response_version={LIST_RESPONSE_VERSION}"),
         |id| format!("{origin}/api/mcp/grants/{id}"),

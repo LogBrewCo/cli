@@ -51,7 +51,7 @@ pub(super) async fn execute<W: std::io::Write>(
     output: &mut W,
 ) -> Result<(), RuntimeError> {
     let origin = super::normalized_api_base(env.base_url.as_str())?;
-    let client = crate::http::api_client().map_err(|_| transport_error())?;
+    let client = crate::http::api_client()?;
     let url = format!("{origin}/api/auth/account");
     let response = send_account_authenticated_with_refresh(&client, env, |client, credential| {
         client.get(url.as_str()).bearer_auth(credential.token())

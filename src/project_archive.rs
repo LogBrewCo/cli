@@ -121,7 +121,7 @@ async fn execute_lifecycle<W: std::io::Write>(
         .into());
     }
     let project_id = project_id.to_ascii_lowercase();
-    let client = crate::http::api_client().map_err(|_| failure(operation, Failure::Transport))?;
+    let client = crate::http::api_client()?;
     let origin = crate::http::normalized_origin(env.base_url.as_str())
         .ok_or_else(|| failure(operation, Failure::Transport))?;
     let url = match operation {

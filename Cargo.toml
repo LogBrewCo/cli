@@ -55,6 +55,10 @@ tokio = { version = "1", features = ["io-util", "net", "rt", "time"] }
 tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
 zip = { version = "9.0.5", default-features = false, features = ["deflate-flate2"] }
 
+[target.'cfg(all(unix, not(target_vendor = "apple"), not(target_os = "android")))'.dependencies]
+rustls-native-certs = "0.8.5"
+webpki-root-certs = "1.0.11"
+
 [dev-dependencies]
 tokio = { version = "1", features = ["test-util"] }
 

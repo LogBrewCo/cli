@@ -126,7 +126,7 @@ pub(crate) async fn list(env: &CliEnvironment) -> Result<Vec<(String, String)>, 
 async fn catalog_body(env: &CliEnvironment) -> Result<String, RuntimeError> {
     let origin =
         crate::http::normalized_origin(env.base_url.as_str()).ok_or_else(transport_error)?;
-    let client = crate::http::api_client().map_err(|_| transport_error())?;
+    let client = crate::http::api_client()?;
     let (url, read_key_url) = (
         format!("{origin}/api/projects"),
         format!("{origin}/api/auth/read-key"),

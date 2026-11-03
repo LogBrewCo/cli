@@ -112,17 +112,47 @@ pub(crate) fn server_error_action_matches(fields: (&str, &str, &str)) -> bool {
 /// Returns a client builder after installing the process-wide TLS provider.
 pub(crate) fn client_builder() -> reqwest::ClientBuilder {
     drop(rustls::crypto::ring::default_provider().install_default());
-    reqwest::Client::builder()
+    with_trust_roots(reqwest::Client::builder())
+}
+
+/// Uses bundled Mozilla roots only when a Linux host has no system CA store at all.
+#[cfg(all(unix, not(target_vendor = "apple"), not(target_os = "android")))]
+fn with_trust_roots(builder: reqwest::ClientBuilder) -> reqwest::ClientBuilder {
+    let system = rustls_native_certs::load_native_certs();
+    if system.certs.is_empty() && system.errors.is_empty() {
+        builder.tls_certs_only(
+            webpki_root_certs::TLS_SERVER_ROOT_CERTS
+                .iter()
+                .filter_map(|der| reqwest::Certificate::from_der(der).ok()),
+        )
+    } else {
+        builder
+    }
+}
+
+/// macOS and Windows verify through the operating system trust store.
+#[cfg(not(all(unix, not(target_vendor = "apple"), not(target_os = "android"))))]
+const fn with_trust_roots(builder: reqwest::ClientBuilder) -> reqwest::ClientBuilder {
+    builder
+}
+
+/// Fixed recovery for a client that cannot load TLS trust roots.
+pub(crate) const fn client_setup_error() -> crate::RuntimeError {
+    crate::RuntimeError::Unavailable {
+        message: "TLS root certificates could not be loaded",
+        next: "fix SSL_CERT_FILE or SSL_CERT_DIR, or install ca-certificates",
+    }
 }
 
 /// Builds the bounded redirect-refusing client used by API commands.
-pub(crate) fn api_client() -> Result<reqwest::Client, reqwest::Error> {
+pub(crate) fn api_client() -> Result<reqwest::Client, crate::RuntimeError> {
     client_builder()
         .redirect(reqwest::redirect::Policy::none())
         .retry(reqwest::retry::never())
         .timeout(std::time::Duration::from_secs(30))
         .connect_timeout(std::time::Duration::from_secs(10))
         .build()
+        .map_err(|_| client_setup_error())
 }
 
 /// Normalizes an HTTP(S) API origin without credentials, path, query, or fragment.
