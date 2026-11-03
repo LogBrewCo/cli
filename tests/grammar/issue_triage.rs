@@ -315,7 +315,7 @@ fn issue_reads_filter_by_priority_and_archived_status() -> TestResult {
             "archived",
             "--json",
         ],
-        "/api/telemetry/issues?status=archived&priority=high&response_version=4",
+        "/api/telemetry/issues?status=archived&priority=high&response_version=7",
     );
     assert_json_error(
         &["logbrew", "issues", "--priority", "urgent", "--json"],
@@ -395,7 +395,7 @@ fn issue_reads_filter_by_assignee() -> TestResult {
     ] {
         assert_path(
             &args,
-            &format!("/api/telemetry/issues?{query}&response_version=4"),
+            &format!("/api/telemetry/issues?{query}&response_version=7"),
         );
     }
     let next = "use --assignee me, none, my_teams, a user ID, or team:<team_id>";

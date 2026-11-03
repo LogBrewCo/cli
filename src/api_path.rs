@@ -180,7 +180,7 @@ fn filtered_read_path(target: &ReadTarget, filters: &ReadPathFilters<'_>) -> Str
     }
 }
 
-/// Builds the grouped issue list path in response version 4.
+/// Builds the grouped issue list path in response version 7.
 fn issue_list_path(filters: &ReadPathFilters<'_>) -> String {
     path_with_query(
         "/api/telemetry/issues",
@@ -198,7 +198,7 @@ fn issue_list_path(filters: &ReadPathFilters<'_>) -> String {
             ("cursor_time", filters.cursor_time),
             ("cursor_id", filters.cursor_id),
             ("limit", filters.limit),
-            ("response_version", Some("4")),
+            ("response_version", Some("7")),
         ],
     )
 }

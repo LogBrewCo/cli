@@ -1002,6 +1002,7 @@ fn issue_line(value: &serde_json::Value) -> Option<String> {
         output.push_str(" occurrences=");
         output.push_str(occurrences.to_string().as_str());
     }
+    output.push_str(affected_users_label(value).as_str());
     append_labeled_field(&mut output, "last_seen", value, "last_seen_at");
     append_labeled_field(&mut output, "service", value, "service_name");
     append_labeled_field(&mut output, "trace", value, "trace_id");
@@ -1011,6 +1012,26 @@ fn issue_line(value: &serde_json::Value) -> Option<String> {
     }
     output.push_str(release_environment_suffix(value).as_str());
     Some(output)
+}
+
+/// Shows how many users an issue reached: `users=5` when every occurrence names a user,
+/// `users=2+` when some do not, and `users=unknown` when no occurrence does.
+fn affected_users_label(value: &serde_json::Value) -> String {
+    let Some(impact) = value.get("user_impact") else {
+        return String::new();
+    };
+    let known = impact
+        .get("known_affected_users")
+        .and_then(serde_json::Value::as_u64);
+    match (
+        impact.get("status").and_then(serde_json::Value::as_str),
+        known,
+    ) {
+        (Some("complete"), Some(users)) => format!(" users={users}"),
+        (Some("partial"), Some(users)) => format!(" users={users}+"),
+        (Some("not_captured" | "unavailable"), _) => String::from(" users=unknown"),
+        _ => String::new(),
+    }
 }
 
 /// Formats a cursor issue only when every bounded list field has the public type.
