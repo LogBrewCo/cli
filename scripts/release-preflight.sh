@@ -173,10 +173,11 @@ check_homebrew_tap_available() {
 }
 
 check_main_branch_protection() {
-  local metadata
+  local rules
+  local ruleset_id
   local required_reviews
   local require_last_push_approval
-  local enforce_admins
+  local enforce_admins=true
   local strict_status_checks
   local status_checks
   local conversation_resolution
@@ -184,27 +185,34 @@ check_main_branch_protection() {
   local allow_deletions
   local linear_history
 
-  if ! metadata="$(gh api "repos/${REPO}/branches/main/protection")"; then
+  # The rules that apply to main come from the repository's rulesets.
+  if ! rules="$(gh api "repos/${REPO}/rules/branches/main")"; then
     fail "could not verify main branch protection"
   fi
 
   required_reviews="$(
-    jq -r '.required_pull_request_reviews.required_approving_review_count // 0' <<<"$metadata"
+    jq -r '[.[] | select(.type == "pull_request") | .parameters.required_approving_review_count] | max // 0' <<<"$rules"
   )"
   require_last_push_approval="$(
-    jq -r '.required_pull_request_reviews.require_last_push_approval // false' <<<"$metadata"
+    jq -r 'any(.[]; .type == "pull_request" and .parameters.require_last_push_approval)' <<<"$rules"
   )"
-  enforce_admins="$(jq -r '.enforce_admins.enabled // false' <<<"$metadata")"
-  strict_status_checks="$(jq -r '.required_status_checks.strict // false' <<<"$metadata")"
+  while read -r ruleset_id; do
+    if [[ "$(gh api "repos/${REPO}/rulesets/${ruleset_id}" | jq -r '.current_user_can_bypass')" != "never" ]]; then
+      enforce_admins=false
+    fi
+  done < <(jq -r '[.[].ruleset_id] | unique[]' <<<"$rules")
+  strict_status_checks="$(
+    jq -r 'any(.[]; .type == "required_status_checks" and .parameters.strict_required_status_checks_policy)' <<<"$rules"
+  )"
   conversation_resolution="$(
-    jq -r '.required_conversation_resolution.enabled // false' <<<"$metadata"
+    jq -r 'any(.[]; .type == "pull_request" and .parameters.required_review_thread_resolution)' <<<"$rules"
   )"
-  allow_force_pushes="$(jq -r '.allow_force_pushes.enabled // false' <<<"$metadata")"
-  allow_deletions="$(jq -r '.allow_deletions.enabled // false' <<<"$metadata")"
-  linear_history="$(jq -r '.required_linear_history.enabled // false' <<<"$metadata")"
+  allow_force_pushes="$(jq -r 'any(.[]; .type == "non_fast_forward") | not' <<<"$rules")"
+  allow_deletions="$(jq -r 'any(.[]; .type == "deletion") | not' <<<"$rules")"
+  linear_history="$(jq -r 'any(.[]; .type == "required_linear_history")' <<<"$rules")"
   status_checks="$(
-    jq -r '[.required_status_checks.checks[]?.context, .required_status_checks.contexts[]?] | unique[]' \
-      <<<"$metadata"
+    jq -r '[.[] | select(.type == "required_status_checks") | .parameters.required_status_checks[].context] | unique[]' \
+      <<<"$rules"
   )"
 
   if (( required_reviews != 0 )); then
