@@ -107,14 +107,14 @@ case "${1:-} ${2:-}" in
   "repo view")
     printf '{"defaultBranchRef":{"name":"main"},"isPrivate":false,"nameWithOwner":"LogBrewCo/homebrew-tap","url":"https://github.com/LogBrewCo/homebrew-tap"}\n'
     ;;
-  "api repos/LogBrewCo/cli/branches/main/protection")
+  "api repos/LogBrewCo/cli/rules/branches/main")
     reviews=0
     last_push=false
     conversations=true
     force_pushes=false
     deletions=false
     linear_history=true
-    checks='[{"context":"check"},{"context":"plan"}]'
+    checks='[{"context":"check","integration_id":15368},{"context":"plan","integration_id":15368}]'
     case "${LOGBREW_TEST_PROTECTION:-ok}" in
       human-review)
         reviews=1
@@ -133,11 +133,21 @@ case "${1:-} ${2:-}" in
         linear_history=false
         ;;
       missing-plan)
-        checks='[{"context":"check"}]'
+        checks='[{"context":"check","integration_id":15368}]'
         ;;
     esac
-    printf '{"required_pull_request_reviews":{"required_approving_review_count":%s,"dismiss_stale_reviews":true,"require_last_push_approval":%s},"enforce_admins":{"enabled":true},"required_status_checks":{"strict":true,"checks":%s,"contexts":[]},"required_conversation_resolution":{"enabled":%s},"allow_force_pushes":{"enabled":%s},"allow_deletions":{"enabled":%s},"required_linear_history":{"enabled":%s}}\n' \
-      "$reviews" "$last_push" "$checks" "$conversations" "$force_pushes" "$deletions" "$linear_history"
+    rules="[{\"type\":\"pull_request\",\"ruleset_id\":1,\"parameters\":{\"required_approving_review_count\":${reviews},\"require_last_push_approval\":${last_push},\"required_review_thread_resolution\":${conversations}}},{\"type\":\"required_status_checks\",\"ruleset_id\":1,\"parameters\":{\"strict_required_status_checks_policy\":true,\"required_status_checks\":${checks}}}"
+    [[ "$force_pushes" == true ]] || rules+=',{"type":"non_fast_forward","ruleset_id":1}'
+    [[ "$deletions" == true ]] || rules+=',{"type":"deletion","ruleset_id":1}'
+    [[ "$linear_history" == false ]] || rules+=',{"type":"required_linear_history","ruleset_id":1}'
+    printf '%s]\n' "$rules"
+    ;;
+  "api repos/LogBrewCo/cli/rulesets/1")
+    if [[ "${LOGBREW_TEST_PROTECTION:-ok}" == admin-bypass ]]; then
+      printf '{"id":1,"current_user_can_bypass":"always"}\n'
+    else
+      printf '{"id":1,"current_user_can_bypass":"never"}\n'
+    fi
     ;;
   "api repos/LogBrewCo/cli/actions/workflows")
     case "${LOGBREW_TEST_WORKFLOWS:-active}" in
@@ -334,7 +344,7 @@ if ! grep -Fq "Release preflight failed: main branch protection must require sta
   exit 1
 fi
 
-for protection_case in human-review missing-conversations force-pushes deletions nonlinear; do
+for protection_case in human-review missing-conversations force-pushes deletions nonlinear admin-bypass; do
   : >"$output_file"
   if LOGBREW_TEST_PROTECTION="$protection_case" PATH="$tmp_dir:$PATH" bash scripts/release-preflight.sh v0.1.0 >"$output_file" 2>&1; then
     printf 'expected release preflight to reject protection case %s\n' "$protection_case" >&2
