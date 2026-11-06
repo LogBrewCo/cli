@@ -3,7 +3,6 @@
 use std::path::Path;
 
 const RUNNERS: &[&str] = &[
-    "macos-14",
     "macos-15",
     "macos-15-intel",
     "macos-latest",
