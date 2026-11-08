@@ -5,7 +5,7 @@ use std::path::Path;
 /// Variable every server integration reads for its ingest key.
 pub(super) const KEY_VARIABLE: &str = "LOGBREW_SERVER_API_KEY";
 /// Hosted MCP server URL.
-const MCP_URL: &str = "https://mcp.logbrew.co/mcp";
+const MCP_URL: &str = "https://logbrew.co/mcp";
 /// Largest project file setup reads or edits.
 const MAX_FILE_BYTES: u64 = 1024 * 1024;
 
