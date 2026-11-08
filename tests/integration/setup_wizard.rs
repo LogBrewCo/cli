@@ -624,7 +624,7 @@ async_test!(mcp_config_is_added_only_after_consent_and_keeps_other_servers -> Te
     assert_eq!(claude["mcpServers"]["other"]["command"], "other-server");
     assert_eq!(
         claude["mcpServers"]["logbrew"]["url"],
-        "https://mcp.logbrew.co/mcp"
+        "https://logbrew.co/mcp"
     );
     let vscode: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(dir.join(".vscode/mcp.json"))?)?;
