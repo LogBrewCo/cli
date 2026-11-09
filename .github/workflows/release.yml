@@ -66,7 +66,7 @@ jobs:
           printf 'run-id=%s\n' "$run_id" >> "$GITHUB_OUTPUT"
       - name: Install dist
         shell: bash
-        run: curl --proto '=https' --tlsv1.2 -LsSf https://github.com/axodotdev/cargo-dist/releases/download/v0.32.0/cargo-dist-installer.sh | sh
+        run: curl --proto '=https' --tlsv1.2 -LsSf --retry 8 https://github.com/axodotdev/cargo-dist/releases/download/v0.32.0/cargo-dist-installer.sh | sh
       - id: plan
         shell: bash
         run: |
@@ -141,16 +141,16 @@ jobs:
         include:
           - target: aarch64-apple-darwin
             runner: macos-15
-            install_dist: curl --proto '=https' --tlsv1.2 -LsSf https://github.com/axodotdev/cargo-dist/releases/download/v0.32.0/cargo-dist-installer.sh | sh
+            install_dist: curl --proto '=https' --tlsv1.2 -LsSf --retry 8 https://github.com/axodotdev/cargo-dist/releases/download/v0.32.0/cargo-dist-installer.sh | sh
           - target: aarch64-unknown-linux-gnu
             runner: ubuntu-22.04-arm
-            install_dist: curl --proto '=https' --tlsv1.2 -LsSf https://github.com/axodotdev/cargo-dist/releases/download/v0.32.0/cargo-dist-installer.sh | sh
+            install_dist: curl --proto '=https' --tlsv1.2 -LsSf --retry 8 https://github.com/axodotdev/cargo-dist/releases/download/v0.32.0/cargo-dist-installer.sh | sh
           - target: x86_64-apple-darwin
             runner: macos-15-intel
-            install_dist: curl --proto '=https' --tlsv1.2 -LsSf https://github.com/axodotdev/cargo-dist/releases/download/v0.32.0/cargo-dist-installer.sh | sh
+            install_dist: curl --proto '=https' --tlsv1.2 -LsSf --retry 8 https://github.com/axodotdev/cargo-dist/releases/download/v0.32.0/cargo-dist-installer.sh | sh
           - target: x86_64-unknown-linux-gnu
             runner: ubuntu-22.04
-            install_dist: curl --proto '=https' --tlsv1.2 -LsSf https://github.com/axodotdev/cargo-dist/releases/download/v0.32.0/cargo-dist-installer.sh | sh
+            install_dist: curl --proto '=https' --tlsv1.2 -LsSf --retry 8 https://github.com/axodotdev/cargo-dist/releases/download/v0.32.0/cargo-dist-installer.sh | sh
           - target: x86_64-pc-windows-msvc
             runner: windows-2025
             linker: lld-link
@@ -203,7 +203,7 @@ jobs:
           persist-credentials: false
       - name: Install dist
         shell: bash
-        run: curl --proto '=https' --tlsv1.2 -LsSf https://github.com/axodotdev/cargo-dist/releases/download/v0.32.0/cargo-dist-installer.sh | sh
+        run: curl --proto '=https' --tlsv1.2 -LsSf --retry 8 https://github.com/axodotdev/cargo-dist/releases/download/v0.32.0/cargo-dist-installer.sh | sh
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: artifacts-build-local-*
