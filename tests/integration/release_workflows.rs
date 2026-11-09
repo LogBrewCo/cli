@@ -240,7 +240,10 @@ fn published_manifests_link_the_website() -> crate::TestResult {
         "homepage = \"https://logbrew.co\"",
         "documentation = \"https://docs.logbrew.co/guides/cli\"",
     ] {
-        assert!(CARGO.lines().any(|entry| entry == line), "Cargo.toml misses {line}");
+        assert!(
+            CARGO.lines().any(|entry| entry == line),
+            "Cargo.toml misses {line}"
+        );
     }
     Ok(())
 }
