@@ -3,6 +3,7 @@ const CRATES: &str = include_str!("../../.github/workflows/publish-crates.yml");
 const NPM: &str = include_str!("../../.github/workflows/publish-npm-trusted.yml");
 const HOMEBREW: &str = include_str!("../../.github/workflows/publish-homebrew-tap.yml");
 const PUBLISH_BOUNDARY: &str = include_str!("../../scripts/validate-publish-boundary.sh");
+const CARGO: &str = include_str!("../../Cargo.toml");
 const DIST: &str = include_str!("../../dist-workspace.toml");
 const NPM_PACKAGE: &str = include_str!("../../npm/package.json");
 const NPM_PACKAGES: &str = include_str!("../../scripts/npm-packages.sh");
@@ -224,5 +225,22 @@ fn npm_release_publishes_script_free_platform_packages_first() -> crate::TestRes
         assert!(PREFLIGHT.contains(platform), "preflight misses {platform}");
     }
     assert!(!DIST.contains("\"npm\""));
+    Ok(())
+}
+
+#[test]
+fn published_manifests_link_the_website() -> crate::TestResult {
+    let manifest: serde_json::Value = serde_json::from_str(NPM_PACKAGE)?;
+    assert_eq!(manifest["homepage"], "https://logbrew.co");
+    assert!(
+        NPM_PACKAGES.contains("homepage: \"https://logbrew.co\","),
+        "platform packages must link the website"
+    );
+    for line in [
+        "homepage = \"https://logbrew.co\"",
+        "documentation = \"https://docs.logbrew.co/guides/cli\"",
+    ] {
+        assert!(CARGO.lines().any(|entry| entry == line), "Cargo.toml misses {line}");
+    }
     Ok(())
 }
