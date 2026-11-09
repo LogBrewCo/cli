@@ -8,6 +8,7 @@ authors = ["LogBrewCo"]
 license = "MIT"
 repository = "https://github.com/LogBrewCo/cli"
 homepage = "https://logbrew.co"
+documentation = "https://docs.logbrew.co/guides/cli"
 readme = "README.md"
 keywords = ["logbrew", "cli", "observability", "logs"]
 categories = ["command-line-utilities", "development-tools"]

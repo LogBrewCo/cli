@@ -40,4 +40,4 @@ logbrew login
 logbrew status
 ```
 
-Documentation: <https://github.com/LogBrewCo/cli#readme>
+Documentation: <https://docs.logbrew.co/guides/cli>

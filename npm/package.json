@@ -14,7 +14,7 @@
     "monitoring",
     "ai-agents"
   ],
-  "homepage": "https://docs.logbrew.co/guides/cli",
+  "homepage": "https://logbrew.co",
   "bugs": "https://github.com/LogBrewCo/cli/issues",
   "repository": {
     "type": "git",
