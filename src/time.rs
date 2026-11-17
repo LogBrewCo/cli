@@ -10,7 +10,7 @@
 pub(crate) struct ParsedTimestamp {
     /// Whole UTC seconds since the Unix epoch.
     epoch_seconds: i64,
-    /// Positive sub-second nanoseconds.
+    /// Sub-second nanoseconds; 1 second or more only inside a represented leap second.
     nanoseconds: u32,
 }
 
@@ -44,15 +44,11 @@ pub(crate) fn parse_rfc3339(value: &str) -> Option<ParsedTimestamp> {
     if value.starts_with("0000") || value.get(17..19) == Some("60") {
         return None;
     }
-    let timestamp = parse_timestamp(value)?;
-    Some(ParsedTimestamp {
-        epoch_seconds: timestamp.timestamp(),
-        nanoseconds: timestamp.timestamp_subsec_nanos(),
-    })
+    parse_timestamp(value)
 }
 
 /// Parses UTC evidence without collapsing a represented leap second into the next minute.
-pub(crate) fn parse_utc_evidence(value: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+pub(crate) fn parse_utc_evidence(value: &str) -> Option<ParsedTimestamp> {
     (value.ends_with('Z') || value.ends_with("+00:00"))
         .then_some(value)
         .and_then(parse_timestamp)
@@ -60,12 +56,12 @@ pub(crate) fn parse_utc_evidence(value: &str) -> Option<chrono::DateTime<chrono:
 
 /// Returns signed elapsed milliseconds, counting only leap seconds represented by an endpoint.
 pub(crate) fn evidence_offset_millis(
-    occurred: chrono::DateTime<chrono::Utc>,
-    started: chrono::DateTime<chrono::Utc>,
+    occurred: ParsedTimestamp,
+    started: ParsedTimestamp,
 ) -> Option<i64> {
-    let seconds = i128::from(occurred.timestamp()) - i128::from(started.timestamp());
-    let start_fraction = started.timestamp_subsec_nanos();
-    let end_fraction = occurred.timestamp_subsec_nanos();
+    let seconds = i128::from(occurred.epoch_seconds) - i128::from(started.epoch_seconds);
+    let start_fraction = started.nanoseconds;
+    let end_fraction = occurred.nanoseconds;
     let represented_leaps = i128::from(seconds > 0 && start_fraction >= 1_000_000_000)
         - i128::from(seconds < 0 && end_fraction >= 1_000_000_000);
     let nanos = (seconds + represented_leaps) * 1_000_000_000 + i128::from(end_fraction)
@@ -74,7 +70,7 @@ pub(crate) fn evidence_offset_millis(
 }
 
 /// Applies the wire format and precision limits before Gregorian calendar validation.
-fn parse_timestamp(value: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+fn parse_timestamp(value: &str) -> Option<ParsedTimestamp> {
     let bytes = value.as_bytes();
     if !(20..=35).contains(&bytes.len()) || !bytes.is_ascii() || !has_calendar_shape(bytes) {
         return None;
@@ -92,9 +88,68 @@ fn parse_timestamp(value: &str) -> Option<chrono::DateTime<chrono::Utc>> {
     {
         return None;
     }
-    chrono::DateTime::parse_from_rfc3339(value)
-        .ok()
-        .map(|timestamp| timestamp.to_utc())
+    let (local_seconds, leap) = civil_seconds(value)?;
+    let nanoseconds = match value.get(20..zone) {
+        Some(digits) if zone > 19 => {
+            let scale =
+                10_u32.checked_pow(9_u32.checked_sub(u32::try_from(digits.len()).ok()?)?)?;
+            digits.parse::<u32>().ok()?.checked_mul(scale)?
+        }
+        _ => 0,
+    };
+    let offset_seconds = if value.ends_with('Z') {
+        0
+    } else {
+        let hours = digits_at(value, zone + 1..zone + 3)?;
+        let minutes = digits_at(value, zone + 4..zone + 6)?;
+        if hours > 23 || minutes > 59 {
+            return None;
+        }
+        let offset = i64::from(hours * 3_600 + minutes * 60);
+        if bytes[zone] == b'-' { -offset } else { offset }
+    };
+    Some(ParsedTimestamp {
+        epoch_seconds: local_seconds.checked_sub(offset_seconds)?,
+        nanoseconds: nanoseconds + if leap { 1_000_000_000 } else { 0 },
+    })
+}
+
+/// Reads the unsigned decimal digits at `range`, which the shape checks already proved ASCII digits.
+fn digits_at(value: &str, range: std::ops::Range<usize>) -> Option<u32> {
+    value.get(range)?.parse().ok()
+}
+
+/// Returns the Unix seconds of the date and whole-second prefix, and whether it names a leap second.
+///
+/// A leap second (`:60`) counts as second 59, as RFC 3339 section 5.6 allows it at any minute.
+fn civil_seconds(value: &str) -> Option<(i64, bool)> {
+    let year = digits_at(value, 0..4)?;
+    let month = digits_at(value, 5..7)?;
+    let day = digits_at(value, 8..10)?;
+    let hour = digits_at(value, 11..13)?;
+    let minute = digits_at(value, 14..16)?;
+    let second = digits_at(value, 17..19)?;
+    let leap_year =
+        year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400));
+    let month_days = match month {
+        2 if leap_year => 29,
+        2 => 28,
+        4 | 6 | 9 | 11 => 30,
+        1..=12 => 31,
+        _ => return None,
+    };
+    if day == 0 || day > month_days || hour > 23 || minute > 59 || second > 60 {
+        return None;
+    }
+    // Days from 1970-01-01 in the proleptic Gregorian calendar (Hinnant's days_from_civil).
+    let shifted_year = i64::from(year) - i64::from(month <= 2);
+    let era = shifted_year.div_euclid(400);
+    let year_of_era = shifted_year.rem_euclid(400);
+    let day_of_year = (153 * ((i64::from(month) + 9) % 12) + 2) / 5 + i64::from(day) - 1;
+    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+    let days = era * 146_097 + day_of_era - 719_468;
+    let seconds = i64::from(hour * 3_600 + minute * 60 + second.min(59));
+    Some((days * 86_400 + seconds, second == 60))
 }
 
 /// Checks the fixed-width date and whole-second prefix without accepting relaxed syntax.
@@ -131,7 +186,7 @@ pub(crate) fn is_rfc3339_utc(value: &str) -> bool {
         return false;
     }
 
-    chrono::NaiveDateTime::parse_from_str(seconds, "%Y-%m-%dT%H:%M:%S").is_ok()
+    civil_seconds(seconds).is_some()
 }
 
 /// Parses the canonical UTC `Z` timestamps emitted by analytics contracts.
@@ -161,9 +216,41 @@ pub(crate) fn parse_utc_millis(value: &str) -> Option<i128> {
 #[cfg(test)]
 mod tests {
     use super::{
-        ParsedTimestamp, evidence_offset_millis, is_rfc3339_utc, parse_rfc3339, parse_utc_evidence,
-        parse_utc_millis,
+        ParsedTimestamp, evidence_offset_millis, is_rfc3339_utc, parse_rfc3339, parse_timestamp,
+        parse_utc_evidence, parse_utc_millis,
     };
+
+    #[test]
+    fn calendar_and_offsets_follow_rfc_3339() {
+        for value in [
+            "2026-04-31T00:00:00Z",
+            "2026-13-01T00:00:00Z",
+            "2026-00-10T00:00:00Z",
+            "2026-01-00T00:00:00Z",
+            "2100-02-29T00:00:00Z",
+        ] {
+            assert!(parse_rfc3339(value).is_none(), "accepted {value}");
+            assert!(!is_rfc3339_utc(value), "accepted {value}");
+        }
+        for (value, seconds) in [
+            ("2000-02-29T00:00:00Z", 951_782_400),
+            ("1600-03-01T00:00:00Z", -11_670_912_000),
+            ("2026-11-17T15:30:00-00:00", 1_794_929_400),
+            ("2026-11-17T16:30:00.5+01:00", 1_794_929_400),
+            ("2026-11-17T14:00:00-01:30", 1_794_929_400),
+            ("9999-12-31T23:59:59Z", 253_402_300_799),
+        ] {
+            assert_eq!(
+                parse_rfc3339(value).map(|parsed| parsed.epoch_seconds),
+                Some(seconds),
+                "{value}"
+            );
+        }
+        assert_eq!(
+            parse_timestamp("2017-01-01T00:59:60.5+01:00"),
+            parse_utc_evidence("2016-12-31T23:59:60.500Z")
+        );
+    }
 
     #[test]
     fn utc_evidence_preserves_calendar_order_and_signed_offsets() -> Result<(), &'static str> {
