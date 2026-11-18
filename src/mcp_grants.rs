@@ -1,8 +1,4 @@
 //! Connected MCP clients: list the account's grants and revoke one.
-#![expect(
-    clippy::redundant_pub_crate,
-    reason = "the parent command executor consumes these private-module helpers"
-)]
 
 use crate::auth::{AuthCredential, send_account_authenticated_with_refresh};
 use crate::http::display_safe;

@@ -37,10 +37,6 @@ const HUMAN_POINT_LIMIT: usize = 12;
 const NANOS_PER_SECOND: i128 = 1_000_000_000;
 
 /// Builds the exact public POST body with explicit CLI defaults.
-#[expect(
-    clippy::redundant_pub_crate,
-    reason = "the parent command model consumes this private-module helper"
-)]
 pub(super) fn request_body(options: &AnalyticsSegmentComparisonOptions) -> serde_json::Value {
     let mut body = serde_json::Map::new();
     drop(body.insert(
@@ -115,10 +111,6 @@ fn segment_body(segment: &AnalyticsSegment) -> serde_json::Value {
 }
 
 /// Executes one bounded, identity-safe segment comparison request.
-#[expect(
-    clippy::redundant_pub_crate,
-    reason = "the parent command executor consumes this private-module helper"
-)]
 pub(super) async fn execute<W: std::io::Write>(
     env: &CliEnvironment,
     options: &AnalyticsSegmentComparisonOptions,

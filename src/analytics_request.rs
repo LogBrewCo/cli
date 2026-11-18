@@ -7,10 +7,6 @@
         reason = "private transport policy names mirror their documented analytics owners"
     )
 )]
-#![expect(
-    clippy::redundant_pub_crate,
-    reason = "private sibling analytics modules share this canonical transport policy"
-)]
 
 use crate::auth::{AuthCredential, send_authenticated_with_refresh};
 use crate::{CliEnvironment, RuntimeError};

@@ -16,10 +16,6 @@ const WATCH_RECONNECT_MAX_DELAY: std::time::Duration = std::time::Duration::from
 const WATCH_RECONNECT_JITTER_MAX_MILLIS: u64 = 250;
 
 /// Executes the public live WebSocket watch flow.
-#[expect(
-    clippy::redundant_pub_crate,
-    reason = "the parent command executor consumes this private-module helper"
-)]
 pub(crate) async fn execute<W: std::io::Write>(
     env: &CliEnvironment,
     target: WatchTarget,

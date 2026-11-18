@@ -41,6 +41,8 @@ test_pid=$!
 (
 bash scripts/check-tool-matrix.sh
 bash scripts/test-check-tool-matrix.sh
+bash scripts/check-suppressions.sh
+bash scripts/test-check-suppressions.sh
 cargo fmt --all -- --check
 if [[ "${LOGBREW_CHECK_ALL_SELF_TEST:-1}" != "0" ]]; then
   bash scripts/test-check-all.sh

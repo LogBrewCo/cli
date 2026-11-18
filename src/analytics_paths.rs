@@ -31,10 +31,6 @@ const LIMITATION_LIMIT: usize = 10;
 const TRACE_EXEMPLAR_LIMIT: usize = 3;
 
 /// Builds the exact public POST body with explicit CLI defaults.
-#[expect(
-    clippy::redundant_pub_crate,
-    reason = "the parent command model consumes this private-module helper"
-)]
 pub(super) fn request_body(options: &AnalyticsPathOptions) -> serde_json::Value {
     let mut body = scoped_body(
         &options.project_id,
@@ -80,10 +76,6 @@ pub(super) fn request_body(options: &AnalyticsPathOptions) -> serde_json::Value 
 }
 
 /// Executes one aggregate, identity-safe product-path request.
-#[expect(
-    clippy::redundant_pub_crate,
-    reason = "the parent command executor consumes this private-module helper"
-)]
 pub(super) async fn execute<W: std::io::Write>(
     env: &CliEnvironment,
     options: &AnalyticsPathOptions,

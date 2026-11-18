@@ -155,10 +155,6 @@ impl<'de> Visitor<'de> for UniqueValueVisitor {
 }
 
 /// Executes one versioned read-only explanation.
-#[expect(
-    clippy::redundant_pub_crate,
-    reason = "the parent command executor consumes this private-module helper"
-)]
 pub(super) async fn execute<W: std::io::Write>(
     env: &CliEnvironment,
     target: &ExplainTarget,

@@ -212,10 +212,6 @@ struct StreamUsageShape {
 }
 
 /// Executes the exact account-usage read and writes JSON or bounded human output.
-#[expect(
-    clippy::redundant_pub_crate,
-    reason = "the parent command executor consumes this private-module helper"
-)]
 pub(crate) async fn execute<W: std::io::Write>(
     env: &CliEnvironment,
     json: bool,

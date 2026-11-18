@@ -1,8 +1,4 @@
 //! Percent-encoded REST endpoint paths for read, explain, and set commands.
-#![expect(
-    clippy::redundant_pub_crate,
-    reason = "the parent command modules consume these private-module helpers"
-)]
 
 use crate::{
     ExplainMetricTarget, ExplainTarget, IssueOccurrenceSelection, ReadOptions, ReadTarget,

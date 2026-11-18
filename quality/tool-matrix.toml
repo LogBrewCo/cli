@@ -39,8 +39,8 @@ unpinned = "ships with the stable toolchain (see rust)"
 commands = ["clippy-driver"]
 runs_in = "CI check job: scripts/check-all.sh compiles every target once with clippy-driver"
 config = "Cargo.toml [lints]; every warning fails"
-conflicts = "none known"
-exceptions = "none"
+conflicts = "the nursery lint redundant_pub_crate asks for the opposite of rustc's unreachable_pub on items shared by private sibling modules (rust-clippy#5369)"
+exceptions = "redundant_pub_crate is allowed in Cargo.toml [lints] because of that conflict; no inline suppressions"
 runtime = "inside the check step (see rust)"
 findings = "lints are fixed before merge; until 2026-10-23 test targets skipped clippy, and a seeded vec.get(0) in a test now fails the gate"
 replaces = "a separate cargo clippy build"
@@ -193,6 +193,22 @@ runtime = "new; record from CI runs at the next check"
 findings = "seeded: an unlisted command, a changed pin, a changed action commit, a stale or future date, and a missing field each fail"
 replaces = "none"
 checked = 2026-10-19
+
+[[tool]]
+id = "suppressions"
+risk = "an inline lint or type suppression that hides a finding instead of fixing it"
+tool = "scripts/check-suppressions.sh and its seeded tests"
+version = "repository"
+unpinned = "repository script, versioned by commit"
+commands = ["scripts/check-suppressions.sh", "scripts/test-check-suppressions.sh"]
+runs_in = "CI check job (scripts/check-all.sh)"
+config = "the pattern in scripts/check-suppressions.sh"
+conflicts = "none known"
+exceptions = "none"
+runtime = "new; record from CI runs at the next check"
+findings = "seeded: each suppression form fails with its path and line; a clean repository passes; a directory outside Git fails"
+replaces = "none"
+checked = 2026-11-18
 
 [[tool]]
 id = "openssf-scorecard"

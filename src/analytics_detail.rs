@@ -1,10 +1,5 @@
 //! Previous-period change, sample size, and example units shared by analytics responses.
 
-#![expect(
-    clippy::redundant_pub_crate,
-    reason = "sibling analytics modules share this private contract"
-)]
-
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
 

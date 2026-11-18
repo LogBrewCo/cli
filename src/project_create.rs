@@ -159,10 +159,6 @@ impl CredentialOperation {
 }
 
 /// Executes one locked, idempotent project bootstrap.
-#[expect(
-    clippy::redundant_pub_crate,
-    reason = "the parent command executor consumes this private-module helper"
-)]
 pub(super) async fn execute<W: std::io::Write>(
     env: &CliEnvironment,
     options: &ProjectCreateOptions,
@@ -225,10 +221,6 @@ pub(super) async fn execute<W: std::io::Write>(
 }
 
 /// Executes one locked, idempotent key creation for an existing project.
-#[expect(
-    clippy::redundant_pub_crate,
-    reason = "the parent command executor consumes this private-module helper"
-)]
 pub(super) async fn execute_ingest_key_create<W: std::io::Write>(
     env: &CliEnvironment,
     options: &ProjectIngestKeyCreateOptions,
@@ -291,10 +283,6 @@ pub(super) async fn execute_ingest_key_create<W: std::io::Write>(
 }
 
 /// Creates a project for setup and returns its id and one-time ingest key.
-#[expect(
-    clippy::redundant_pub_crate,
-    reason = "the setup wizard consumes this private-module helper"
-)]
 pub(crate) async fn create_project_for_setup(
     env: &CliEnvironment,
     options: &ProjectCreateOptions,
@@ -316,10 +304,6 @@ pub(crate) async fn create_project_for_setup(
 }
 
 /// Creates an ingest key for setup and returns the one-time key.
-#[expect(
-    clippy::redundant_pub_crate,
-    reason = "the setup wizard consumes this private-module helper"
-)]
 pub(crate) async fn create_ingest_key_for_setup(
     env: &CliEnvironment,
     options: &ProjectIngestKeyCreateOptions,

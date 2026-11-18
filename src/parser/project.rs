@@ -449,10 +449,6 @@ fn parse_project_deletion(args: &[String]) -> Result<Command, CliError> {
 }
 
 /// Parses the closed secure project creation grammar.
-#[expect(
-    clippy::too_many_lines,
-    reason = "one closed grammar keeps mutually dependent project creation flags visible"
-)]
 fn parse_project_create(args: &[String]) -> Result<Command, CliError> {
     let Some((name, tail)) = args.split_first() else {
         return Err(CliError::InvalidProjectCreateCommand);
@@ -496,49 +492,30 @@ fn parse_project_create(args: &[String]) -> Result<Command, CliError> {
             "--provider" if provider.is_none() => {
                 let value = flag_value(tail, &mut index, inline_value)
                     .ok_or(CliError::InvalidProjectCreateCommand)?;
-                provider = Some(
-                    value
-                        .parse()
-                        .ok()
-                        .filter(|provider: &LoginProvider| provider.hosts_repositories())
-                        .ok_or(CliError::InvalidProjectCreateCommand)?,
-                );
+                provider = Some(repository_provider(value)?);
             }
             "--repository" if repository_id.is_none() => {
                 let value = flag_value(tail, &mut index, inline_value)
                     .ok_or(CliError::InvalidProjectCreateCommand)?;
-                repository_id = bounded_project_create_value(value, 256, false);
-                if repository_id.is_none() {
-                    return Err(CliError::InvalidProjectCreateCommand);
-                }
+                repository_id = Some(
+                    bounded_project_create_value(value, 256, false)
+                        .ok_or(CliError::InvalidProjectCreateCommand)?,
+                );
             }
             "--discovery" if discovery_id.is_none() => {
                 let value = flag_value(tail, &mut index, inline_value)
                     .ok_or(CliError::InvalidProjectCreateCommand)?;
-                if !is_non_nil_uuid(value) {
-                    return Err(CliError::InvalidProjectCreateCommand);
-                }
-                discovery_id = Some(value.to_ascii_lowercase());
+                discovery_id = Some(project_create_uuid(value)?);
             }
             "--component" if component_ids.len() < 32 => {
                 let value = flag_value(tail, &mut index, inline_value)
                     .ok_or(CliError::InvalidProjectCreateCommand)?;
-                if !is_non_nil_uuid(value) {
-                    return Err(CliError::InvalidProjectCreateCommand);
-                }
-                component_ids.push(value.to_ascii_lowercase());
+                component_ids.push(project_create_uuid(value)?);
             }
             "--ingest-key-file" if ingest_key_file.is_none() => {
                 let value = flag_value(tail, &mut index, inline_value)
                     .ok_or(CliError::InvalidProjectCreateCommand)?;
-                let trimmed = value.trim();
-                if trimmed.is_empty()
-                    || trimmed.len() > 4096
-                    || trimmed.chars().any(char::is_control)
-                {
-                    return Err(CliError::InvalidProjectCreateCommand);
-                }
-                ingest_key_file = Some(trimmed.to_owned());
+                ingest_key_file = Some(ingest_key_path(value)?);
             }
             "--abandon-retry" if inline_value.is_none() && !abandon_retry => {
                 abandon_retry = true;
@@ -549,22 +526,7 @@ fn parse_project_create(args: &[String]) -> Result<Command, CliError> {
         index += 1;
     }
 
-    component_ids.sort_unstable();
-    if component_ids.windows(2).any(|pair| pair[0] == pair[1])
-        || provider.is_some() != repository_id.is_some()
-        || discovery_id.is_some() == component_ids.is_empty()
-        || repository_id.is_none() && discovery_id.is_some()
-    {
-        return Err(CliError::InvalidProjectCreateCommand);
-    }
-    let repository = provider
-        .zip(repository_id)
-        .map(|(provider, id)| ProjectRepositoryOptions {
-            provider,
-            id,
-            discovery_id,
-            component_ids,
-        });
+    let repository = project_repository(provider, repository_id, discovery_id, component_ids)?;
     let ingest_key_file = ingest_key_file.ok_or(CliError::InvalidProjectCreateCommand)?;
     Ok(Command::ProjectCreate {
         options: ProjectCreateOptions {
@@ -577,6 +539,58 @@ fn parse_project_create(args: &[String]) -> Result<Command, CliError> {
         },
         json,
     })
+}
+
+/// Parses a provider that hosts repositories.
+fn repository_provider(value: &str) -> Result<LoginProvider, CliError> {
+    value
+        .parse()
+        .ok()
+        .filter(|provider: &LoginProvider| provider.hosts_repositories())
+        .ok_or(CliError::InvalidProjectCreateCommand)
+}
+
+/// Normalizes one non-nil discovery or component UUID.
+fn project_create_uuid(value: &str) -> Result<String, CliError> {
+    if is_non_nil_uuid(value) {
+        Ok(value.to_ascii_lowercase())
+    } else {
+        Err(CliError::InvalidProjectCreateCommand)
+    }
+}
+
+/// Trims one bounded control-safe ingest key file path.
+fn ingest_key_path(value: &str) -> Result<String, CliError> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() || trimmed.len() > 4096 || trimmed.chars().any(char::is_control) {
+        return Err(CliError::InvalidProjectCreateCommand);
+    }
+    Ok(trimmed.to_owned())
+}
+
+/// Binds the repository, discovery, and unique component flags into one repository link.
+fn project_repository(
+    provider: Option<LoginProvider>,
+    repository_id: Option<String>,
+    discovery_id: Option<String>,
+    mut component_ids: Vec<String>,
+) -> Result<Option<ProjectRepositoryOptions>, CliError> {
+    component_ids.sort_unstable();
+    if component_ids.windows(2).any(|pair| pair[0] == pair[1])
+        || provider.is_some() != repository_id.is_some()
+        || discovery_id.is_some() == component_ids.is_empty()
+        || repository_id.is_none() && discovery_id.is_some()
+    {
+        return Err(CliError::InvalidProjectCreateCommand);
+    }
+    Ok(provider
+        .zip(repository_id)
+        .map(|(provider, id)| ProjectRepositoryOptions {
+            provider,
+            id,
+            discovery_id,
+            component_ids,
+        }))
 }
 
 /// Trims one bounded control-safe project-create field.

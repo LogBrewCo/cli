@@ -144,10 +144,6 @@ struct Action {
 }
 
 /// Validates and writes one successful repository setup response.
-#[expect(
-    clippy::redundant_pub_crate,
-    reason = "the parent renderer consumes this private-module helper"
-)]
 pub(crate) fn write_success<W: std::io::Write>(
     target: &RepositorySetupTarget,
     json: bool,
@@ -586,10 +582,6 @@ const fn discovery_next(code: &str) -> &'static str {
 }
 
 /// Replaces a validated API error with fixed local text.
-#[expect(
-    clippy::redundant_pub_crate,
-    reason = "the parent HTTP executor consumes this private-module helper"
-)]
 pub(crate) fn validate_error(
     status: u16,
     body: &str,

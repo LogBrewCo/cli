@@ -362,21 +362,19 @@ fn timeline_kind_rank(kind: &str) -> Result<u8, RuntimeError> {
     }
 }
 
-/// Validates explicit captured, missing, redacted, and truncated evidence state.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "evidence validation binds every independently serialized source receipt"
-)]
+/// Validates the response's explicit captured, missing, redacted, and truncated evidence state
+/// against its context, timeline, and every validated source receipt.
 pub(super) fn validate_evidence(
-    evidence: &Map<String, Value>,
-    context: Option<&Value>,
+    response: &Map<String, Value>,
     subject: &SubjectFacts<'_>,
     payload: PayloadFacts,
     topology: &TopologyFacts<'_>,
     baseline: &BaselineFacts<'_>,
     correlations: &CorrelationFacts<'_>,
-    timeline: &Map<String, Value>,
 ) -> Result<EvidenceFacts, RuntimeError> {
+    let evidence = required_object(response, "evidence")?;
+    let context = response.get("context");
+    let timeline = required_object(response, "timeline")?;
     require_exact_fields(
         evidence,
         &[

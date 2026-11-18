@@ -119,17 +119,19 @@ pub(super) fn validate_topology<'a>(
     }
     validate_service_edges(edge_values, subject, &ancestors, &children)?;
     validate_topology_state(
-        status,
-        root,
-        root_facts,
-        parent,
-        parent_facts,
-        &ancestors,
-        &children,
-        descendant_count,
-        edge_values,
-        chain_status,
-        truncated,
+        &TopologyState {
+            status,
+            root,
+            root_facts,
+            parent,
+            parent_facts,
+            ancestors: &ancestors,
+            children: &children,
+            descendant_count,
+            edges: edge_values,
+            chain_status,
+            truncated,
+        },
         subject,
     )?;
     Ok(TopologyFacts {
@@ -144,10 +146,6 @@ pub(super) fn validate_topology<'a>(
 }
 
 /// Validates deterministic baseline dimensions, arithmetic, availability, and limitations.
-#[expect(
-    clippy::too_many_lines,
-    reason = "the baseline validator keeps the serialized dimensions, arithmetic, method, and availability state machine together"
-)]
 pub(super) fn validate_baseline<'a>(
     baseline: &'a Map<String, Value>,
     subject: &SubjectFacts<'_>,
@@ -176,7 +174,56 @@ pub(super) fn validate_baseline<'a>(
     if until != subject.started_at || since >= until {
         return Err(invalid_response());
     }
-    let dimensions = super::required_object(baseline, "dimensions")?;
+    validate_baseline_dimensions(super::required_object(baseline, "dimensions")?, subject)?;
+    let retained = require_safe_u64(baseline, "retained_peer_count")?;
+    let errors = require_safe_u64(baseline, "error_peer_count")?;
+    let error_rate = require_safe_u64(baseline, "error_rate_basis_points")?;
+    let expected_rate = u128::from(errors)
+        .checked_mul(10_000)
+        .and_then(|scaled| scaled.checked_div(u128::from(retained)))
+        .unwrap_or_default();
+    if errors > retained || error_rate > 10_000 || u128::from(error_rate) != expected_rate {
+        return Err(invalid_response());
+    }
+    let p50 = nullable_nonnegative_number(baseline, "p50_duration_ms")?;
+    let p95 = nullable_nonnegative_number(baseline, "p95_duration_ms")?;
+    let p99 = nullable_nonnegative_number(baseline, "p99_duration_ms")?;
+    let percentile = super::nullable_safe_u64(baseline, "subject_percentile_basis_points")?;
+    if percentile.is_some_and(|value| value > 10_000)
+        || matches!((p50, p95, p99), (Some(p50), Some(p95), Some(p99)) if p50 > p95 || p95 > p99)
+    {
+        return Err(invalid_response());
+    }
+    if require_string(baseline, "method")? != "approximate_t_digest" {
+        return Err(invalid_response());
+    }
+    validate_baseline_limitations(baseline)?;
+    let values_present = p50.is_some() && p95.is_some() && p99.is_some() && percentile.is_some();
+    match status {
+        "available" if retained > 0 && values_present => {}
+        "not_found" | "unavailable"
+            if retained == 0
+                && errors == 0
+                && error_rate == 0
+                && p50.is_none()
+                && p95.is_none()
+                && p99.is_none()
+                && percentile.is_none() => {}
+        _ => return Err(invalid_response()),
+    }
+    let duration = safe_u64_as_f64(subject.duration_ms)?;
+    Ok(BaselineFacts {
+        status,
+        at_or_above_p95: p95.is_some_and(|p95| duration >= p95),
+        at_or_above_p99: p99.is_some_and(|p99| duration >= p99),
+    })
+}
+
+/// Requires baseline dimensions that match the subject exactly.
+fn validate_baseline_dimensions(
+    dimensions: &Map<String, Value>,
+    subject: &SubjectFacts<'_>,
+) -> Result<(), RuntimeError> {
     require_exact_fields(
         dimensions,
         &[
@@ -200,28 +247,11 @@ pub(super) fn validate_baseline<'a>(
             return Err(invalid_response());
         }
     }
-    let retained = require_safe_u64(baseline, "retained_peer_count")?;
-    let errors = require_safe_u64(baseline, "error_peer_count")?;
-    let error_rate = require_safe_u64(baseline, "error_rate_basis_points")?;
-    let expected_rate = u128::from(errors)
-        .checked_mul(10_000)
-        .and_then(|scaled| scaled.checked_div(u128::from(retained)))
-        .unwrap_or_default();
-    if errors > retained || error_rate > 10_000 || u128::from(error_rate) != expected_rate {
-        return Err(invalid_response());
-    }
-    let p50 = nullable_nonnegative_number(baseline, "p50_duration_ms")?;
-    let p95 = nullable_nonnegative_number(baseline, "p95_duration_ms")?;
-    let p99 = nullable_nonnegative_number(baseline, "p99_duration_ms")?;
-    let percentile = super::nullable_safe_u64(baseline, "subject_percentile_basis_points")?;
-    if percentile.is_some_and(|value| value > 10_000)
-        || matches!((p50, p95, p99), (Some(p50), Some(p95), Some(p99)) if p50 > p95 || p95 > p99)
-    {
-        return Err(invalid_response());
-    }
-    if require_string(baseline, "method")? != "approximate_t_digest" {
-        return Err(invalid_response());
-    }
+    Ok(())
+}
+
+/// Requires the exact ordered baseline limitations.
+fn validate_baseline_limitations(baseline: &Map<String, Value>) -> Result<(), RuntimeError> {
     let limitations = baseline
         .get("limitations")
         .and_then(Value::as_array)
@@ -240,25 +270,7 @@ pub(super) fn validate_baseline<'a>(
     {
         return Err(invalid_response());
     }
-    let values_present = p50.is_some() && p95.is_some() && p99.is_some() && percentile.is_some();
-    match status {
-        "available" if retained > 0 && values_present => {}
-        "not_found" | "unavailable"
-            if retained == 0
-                && errors == 0
-                && error_rate == 0
-                && p50.is_none()
-                && p95.is_none()
-                && p99.is_none()
-                && percentile.is_none() => {}
-        _ => return Err(invalid_response()),
-    }
-    let duration = safe_u64_as_f64(subject.duration_ms)?;
-    Ok(BaselineFacts {
-        status,
-        at_or_above_p95: p95.is_some_and(|p95| duration >= p95),
-        at_or_above_p99: p99.is_some_and(|p99| duration >= p99),
-    })
+    Ok(())
 }
 
 /// Validates one exact shared span summary.
@@ -350,25 +362,50 @@ fn validate_ancestor_chain(
     Ok(())
 }
 
-/// Validates availability-dependent topology emptiness and parent-chain semantics.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the strict topology state machine compares each independently serialized receipt"
-)]
-fn validate_topology_state(
-    status: &str,
-    root: Option<&Map<String, Value>>,
-    root_facts: Option<SpanSummaryFacts<'_>>,
-    parent: Option<&Map<String, Value>>,
-    parent_facts: Option<SpanSummaryFacts<'_>>,
-    ancestors: &[SpanSummaryFacts<'_>],
-    children: &[SpanSummaryFacts<'_>],
+/// Parsed topology fields that the availability state machine compares.
+struct TopologyState<'a> {
+    /// Optional-evidence status.
+    status: &'a str,
+    /// Serialized root span summary.
+    root: Option<&'a Map<String, Value>>,
+    /// Validated root span identity.
+    root_facts: Option<SpanSummaryFacts<'a>>,
+    /// Serialized direct parent span summary.
+    parent: Option<&'a Map<String, Value>>,
+    /// Validated direct parent identity.
+    parent_facts: Option<SpanSummaryFacts<'a>>,
+    /// Validated known ancestors, root first.
+    ancestors: &'a [SpanSummaryFacts<'a>],
+    /// Validated direct children.
+    children: &'a [SpanSummaryFacts<'a>],
+    /// Reported descendant count.
     descendant_count: u64,
-    edges: &[Value],
-    chain_status: &str,
+    /// Serialized cross-service edges.
+    edges: &'a [Value],
+    /// Parent-chain completeness.
+    chain_status: &'a str,
+    /// Whether the topology response was clipped.
     truncated: bool,
+}
+
+/// Validates availability-dependent topology emptiness and parent-chain semantics.
+fn validate_topology_state(
+    state: &TopologyState<'_>,
     subject: &SubjectFacts<'_>,
 ) -> Result<(), RuntimeError> {
+    let TopologyState {
+        status,
+        root,
+        root_facts,
+        parent,
+        parent_facts,
+        ancestors,
+        children,
+        descendant_count,
+        edges,
+        chain_status,
+        truncated,
+    } = *state;
     match status {
         "unavailable" => {
             if root.is_some()

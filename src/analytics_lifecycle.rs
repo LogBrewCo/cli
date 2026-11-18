@@ -31,10 +31,6 @@ const LIMITATION_LIMIT: usize = 16;
 const NANOS_PER_SECOND: i128 = 1_000_000_000;
 
 /// Builds the exact public POST body with explicit CLI history defaults.
-#[expect(
-    clippy::redundant_pub_crate,
-    reason = "the parent command model consumes this private-module helper"
-)]
 pub(super) fn request_body(options: &AnalyticsLifecycleOptions) -> serde_json::Value {
     let mut body = scoped_body(
         &options.project_id,
@@ -65,10 +61,6 @@ pub(super) fn request_body(options: &AnalyticsLifecycleOptions) -> serde_json::V
 }
 
 /// Executes one aggregate, identity-safe lifecycle request.
-#[expect(
-    clippy::redundant_pub_crate,
-    reason = "the parent command executor consumes this private-module helper"
-)]
 pub(super) async fn execute<W: std::io::Write>(
     env: &CliEnvironment,
     options: &AnalyticsLifecycleOptions,

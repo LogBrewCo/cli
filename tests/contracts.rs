@@ -4,16 +4,8 @@
 mod async_test;
 
 #[path = "integration/mock_http.rs"]
-#[expect(
-    clippy::redundant_pub_crate,
-    reason = "Private test helpers need crate visibility; unreachable_pub stays denied. Review on Clippy upgrade; checked 2026-09-09."
-)]
 mod mock_http;
 #[path = "integration/support.rs"]
-#[expect(
-    clippy::redundant_pub_crate,
-    reason = "Private test helpers need crate visibility; unreachable_pub stays denied. Review on Clippy upgrade; checked 2026-09-09."
-)]
 mod support;
 
 pub(crate) use mock_http::{Mock, MockServer, Request, ResponseTemplate, matchers, retry_then};

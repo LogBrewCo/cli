@@ -86,8 +86,9 @@ class VerificationError(RuntimeError):
 class HealthHandler(http.server.BaseHTTPRequestHandler):
     """Serve the one public health response required by `logbrew status`."""
 
-    def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
-        self.server.request_paths.append(self.path)  # type: ignore[attr-defined]
+    def do_GET(self) -> None:
+        if isinstance(self.server, HealthServer):
+            self.server.request_paths.append(self.path)
         if self.path != "/health":
             self.send_error(404)
             return

@@ -23,10 +23,6 @@ const OVERALL_UPLOAD_TIMEOUT: std::time::Duration = std::time::Duration::from_se
 const MAX_PHASE_ATTEMPTS: usize = 2;
 
 /// Executes one bounded native debug-artifact operation.
-#[expect(
-    clippy::redundant_pub_crate,
-    reason = "the parent command executor consumes this private-module helper"
-)]
 pub(super) async fn execute<W: std::io::Write>(
     env: &CliEnvironment,
     target: &NativeDebugArtifactsTarget,
