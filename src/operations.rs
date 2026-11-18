@@ -5,10 +5,6 @@
 //! `logbrew operations show <operation_id>` adds the operation's boundaries, every observation
 //! below 100 samples, and one distribution per span name. The p99 is reported only from 100
 //! samples; below that the view gives the count, the maximum, and every observation.
-#![expect(
-    clippy::redundant_pub_crate,
-    reason = "the parent command executor consumes these private-module helpers"
-)]
 
 use crate::auth::{AuthCredential, send_account_authenticated_with_refresh};
 use crate::{CliEnvironment, Command, RuntimeError};

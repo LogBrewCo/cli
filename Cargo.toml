@@ -110,6 +110,10 @@ bare_urls = "deny"
 all = { level = "deny", priority = -1 }
 pedantic = { level = "deny", priority = -1 }
 nursery = { level = "deny", priority = -1 }
+# rustc's unreachable_pub (denied above) requires pub(crate) on items that
+# private sibling modules share, and this nursery lint asks for the opposite.
+# Both cannot hold: https://github.com/rust-lang/rust-clippy/issues/5369
+redundant_pub_crate = "allow"
 unwrap_used = "deny"
 expect_used = "deny"
 panic = "deny"

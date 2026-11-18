@@ -15,10 +15,6 @@ const RESPONSE_LIMIT: usize = 64 * 1024;
 /// Maximum completed deployment duration accepted by the API.
 const MAX_DURATION_MILLIS: i128 = 30 * 24 * 60 * 60 * 1_000;
 /// Stable parser recovery for the closed deployment grammar.
-#[expect(
-    clippy::redundant_pub_crate,
-    reason = "sibling parser and error modules consume this private-module contract"
-)]
 pub(crate) const DEPLOYMENT_NEXT_STEP: &str = "use logbrew deploy <deployment_id> --project \
     <project_id> --release <release> --environment <environment> --service <service_name> \
     --status <succeeded|failed> --started-at <rfc3339> --finished-at <rfc3339> with optional \
@@ -85,10 +81,6 @@ struct DeploymentResponse {
 }
 
 /// Parses the closed deployment command without reflecting invalid values.
-#[expect(
-    clippy::redundant_pub_crate,
-    reason = "the sibling parser module consumes this private-module helper"
-)]
 pub(crate) fn parse(args: &[String]) -> Result<Command, CliError> {
     let mut flags = DeploymentFlags::default();
     let mut index = 0;
@@ -182,10 +174,6 @@ fn parse_status(value: &str) -> Result<DeploymentStatus, CliError> {
 }
 
 /// Executes one deployment record with account sign-in or a project artifact key.
-#[expect(
-    clippy::redundant_pub_crate,
-    reason = "the parent command executor consumes this private-module helper"
-)]
 pub(crate) async fn execute<W: std::io::Write>(
     env: &CliEnvironment,
     options: &DeploymentRecordOptions,
@@ -305,10 +293,6 @@ fn normalize(options: &DeploymentRecordOptions) -> Result<NormalizedDeployment, 
 }
 
 /// Accepts one bounded caller-owned deployment identifier.
-#[expect(
-    clippy::redundant_pub_crate,
-    reason = "the sibling parser reuses the deployment identifier contract"
-)]
 pub(crate) fn valid_id(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 128

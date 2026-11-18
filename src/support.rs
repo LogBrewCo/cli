@@ -3,10 +3,6 @@
 use crate::{SupportContextReplyOptions, SupportTarget, SupportTicketCreateOptions};
 
 /// Builds the public support-ticket endpoint for one operation.
-#[expect(
-    clippy::redundant_pub_crate,
-    reason = "the parent command executor consumes this private-module helper"
-)]
 pub(super) fn path(target: &SupportTarget) -> String {
     match target {
         SupportTarget::Create(_) => String::from("/api/support/tickets"),
@@ -42,10 +38,6 @@ pub(super) fn path(target: &SupportTarget) -> String {
 }
 
 /// Builds the strict support-context reply body.
-#[expect(
-    clippy::redundant_pub_crate,
-    reason = "the parent command executor consumes this private-module helper"
-)]
 pub(super) fn context_body(options: &SupportContextReplyOptions) -> serde_json::Value {
     let mut body = serde_json::Map::new();
     insert_string(&mut body, "context", options.context.as_str());
@@ -56,10 +48,6 @@ pub(super) fn context_body(options: &SupportContextReplyOptions) -> serde_json::
 }
 
 /// Builds a support-ticket create body with fixed CLI source metadata.
-#[expect(
-    clippy::redundant_pub_crate,
-    reason = "the parent command executor consumes this private-module helper"
-)]
 pub(super) fn create_body(options: &SupportTicketCreateOptions) -> serde_json::Value {
     let mut body = serde_json::Map::new();
     insert_string(&mut body, "source", "cli");
@@ -86,10 +74,6 @@ pub(super) fn create_body(options: &SupportTicketCreateOptions) -> serde_json::V
 /// The server maps one key to one ticket per account, so repeating the same create (for
 /// example after a timeout) returns the first ticket instead of a duplicate. A changed field
 /// makes a new key and a new ticket.
-#[expect(
-    clippy::redundant_pub_crate,
-    reason = "the parent command executor consumes this private-module helper"
-)]
 pub(super) fn create_retry_key(options: &SupportTicketCreateOptions) -> String {
     let body = create_body(options).to_string();
     crate::ids::sha256_hex(format!("logbrew-cli-support-create-v1\n{body}").as_bytes())
@@ -106,10 +90,6 @@ fn generated_diagnostics() -> serde_json::Value {
 }
 
 /// Builds local support error guidance without retaining backend response text.
-#[expect(
-    clippy::redundant_pub_crate,
-    reason = "the parent command executor consumes this private-module helper"
-)]
 pub(super) fn safe_error_body(target: &SupportTarget, status: u16) -> String {
     let (error, code, next, action_code, action_target) = match status {
         400 | 422 => (

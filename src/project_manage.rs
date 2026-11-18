@@ -1,8 +1,4 @@
 //! Project key list, rename, inbound filters, archived list, and restore.
-#![expect(
-    clippy::redundant_pub_crate,
-    reason = "the parent command executor consumes these private-module helpers"
-)]
 
 use crate::auth::{AuthCredential, send_account_authenticated_with_refresh};
 use crate::project_key_revoke::KeyMetadata;

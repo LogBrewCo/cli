@@ -32,10 +32,6 @@ const LIMITATION_LIMIT: usize = 12;
 const NANOS_PER_SECOND: i128 = 1_000_000_000;
 
 /// Builds the exact public POST body with explicit CLI defaults.
-#[expect(
-    clippy::redundant_pub_crate,
-    reason = "the parent command model consumes this private-module helper"
-)]
 pub(super) fn request_body(options: &AnalyticsRetentionOptions) -> serde_json::Value {
     let mut body = scoped_body(
         &options.project_id,
@@ -77,10 +73,6 @@ pub(super) fn request_body(options: &AnalyticsRetentionOptions) -> serde_json::V
 }
 
 /// Executes one aggregate, identity-safe retention request.
-#[expect(
-    clippy::redundant_pub_crate,
-    reason = "the parent command executor consumes this private-module helper"
-)]
 pub(super) async fn execute<W: std::io::Write>(
     env: &CliEnvironment,
     options: &AnalyticsRetentionOptions,

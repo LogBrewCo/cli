@@ -1,10 +1,5 @@
 //! Exact RFC 3339 parsing and validation shared by every response contract.
 
-#![expect(
-    clippy::redundant_pub_crate,
-    reason = "shared across private sibling modules"
-)]
-
 /// Parsed RFC 3339 instant at nanosecond precision.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct ParsedTimestamp {

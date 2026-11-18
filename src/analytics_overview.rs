@@ -30,10 +30,6 @@ const TOP_LIMIT: usize = 20;
 const LIMITATION_LIMIT: usize = 12;
 
 /// Builds the exact public GET path with explicit CLI defaults.
-#[expect(
-    clippy::redundant_pub_crate,
-    reason = "the parent command model consumes this private-module helper"
-)]
 pub(super) fn request_path(options: &AnalyticsOverviewOptions) -> String {
     let top_limit = options.top_limit.to_string();
     crate::api_path::path_with_query(
@@ -53,10 +49,6 @@ pub(super) fn request_path(options: &AnalyticsOverviewOptions) -> String {
 }
 
 /// Executes one aggregate, identity-safe product-analytics overview request.
-#[expect(
-    clippy::redundant_pub_crate,
-    reason = "the parent command executor consumes this private-module helper"
-)]
 pub(super) async fn execute<W: std::io::Write>(
     env: &CliEnvironment,
     options: &AnalyticsOverviewOptions,

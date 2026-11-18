@@ -37,10 +37,6 @@ const MAX_RANGE_SECONDS: i128 = 31 * 24 * 60 * 60;
 const NANOS_PER_SECOND: i128 = 1_000_000_000;
 
 /// Builds the exact public POST body with explicit CLI unit semantics.
-#[expect(
-    clippy::redundant_pub_crate,
-    reason = "the parent command model consumes this private-module helper"
-)]
 pub(super) fn request_body(options: &AnalyticsFunnelOptions) -> serde_json::Value {
     let mut body = scoped_body(
         &options.project_id,
@@ -82,10 +78,6 @@ pub(super) fn request_body(options: &AnalyticsFunnelOptions) -> serde_json::Valu
 }
 
 /// Executes one aggregate, identity-safe funnel request.
-#[expect(
-    clippy::redundant_pub_crate,
-    reason = "the parent command executor consumes this private-module helper"
-)]
 pub(super) async fn execute<W: std::io::Write>(
     env: &CliEnvironment,
     options: &AnalyticsFunnelOptions,

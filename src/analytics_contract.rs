@@ -1,10 +1,5 @@
 //! Shared fail-closed validation for bounded analytics responses.
 
-#![expect(
-    clippy::redundant_pub_crate,
-    reason = "sibling analytics modules share this private contract"
-)]
-
 use serde::Deserialize;
 
 use crate::http::nonempty_control_safe;

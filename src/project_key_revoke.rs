@@ -1,8 +1,4 @@
 //! Explicitly confirmed project key revocation.
-#![expect(
-    clippy::redundant_pub_crate,
-    reason = "the parent command executor consumes these private-module helpers"
-)]
 
 use crate::auth::{AuthCredential, send_account_authenticated_with_refresh};
 use crate::ids::is_uuid;

@@ -1,8 +1,4 @@
 //! Strict authenticated project catalog reads.
-#![expect(
-    clippy::redundant_pub_crate,
-    reason = "the parent command modules consume these private-module helpers"
-)]
 
 use crate::auth::{
     AuthCredential, parse_read_key_scope, send_authenticated_with_refresh,

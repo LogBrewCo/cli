@@ -453,6 +453,15 @@ fn parse_debug_file(bytes: Vec<u8>) -> Result<Vec<Artifact>, RuntimeError> {
     }
 }
 
+/// ELF architectures the public contract accepts. Every other one, including
+/// architectures added later, fails closed.
+const ELF_ARCHITECTURES: [(Architecture, NativeArchitecture); 4] = [
+    (Architecture::Arm, NativeArchitecture::Arm),
+    (Architecture::Aarch64, NativeArchitecture::Arm64),
+    (Architecture::I386, NativeArchitecture::X86),
+    (Architecture::X86_64, NativeArchitecture::X86_64),
+];
+
 /// Parses one complete ELF object and derives its UUID from GNU Build ID bytes.
 fn parse_elf(bytes: Vec<u8>) -> Result<Artifact, RuntimeError> {
     let payload = bytes::Bytes::from(bytes);
@@ -460,17 +469,11 @@ fn parse_elf(bytes: Vec<u8>) -> Result<Artifact, RuntimeError> {
         return Err(invalid_artifact());
     }
     let file = object::File::parse(payload.as_ref()).map_err(|_| invalid_artifact())?;
-    #[expect(
-        clippy::wildcard_enum_match_arm,
-        reason = "all unsupported and future ELF architectures fail closed"
-    )]
-    let architecture = match file.architecture() {
-        Architecture::Arm => NativeArchitecture::Arm,
-        Architecture::Aarch64 => NativeArchitecture::Arm64,
-        Architecture::I386 => NativeArchitecture::X86,
-        Architecture::X86_64 => NativeArchitecture::X86_64,
-        _ => return Err(invalid_artifact()),
-    };
+    let elf_architecture = file.architecture();
+    let architecture = ELF_ARCHITECTURES
+        .iter()
+        .find_map(|&(elf, native)| (elf == elf_architecture).then_some(native))
+        .ok_or_else(invalid_artifact)?;
     let has_debug_info = file.sections().any(|section| {
         section.name().ok() == Some(".debug_info")
             && section.data().is_ok_and(|data| !data.is_empty())

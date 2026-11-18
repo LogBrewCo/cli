@@ -123,14 +123,12 @@ pub(super) fn validate_response(
         &subject,
     )?;
     let evidence = timeline::validate_evidence(
-        required_object(response, "evidence")?,
-        response.get("context"),
+        response,
         &subject,
         payload,
         &topology,
         &baseline,
         &correlations,
-        required_object(response, "timeline")?,
     )?;
     timeline::validate_next_actions(
         response.get("next_actions"),

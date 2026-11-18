@@ -1,8 +1,4 @@
 //! Shared bounded HTTP response and origin validation.
-#![expect(
-    clippy::redundant_pub_crate,
-    reason = "sibling private command modules consume these shared helpers"
-)]
 
 /// Failure category while reading an authenticated response.
 pub(crate) enum BodyError {

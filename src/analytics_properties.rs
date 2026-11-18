@@ -31,10 +31,6 @@ const PROPERTY_LIMIT: usize = 50;
 const LIMITATION_LIMIT: usize = 8;
 
 /// Builds the exact public GET path with explicit CLI defaults.
-#[expect(
-    clippy::redundant_pub_crate,
-    reason = "the parent command model consumes this private-module helper"
-)]
 pub(super) fn request_path(options: &AnalyticsPropertyOptions) -> String {
     let limit = options.limit.to_string();
     crate::api_path::path_with_query(
@@ -53,10 +49,6 @@ pub(super) fn request_path(options: &AnalyticsPropertyOptions) -> String {
 }
 
 /// Executes one aggregate, value-free analytics property catalog request.
-#[expect(
-    clippy::redundant_pub_crate,
-    reason = "the parent command executor consumes this private-module helper"
-)]
 pub(super) async fn execute<W: std::io::Write>(
     env: &CliEnvironment,
     options: &AnalyticsPropertyOptions,
