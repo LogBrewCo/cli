@@ -147,7 +147,7 @@ fn publication_requires_verified_source_and_single_upload() {
     );
     assert!(NPM.contains("(has(\"scripts\") | not)"));
     assert!(NPM.contains("[[ \"$published\" == \"$integrity\" ]] || exit 1"));
-    assert!(NPM.contains("node-version: \"24.19.0\"") && !NPM.contains("npm install --global"));
+    assert!(NPM.contains("node-version: \"24.22.3\"") && !NPM.contains("npm install --global"));
     assert!(!NPM.contains("  workflow_dispatch:"));
 
     for required in [

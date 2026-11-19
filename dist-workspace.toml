@@ -2,7 +2,7 @@
 members = ["cargo:."]
 
 [dist]
-cargo-dist-version = "0.32.0"
+cargo-dist-version = "0.34.0"
 ci = "github"
 allow-dirty = ["ci"]
 installers = ["shell", "powershell", "homebrew", "msi"]
