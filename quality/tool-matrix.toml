@@ -26,9 +26,9 @@ config = "Cargo.toml [lints]"
 conflicts = "a floating toolchain can change results without a commit; pinning it is an open question"
 exceptions = "none"
 runtime = "check step: push n=38, max 73 s; pull request n=50, max 107 s; p99 unsupported"
-findings = "unknown: failures are fixed before merge and not recorded"
+findings = "unknown: failures are fixed before merge and not recorded; recheck 2026-11-19: stable is 1.100.0, and main CI passed with it"
 replaces = "none"
-checked = 2026-10-19
+checked = 2026-11-19
 
 [[tool]]
 id = "clippy"
@@ -60,7 +60,7 @@ exceptions = "none"
 runtime = "inside the check step (see rust)"
 findings = "unknown: formatting is fixed before merge"
 replaces = "none"
-checked = 2026-10-19
+checked = 2026-11-19
 
 [[tool]]
 id = "cargo-audit"
@@ -83,18 +83,17 @@ checked = 2026-10-25
 id = "cargo-dist"
 risk = "release archives, installers, and checksums built differently from the plan"
 tool = "cargo-dist"
-version = "0.32.0"
-pins = ["dist-workspace.toml::cargo-dist-version = \"@VERSION@\""]
+version = "0.34.0"
+pins = ["dist-workspace.toml::cargo-dist-version = \"@VERSION@\"", ".github/workflows/release.yml::cargo-dist/releases/download/v@VERSION@/cargo-dist-installer.sh"]
 commands = ["dist"]
 runs_in = "Release workflow"
 config = "dist-workspace.toml"
-conflicts = "none known"
+conflicts = "release.yml is maintained in this repository (allow-dirty = [\"ci\"]), so dist generate refuses to rewrite it; an upgrade ports the generator's own diff by hand. 0.34.0 also emits the self-repository syntax ($/) for local reusable workflows; release.yml keeps ./ for now"
 exceptions = "none"
 runtime = "release jobs; see the Release workflow runs"
-findings = "unknown: no recorded finding"
+findings = "recheck 2026-11-19: dist plan lists the same 18 artifacts with 0.32.0 and 0.34.0, and 0.34.0 now picks macos-15 for aarch64-apple-darwin, matching the runner release.yml already pins; no published advisories"
 replaces = "none"
-status = "behind: 0.33.0 released"
-checked = 2026-10-19
+checked = 2026-11-19
 
 [[tool]]
 id = "homebrew-formula-audit"
@@ -110,14 +109,14 @@ exceptions = "the first audit pass may fix the formula; the second must pass"
 runtime = "release jobs; see the Release workflow runs"
 findings = "unknown: no recorded finding"
 replaces = "none"
-checked = 2026-10-19
+checked = 2026-11-19
 
 [[tool]]
 id = "npm-packaging"
 risk = "npm packages that run install scripts or install the wrong binary"
 tool = "Node.js and npm (packaging tests and trusted publishing, not quality tools)"
-version = "24.19.0"
-pins = [".github/workflows/ci.yml::node-version: \"@VERSION@\"", ".github/workflows/ci.yml::npm install --global npm@12.2.0", ".github/workflows/publish-npm-trusted.yml::node-version: \"@VERSION@\""]
+version = "24.22.3"
+pins = [".github/workflows/ci.yml::node-version: \"@VERSION@\"", ".github/workflows/ci.yml::npm install --global npm@12.2.3", ".github/workflows/publish-npm-trusted.yml::node-version: \"@VERSION@\""]
 uses = ["actions/setup-node"]
 commands = ["npm", "npm init", "npm install", "npm publish", "npm view", "npx"]
 runs_in = "CI npm-install jobs on Linux, macOS, and Windows; npm trusted publishing"
@@ -125,9 +124,9 @@ config = "scripts/npm-packages.sh"
 conflicts = "npm here installs and publishes the release; it does not check code"
 exceptions = "none"
 runtime = "install step: Linux arm64 max 8 s, macOS max 8 s (n=45 each); npm self-update once took 246 s on macOS"
-findings = "unknown: no recorded finding"
+findings = "recheck 2026-11-19: 24.19.0 missed the Node.js security releases 24.22.1 and 24.22.3; moved to 24.22.3 and npm 12.2.3"
 replaces = "none"
-checked = 2026-10-19
+checked = 2026-11-19
 
 [[tool]]
 id = "repository-tests"
@@ -143,7 +142,7 @@ exceptions = "none"
 runtime = "SDK versions step: push n=5, max 5 s; pull request n=6, max 3 s"
 findings = "unknown: no recorded finding"
 replaces = "none"
-checked = 2026-10-19
+checked = 2026-11-19
 
 [[tool]]
 id = "public-guard"
@@ -159,7 +158,7 @@ exceptions = "false positives are fixed in their own pull request"
 runtime = "see the Public guard workflow runs"
 findings = "unknown: findings are fixed before merge"
 replaces = "none"
-checked = 2026-10-19
+checked = 2026-11-19
 
 [[tool]]
 id = "release-actions"
@@ -176,7 +175,7 @@ exceptions = "none"
 runtime = "release jobs; see the Release workflow runs"
 findings = "not a check; supply-chain pins"
 replaces = "none"
-checked = 2026-10-19
+checked = 2026-11-19
 
 [[tool]]
 id = "tool-matrix"
@@ -192,7 +191,7 @@ exceptions = "none"
 runtime = "new; record from CI runs at the next check"
 findings = "seeded: an unlisted command, a changed pin, a changed action commit, a stale or future date, and a missing field each fail"
 replaces = "none"
-checked = 2026-10-19
+checked = 2026-11-19
 
 [[tool]]
 id = "suppressions"
