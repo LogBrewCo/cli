@@ -106,8 +106,8 @@ pub(super) fn validate_suspect_commits(
     validate_evidence(evidence)?;
     validate_evidence_vocabulary(evidence, "suspect_commits", &SUSPECT_EVIDENCE_FIELDS)?;
     let partial = require_string(evidence, "status")? == "partial";
-    if status != "available" && (truncated || !commits.is_empty() || !partial)
-        || status == "available" && partial != truncated
+    if !status.is_available() && (truncated || !commits.is_empty() || !partial)
+        || status.is_available() && partial != truncated
     {
         return Err(invalid_response());
     }

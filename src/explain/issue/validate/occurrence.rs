@@ -7,6 +7,7 @@ use crate::explain::contract::{
     optional_string, require_bool, require_safe_positive_u64, require_safe_u64, require_string,
     require_string_equals, require_timestamp, require_u64, required_object, validate_name_version,
 };
+use crate::explain::correlation::validate_availability;
 use crate::explain::{context, invalid_response};
 use crate::ids::{is_trace_id, is_uuid};
 use crate::{IssueOccurrenceSelection, RuntimeError};
@@ -278,12 +279,8 @@ pub(super) fn validate_selected_occurrence_correlations(
     let trace = required_object(correlations, "trace")?;
     let event_trace_id = selected_event_trace_id(event)?;
     let correlated_trace_id = optional_string(trace, "trace_id")?;
-    let trace_status = require_string(trace, "status")?;
-    let trace_status_matches = if selected.trace_linked {
-        trace_status != "not_linked"
-    } else {
-        trace_status == "not_linked"
-    };
+    let trace_status_matches =
+        validate_availability(trace, "status")?.is_linked() == selected.trace_linked;
     let summary_matches = match trace.get("summary") {
         None | Some(Value::Null) => true,
         Some(Value::Object(summary)) => correlated_trace_id.is_some_and(|trace_id| {

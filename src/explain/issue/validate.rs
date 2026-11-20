@@ -13,7 +13,7 @@ use crate::explain::contract::{
     validate_string_array, validate_strings,
 };
 use crate::explain::correlation::{
-    DeploymentExpectation, validate_availability, validate_correlated_collection,
+    Availability, DeploymentExpectation, validate_availability, validate_correlated_collection,
     validate_correlated_signal, validate_deployment_boundary, validate_items_collection,
     validate_release_scope, validate_shared_trace_summary, validate_trace_link,
 };
@@ -305,6 +305,7 @@ fn validate_issue_source_locator(
         ],
     )?;
     let status = validate_availability(locator, "status")?;
+    let available = status.is_available();
     let provider = optional_string(locator, "repository_provider")?;
     let repository = optional_string(locator, "repository_full_name")?;
     let component = optional_string(locator, "component_path")?;
@@ -314,9 +315,9 @@ fn validate_issue_source_locator(
     let evidence = required_object(locator, "evidence")?;
     validate_evidence(evidence)?;
     if provider.is_some() != repository.is_some()
-        || (status == "available") != repository.is_some()
+        || repository.is_some() != available
         || provider.is_some() && component.is_none()
-        || status == "not_linked" && component.is_some()
+        || !status.is_linked() && component.is_some()
         || component.is_none() && (revision.is_some() || file.is_some())
         || provider.is_some_and(|value| !matches!(value, "github" | "gitlab" | "bitbucket"))
         || repository.is_some_and(|value| !safe_repository_name(value))
@@ -361,28 +362,30 @@ fn validate_issue_source_locator(
 fn validate_source_locator_evidence(
     locator: &Map<String, Value>,
     evidence: &Map<String, Value>,
-    status: &str,
+    status: Availability,
 ) -> Result<bool, RuntimeError> {
     let provider = optional_string(locator, "repository_provider")?;
     let component = optional_string(locator, "component_path")?;
     let revision_source = optional_string(locator, "revision_source")?;
     let file = optional_string(locator, "repository_relative_file")?;
     let (mut captured, mut missing) = match (status, component) {
-        ("not_linked", None) => (vec![], vec!["source.service"]),
-        ("not_found", None) => (vec!["source.service"], vec!["source.component"]),
-        ("unavailable", None)
+        (Availability::NotLinked, None) => (vec![], vec!["source.service"]),
+        (Availability::NotFound, None) => (vec!["source.service"], vec!["source.component"]),
+        (Availability::Unavailable, None)
             if evidence_has_field(evidence, "missing_fields", "source.lookup")? =>
         {
             (vec!["source.service"], vec!["source.lookup"])
         }
-        ("unavailable", None) => (vec!["source.service"], vec!["source.component.unique"]),
+        (Availability::Unavailable, None) => {
+            (vec!["source.service"], vec!["source.component.unique"])
+        }
         (_, Some(_)) => (vec!["source.service", "source.component"], vec![]),
-        _ => return Err(invalid_response()),
+        (Availability::Available, None) => return Err(invalid_response()),
     };
     if component.is_some() {
         if provider.is_some() {
             captured.push("source.repository");
-        } else if status == "unavailable"
+        } else if !status.completed()
             && evidence_has_field(evidence, "missing_fields", "source.repository.unique")?
         {
             missing.push("source.repository.unique");
@@ -678,7 +681,8 @@ fn validate_issue_correlations(
     let trace = required_object(value, "trace")?;
     validate_trace_link(trace, false)?;
     let summary = optional_object_value(trace.get("summary"))?;
-    if (require_string(trace, "status")? == "available") != summary.is_some() {
+    let trace_status = validate_availability(trace, "status")?;
+    if trace_status.is_available() != summary.is_some() {
         return Err(invalid_response());
     }
     if let Some(summary) = summary {
@@ -696,7 +700,7 @@ fn validate_issue_correlations(
         project_id,
         require_string(release, "environment")?,
         require_string(release, "release")?,
-        require_string(trace, "status")?,
+        trace_status,
     )?;
     validate_issue_deployment(release, event, evidence)
 }
@@ -709,7 +713,7 @@ fn validate_related_issues(
     project_id: &str,
     environment: &str,
     release: &str,
-    trace_status: &str,
+    trace_status: Availability,
 ) -> Result<(), RuntimeError> {
     validate_evidence_vocabulary(evidence, "related_issues", &["related_issues"])?;
     let mut issue_ids = BTreeSet::new();
@@ -730,15 +734,15 @@ fn validate_related_issues(
                 .ok_or_else(invalid_response)
         })?;
     // Same-frame relations need no trace, so only an unlinked read requires an unlinked trace.
-    if status == "not_linked" && trace_status != "not_linked" {
+    if !status.is_linked() && trace_status.is_linked() {
         return Err(invalid_response());
     }
     validate_field_receipts(
         evidence,
         "related_issues",
         [
-            status == "available",
-            status != "available",
+            status.is_available(),
+            !status.is_available(),
             false,
             truncated,
         ],

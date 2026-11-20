@@ -123,14 +123,26 @@ enum SetupProgress {
 
 /// Safe fields retained from the exact doctor response.
 struct DoctorSnapshot {
-    /// Canonical readiness state.
-    state: ProjectState,
     /// Whether an active ingest key exists.
     has_active_ingest_key: bool,
     /// Validated setup progress.
     setup: SetupProgress,
-    /// Whether first telemetry has been observed.
-    telemetry_seen: bool,
+}
+
+impl DoctorSnapshot {
+    /// Canonical readiness state that the key and setup progress imply.
+    const fn state(&self) -> ProjectState {
+        if !self.has_active_ingest_key {
+            return ProjectState::NeedsIngestKey;
+        }
+        match self.setup {
+            SetupProgress::NotStarted => ProjectState::NeedsSetup,
+            SetupProgress::PathSelected | SetupProgress::Acknowledged => {
+                ProjectState::NeedsTelemetry
+            }
+            SetupProgress::Operational => ProjectState::Ready,
+        }
+    }
 }
 
 /// Result of the authoritative doctor read.
@@ -277,16 +289,18 @@ const fn apply_snapshot(report: &mut DoctorReport, snapshot: &DoctorSnapshot) {
         SetupProgress::Acknowledged => check("setup", "acknowledged", "inspect telemetry state"),
         SetupProgress::Operational => check("setup", "operational", "inspect telemetry state"),
     };
-    report.telemetry = if snapshot.telemetry_seen {
-        check("telemetry", "seen", "inspect recent telemetry")
-    } else {
-        check(
-            "telemetry",
-            "not_seen",
-            "send the first telemetry event for this project",
-        )
+    report.telemetry = match snapshot.setup {
+        SetupProgress::Operational => check("telemetry", "seen", "inspect recent telemetry"),
+        SetupProgress::NotStarted | SetupProgress::PathSelected | SetupProgress::Acknowledged => {
+            check(
+                "telemetry",
+                "not_seen",
+                "send the first telemetry event for this project",
+            )
+        }
     };
-    report.mark(snapshot.state.key(), snapshot.state.next());
+    let state = snapshot.state();
+    report.mark(state.key(), state.next());
 }
 
 /// Applies log visibility without reconstructing or overriding canonical readiness.
@@ -483,24 +497,11 @@ fn validate_doctor(
     {
         return None;
     }
-    let telemetry_seen = matches!(setup, SetupProgress::Operational);
-    let expected_state = if has_active_ingest_key {
-        match setup {
-            SetupProgress::NotStarted => ProjectState::NeedsSetup,
-            SetupProgress::PathSelected | SetupProgress::Acknowledged => {
-                ProjectState::NeedsTelemetry
-            }
-            SetupProgress::Operational => ProjectState::Ready,
-        }
-    } else {
-        ProjectState::NeedsIngestKey
-    };
-    (state == expected_state).then_some(DoctorSnapshot {
-        state,
+    let snapshot = DoctorSnapshot {
         has_active_ingest_key,
         setup,
-        telemetry_seen,
-    })
+    };
+    (snapshot.state() == state).then_some(snapshot)
 }
 
 /// Validates the existing display-safe last-signal surface without retaining it.
