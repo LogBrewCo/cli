@@ -703,6 +703,82 @@ async_test!(an_existing_key_and_other_env_values_are_kept_and_never_printed -> T
     Ok(())
 });
 
+const APP_JS: &str =
+    "import express from \"express\";\n\nconst app = express();\napp.listen(3000);\n";
+
+async_test!(setup_without_sign_in_uses_the_env_file_key_and_sdk_ingest -> TestResult, {
+    let existing = "lbw_ingest_dashboard_private_value";
+    let env_text = format!("LOGBREW_SERVER_API_KEY={existing}\nLOGBREW_PROJECT_ID={PROJECT_ID}\n");
+    let dir = fixture(
+        "env-key-only",
+        &[
+            (
+                "package.json",
+                r#"{"name":"api","main":"app.js","dependencies":{"express":"5.1.0"}}"#,
+            ),
+            ("app.js", APP_JS),
+            (".env", env_text.as_str()),
+        ],
+    )?;
+    let bin = fake_package_managers("env-key-only")?;
+    for (response, ok) in [
+        (ingest_accepted(1, 0), true),
+        (ingest_accepted(0, 0), false),
+        (ingest_accepted(0, 1), false),
+    ] {
+        let server = MockServer::start().await?;
+        Mock::auth("POST", "/api/telemetry/ingest", existing)
+            .respond_with(ResponseTemplate::new(200).set_body_json(&response))
+            .mount(&server);
+        std::fs::write(dir.join(".env"), env_text.as_str())?;
+        std::fs::write(dir.join("app.js"), APP_JS)?;
+        let output = run_setup_signed_out(&server, &dir, &bin).await?;
+        assert_eq!(output.status.success(), ok, "{response}");
+        let text = String::from_utf8(output.stdout)?;
+        assert!(!text.contains(existing), "the key must never be printed");
+        let body: serde_json::Value = serde_json::from_str(&text)?;
+        assert_eq!(body["ok"], ok, "{response}");
+        assert_eq!(step(&body, "sign_in")["status"], "not_needed");
+        assert_eq!(step(&body, "project")["status"], "kept");
+        assert_eq!(step(&body, "project")["key"], "kept");
+        assert_eq!(step(&body, "project")["project"]["id"], PROJECT_ID);
+        assert_eq!(step(&body, "install")["status"], "done");
+        assert_eq!(step(&body, "init")["status"], "done");
+        let verify = step(&body, "verify");
+        if ok {
+            assert_eq!(verify["status"], "accepted");
+            assert_eq!(verify["credential"], "ingest_key");
+            assert!(
+                verify["trace_id"]
+                    .as_str()
+                    .is_some_and(|trace| trace.len() == 32)
+            );
+            let sent: serde_json::Value =
+                serde_json::from_slice(&server.received_requests()[0].body)?;
+            assert_eq!(sent["trace_id"], verify["trace_id"]);
+        } else {
+            assert_eq!(
+                verify,
+                &serde_json::json!({"step": "verify", "status": "not_arrived"})
+            );
+        }
+        let requests = server.received_requests();
+        assert_eq!(
+            requests.len(),
+            1,
+            "setup must send only the test event and never call account routes"
+        );
+        let sent: serde_json::Value = serde_json::from_slice(&requests[0].body)?;
+        assert_eq!(sent["project_id"], PROJECT_ID);
+        assert_eq!(sent["environment"], "test");
+        assert_eq!(sent["items"][0]["type"], "log");
+        assert_eq!(sent["items"][0]["data"]["message"], "LogBrew test event");
+        let written = std::fs::read_to_string(dir.join(".env"))?;
+        assert!(written.starts_with(&env_text), "existing values must stay unchanged");
+    }
+    Ok(())
+});
+
 async_test!(setup_never_writes_through_a_symlinked_env_file -> TestResult, {
     let dir = fixture(
         "symlink",
@@ -1214,6 +1290,37 @@ async fn run_setup(
         .env("PATH", bin)
         .env("FAKE_LOG", bin.join("calls.log"));
     run_cli_command(command).await
+}
+
+/// Runs setup the way a person without a CLI sign-in does: no token and no token file.
+async fn run_setup_signed_out(
+    server: &MockServer,
+    dir: &std::path::Path,
+    bin: &std::path::Path,
+) -> TestResult<std::process::Output> {
+    let _removed = std::fs::remove_file(bin.join("calls.log"));
+    let mut command = cli_command(server);
+    let _command = command
+        .env_remove("LOGBREW_TOKEN")
+        .args(["setup", "--yes", "--json"])
+        .current_dir(dir)
+        .env("HOME", bin)
+        .env("PATH", bin)
+        .env("FAKE_LOG", bin.join("calls.log"));
+    run_cli_command(command).await
+}
+
+/// A native ingest response with these accepted log and replayed item counts.
+fn ingest_accepted(logs: usize, already_accepted: usize) -> serde_json::Value {
+    serde_json::json!({
+        "issues": 0,
+        "logs": logs,
+        "trace_spans": 0,
+        "actions": 0,
+        "already_accepted": already_accepted,
+        "next": "review accepted telemetry in logs, issues, traces, actions, or live feed",
+        "next_action": {"code": "review_ingested_telemetry", "target": "telemetry_reads"}
+    })
 }
 
 fn fixture(label: &str, files: &[(&str, &str)]) -> std::io::Result<std::path::PathBuf> {

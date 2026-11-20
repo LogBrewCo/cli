@@ -1,4 +1,7 @@
 //! Applies setup: sign-in, project, SDK, ingest key, init code, agent config, and a test event.
+//!
+//! When the CLI is not signed in and the env file already holds a server ingest key and a project
+//! id, setup works with that key alone: no sign-in, and the test event goes through SDK ingest.
 
 use super::recipe::{self, Action, FileChange, KEY_VARIABLE};
 use crate::{CliEnvironment, RuntimeError};
@@ -42,6 +45,8 @@ enum ProjectChoice {
     Existing(String, String),
     /// A project setup creates with this name.
     New(String),
+    /// The project id in the env file, reached with the env file's key and no account.
+    EnvKey(String),
 }
 
 /// Collects human lines and the JSON report.
@@ -162,8 +167,25 @@ pub async fn run_wizard<R: BufRead, W: Write>(
             .unwrap_or("source"),
         project.target.manifest
     ))?;
-    sign_in(env, &mut report).await?;
-    let choice = choose_project(env, options, &project, &mut report, input).await?;
+    let choice = match env_key_project(env, options, &project)? {
+        Some(id) => {
+            report.step(
+                serde_json::json!({"step": "sign_in", "status": "not_needed"}),
+                &format!("Sign-in: not needed; using the key in {}", project.env_file),
+            )?;
+            ProjectChoice::EnvKey(id)
+        }
+        None => {
+            sign_in(env, &mut report).await?;
+            choose_project(env, options, &project, &mut report, input).await?
+        }
+    };
+    report.say(&match &choice {
+        ProjectChoice::Existing(_, name) => format!("Project: {name}"),
+        ProjectChoice::New(name) => format!("Project: {name} (new)"),
+        ProjectChoice::EnvKey(id) => format!("Project: {id}"),
+    })?;
+    let key_only = matches!(choice, ProjectChoice::EnvKey(_));
     let plan = plan(env, options, &project, &choice, &mut report, input)?;
     if !options.yes && !confirm(&mut report, input, "Apply these changes? [Y/n] ", true)? {
         return report.say("No changes made.");
@@ -185,7 +207,12 @@ pub async fn run_wizard<R: BufRead, W: Write>(
         .unwrap_or_default()
         .replace('_', " ");
     report.step(plan.mcp, &format!("MCP server: {mcp}"))?;
-    if options.extras.sample_data {
+    if options.extras.sample_data && key_only {
+        report.step(
+            serde_json::json!({"step": "sample_data", "status": "needs_sign_in"}),
+            "Sample data: needs sign-in; run logbrew login, then rerun setup",
+        )?;
+    } else if options.extras.sample_data {
         let step = sample_data(env, project_id.as_str()).await?;
         let counts = &step["counts"];
         let line = match step["status"].as_str() {
@@ -200,13 +227,18 @@ pub async fn run_wizard<R: BufRead, W: Write>(
     }
     report.say("Test event: sending…")?;
     let send_key = key.or_else(|| project.existing_key()).unwrap_or_default();
-    let verified = verify(env, project_id.as_str(), send_key.as_str()).await?;
+    let verified = if key_only {
+        verify_with_key(env, &project, project_id.as_str(), send_key.as_str()).await?
+    } else {
+        verify(env, project_id.as_str(), send_key.as_str()).await?
+    };
     let arrived = verified.is_some();
     let line = verified.as_ref().map_or_else(
         || String::from("Test event: did not arrive"),
         |step| {
             format!(
-                "Test event: arrived in LogBrew in {} ms\nRead it back: logbrew read logs --project {project_id} --trace {}",
+                "Test event: {} LogBrew in {} ms\nRead it back: logbrew read logs --project {project_id} --trace {}",
+                if key_only { "accepted by" } else { "arrived in" },
                 step["elapsed_ms"], step["trace_id"].as_str().unwrap_or_default()
             )
         },
@@ -216,6 +248,25 @@ pub async fn run_wizard<R: BufRead, W: Write>(
         line.as_str(),
     )?;
     finish(&project, &mut report, &files, installed, arrived)
+}
+
+/// Returns the env file's project id when setup can use the env file's key without an account.
+///
+/// That needs no stored or environment credential, a server ingest key in the env file, and a
+/// project id from `--project` or the env file.
+fn env_key_project(
+    env: &CliEnvironment,
+    options: &WizardOptions,
+    project: &Project,
+) -> Result<Option<String>, RuntimeError> {
+    if crate::auth::inspect_auth_snapshot(env)?.authenticated || project.existing_key().is_none() {
+        return Ok(None);
+    }
+    Ok(options
+        .project_id
+        .clone()
+        .or_else(|| env_value(project.env_text.as_str(), "LOGBREW_PROJECT_ID"))
+        .filter(|id| crate::ids::is_uuid(id)))
 }
 
 /// Signs in through the browser when no credential is stored.
@@ -287,11 +338,6 @@ async fn choose_project<R: BufRead, W: Write>(
             key_present,
         )?,
     };
-    let line = match &choice {
-        ProjectChoice::Existing(_, name) => format!("Project: {name}"),
-        ProjectChoice::New(name) => format!("Project: {name} (new)"),
-    };
-    report.say(&line)?;
     Ok(choice)
 }
 
@@ -306,7 +352,7 @@ fn plan<R: BufRead, W: Write>(
 ) -> Result<Plan, RuntimeError> {
     let dir = project.dir.as_path();
     let project_id = match choice {
-        ProjectChoice::Existing(id, _) => id.as_str(),
+        ProjectChoice::Existing(id, _) | ProjectChoice::EnvKey(id) => id.as_str(),
         ProjectChoice::New(_) => PROJECT_PLACEHOLDER,
     };
     let mut changes = Vec::new();
@@ -396,7 +442,7 @@ async fn credentials<W: Write>(
                 abandon_retry: false,
             };
             let (id, key) = crate::project_create::create_project_for_setup(env, &options).await?;
-            (id, name, Some(key), true)
+            (id, Some(name), Some(key), true)
         }
         ProjectChoice::Existing(id, name) if project.existing_key().is_none() => {
             let options = crate::ProjectIngestKeyCreateOptions {
@@ -407,9 +453,10 @@ async fn credentials<W: Write>(
                 abandon_retry: false,
             };
             let key = crate::project_create::create_ingest_key_for_setup(env, &options).await?;
-            (id, name, Some(key), false)
+            (id, Some(name), Some(key), false)
         }
-        ProjectChoice::Existing(id, name) => (id, name, None, false),
+        ProjectChoice::Existing(id, name) => (id, Some(name), None, false),
+        ProjectChoice::EnvKey(id) => (id, None, None, false),
     };
     report.step(
         serde_json::json!({
@@ -871,6 +918,74 @@ async fn verify(
     Ok(None)
 }
 
+/// Sends one test log through SDK ingest with the ingest key alone.
+///
+/// Ingest answers only after it stores the log, so one accepted log proves the key works. Reading
+/// it back needs account access, so the step reports `accepted` and not `arrived`.
+///
+/// Returns the verify step, or `None` when the log was not accepted.
+async fn verify_with_key(
+    env: &CliEnvironment,
+    project: &Project,
+    project_id: &str,
+    key: &str,
+) -> Result<Option<serde_json::Value>, RuntimeError> {
+    let origin = crate::http::normalized_origin(env.base_url.as_str()).ok_or(invalid_api_url())?;
+    let mut bytes = [0_u8; 16];
+    getrandom::fill(&mut bytes).map_err(|_| test_event_unsent())?;
+    let trace_id = bytes
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    let occurred_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .and_then(|now| {
+            chrono::DateTime::from_timestamp_millis(i64::try_from(now.as_millis()).ok()?)
+        })
+        .ok_or(test_event_unsent())?
+        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    let envelope = serde_json::json!({
+        "project_id": project_id,
+        "environment": "test",
+        "release": "logbrew-test-event",
+        "service_name": project.service,
+        "trace_id": trace_id,
+        "sdk_name": "logbrew.test-event",
+        "sdk_version": env!("CARGO_PKG_VERSION"),
+        "items": [{"type": "log", "data": {
+            "level": "info",
+            "message": "LogBrew test event",
+            "source": "logbrew.test-event",
+            "attributes": {"logbrew": {"testEvent": true}},
+            "occurred_at": occurred_at,
+        }}],
+    });
+    let started = std::time::Instant::now();
+    let response = crate::http::api_client()?
+        .post(format!("{origin}/api/telemetry/ingest"))
+        .bearer_auth(key)
+        .json(&envelope)
+        .send()
+        .await
+        .map_err(|_| test_event_unsent())?;
+    let status = response.status().as_u16();
+    let accepted = crate::http::bounded_body(response, FIRST_RUN_RESPONSE_LIMIT)
+        .await
+        .ok()
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(text.as_str()).ok())
+        .is_some_and(|body| status == 200 && body["logs"] == 1 && body["already_accepted"] == 0);
+    Ok(accepted.then(|| {
+        serde_json::json!({
+            "step": "verify",
+            "status": "accepted",
+            "credential": "ingest_key",
+            "trace_id": trace_id,
+            "elapsed_ms": u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+        })
+    }))
+}
+
 /// Loads the removable sample data; a project that already has events keeps none.
 async fn sample_data(
     env: &CliEnvironment,
@@ -908,11 +1023,7 @@ async fn first_run_post(
     route: &str,
     body: Option<&serde_json::Value>,
 ) -> Result<(u16, Option<serde_json::Value>), RuntimeError> {
-    let origin =
-        crate::http::normalized_origin(env.base_url.as_str()).ok_or(RuntimeError::Unavailable {
-            message: "the configured API URL is invalid",
-            next: "set LOGBREW_API_URL to an http or https API origin and retry",
-        })?;
+    let origin = crate::http::normalized_origin(env.base_url.as_str()).ok_or(invalid_api_url())?;
     let client = crate::http::api_client()?;
     let url = format!("{origin}/api/projects/{project_id}/{route}");
     let (response, _credential) =
@@ -951,6 +1062,22 @@ fn service_name(dir: &Path) -> String {
         String::from("app")
     } else {
         name
+    }
+}
+
+/// The configured API URL is not an http or https origin.
+const fn invalid_api_url() -> RuntimeError {
+    RuntimeError::Unavailable {
+        message: "the configured API URL is invalid",
+        next: "set LOGBREW_API_URL to an http or https API origin and retry",
+    }
+}
+
+/// The test event could not reach LogBrew.
+const fn test_event_unsent() -> RuntimeError {
+    RuntimeError::Unavailable {
+        message: "the test event could not be sent",
+        next: "check network connectivity, then rerun logbrew setup",
     }
 }
 
