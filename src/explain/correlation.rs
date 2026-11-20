@@ -582,3 +582,40 @@ pub(super) fn validate_deployment_boundary<'a>(
         })
         .ok_or_else(invalid_response)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{Availability, validate_availability};
+
+    #[test]
+    fn availability_parses_each_wire_state_and_its_meaning() {
+        for (wire, state, available, linked, completed) in [
+            ("available", Availability::Available, true, true, true),
+            ("not_linked", Availability::NotLinked, false, false, true),
+            ("not_found", Availability::NotFound, false, true, true),
+            ("unavailable", Availability::Unavailable, false, true, false),
+        ] {
+            let value = serde_json::json!({"status": wire});
+            let parsed = value
+                .as_object()
+                .and_then(|object| validate_availability(object, "status").ok());
+            assert_eq!(parsed, Some(state), "{wire}");
+            assert_eq!(state.is_available(), available, "{wire}");
+            assert_eq!(state.is_linked(), linked, "{wire}");
+            assert_eq!(state.completed(), completed, "{wire}");
+        }
+        for value in [
+            serde_json::json!({"status": "partial"}),
+            serde_json::json!({"status": "Available"}),
+            serde_json::json!({"status": null}),
+            serde_json::json!({}),
+        ] {
+            assert!(
+                value
+                    .as_object()
+                    .is_some_and(|object| validate_availability(object, "status").is_err()),
+                "{value}"
+            );
+        }
+    }
+}

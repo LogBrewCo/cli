@@ -207,3 +207,62 @@ const fn transport() -> RuntimeError {
         next: "check network connectivity and retry the same command",
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::KeyMetadata;
+
+    const REVOKED_AT: &str = "2026-11-20T10:00:00Z";
+
+    fn key(status: &str, revoked_at: Option<&str>) -> serde_json::Value {
+        serde_json::json!({
+            "id": "123e4567-e89b-12d3-a456-426614174000",
+            "label": "server",
+            "kind": "ingest",
+            "token_prefix": "lbw_ingest_ab",
+            "status": status,
+            "created_at": "2026-11-01T10:00:00Z",
+            "expires_at": null,
+            "revoked_at": revoked_at,
+        })
+    }
+
+    #[test]
+    fn key_status_matches_its_revocation_time() {
+        for (status, revoked_at, expected) in [
+            ("active", None, Some("active")),
+            ("expired", None, Some("expired")),
+            ("revoked", Some(REVOKED_AT), Some("revoked")),
+            ("active", Some(REVOKED_AT), None),
+            ("expired", Some(REVOKED_AT), None),
+            ("revoked", None, None),
+            ("disabled", None, None),
+        ] {
+            let parsed = serde_json::from_value::<KeyMetadata>(key(status, revoked_at)).ok();
+            assert_eq!(
+                parsed.map(|key| key.status.as_str()),
+                expected,
+                "{status} revoked_at={revoked_at:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn key_metadata_rejects_unsafe_or_unknown_fields() {
+        for (field, value) in [
+            ("id", serde_json::json!("not-a-uuid")),
+            ("label", serde_json::json!("")),
+            ("token_prefix", serde_json::json!("lbw\nforged")),
+            ("created_at", serde_json::json!("yesterday")),
+            ("expires_at", serde_json::json!("2026-11-01")),
+            ("owner", serde_json::json!("someone")),
+        ] {
+            let mut body = key("active", None);
+            body[field] = value;
+            assert!(
+                serde_json::from_value::<KeyMetadata>(body).is_err(),
+                "{field}"
+            );
+        }
+    }
+}

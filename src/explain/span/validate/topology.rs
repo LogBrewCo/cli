@@ -4,6 +4,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use serde_json::{Map, Value};
 
+use super::super::super::correlation::Availability;
 use super::{
     SubjectFacts, availability, invalid_response, is_error_status, is_w3c_id,
     nullable_nonnegative_number, nullable_string, nullable_w3c_id, require_exact_fields,
@@ -22,7 +23,7 @@ const EDGE_LIMIT: usize = 50;
 #[derive(Clone, Copy)]
 pub(super) struct TopologyFacts<'a> {
     /// Optional-evidence status.
-    pub(super) status: &'a str,
+    pub(super) status: Availability,
     /// Direct retained parent identity.
     pub(super) parent_span_id: Option<&'a str>,
     /// First direct child that reported an error.
@@ -32,14 +33,49 @@ pub(super) struct TopologyFacts<'a> {
 }
 
 /// Validated peer-baseline facts needed by analysis and next actions.
-#[derive(Clone, Copy)]
-pub(super) struct BaselineFacts<'a> {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum BaselineFacts {
+    /// Retained peers produced percentiles, and the subject duration ranks against them.
+    Available(PeerRank),
+    /// The read completed without retained peers.
+    NotFound,
+    /// The read could not complete safely.
+    Unavailable,
+}
+
+/// Where the subject duration falls against the returned approximate peer percentiles.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum PeerRank {
+    /// Faster than p95.
+    BelowP95,
+    /// At or above p95, and faster than p99.
+    AtOrAboveP95,
+    /// At or above p99, which is never below p95.
+    AtOrAboveP99,
+}
+
+impl BaselineFacts {
     /// Optional-evidence status.
-    pub(super) status: &'a str,
-    /// Whether subject duration meets the returned approximate p95.
-    pub(super) at_or_above_p95: bool,
-    /// Whether subject duration meets the returned approximate p99.
-    pub(super) at_or_above_p99: bool,
+    pub(super) const fn status(self) -> Availability {
+        match self {
+            Self::Available(_) => Availability::Available,
+            Self::NotFound => Availability::NotFound,
+            Self::Unavailable => Availability::Unavailable,
+        }
+    }
+
+    /// Whether the subject duration meets the returned approximate p95.
+    pub(super) const fn at_or_above_p95(self) -> bool {
+        matches!(
+            self,
+            Self::Available(PeerRank::AtOrAboveP95 | PeerRank::AtOrAboveP99)
+        )
+    }
+
+    /// Whether the subject duration meets the returned approximate p99.
+    pub(super) const fn at_or_above_p99(self) -> bool {
+        matches!(self, Self::Available(PeerRank::AtOrAboveP99))
+    }
 }
 
 /// Minimal validated span-summary identity used for relationship checks.
@@ -106,8 +142,8 @@ pub(super) fn validate_topology<'a>(
         chain_status == "cycle",
     )?;
     let immediate_parent_missing =
-        status == "available" && chain_status == "missing" && ancestors.is_empty();
-    if status == "available" && !immediate_parent_missing {
+        status.is_available() && chain_status == "missing" && ancestors.is_empty();
+    if status.is_available() && !immediate_parent_missing {
         validate_ancestor_chain(&ancestors, parent_facts, subject.parent_span_id)?;
     }
     if children
@@ -146,10 +182,10 @@ pub(super) fn validate_topology<'a>(
 }
 
 /// Validates deterministic baseline dimensions, arithmetic, availability, and limitations.
-pub(super) fn validate_baseline<'a>(
-    baseline: &'a Map<String, Value>,
+pub(super) fn validate_baseline(
+    baseline: &Map<String, Value>,
     subject: &SubjectFacts<'_>,
-) -> Result<BaselineFacts<'a>, RuntimeError> {
+) -> Result<BaselineFacts, RuntimeError> {
     require_exact_fields(
         baseline,
         &[
@@ -198,25 +234,28 @@ pub(super) fn validate_baseline<'a>(
         return Err(invalid_response());
     }
     validate_baseline_limitations(baseline)?;
-    let values_present = p50.is_some() && p95.is_some() && p99.is_some() && percentile.is_some();
-    match status {
-        "available" if retained > 0 && values_present => {}
-        "not_found" | "unavailable"
-            if retained == 0
-                && errors == 0
-                && error_rate == 0
-                && p50.is_none()
-                && p95.is_none()
-                && p99.is_none()
-                && percentile.is_none() => {}
-        _ => return Err(invalid_response()),
+    let empty = retained == 0
+        && errors == 0
+        && error_rate == 0
+        && p50.is_none()
+        && p95.is_none()
+        && p99.is_none()
+        && percentile.is_none();
+    match (status, p50, p95, p99, percentile) {
+        (Availability::Available, Some(_), Some(p95), Some(p99), Some(_)) if retained > 0 => {
+            let duration = safe_u64_as_f64(subject.duration_ms)?;
+            Ok(BaselineFacts::Available(if duration >= p99 {
+                PeerRank::AtOrAboveP99
+            } else if duration >= p95 {
+                PeerRank::AtOrAboveP95
+            } else {
+                PeerRank::BelowP95
+            }))
+        }
+        (Availability::NotFound, ..) if empty => Ok(BaselineFacts::NotFound),
+        (Availability::Unavailable, ..) if empty => Ok(BaselineFacts::Unavailable),
+        _ => Err(invalid_response()),
     }
-    let duration = safe_u64_as_f64(subject.duration_ms)?;
-    Ok(BaselineFacts {
-        status,
-        at_or_above_p95: p95.is_some_and(|p95| duration >= p95),
-        at_or_above_p99: p99.is_some_and(|p99| duration >= p99),
-    })
 }
 
 /// Requires baseline dimensions that match the subject exactly.
@@ -365,7 +404,7 @@ fn validate_ancestor_chain(
 /// Parsed topology fields that the availability state machine compares.
 struct TopologyState<'a> {
     /// Optional-evidence status.
-    status: &'a str,
+    status: Availability,
     /// Serialized root span summary.
     root: Option<&'a Map<String, Value>>,
     /// Validated root span identity.
@@ -407,7 +446,7 @@ fn validate_topology_state(
         truncated,
     } = *state;
     match status {
-        "unavailable" => {
+        Availability::Unavailable => {
             if root.is_some()
                 || parent.is_some()
                 || !ancestors.is_empty()
@@ -420,7 +459,7 @@ fn validate_topology_state(
                 return Err(invalid_response());
             }
         }
-        "not_found" => {
+        Availability::NotFound => {
             let expected_chain = if subject.parent_span_id.is_some() {
                 "missing"
             } else {
@@ -438,7 +477,7 @@ fn validate_topology_state(
                 return Err(invalid_response());
             }
         }
-        "available" => match chain_status {
+        Availability::Available => match chain_status {
             "root" => {
                 if subject.parent_span_id.is_some()
                     || parent.is_some()
@@ -485,7 +524,7 @@ fn validate_topology_state(
             "cycle" if root.is_none() && truncated => {}
             _ => return Err(invalid_response()),
         },
-        _ => return Err(invalid_response()),
+        Availability::NotLinked => return Err(invalid_response()),
     }
     if matches!(chain_status, "cycle" | "truncated") && !truncated {
         return Err(invalid_response());
@@ -569,4 +608,66 @@ fn safe_u64_as_f64(value: u64) -> Result<f64, RuntimeError> {
         .to_string()
         .parse::<f64>()
         .map_err(|_error| invalid_response())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::super::super::correlation::Availability;
+    use super::{BaselineFacts, PeerRank, availability};
+
+    #[test]
+    fn span_reads_never_accept_not_linked() {
+        for (wire, expected) in [
+            ("available", Some(Availability::Available)),
+            ("not_found", Some(Availability::NotFound)),
+            ("unavailable", Some(Availability::Unavailable)),
+            ("not_linked", None),
+        ] {
+            let value = serde_json::json!({"status": wire});
+            let parsed = value
+                .as_object()
+                .and_then(|object| availability(object, "status").ok());
+            assert_eq!(parsed, expected, "{wire}");
+        }
+    }
+
+    #[test]
+    fn baseline_rank_drives_the_peer_percentile_flags() {
+        for (baseline, status, p95, p99) in [
+            (
+                BaselineFacts::Available(PeerRank::BelowP95),
+                Availability::Available,
+                false,
+                false,
+            ),
+            (
+                BaselineFacts::Available(PeerRank::AtOrAboveP95),
+                Availability::Available,
+                true,
+                false,
+            ),
+            (
+                BaselineFacts::Available(PeerRank::AtOrAboveP99),
+                Availability::Available,
+                true,
+                true,
+            ),
+            (
+                BaselineFacts::NotFound,
+                Availability::NotFound,
+                false,
+                false,
+            ),
+            (
+                BaselineFacts::Unavailable,
+                Availability::Unavailable,
+                false,
+                false,
+            ),
+        ] {
+            assert_eq!(baseline.status(), status, "{baseline:?}");
+            assert_eq!(baseline.at_or_above_p95(), p95, "{baseline:?}");
+            assert_eq!(baseline.at_or_above_p99(), p99, "{baseline:?}");
+        }
+    }
 }

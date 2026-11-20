@@ -749,3 +749,115 @@ fn check_title(check: &str) -> &'static str {
         _ => "Check",
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{apply_snapshot, initial_report, validate_doctor};
+
+    const PROJECT_ID: &str = "123e4567-e89b-12d3-a456-426614174000";
+    const STATES: [(&str, &str, &str); 4] = [
+        (
+            "needs_ingest_key",
+            "create_ingest_key",
+            "project_ingest_keys",
+        ),
+        ("needs_setup", "choose_setup_path", "project_setup"),
+        (
+            "needs_telemetry",
+            "send_first_telemetry",
+            "telemetry_ingest",
+        ),
+        ("ready", "inspect_recent_telemetry", "telemetry_reads"),
+    ];
+
+    fn response(
+        (state, code, target): (&str, &str, &str),
+        setup_status: &str,
+        setup_acknowledged: bool,
+        has_active_ingest_key: bool,
+    ) -> serde_json::Value {
+        serde_json::json!({
+            "project_id": PROJECT_ID,
+            "state": state,
+            "setup_status": setup_status,
+            "setup_acknowledged": setup_acknowledged,
+            "has_active_ingest_key": has_active_ingest_key,
+            "first_telemetry_seen_at": null,
+            "last_seen_at": null,
+            "last_signal": null,
+            "next": "follow the next action",
+            "next_action": {"code": code, "target": target},
+        })
+    }
+
+    #[test]
+    fn readiness_follows_the_ingest_key_and_setup_progress() {
+        for (key, wire, expected, setup, telemetry) in [
+            (
+                false,
+                "created",
+                "needs_ingest_key",
+                "not_started",
+                "not_seen",
+            ),
+            (false, "active", "needs_ingest_key", "operational", "seen"),
+            (true, "created", "needs_setup", "not_started", "not_seen"),
+            (
+                true,
+                "setup_started",
+                "needs_telemetry",
+                "path_selected",
+                "not_seen",
+            ),
+            (
+                true,
+                "sdk_seen",
+                "needs_telemetry",
+                "acknowledged",
+                "not_seen",
+            ),
+            (true, "first_telemetry_seen", "ready", "operational", "seen"),
+            (true, "active", "ready", "operational", "seen"),
+        ] {
+            let acknowledged = !matches!(wire, "created" | "setup_started");
+            for state in STATES {
+                let snapshot =
+                    validate_doctor(&response(state, wire, acknowledged, key), PROJECT_ID);
+                assert_eq!(
+                    snapshot.is_some(),
+                    state.0 == expected,
+                    "{key} {wire} {}",
+                    state.0
+                );
+                if let Some(snapshot) = snapshot {
+                    let mut report = initial_report();
+                    apply_snapshot(&mut report, &snapshot);
+                    assert_eq!(report.status, expected, "{wire}");
+                    assert_eq!(report.setup.status, setup, "{wire}");
+                    assert_eq!(report.telemetry.status, telemetry, "{wire}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn setup_acknowledgement_must_match_setup_progress() {
+        for (setup_status, acknowledged) in [
+            ("created", true),
+            ("setup_started", true),
+            ("sdk_seen", false),
+            ("active", false),
+        ] {
+            for state in STATES {
+                assert!(
+                    validate_doctor(
+                        &response(state, setup_status, acknowledged, true),
+                        PROJECT_ID
+                    )
+                    .is_none(),
+                    "{setup_status} acknowledged={acknowledged}"
+                );
+            }
+        }
+    }
+}
