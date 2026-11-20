@@ -147,6 +147,35 @@ fn civil_seconds(value: &str) -> Option<(i64, bool)> {
     Some((days * 86_400 + seconds, second == 60))
 }
 
+/// Formats Unix milliseconds from 1970 through 9999 as `YYYY-MM-DDTHH:MM:SS.mmmZ`.
+pub(crate) fn format_utc_millis(millis: i64) -> Option<String> {
+    if !(0..253_402_300_800_000).contains(&millis) {
+        return None;
+    }
+    let (days, day_millis) = (millis / 86_400_000, millis % 86_400_000);
+    // Hinnant's civil_from_days, the inverse of the days_from_civil step in `civil_seconds`.
+    let shifted = days + 719_468;
+    let (era, day_of_era) = (shifted / 146_097, shifted % 146_097);
+    let year_of_era =
+        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let shifted_month = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * shifted_month + 2) / 5 + 1;
+    let month = if shifted_month < 10 {
+        shifted_month + 3
+    } else {
+        shifted_month - 9
+    };
+    let year = era * 400 + year_of_era + i64::from(month <= 2);
+    Some(format!(
+        "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}.{:03}Z",
+        day_millis / 3_600_000,
+        day_millis / 60_000 % 60,
+        day_millis / 1_000 % 60,
+        day_millis % 1_000
+    ))
+}
+
 /// Checks the fixed-width date and whole-second prefix without accepting relaxed syntax.
 pub(crate) fn has_calendar_shape(bytes: &[u8]) -> bool {
     bytes.get(..19).is_some_and(|seconds| {
@@ -211,9 +240,26 @@ pub(crate) fn parse_utc_millis(value: &str) -> Option<i128> {
 #[cfg(test)]
 mod tests {
     use super::{
-        ParsedTimestamp, evidence_offset_millis, is_rfc3339_utc, parse_rfc3339, parse_timestamp,
-        parse_utc_evidence, parse_utc_millis,
+        ParsedTimestamp, evidence_offset_millis, format_utc_millis, is_rfc3339_utc, parse_rfc3339,
+        parse_timestamp, parse_utc_evidence, parse_utc_millis,
     };
+
+    #[test]
+    fn utc_millis_format_as_canonical_rfc_3339() {
+        for (millis, text) in [
+            (0, "1970-01-01T00:00:00.000Z"),
+            (951_782_400_000, "2000-02-29T00:00:00.000Z"),
+            (1_794_929_400_005, "2026-11-17T15:30:00.005Z"),
+            (253_402_300_799_999, "9999-12-31T23:59:59.999Z"),
+        ] {
+            assert_eq!(format_utc_millis(millis).as_deref(), Some(text), "{millis}");
+            assert_eq!(parse_utc_millis(text), Some(i128::from(millis)), "{text}");
+            assert!(is_rfc3339_utc(text), "{text}");
+        }
+        for millis in [-1, 253_402_300_800_000, i64::MAX] {
+            assert_eq!(format_utc_millis(millis), None, "{millis}");
+        }
+    }
 
     #[test]
     fn calendar_and_offsets_follow_rfc_3339() {

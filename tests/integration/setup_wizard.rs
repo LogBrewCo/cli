@@ -721,23 +721,29 @@ async_test!(setup_without_sign_in_uses_the_env_file_key_and_sdk_ingest -> TestRe
         ],
     )?;
     let bin = fake_package_managers("env-key-only")?;
-    for (response, ok) in [
-        (ingest_accepted(1, 0), true),
-        (ingest_accepted(0, 0), false),
-        (ingest_accepted(0, 1), false),
+    let refused = serde_json::json!({"error": "ingest key refused", "key": existing});
+    for (label, response, ok) in [
+        ("accepted", ResponseTemplate::new(200).set_body_json(&ingest_accepted(1, 0)), true),
+        ("no log stored", ResponseTemplate::new(200).set_body_json(&ingest_accepted(0, 0)), false),
+        ("replayed", ResponseTemplate::new(200).set_body_json(&ingest_accepted(0, 1)), false),
+        ("refused key", ResponseTemplate::new(401).set_body_json(&refused), false),
     ] {
         let server = MockServer::start().await?;
         Mock::auth("POST", "/api/telemetry/ingest", existing)
-            .respond_with(ResponseTemplate::new(200).set_body_json(&response))
+            .respond_with(response)
             .mount(&server);
         std::fs::write(dir.join(".env"), env_text.as_str())?;
         std::fs::write(dir.join("app.js"), APP_JS)?;
-        let output = run_setup_signed_out(&server, &dir, &bin).await?;
-        assert_eq!(output.status.success(), ok, "{response}");
+        let output = run_setup_signed_out(&server.uri(), &server, &dir, &bin, true).await?;
+        assert_eq!(output.status.success(), ok, "{label}");
         let text = String::from_utf8(output.stdout)?;
-        assert!(!text.contains(existing), "the key must never be printed");
+        let errors = String::from_utf8(output.stderr)?;
+        assert!(
+            !text.contains(existing) && !errors.contains(existing),
+            "the key must never be printed"
+        );
         let body: serde_json::Value = serde_json::from_str(&text)?;
-        assert_eq!(body["ok"], ok, "{response}");
+        assert_eq!(body["ok"], ok, "{label}");
         assert_eq!(step(&body, "sign_in")["status"], "not_needed");
         assert_eq!(step(&body, "project")["status"], "kept");
         assert_eq!(step(&body, "project")["key"], "kept");
@@ -759,7 +765,12 @@ async_test!(setup_without_sign_in_uses_the_env_file_key_and_sdk_ingest -> TestRe
         } else {
             assert_eq!(
                 verify,
-                &serde_json::json!({"step": "verify", "status": "not_arrived"})
+                &serde_json::json!({"step": "verify", "status": "not_arrived"}),
+                "{label}"
+            );
+            assert_eq!(
+                body["next"], "check the key in the env file, then rerun logbrew setup",
+                "{label}"
             );
         }
         let requests = server.received_requests();
@@ -776,6 +787,82 @@ async_test!(setup_without_sign_in_uses_the_env_file_key_and_sdk_ingest -> TestRe
         let written = std::fs::read_to_string(dir.join(".env"))?;
         assert!(written.starts_with(&env_text), "existing values must stay unchanged");
     }
+    Ok(())
+});
+
+async_test!(setup_without_sign_in_prints_the_read_back_command_for_after_sign_in -> TestResult, {
+    let existing = "lbw_ingest_dashboard_private_value";
+    let env_text = format!("LOGBREW_SERVER_API_KEY={existing}\nLOGBREW_PROJECT_ID={PROJECT_ID}\n");
+    let dir = fixture(
+        "env-key-human",
+        &[
+            (
+                "package.json",
+                r#"{"name":"api","main":"app.js","dependencies":{"express":"5.1.0"}}"#,
+            ),
+            ("app.js", APP_JS),
+            (".env", env_text.as_str()),
+        ],
+    )?;
+    let bin = fake_package_managers("env-key-human")?;
+    let server = MockServer::start().await?;
+    Mock::auth("POST", "/api/telemetry/ingest", existing)
+        .respond_with(ResponseTemplate::new(200).set_body_json(&ingest_accepted(1, 0)))
+        .mount(&server);
+    let output = run_setup_signed_out(&server.uri(), &server, &dir, &bin, false).await?;
+    assert!(output.status.success());
+    let text = String::from_utf8(output.stdout)?;
+    assert!(!text.contains(existing), "the key must never be printed");
+    assert!(text.contains("Sign-in: not needed; using the key in .env"), "{text}");
+    let sent: serde_json::Value = serde_json::from_slice(&server.received_requests()[0].body)?;
+    let trace = sent["trace_id"].as_str().unwrap_or_default();
+    assert!(
+        text.contains(&format!(
+            "Read it back after logbrew login: logbrew read logs --project {PROJECT_ID} --trace {trace}\n"
+        )),
+        "{text}"
+    );
+    Ok(())
+});
+
+async_test!(setup_without_sign_in_stops_on_a_bad_api_url -> TestResult, {
+    let existing = "lbw_ingest_dashboard_private_value";
+    let env_text = format!("LOGBREW_SERVER_API_KEY={existing}\nLOGBREW_PROJECT_ID={PROJECT_ID}\n");
+    let server = MockServer::start().await?;
+    for (label, api_url, message, changes) in [
+        ("not a url", "not a url", "the configured API URL is invalid", false),
+        ("ftp", "ftp://127.0.0.1", "the configured API URL is invalid", false),
+        ("path", "https://api.example.test/v1", "the configured API URL is invalid", false),
+        ("unreachable", "http://127.0.0.1:9", "the test event could not be sent", true),
+    ] {
+        let dir = fixture(
+            "env-key-bad-url",
+            &[
+                (
+                    "package.json",
+                    r#"{"name":"api","main":"app.js","dependencies":{"express":"5.1.0"}}"#,
+                ),
+                ("app.js", APP_JS),
+                (".env", env_text.as_str()),
+            ],
+        )?;
+        let bin = fake_package_managers("env-key-bad-url")?;
+        let output = run_setup_signed_out(api_url, &server, &dir, &bin, true).await?;
+        assert!(!output.status.success(), "{label}");
+        assert!(output.stdout.is_empty(), "{label}");
+        let errors = String::from_utf8(output.stderr)?;
+        assert!(!errors.contains(existing), "the key must never be printed");
+        let error: serde_json::Value = serde_json::from_str(&errors)?;
+        assert_eq!(error["error"], "unavailable", "{label}");
+        assert_eq!(error["message"], message, "{label}");
+        assert_eq!(bin.join("calls.log").exists(), changes, "{label}: package manager calls");
+        assert_eq!(
+            std::fs::read_to_string(dir.join("app.js"))? != APP_JS,
+            changes,
+            "{label}: init code"
+        );
+    }
+    assert!(server.received_requests().is_empty(), "no request may reach the test API");
     Ok(())
 });
 
@@ -1294,15 +1381,19 @@ async fn run_setup(
 
 /// Runs setup the way a person without a CLI sign-in does: no token and no token file.
 async fn run_setup_signed_out(
+    api_url: &str,
     server: &MockServer,
     dir: &std::path::Path,
     bin: &std::path::Path,
+    json: bool,
 ) -> TestResult<std::process::Output> {
     let _removed = std::fs::remove_file(bin.join("calls.log"));
     let mut command = cli_command(server);
     let _command = command
         .env_remove("LOGBREW_TOKEN")
-        .args(["setup", "--yes", "--json"])
+        .env("LOGBREW_API_URL", api_url)
+        .args(["setup", "--yes"])
+        .args(json.then_some("--json"))
         .current_dir(dir)
         .env("HOME", bin)
         .env("PATH", bin)

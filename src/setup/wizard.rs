@@ -167,18 +167,15 @@ pub async fn run_wizard<R: BufRead, W: Write>(
             .unwrap_or("source"),
         project.target.manifest
     ))?;
-    let choice = match env_key_project(env, options, &project)? {
-        Some(id) => {
-            report.step(
-                serde_json::json!({"step": "sign_in", "status": "not_needed"}),
-                &format!("Sign-in: not needed; using the key in {}", project.env_file),
-            )?;
-            ProjectChoice::EnvKey(id)
-        }
-        None => {
-            sign_in(env, &mut report).await?;
-            choose_project(env, options, &project, &mut report, input).await?
-        }
+    let choice = if let Some(id) = env_key_project(env, options, &project)? {
+        report.step(
+            serde_json::json!({"step": "sign_in", "status": "not_needed"}),
+            &format!("Sign-in: not needed; using the key in {}", project.env_file),
+        )?;
+        ProjectChoice::EnvKey(id)
+    } else {
+        sign_in(env, &mut report).await?;
+        choose_project(env, options, &project, &mut report, input).await?
     };
     report.say(&match &choice {
         ProjectChoice::Existing(_, name) => format!("Project: {name}"),
@@ -237,9 +234,11 @@ pub async fn run_wizard<R: BufRead, W: Write>(
         || String::from("Test event: did not arrive"),
         |step| {
             format!(
-                "Test event: {} LogBrew in {} ms\nRead it back: logbrew read logs --project {project_id} --trace {}",
+                "Test event: {} LogBrew in {} ms\nRead it back{}: logbrew read logs --project {project_id} --trace {}",
                 if key_only { "accepted by" } else { "arrived in" },
-                step["elapsed_ms"], step["trace_id"].as_str().unwrap_or_default()
+                step["elapsed_ms"],
+                if key_only { " after logbrew login" } else { "" },
+                step["trace_id"].as_str().unwrap_or_default()
             )
         },
     );
@@ -253,7 +252,8 @@ pub async fn run_wizard<R: BufRead, W: Write>(
 /// Returns the env file's project id when setup can use the env file's key without an account.
 ///
 /// That needs no stored or environment credential, a server ingest key in the env file, and a
-/// project id from `--project` or the env file.
+/// project id from `--project` or the env file. An invalid API URL stops setup before it changes
+/// anything, because the test event is the only request this path makes.
 fn env_key_project(
     env: &CliEnvironment,
     options: &WizardOptions,
@@ -262,11 +262,15 @@ fn env_key_project(
     if crate::auth::inspect_auth_snapshot(env)?.authenticated || project.existing_key().is_none() {
         return Ok(None);
     }
-    Ok(options
+    let id = options
         .project_id
         .clone()
         .or_else(|| env_value(project.env_text.as_str(), "LOGBREW_PROJECT_ID"))
-        .filter(|id| crate::ids::is_uuid(id)))
+        .filter(|id| crate::ids::is_uuid(id));
+    if id.is_some() && crate::http::normalized_origin(env.base_url.as_str()).is_none() {
+        return Err(invalid_api_url());
+    }
+    Ok(id)
 }
 
 /// Signs in through the browser when no credential is stored.
@@ -935,16 +939,15 @@ async fn verify_with_key(
     getrandom::fill(&mut bytes).map_err(|_| test_event_unsent())?;
     let trace_id = bytes
         .iter()
-        .map(|byte| format!("{byte:02x}"))
+        .flat_map(|byte| [byte >> 4, byte & 0x0f])
+        .filter_map(|nibble| char::from_digit(u32::from(nibble), 16))
         .collect::<String>();
     let occurred_at = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .ok()
-        .and_then(|now| {
-            chrono::DateTime::from_timestamp_millis(i64::try_from(now.as_millis()).ok()?)
-        })
-        .ok_or(test_event_unsent())?
-        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        .and_then(|now| i64::try_from(now.as_millis()).ok())
+        .and_then(crate::time::format_utc_millis)
+        .ok_or(test_event_unsent())?;
     let envelope = serde_json::json!({
         "project_id": project_id,
         "environment": "test",
@@ -1073,7 +1076,7 @@ const fn invalid_api_url() -> RuntimeError {
     }
 }
 
-/// The test event could not reach LogBrew.
+/// The test event could not be sent.
 const fn test_event_unsent() -> RuntimeError {
     RuntimeError::Unavailable {
         message: "the test event could not be sent",
