@@ -7,9 +7,53 @@ use crate::{CliEnvironment, CliError, RuntimeError};
 /// Maximum accepted revocation response body.
 const RESPONSE_LIMIT: usize = 64 * 1024;
 
-/// Key metadata from the list and revocation routes; the raw key is never returned.
+/// Key metadata exactly as the list and revocation routes return it.
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
+struct KeyWire {
+    /// Key UUID.
+    id: String,
+    /// Key label.
+    label: String,
+    /// Key kind.
+    kind: String,
+    /// Short non-secret key prefix.
+    token_prefix: String,
+    /// Key state: `active`, `expired`, or `revoked`.
+    status: String,
+    /// Creation time.
+    created_at: String,
+    /// Optional expiry.
+    expires_at: Option<String>,
+    /// Revocation time, present exactly when the key is revoked.
+    revoked_at: Option<String>,
+}
+
+/// Lifecycle state of one project key.
+#[derive(Clone, Copy)]
+pub(crate) enum KeyStatus {
+    /// The key authenticates ingest requests.
+    Active,
+    /// The key passed its expiry time.
+    Expired,
+    /// The key was revoked.
+    Revoked,
+}
+
+impl KeyStatus {
+    /// Stable wire value.
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Active => "active",
+            Self::Expired => "expired",
+            Self::Revoked => "revoked",
+        }
+    }
+}
+
+/// Validated key metadata from the list and revocation routes; the raw key is never returned.
+#[derive(serde::Deserialize)]
+#[serde(try_from = "KeyWire")]
 pub(crate) struct KeyMetadata {
     /// Key UUID.
     pub(crate) id: String,
@@ -19,30 +63,42 @@ pub(crate) struct KeyMetadata {
     pub(crate) kind: String,
     /// Short non-secret key prefix.
     pub(crate) token_prefix: String,
-    /// Key state: `active`, `expired`, or `revoked`.
-    pub(crate) status: String,
+    /// Key state.
+    pub(crate) status: KeyStatus,
     /// Creation time.
     pub(crate) created_at: String,
-    /// Optional expiry.
-    pub(crate) expires_at: Option<String>,
-    /// Revocation time.
-    pub(crate) revoked_at: Option<String>,
 }
 
-impl KeyMetadata {
-    /// Whether every field holds the documented value shape.
-    pub(crate) fn valid(&self) -> bool {
+impl TryFrom<KeyWire> for KeyMetadata {
+    type Error = &'static str;
+
+    fn try_from(wire: KeyWire) -> Result<Self, Self::Error> {
+        let status = match (wire.status.as_str(), wire.revoked_at.is_some()) {
+            ("active", false) => KeyStatus::Active,
+            ("expired", false) => KeyStatus::Expired,
+            ("revoked", true) => KeyStatus::Revoked,
+            _ => return Err("invalid key status"),
+        };
         let safe = |text: &str| crate::http::nonempty_display_safe(text, 128);
-        is_uuid(self.id.as_str())
-            && matches!(self.status.as_str(), "active" | "expired" | "revoked")
-            && (self.status == "revoked") == self.revoked_at.is_some()
-            && std::iter::once(Some(self.created_at.as_str()))
-                .chain([self.expires_at.as_deref(), self.revoked_at.as_deref()])
+        let valid = is_uuid(wire.id.as_str())
+            && std::iter::once(Some(wire.created_at.as_str()))
+                .chain([wire.expires_at.as_deref(), wire.revoked_at.as_deref()])
                 .flatten()
                 .all(crate::time::is_rfc3339_utc)
-            && [&self.label, &self.kind, &self.token_prefix]
+            && [&wire.label, &wire.kind, &wire.token_prefix]
                 .into_iter()
-                .all(|text| safe(text))
+                .all(|text| safe(text));
+        if !valid {
+            return Err("invalid key metadata");
+        }
+        Ok(Self {
+            id: wire.id,
+            label: wire.label,
+            kind: wire.kind,
+            token_prefix: wire.token_prefix,
+            status,
+            created_at: wire.created_at,
+        })
     }
 }
 
@@ -78,7 +134,7 @@ pub(crate) async fn execute<W: std::io::Write>(
         return Err(api_error(status, body.as_str(), &credential));
     }
     let revoked = serde_json::from_str::<KeyMetadata>(body.as_str()).map_err(|_| invalid())?;
-    if revoked.id != key_id || revoked.status != "revoked" || !revoked.valid() {
+    if revoked.id != key_id || !matches!(revoked.status, KeyStatus::Revoked) {
         return Err(invalid());
     }
     if json {

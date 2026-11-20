@@ -4,6 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::{Map, Value};
 
+use super::super::super::correlation::Availability;
 use super::correlations::CorrelationFacts;
 use super::topology::{BaselineFacts, TopologyFacts};
 use super::{
@@ -369,7 +370,7 @@ pub(super) fn validate_evidence(
     subject: &SubjectFacts<'_>,
     payload: PayloadFacts,
     topology: &TopologyFacts<'_>,
-    baseline: &BaselineFacts<'_>,
+    baseline: BaselineFacts,
     correlations: &CorrelationFacts<'_>,
 ) -> Result<EvidenceFacts, RuntimeError> {
     let evidence = required_object(response, "evidence")?;
@@ -416,14 +417,14 @@ pub(super) fn validate_evidence(
     }
     for (field, status) in [
         ("topology", topology.status),
-        ("baseline", baseline.status),
+        ("baseline", baseline.status()),
         ("correlations.trace", correlations.trace.status),
         ("correlations.issues", correlations.issue_state.status),
         ("correlations.logs", correlations.log_state.status),
         ("correlations.actions", correlations.action_state.status),
         ("correlations.metrics", correlations.metric_state.status),
     ] {
-        require_membership(&captured, &missing, field, status != "unavailable")?;
+        require_membership(&captured, &missing, field, status.completed())?;
     }
     for (field, expected) in [
         ("topology", topology.truncated),
@@ -518,7 +519,7 @@ pub(super) fn validate_next_actions(
     value: Option<&Value>,
     subject: &SubjectFacts<'_>,
     topology: &TopologyFacts<'_>,
-    baseline: &BaselineFacts<'_>,
+    baseline: BaselineFacts,
     correlations: &CorrelationFacts<'_>,
     evidence: EvidenceFacts,
 ) -> Result<(), RuntimeError> {
@@ -540,7 +541,7 @@ pub(super) fn validate_next_actions(
 fn expected_actions<'a>(
     subject: &SubjectFacts<'a>,
     topology: &TopologyFacts<'a>,
-    baseline: &BaselineFacts<'_>,
+    baseline: BaselineFacts,
     correlations: &CorrelationFacts<'a>,
     evidence: EvidenceFacts,
 ) -> Vec<ExpectedAction<'a>> {
@@ -550,13 +551,13 @@ fn expected_actions<'a>(
         .and_then(|issue| issue.get("issue_id")?.as_str());
     let unavailable = [
         correlations.trace.status,
-        baseline.status,
+        baseline.status(),
         correlations.issue_state.status,
         correlations.log_state.status,
         correlations.action_state.status,
         correlations.metric_state.status,
     ]
-    .contains(&"unavailable");
+    .contains(&Availability::Unavailable);
     let span = Some(subject.span_id);
     [
         (
@@ -592,7 +593,7 @@ fn expected_actions<'a>(
             issue,
         ),
         (
-            correlations.trace.status == "available",
+            correlations.trace.status.is_available(),
             "inspect_trace",
             "trace_investigation",
             "trace_context_available",
@@ -600,7 +601,7 @@ fn expected_actions<'a>(
             None,
         ),
         (
-            baseline.status == "available" && baseline.at_or_above_p95,
+            baseline.at_or_above_p95(),
             "compare_peer_baseline",
             "peer_baseline",
             "subject_latency_elevated",

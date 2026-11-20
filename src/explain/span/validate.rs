@@ -16,6 +16,7 @@ use super::super::contract::{
     require_bool, require_exact_fields, require_safe_u64, require_string, require_timestamp,
     required_object, validate_schema_version,
 };
+use super::super::correlation::{Availability, validate_availability};
 use super::super::invalid_response;
 use super::super::projection::{count_scalar_leaves, validate_projection};
 use crate::ids::is_uuid;
@@ -113,7 +114,7 @@ pub(super) fn validate_response(
         required_object(response, "analysis")?,
         &subject,
         &topology,
-        &baseline,
+        baseline,
         &correlations,
     )?;
     timeline::validate_timeline(
@@ -127,14 +128,14 @@ pub(super) fn validate_response(
         &subject,
         payload,
         &topology,
-        &baseline,
+        baseline,
         &correlations,
     )?;
     timeline::validate_next_actions(
         response.get("next_actions"),
         &subject,
         &topology,
-        &baseline,
+        baseline,
         &correlations,
         evidence,
     )
@@ -311,7 +312,7 @@ fn validate_analysis(
     analysis: &Map<String, Value>,
     subject: &SubjectFacts<'_>,
     topology: &TopologyFacts<'_>,
-    baseline: &BaselineFacts<'_>,
+    baseline: BaselineFacts,
     correlations: &CorrelationFacts<'_>,
 ) -> Result<(), RuntimeError> {
     require_exact_fields(analysis, &["status", "causality", "observations"])?;
@@ -332,10 +333,10 @@ fn validate_analysis(
     if !correlations.issues.is_empty() {
         expected.push("related_issue");
     }
-    if baseline.at_or_above_p95 {
+    if baseline.at_or_above_p95() {
         expected.push("subject_at_or_above_peer_p95");
     }
-    if baseline.at_or_above_p99 {
+    if baseline.at_or_above_p99() {
         expected.push("subject_at_or_above_peer_p99");
     }
     let observations = analysis
@@ -356,7 +357,7 @@ fn validate_analysis(
         || !correlations.issues.is_empty()
     {
         "error_evidence"
-    } else if baseline.at_or_above_p95 {
+    } else if baseline.at_or_above_p95() {
         "latency_focus"
     } else {
         "no_failure_observed"
@@ -474,15 +475,15 @@ pub(super) fn nullable_nonnegative_number(
 }
 
 /// Returns one allowed optional-evidence status without accepting `not_linked` here.
-pub(super) fn availability<'a>(
-    value: &'a Map<String, Value>,
+pub(super) fn availability(
+    value: &Map<String, Value>,
     name: &str,
-) -> Result<&'a str, RuntimeError> {
-    let status = require_string(value, name)?;
-    if matches!(status, "available" | "not_found" | "unavailable") {
-        Ok(status)
-    } else {
-        Err(invalid_response())
+) -> Result<Availability, RuntimeError> {
+    match validate_availability(value, name)? {
+        Availability::NotLinked => Err(invalid_response()),
+        status @ (Availability::Available | Availability::NotFound | Availability::Unavailable) => {
+            Ok(status)
+        }
     }
 }
 

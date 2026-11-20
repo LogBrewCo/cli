@@ -282,7 +282,7 @@ fn validate_action_trace_link(
         return Err(invalid_response());
     }
     let span_id = nullable_w3c_id(value, "span_id", 16)?;
-    if (status == "not_linked") != trace_id.is_none() || span_id.is_some() && trace_id.is_none() {
+    if status.is_linked() == trace_id.is_none() || span_id.is_some() && trace_id.is_none() {
         return Err(invalid_response());
     }
     let exact_span = optional_object_value(value.get("exact_span"))?;
@@ -295,11 +295,11 @@ fn validate_action_trace_link(
     let summary = optional_object_value(value.get("summary"))?;
     if let Some(summary) = summary {
         validate_shared_trace_summary(summary, None)?;
-        if trace_id != Some(require_string(summary, "trace_id")?) || status != "available" {
+        if trace_id != Some(require_string(summary, "trace_id")?) || !status.is_available() {
             return Err(invalid_response());
         }
     }
-    if exact_span.is_some() && status != "available" {
+    if exact_span.is_some() && !status.is_available() {
         return Err(invalid_response());
     }
     let _truncated = require_bool(value, "truncated")?;

@@ -340,19 +340,56 @@ pub(super) fn validate_correlated_log(
     Ok(())
 }
 
+/// State of one optional-evidence read in an investigation response.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Availability {
+    /// The read returned usable evidence.
+    Available,
+    /// The subject carries no link to this evidence.
+    NotLinked,
+    /// The read completed without matching evidence.
+    NotFound,
+    /// The read could not complete safely.
+    Unavailable,
+}
+
+impl Availability {
+    /// Whether the read returned usable evidence.
+    pub(super) const fn is_available(self) -> bool {
+        match self {
+            Self::Available => true,
+            Self::NotLinked | Self::NotFound | Self::Unavailable => false,
+        }
+    }
+
+    /// Whether the subject carries a link to this evidence.
+    pub(super) const fn is_linked(self) -> bool {
+        match self {
+            Self::NotLinked => false,
+            Self::Available | Self::NotFound | Self::Unavailable => true,
+        }
+    }
+
+    /// Whether the read completed, with or without evidence.
+    pub(super) const fn completed(self) -> bool {
+        match self {
+            Self::Unavailable => false,
+            Self::Available | Self::NotLinked | Self::NotFound => true,
+        }
+    }
+}
+
 /// Validates one optional-evidence availability field.
-pub(super) fn validate_availability<'a>(
-    value: &'a Map<String, Value>,
+pub(super) fn validate_availability(
+    value: &Map<String, Value>,
     name: &str,
-) -> Result<&'a str, RuntimeError> {
-    let status = require_string(value, name)?;
-    if matches!(
-        status,
-        "available" | "not_linked" | "not_found" | "unavailable"
-    ) {
-        Ok(status)
-    } else {
-        Err(invalid_response())
+) -> Result<Availability, RuntimeError> {
+    match require_string(value, name)? {
+        "available" => Ok(Availability::Available),
+        "not_linked" => Ok(Availability::NotLinked),
+        "not_found" => Ok(Availability::NotFound),
+        "unavailable" => Ok(Availability::Unavailable),
+        _ => Err(invalid_response()),
     }
 }
 
@@ -362,7 +399,7 @@ pub(super) fn validate_correlated_collection(
     limit: usize,
     allow_not_linked: bool,
     mut validate_item: impl FnMut(&Map<String, Value>) -> Result<(), RuntimeError>,
-) -> Result<(&str, bool, &[Value]), RuntimeError> {
+) -> Result<(Availability, bool, &[Value]), RuntimeError> {
     require_exact_fields(value, &["status", "items", "truncated"])?;
     let status = validate_availability(value, "status")?;
     let items = value
@@ -371,10 +408,10 @@ pub(super) fn validate_correlated_collection(
         .ok_or_else(invalid_response)?;
     let truncated = require_bool(value, "truncated")?;
     if items.len() > limit
-        || (status == "available") == items.is_empty()
-        || (status != "available" && truncated)
+        || status.is_available() == items.is_empty()
+        || (!status.is_available() && truncated)
         || (truncated && items.len() != limit)
-        || (!allow_not_linked && status == "not_linked")
+        || (!allow_not_linked && !status.is_linked())
     {
         return Err(invalid_response());
     }

@@ -3,7 +3,7 @@
 use serde_json::{Map, Value};
 
 use super::super::super::correlation::{
-    TraceSummaryExpectation, validate_correlated_collection, validate_correlated_log,
+    Availability, TraceSummaryExpectation, validate_correlated_collection, validate_correlated_log,
     validate_correlated_signal, validate_exact_release_scope, validate_shared_trace_summary,
 };
 use super::topology::TopologyFacts;
@@ -19,28 +19,28 @@ const CORRELATION_LIMIT: usize = 20;
 #[derive(Clone, Copy)]
 pub(super) struct CorrelationFacts<'a> {
     /// Containing-trace read state.
-    pub(super) trace: SourceState<'a>,
+    pub(super) trace: SourceState,
     /// Same-trace issue occurrences.
     pub(super) issues: &'a [Value],
     /// Issue collection read state.
-    pub(super) issue_state: SourceState<'a>,
+    pub(super) issue_state: SourceState,
     /// Exact-span logs.
     pub(super) logs: &'a [Value],
     /// Log collection read state.
-    pub(super) log_state: SourceState<'a>,
+    pub(super) log_state: SourceState,
     /// Action collection read state.
-    pub(super) action_state: SourceState<'a>,
+    pub(super) action_state: SourceState,
     /// Metric collection read state.
-    pub(super) metric_state: SourceState<'a>,
+    pub(super) metric_state: SourceState,
     /// Whether an exact-span log carries error or critical severity.
     pub(super) exact_error_log: bool,
 }
 
 /// One collection's validated availability and truncation receipt.
 #[derive(Clone, Copy)]
-pub(super) struct SourceState<'a> {
+pub(super) struct SourceState {
     /// Read status.
-    pub(super) status: &'a str,
+    pub(super) status: Availability,
     /// Whether additional rows were omitted.
     pub(super) truncated: bool,
 }
@@ -83,17 +83,17 @@ pub(super) fn validate_correlations<'a>(
 }
 
 /// Validates containing-trace availability and a strict aggregate summary.
-fn validate_trace<'a>(
-    trace: &'a Map<String, Value>,
+fn validate_trace(
+    trace: &Map<String, Value>,
     subject: &SubjectFacts<'_>,
     topology: &TopologyFacts<'_>,
-) -> Result<SourceState<'a>, RuntimeError> {
+) -> Result<SourceState, RuntimeError> {
     require_exact_fields(trace, &["status", "summary", "truncated"])?;
     let status = availability(trace, "status")?;
     let summary = required_nullable_object(trace.get("summary"))?;
     let truncated = require_bool(trace, "truncated")?;
     match status {
-        "available" if summary.is_some() => {
+        Availability::Available if summary.is_some() => {
             validate_shared_trace_summary(
                 summary.ok_or_else(invalid_response)?,
                 Some(&TraceSummaryExpectation {
@@ -104,8 +104,11 @@ fn validate_trace<'a>(
                 }),
             )?;
         }
-        "not_found" | "unavailable" if summary.is_none() && !truncated => {}
-        _ => return Err(invalid_response()),
+        Availability::NotFound | Availability::Unavailable if summary.is_none() && !truncated => {}
+        Availability::Available
+        | Availability::NotLinked
+        | Availability::NotFound
+        | Availability::Unavailable => return Err(invalid_response()),
     }
     if status != topology.status || truncated && !topology.truncated {
         return Err(invalid_response());
@@ -118,7 +121,7 @@ fn validate_collection<'a>(
     collection: &'a Map<String, Value>,
     validate_item: fn(&Map<String, Value>, &SubjectFacts<'_>) -> Result<(), RuntimeError>,
     subject: &SubjectFacts<'_>,
-) -> Result<(&'a [Value], SourceState<'a>), RuntimeError> {
+) -> Result<(&'a [Value], SourceState), RuntimeError> {
     let (status, truncated, items) =
         validate_correlated_collection(collection, CORRELATION_LIMIT, false, |item| {
             validate_item(item, subject)

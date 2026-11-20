@@ -140,9 +140,6 @@ pub(crate) async fn execute_key_list<W: std::io::Write>(
         return Err(api_error(status, body.as_str(), "keys", &credential));
     }
     let keys = serde_json::from_str::<Vec<KeyMetadata>>(body.as_str()).map_err(|_| invalid())?;
-    if !keys.iter().all(KeyMetadata::valid) {
-        return Err(invalid());
-    }
     if json {
         writeln!(output, "{body}")?;
         return Ok(());
@@ -152,7 +149,12 @@ pub(crate) async fn execute_key_list<W: std::io::Write>(
         writeln!(
             output,
             "- id={} kind={} status={} prefix={} label={} created={}",
-            key.id, key.kind, key.status, key.token_prefix, key.label, key.created_at
+            key.id,
+            key.kind,
+            key.status.as_str(),
+            key.token_prefix,
+            key.label,
+            key.created_at
         )?;
     }
     if keys.len() > HUMAN_ROW_LIMIT {
