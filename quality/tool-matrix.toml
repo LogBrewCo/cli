@@ -18,9 +18,9 @@ id = "rust"
 risk = "Rust compile errors, compiler lints (warnings deny), and test failures"
 tool = "rustc, cargo, and libtest"
 version = "stable"
-unpinned = "CI installs the latest stable toolchain on every run (dtolnay/rust-toolchain, toolchain: stable); Cargo.toml requires at least 1.87"
-uses = ["dtolnay/rust-toolchain", "swatinem/rust-cache"]
-commands = ["cargo test", "cargo build", "cargo metadata", "cargo package", "rustc"]
+unpinned = "CI installs the latest stable toolchain on every run (rustup toolchain install stable); Cargo.toml requires at least 1.87"
+uses = ["swatinem/rust-cache"]
+commands = ["cargo test", "cargo build", "cargo metadata", "cargo package", "rustc", "rustup"]
 runs_in = "CI check job (scripts/check-all.sh), npm-install jobs, release builds"
 config = "Cargo.toml [lints]"
 conflicts = "a floating toolchain can change results without a commit; pinning it is an open question"
@@ -195,7 +195,7 @@ checked = 2026-11-19
 
 [[tool]]
 id = "dependabot-coverage"
-risk = "a dependency or tool manifest that Dependabot never updates, or an entry that is not daily, has no 2-day cooldown, or splits updates into many pull requests"
+risk = "a dependency or tool manifest that Dependabot never updates, or an entry that is not daily, has no 7-day cooldown, or splits updates into many pull requests"
 tool = "scripts/check-dependabot.sh and its seeded tests"
 version = "repository"
 unpinned = "repository script, versioned by commit"
@@ -240,3 +240,19 @@ runtime = "not yet recorded; the workflow is new"
 findings = "unknown: the first run publishes the baseline; record low checks at the next review"
 replaces = "none"
 checked = 2026-10-30
+
+[[tool]]
+id = "zizmor"
+risk = "GitHub Actions workflows, actions, and Dependabot settings that an attacker can turn against the repository: template injection, broad token permissions, persisted credentials, dangerous triggers, cache poisoning, and unpinned or known-vulnerable actions"
+tool = "zizmor through zizmorcore/zizmor-action"
+version = "1.32.0"
+unpinned = "the zizmor workflow pins zizmorcore/zizmor-action to a commit with a version comment; that commit's lock file pins zizmor by version and wheel hashes, so a Dependabot update of the action updates zizmor"
+uses = ["zizmorcore/zizmor-action"]
+runs_in = "zizmor workflow: every pull request and push to main"
+config = ".github/zizmor.yml; regular persona with online audits; every finding fails the run"
+conflicts = "none known"
+exceptions = ".github/zizmor.yml gives each reason: dangerous-triggers in public-guard.yml and public-text-guard.yml (the guard needs the term list on fork pull requests and never runs their content); self-repository in release.yml (actionlint 1.7.12 rejects the $/ form of a reusable workflow call); github-env and adhoc-packages in action.yml (the action installs the CLI version the caller picks and puts it on PATH); adhoc-packages in ci.yml (an exact npm release and the packages the job just built)"
+runtime = "not yet recorded; the workflow is new"
+findings = "2026-11-21 before: 21 (3 dangerous-triggers, 3 dependabot-cooldown, 3 ref-version-mismatch, 2 secrets-inherit, 2 self-repository, 4 adhoc-packages, 1 template-injection, 1 cache-poisoning, 1 github-env, 1 artipacked); after: 0, with 10 ignored; a seeded workflow with template injection and an unpinned action fails the run"
+replaces = "none"
+checked = 2026-11-21
