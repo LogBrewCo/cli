@@ -1,7 +1,8 @@
 # Dependabot checks every ecosystem daily and opens one grouped pull request per
 # ecosystem. It waits 2 days after a release, so a release that its publisher
 # pulls soon after publishing never lands. scripts/check-dependabot.sh fails
-# when a tracked manifest has no entry here.
+# when a tracked manifest has no entry here. Each entry sets commit-message so
+# commits and pull request titles read chore(deps): ...
 version: 2
 updates:
   - package-ecosystem: github-actions
@@ -11,6 +12,9 @@ updates:
       interval: daily
     cooldown:
       default-days: 2
+    commit-message:
+      prefix: chore
+      include: scope
     groups:
       github-actions:
         patterns: ["*"]
@@ -21,6 +25,9 @@ updates:
       interval: daily
     cooldown:
       default-days: 2
+    commit-message:
+      prefix: chore
+      include: scope
     groups:
       bun:
         patterns: ["*"]
@@ -34,6 +41,9 @@ updates:
       interval: daily
     cooldown:
       default-days: 2
+    commit-message:
+      prefix: chore
+      include: scope
     groups:
       cargo:
         patterns: ["*"]
