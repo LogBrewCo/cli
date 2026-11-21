@@ -47,8 +47,6 @@ fn release_workflows_prebuild_publish_and_recover_safely() -> crate::TestResult 
         "--commit \"$GITHUB_SHA\"",
         "--status success",
         "if: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag == '' && github.ref == 'refs/heads/main' }}",
-        "key: workspace-v1-${{ matrix.target }}",
-        "cache-workspace-crates: true",
         "runner: windows-2025\n            linker: lld-link",
         "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER: ${{ matrix.linker }}",
         "run-id: ${{ steps.prebuild.outputs.run-id }}",
@@ -67,6 +65,10 @@ fn release_workflows_prebuild_publish_and_recover_safely() -> crate::TestResult 
     ] {
         assert!(RELEASE.contains(required), "missing {required}");
     }
+    assert!(
+        !RELEASE.contains("rust-cache"),
+        "release builds must not restore a cache"
+    );
     assert!(ordered(
         RELEASE,
         &[

@@ -69,8 +69,15 @@ jobs:
         run: curl --proto '=https' --tlsv1.2 -LsSf --retry 8 https://github.com/axodotdev/cargo-dist/releases/download/v0.34.0/cargo-dist-installer.sh | sh
       - id: plan
         shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          TAG: ${{ github.ref_name }}
         run: |
-          dist ${{ github.event_name == 'push' && format('host --steps=create --tag={0}', github.ref_name) || 'plan' }} --output-format=json > plan-dist-manifest.json
+          if [[ "$EVENT_NAME" == push ]]; then
+            dist host --steps=create --tag="$TAG" --output-format=json > plan-dist-manifest.json
+          else
+            dist plan --output-format=json > plan-dist-manifest.json
+          fi
           echo "manifest=$(jq -c '.' plan-dist-manifest.json)" >> "$GITHUB_OUTPUT"
 
       - name: Fetch exact-main prebuilt artifacts
@@ -163,10 +170,6 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with:
-          key: workspace-v1-${{ matrix.target }}
-          cache-workspace-crates: true
       - name: Install dist
         run: ${{ matrix.install_dist }}
       - name: Build artifacts
@@ -283,7 +286,6 @@ jobs:
       plan: ${{ needs.plan.outputs.val }}
       release_tag: ${{ inputs.release_tag || needs.plan.outputs.tag }}
       artifacts_run_id: ${{ inputs.artifacts_run_id || needs.plan.outputs.prebuild-run-id }}
-    secrets: inherit
     permissions:
       actions: read
       contents: read
@@ -298,7 +300,8 @@ jobs:
       plan: ${{ needs.plan.outputs.val }}
       release_tag: ${{ needs.plan.outputs.tag }}
       artifacts_run_id: ${{ needs.plan.outputs.prebuild-run-id }}
-    secrets: inherit
+    secrets:
+      HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
     permissions:
       actions: read
       contents: read
