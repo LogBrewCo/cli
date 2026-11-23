@@ -51,6 +51,7 @@ if [[ "${LOGBREW_CHECK_ALL_SELF_TEST:-1}" != "0" ]]; then
 fi
 ruby scripts/test-prepare-homebrew-formula.rb
 bash scripts/test-release-preflight.sh
+bash scripts/test-install-dist.sh
 python3 scripts/test-installed-release-attestation.py
 python3 scripts/test-installed-release-attestation-workflow.py
 ) &

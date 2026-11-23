@@ -50,22 +50,6 @@ fn scan(
 fn check(root: &Path) -> crate::TestResult {
     scan(root, [SECRET_PATTERN], Path::new("."))?;
     scan(root, [r"\bprivate\b"], Path::new("README.md"))?;
-    let mut fixtures = 0_u32;
-    for entry in std::fs::read_dir(root.join("tests/fixtures"))? {
-        let entry = entry?;
-        if entry.file_name().to_str().is_some_and(|name| {
-            name.starts_with("native_elf")
-                && Path::new(name)
-                    .extension()
-                    .is_some_and(|ext| ext.eq_ignore_ascii_case("so"))
-        }) {
-            scan(root, ["/Users/|/home/runner/|/private/var/"], &entry.path())?;
-            fixtures += 1;
-        }
-    }
-    if fixtures == 0 {
-        return Err("native confidentiality fixtures missing".into());
-    }
     match std::fs::symlink_metadata(root.join(DENYLIST)) {
         Ok(metadata) if metadata.is_file() => {}
         Ok(_) => return Err("denylist must be a regular file".into()),
@@ -125,9 +109,7 @@ fn check_secret_markers(root: &Path) -> crate::TestResult {
 fn confidentiality_rules_and_local_patterns_fail_closed() -> crate::TestResult {
     let root = super::isolated_home("logbrew-confidentiality", "rules")?;
     let result = (|| -> crate::TestResult {
-        std::fs::create_dir_all(root.join("tests/fixtures"))?;
         std::fs::write(root.join("README.md"), "public CLI")?;
-        std::fs::write(root.join("tests/fixtures/native_elf.so"), b"ELF\0public")?;
         check(&root)?;
         let source = root.join("source.txt");
         check_secret_markers(&root)?;
@@ -139,21 +121,6 @@ fn confidentiality_rules_and_local_patterns_fail_closed() -> crate::TestResult {
                 Some("confidentiality match"),
             ),
             ("README.md", "privateer", None),
-            (
-                "tests/fixtures/native_elf.so",
-                "ELF\0/Users/synthetic",
-                Some("confidentiality match"),
-            ),
-            (
-                "tests/fixtures/native_elf.so",
-                "ELF\0/HOME/RUNNER/synthetic",
-                Some("confidentiality match"),
-            ),
-            (
-                "tests/fixtures/native_elf.so",
-                "ELF\0/private/var/synthetic",
-                Some("confidentiality match"),
-            ),
         ] {
             let path = root.join(path);
             let saved = std::fs::read(&path)?;

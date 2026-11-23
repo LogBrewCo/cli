@@ -35,6 +35,19 @@ updates:
     ignore:
       # The release job sets these to the version it publishes.
       - dependency-name: "@logbrew/cli-*"
+  - package-ecosystem: npm
+    directories:
+      - /.github/npm
+    schedule:
+      interval: daily
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: chore
+      include: scope
+    groups:
+      npm:
+        patterns: ["*"]
   - package-ecosystem: cargo
     directories:
       - /

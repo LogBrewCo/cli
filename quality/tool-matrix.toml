@@ -42,9 +42,9 @@ config = "Cargo.toml [lints]; every warning fails"
 conflicts = "the nursery lint redundant_pub_crate asks for the opposite of rustc's unreachable_pub on items shared by private sibling modules (rust-clippy#5369)"
 exceptions = "redundant_pub_crate is allowed in Cargo.toml [lints] because of that conflict; no inline suppressions"
 runtime = "inside the check step (see rust)"
-findings = "lints are fixed before merge; until 2026-10-23 test targets skipped clippy, and a seeded vec.get(0) in a test now fails the gate"
+findings = "lints are fixed before merge; until 2026-10-23 test targets skipped clippy, and a seeded vec.get(0) in a test now fails the gate; recheck 2026-11-23: stable 1.100.0 ships the current Clippy, main CI passed with it, and rust-clippy#5369 is still open, so the redundant_pub_crate allow stays"
 replaces = "a separate cargo clippy build"
-checked = 2026-10-23
+checked = 2026-11-23
 
 [[tool]]
 id = "rustfmt"
@@ -84,16 +84,16 @@ id = "cargo-dist"
 risk = "release archives, installers, and checksums built differently from the plan"
 tool = "cargo-dist"
 version = "0.34.0"
-pins = ["dist-workspace.toml::cargo-dist-version = \"@VERSION@\"", ".github/workflows/release.yml::cargo-dist/releases/download/v@VERSION@/cargo-dist-installer.sh"]
-commands = ["dist"]
+pins = ["dist-workspace.toml::cargo-dist-version = \"@VERSION@\"", "scripts/install-dist.sh::version=@VERSION@"]
+commands = ["dist", "scripts/install-dist.sh", "scripts/test-install-dist.sh"]
 runs_in = "Release workflow"
 config = "dist-workspace.toml"
 conflicts = "release.yml is maintained in this repository (allow-dirty = [\"ci\"]), so dist generate refuses to rewrite it; an upgrade ports the generator's own diff by hand. 0.34.0 also emits the self-repository syntax ($/) for local reusable workflows; release.yml keeps ./ for now"
 exceptions = "none"
 runtime = "release jobs; see the Release workflow runs"
-findings = "recheck 2026-11-19: dist plan lists the same 18 artifacts with 0.32.0 and 0.34.0, and 0.34.0 now picks macos-15 for aarch64-apple-darwin, matching the runner release.yml already pins; no published advisories"
+findings = "recheck 2026-11-19: dist plan lists the same 18 artifacts with 0.32.0 and 0.34.0, and 0.34.0 now picks macos-15 for aarch64-apple-darwin, matching the runner release.yml already pins; no published advisories. 2026-11-23: the release jobs ran the 0.34.0 installer script through curl | sh; scripts/install-dist.sh now installs the release archive only when its sha256 matches the pinned hash, and scripts/test-install-dist.sh proves that it refuses another archive"
 replaces = "none"
-checked = 2026-11-19
+checked = 2026-11-23
 
 [[tool]]
 id = "homebrew-formula-audit"
@@ -116,17 +116,17 @@ id = "npm-packaging"
 risk = "npm packages that run install scripts or install the wrong binary"
 tool = "Node.js and npm (packaging tests and trusted publishing, not quality tools)"
 version = "24.22.3"
-pins = [".github/workflows/ci.yml::node-version: \"@VERSION@\"", ".github/workflows/ci.yml::npm install --global npm@12.2.3", ".github/workflows/publish-npm-trusted.yml::node-version: \"@VERSION@\""]
+pins = [".github/workflows/ci.yml::node-version: \"@VERSION@\"", ".github/npm/package.json::\"npm\": \"12.2.3\"", ".github/workflows/publish-npm-trusted.yml::node-version: \"@VERSION@\""]
 uses = ["actions/setup-node"]
-commands = ["npm", "npm init", "npm install", "npm publish", "npm view", "npx"]
+commands = ["npm", "npm ci", "npm publish", "npm view", "npx", "node", "scripts/npm-lock-tarballs.sh", "scripts/test-npm-lock-tarballs.sh", "node_modules/.bin/logbrew"]
 runs_in = "CI npm-install jobs on Linux, macOS, and Windows; npm trusted publishing"
 config = "scripts/npm-packages.sh"
 conflicts = "npm here installs and publishes the release; it does not check code"
 exceptions = "none"
 runtime = "install step: Linux arm64 max 8 s, macOS max 8 s (n=45 each); npm self-update once took 246 s on macOS"
-findings = "recheck 2026-11-19: 24.19.0 missed the Node.js security releases 24.22.1 and 24.22.3; moved to 24.22.3 and npm 12.2.3"
+findings = "recheck 2026-11-19: 24.19.0 missed the Node.js security releases 24.22.1 and 24.22.3; moved to 24.22.3 and npm 12.2.3. 2026-11-23: the npm-install jobs ran 3 npm install commands that no lockfile pinned; npm ci now installs npm from .github/npm/package-lock.json and the packed packages from a lockfile that pins their sha512 (scripts/test-npm-lock-tarballs.sh proves npm ci refuses other bytes). npm ci refuses --global, so the job runs the node_modules/.bin launcher that a global install also makes"
 replaces = "none"
-checked = 2026-11-19
+checked = 2026-11-23
 
 [[tool]]
 id = "repository-tests"
@@ -251,8 +251,8 @@ uses = ["zizmorcore/zizmor-action"]
 runs_in = "zizmor workflow: every pull request and push to main"
 config = ".github/zizmor.yml; regular persona with online audits; every finding fails the run"
 conflicts = "none known"
-exceptions = ".github/zizmor.yml gives each reason: dangerous-triggers in public-guard.yml and public-text-guard.yml (the guard needs the term list on fork pull requests and never runs their content); self-repository in release.yml (actionlint 1.7.12 rejects the $/ form of a reusable workflow call); github-env and adhoc-packages in action.yml (the action installs the CLI version the caller picks and puts it on PATH); adhoc-packages in ci.yml (an exact npm release and the packages the job just built)"
+exceptions = ".github/zizmor.yml gives each reason: dangerous-triggers in public-guard.yml and public-text-guard.yml (the guard needs the term list on fork pull requests and never runs their content); self-repository in release.yml (actionlint 1.7.12 rejects the $/ form of a reusable workflow call); github-env and adhoc-packages in action.yml (the action installs the CLI version the caller picks and puts it on PATH)"
 runtime = "not yet recorded; the workflow is new"
-findings = "2026-11-21 before: 21 (3 dangerous-triggers, 3 dependabot-cooldown, 3 ref-version-mismatch, 2 secrets-inherit, 2 self-repository, 4 adhoc-packages, 1 template-injection, 1 cache-poisoning, 1 github-env, 1 artipacked); after: 0, with 10 ignored; a seeded workflow with template injection and an unpinned action fails the run"
+findings = "2026-11-21 before: 21 (3 dangerous-triggers, 3 dependabot-cooldown, 3 ref-version-mismatch, 2 secrets-inherit, 2 self-repository, 4 adhoc-packages, 1 template-injection, 1 cache-poisoning, 1 github-env, 1 artipacked); after: 0, with 10 ignored; a seeded workflow with template injection and an unpinned action fails the run. 2026-11-23: 7 ignored, since the npm-install job installs through npm ci"
 replaces = "none"
 checked = 2026-11-21

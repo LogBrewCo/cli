@@ -1,0 +1,9 @@
+{
+  "name": "logbrew-cli-ci-npm",
+  "private": true,
+  "description": "The npm release that the npm-install CI jobs use. npm ci installs it from package-lock.json.",
+  "license": "MIT",
+  "dependencies": {
+    "npm": "12.2.3"
+  }
+}
