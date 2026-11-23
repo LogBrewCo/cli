@@ -236,6 +236,79 @@ pub(in crate::integration) fn macho64_with_subtype(
     bytes
 }
 
+/// ELF machines, by `e_machine`, that Android debug artifacts use.
+#[derive(Clone, Copy)]
+pub(in crate::integration) enum ElfMachine {
+    Arm,
+    Arm64,
+    X86,
+}
+
+/// A little-endian ELF shared object with a GNU build ID note and a
+/// `.debug_info` section, the parts that identify an Android debug artifact.
+pub(in crate::integration) fn elf_shared_object(machine: ElfMachine, build_id: [u8; 20]) -> Vec<u8> {
+    const NAMES: &[u8; 42] = b"\0.note.gnu.build-id\0.debug_info\0.shstrtab\0";
+    const DEBUG_INFO: [u8; 11] = [7, 0, 0, 0, 4, 0, 0, 0, 0, 0, 8];
+    let (wide, e_machine, e_flags) = match machine {
+        ElfMachine::Arm => (false, 40_u16, 0x0500_0000_u32),
+        ElfMachine::Arm64 => (true, 183, 0),
+        ElfMachine::X86 => (false, 3, 0),
+    };
+    let word = |bytes: &mut Vec<u8>, value: u32| {
+        if wide {
+            bytes.extend_from_slice(&u64::from(value).to_le_bytes());
+        } else {
+            bytes.extend_from_slice(&value.to_le_bytes());
+        }
+    };
+    let (header_size, program_header_size, section_header_size) =
+        if wide { (64_u16, 56_u16, 64_u16) } else { (52, 32, 40) };
+    let note_offset = u32::from(header_size);
+    let debug_offset = note_offset + 36;
+    let names_offset = debug_offset + 11;
+    let sections_offset = (names_offset + 42).next_multiple_of(8);
+
+    let mut bytes = vec![0x7f, b'E', b'L', b'F', if wide { 2 } else { 1 }, 1, 1];
+    bytes.resize(16, 0);
+    bytes.extend_from_slice(&3_u16.to_le_bytes());
+    bytes.extend_from_slice(&e_machine.to_le_bytes());
+    bytes.extend_from_slice(&1_u32.to_le_bytes());
+    for value in [0, 0, sections_offset] {
+        word(&mut bytes, value);
+    }
+    bytes.extend_from_slice(&e_flags.to_le_bytes());
+    for value in [header_size, program_header_size, 0, section_header_size, 4, 3] {
+        bytes.extend_from_slice(&value.to_le_bytes());
+    }
+    for value in [4_u32, 20, 3] {
+        bytes.extend_from_slice(&value.to_le_bytes());
+    }
+    bytes.extend_from_slice(b"GNU\0");
+    bytes.extend_from_slice(&build_id);
+    bytes.extend_from_slice(&DEBUG_INFO);
+    bytes.extend_from_slice(NAMES);
+    while bytes.len() % 8 != 0 {
+        bytes.push(0);
+    }
+    bytes.extend(std::iter::repeat_n(0, usize::from(section_header_size)));
+    for (name, kind, offset, size, align) in [
+        (1_u32, 7_u32, note_offset, 36, 4),
+        (20, 1, debug_offset, 11, 1),
+        (32, 3, names_offset, 42, 1),
+    ] {
+        bytes.extend_from_slice(&name.to_le_bytes());
+        bytes.extend_from_slice(&kind.to_le_bytes());
+        for value in [0, 0, offset, size] {
+            word(&mut bytes, value);
+        }
+        bytes.extend_from_slice(&0_u64.to_le_bytes());
+        for value in [align, 0] {
+            word(&mut bytes, value);
+        }
+    }
+    bytes
+}
+
 fn push_name(bytes: &mut Vec<u8>, name: &[u8]) {
     let mut field = [0_u8; 16];
     field[..name.len()].copy_from_slice(name);

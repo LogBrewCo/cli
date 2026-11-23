@@ -24,16 +24,9 @@ rules:
       # version of the action tag. A lockfile cannot hold a version chosen at
       # run time.
       - action.yml:91
-      # The npm-install job installs one exact npm release to test the packages
-      # with it. The job has a read-only token and no secrets.
-      - ci.yml:82
-      # The npm-install job installs the packages it just built, from local
-      # tarballs. That install is the test.
-      - ci.yml:107
-      - ci.yml:112
   self-repository:
     ignore:
       # actionlint 1.7.12, the latest release, rejects the $/ form of a
       # reusable workflow call. The release workflow keeps ./ until it does.
-      - release.yml:284
-      - release.yml:298
+      - release.yml:280
+      - release.yml:294

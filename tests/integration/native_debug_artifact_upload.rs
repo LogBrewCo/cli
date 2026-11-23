@@ -8,19 +8,23 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 const UPPERCASE_DWARFDUMP_UUID: &str = "10111213-1415-1617-1819-1A1B1C1D1E1F";
 const MIXED_CASE_DWARFDUMP_UUID: &str = "10111213-1415-1617-1819-1a1B1c1D1e1F";
-const ANDROID_ELF_FIXTURES: [(&[u8], &str, &str); 3] = [
+/// Build IDs and the image UUIDs and architectures the CLI derives from them.
+const ANDROID_ELF_FIXTURES: [(ElfMachine, [u8; 20], &str, &str); 3] = [
     (
-        include_bytes!("../fixtures/native_elf_fixture.so"),
+        ElfMachine::Arm64,
+        *b"\xea\x3d\x34\x8d\xe5\x97\xf4\x37\x75\xf2\xb9\x8a\x58\x51\x3e\x26\x01\x2c\xb7\xf6",
         "ea3d348d-e597-f437-75f2-b98a58513e26",
         "arm64",
     ),
     (
-        include_bytes!("../fixtures/native_elf_arm_fixture.so"),
+        ElfMachine::Arm,
+        *b"\xa3\x3a\xf7\x78\xc9\x63\x8b\xcf\xc6\xbd\x16\xc5\x99\x7c\x81\xae\x06\x32\x70\x91",
         "a33af778-c963-8bcf-c6bd-16c5997c81ae",
         "arm",
     ),
     (
-        include_bytes!("../fixtures/native_elf_x86_fixture.so"),
+        ElfMachine::X86,
+        *b"\x9e\x2b\xd6\x73\x7c\x97\x70\xad\x80\x51\xe1\xac\x4c\x99\x38\xfd\xdd\xe3\xac\xc6",
         "9e2bd673-7c97-70ad-8051-e1ac4c9938fd",
         "x86",
     ),
@@ -263,8 +267,9 @@ async_test!(resumable_retry_replays_only_the_ambiguous_chunk -> Result<(), Box<d
 });
 
 async_test!(android_elf_uses_exact_resumable_manifest_and_whole_object -> Result<(), Box<dyn std::error::Error>>, {
-    for (bytes, image_uuid, architecture) in ANDROID_ELF_FIXTURES {
-        assert_android_elf_upload(bytes, image_uuid, architecture).await?;
+    for (machine, build_id, image_uuid, architecture) in ANDROID_ELF_FIXTURES {
+        let bytes = elf_shared_object(machine, build_id);
+        assert_android_elf_upload(bytes.as_slice(), image_uuid, architecture).await?;
     }
     Ok(())
 });
