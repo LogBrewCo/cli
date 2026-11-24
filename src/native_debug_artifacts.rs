@@ -9,6 +9,8 @@ use crate::{
     RuntimeError,
 };
 use artifact::Artifact;
+#[cfg(fuzzing)]
+pub(crate) use artifact::{fuzz_debug_file, fuzz_symbol_zip};
 use wire::{LookupResult, UploadReceipt};
 
 /// Connection establishment timeout shared by upload and lookup.

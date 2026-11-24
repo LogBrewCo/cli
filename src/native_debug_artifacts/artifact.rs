@@ -453,6 +453,20 @@ fn parse_debug_file(bytes: Vec<u8>) -> Result<Vec<Artifact>, RuntimeError> {
     }
 }
 
+/// Parses `bytes` as one debug file, for the `debug_file` fuzz target.
+#[cfg(fuzzing)]
+pub(crate) fn fuzz_debug_file(bytes: &[u8]) -> Option<usize> {
+    parse_debug_file(bytes.to_vec())
+        .ok()
+        .map(|artifacts| artifacts.len())
+}
+
+/// Reads the ZIP at `path` as a symbol ZIP, for the `symbol_zip` fuzz target.
+#[cfg(fuzzing)]
+pub(crate) fn fuzz_symbol_zip(path: &Path) -> Option<usize> {
+    collect(path).ok().map(|artifacts| artifacts.len())
+}
+
 /// ELF architectures the public contract accepts. Every other one, including
 /// architectures added later, fails closed.
 const ELF_ARCHITECTURES: [(Architecture, NativeArchitecture); 4] = [

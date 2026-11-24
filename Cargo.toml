@@ -100,6 +100,8 @@ single_use_lifetimes = "deny"
 non_ascii_idents = "deny"
 let_underscore_drop = "deny"
 redundant_lifetimes = "deny"
+# cargo fuzz builds the fuzzing entry points with --cfg fuzzing.
+unexpected_cfgs = { level = "deny", check-cfg = ["cfg(fuzzing)"] }
 
 [lints.rustdoc]
 broken_intra_doc_links = "deny"

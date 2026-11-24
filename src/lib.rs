@@ -30,6 +30,9 @@ mod error;
 mod explain;
 #[doc(hidden)]
 pub mod flags;
+#[cfg(fuzzing)]
+#[doc(hidden)]
+pub mod fuzzing;
 pub mod help;
 mod http;
 #[doc(hidden)]
