@@ -89,7 +89,12 @@ jobs:
       - name: Check that the lockfile pins the packed npm packages
         run: |
           set -euo pipefail
-          [[ "$(npm --version)" == "$(jq -r .dependencies.npm .github/npm/package.json)" ]]
+          npm_version="$(npm --version)"
+          expected_npm="$(jq -r .dependencies.npm .github/npm/package.json)"
+          [[ "$npm_version" == "$expected_npm" ]] || {
+            printf 'npm is %s, expected %s from .github/npm\n' "$npm_version" "$expected_npm" >&2
+            exit 1
+          }
           bash scripts/test-npm-lock-tarballs.sh
 
       - name: Build the release binary

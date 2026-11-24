@@ -33,6 +33,14 @@ pack() {
   bash "$root/scripts/npm-packages.sh" 1.2.3 "$work/packed" "$target=$work/$executable"
 }
 
+# install: runs npm ci in the current project and prints npm's output if it fails.
+install() {
+  npm ci --offline --ignore-scripts --no-audit --no-fund >"$work/npm.log" 2>&1 || {
+    cat "$work/npm.log" >&2
+    return 1
+  }
+}
+
 sha512() {
   node -e 'process.stdout.write("sha512-" + require("node:crypto").createHash("sha512").update(require("node:fs").readFileSync(process.argv[1])).digest("base64"))' "$1"
 }
@@ -41,7 +49,7 @@ pack one
 mkdir "$work/app"
 cd "$work/app"
 bash "$root/scripts/npm-lock-tarballs.sh" "$work"/packed/*.tgz
-npm ci --offline --ignore-scripts --no-audit --no-fund --silent
+install || fail "npm ci did not install the locked tarballs"
 [[ "$(cat "$installed")" == one ]] || fail "npm ci did not install the packed binary"
 [[ -f node_modules/logbrew-cli/bin/logbrew.js ]] || fail "npm ci did not install the launcher package"
 launcher="logbrew-cli-1.2.3.tgz"
@@ -53,11 +61,11 @@ launcher="logbrew-cli-1.2.3.tgz"
 pack two
 cp "$work"/packed/*.tgz .
 rm -rf node_modules "$npm_config_cache"
-if npm ci --offline --ignore-scripts --no-audit --no-fund --silent >/dev/null 2>&1; then
+if install 2>/dev/null; then
   fail "npm ci installed a tarball whose hash the lockfile does not pin"
 fi
 
 bash "$root/scripts/npm-lock-tarballs.sh" "$work"/packed/*.tgz
-npm ci --offline --ignore-scripts --no-audit --no-fund --silent
+install || fail "npm ci did not install the locked tarballs"
 [[ "$(cat "$installed")" == two ]] || fail "npm ci did not install the new build"
 printf 'test-npm-lock-tarballs: ok\n'

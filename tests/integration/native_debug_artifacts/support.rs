@@ -246,7 +246,10 @@ pub(in crate::integration) enum ElfMachine {
 
 /// A little-endian ELF shared object with a GNU build ID note and a
 /// `.debug_info` section, the parts that identify an Android debug artifact.
-pub(in crate::integration) fn elf_shared_object(machine: ElfMachine, build_id: [u8; 20]) -> Vec<u8> {
+pub(in crate::integration) fn elf_shared_object(
+    machine: ElfMachine,
+    build_id: [u8; 20],
+) -> Vec<u8> {
     const NAMES: &[u8; 42] = b"\0.note.gnu.build-id\0.debug_info\0.shstrtab\0";
     const DEBUG_INFO: [u8; 11] = [7, 0, 0, 0, 4, 0, 0, 0, 0, 0, 8];
     let (wide, e_machine, e_flags) = match machine {
@@ -261,8 +264,11 @@ pub(in crate::integration) fn elf_shared_object(machine: ElfMachine, build_id: [
             bytes.extend_from_slice(&value.to_le_bytes());
         }
     };
-    let (header_size, program_header_size, section_header_size) =
-        if wide { (64_u16, 56_u16, 64_u16) } else { (52, 32, 40) };
+    let (header_size, program_header_size, section_header_size) = if wide {
+        (64_u16, 56_u16, 64_u16)
+    } else {
+        (52, 32, 40)
+    };
     let note_offset = u32::from(header_size);
     let debug_offset = note_offset + 36;
     let names_offset = debug_offset + 11;
@@ -277,7 +283,14 @@ pub(in crate::integration) fn elf_shared_object(machine: ElfMachine, build_id: [
         word(&mut bytes, value);
     }
     bytes.extend_from_slice(&e_flags.to_le_bytes());
-    for value in [header_size, program_header_size, 0, section_header_size, 4, 3] {
+    for value in [
+        header_size,
+        program_header_size,
+        0,
+        section_header_size,
+        4,
+        3,
+    ] {
         bytes.extend_from_slice(&value.to_le_bytes());
     }
     for value in [4_u32, 20, 3] {
