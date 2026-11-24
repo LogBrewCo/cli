@@ -36,6 +36,15 @@ for (const tarball of process.argv.slice(2)) {
   root.dependencies[manifest.name] = `file:${file}`;
   packages[`node_modules/${manifest.name}`] = entry;
 }
+// A platform package that is not here stays out of the install: npm skips an
+// optional dependency whose os or cpu does not match this machine.
+for (const [key, entry] of Object.entries(packages)) {
+  for (const [name, version] of Object.entries(entry.optionalDependencies ?? {})) {
+    const match = /^@logbrew\/cli-(darwin|linux|win32)-(arm64|x64)$/.exec(name);
+    if (key === "" || packages[`node_modules/${name}`] || !match) continue;
+    packages[`node_modules/${name}`] = { version, optional: true, os: [match[1]], cpu: [match[2]] };
+  }
+}
 const lock = { name: root.name, version: root.version, lockfileVersion: 3, requires: true, packages };
 fs.writeFileSync("package.json", `${JSON.stringify(root, null, 2)}\n`);
 fs.writeFileSync("package-lock.json", `${JSON.stringify(lock, null, 2)}\n`);
