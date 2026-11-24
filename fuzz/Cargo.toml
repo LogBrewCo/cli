@@ -1,0 +1,37 @@
+[package]
+name = "logbrew-cli-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+license = "MIT"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4.13"
+logbrew-cli = { path = ".." }
+
+# A workspace of its own, so the CLI's own build never compiles the fuzz targets.
+[workspace]
+
+[[bin]]
+name = "command_line"
+path = "fuzz_targets/command_line.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "debug_file"
+path = "fuzz_targets/debug_file.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "symbol_zip"
+path = "fuzz_targets/symbol_zip.rs"
+test = false
+doc = false
+bench = false
