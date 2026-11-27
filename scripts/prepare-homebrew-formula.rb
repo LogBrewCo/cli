@@ -20,6 +20,14 @@ FORMULA_TEST = <<'RUBY'
     assert_match version.to_s, shell_output("#{bin}/logbrew version")
   end
 RUBY
+# cargo-dist writes an alias table and 2 helpers that read it. Every alias is
+# empty, and Homebrew's style audit refuses a helper with only 1 caller.
+EMPTY_BINARY_ALIASES = /^  BINARY_ALIASES = \{\n(?:    "[a-z0-9_-]+": \{\},?\n)+  \}\n\n/
+ALIAS_HELPERS = [
+  /^  def target_triple\n(?:(?:    .*)?\n)*?  end\n\n/,
+  /^  def install_binary_aliases!\n(?:(?:    .*)?\n)*?  end\n\n/,
+  /\n\n    install_binary_aliases!\n/,
+].freeze
 
 def fail_closed
   warn "Homebrew formula preparation failed."
@@ -76,6 +84,10 @@ begin
     %(  desc "#{description_lines.first}"\n),
     %(  desc "#{EXPECTED_DESCRIPTION}"\n),
   )
+  [EMPTY_BINARY_ALIASES, *ALIAS_HELPERS].each do |pattern|
+    fail_closed unless prepared.scan(pattern).length == 1
+    prepared = prepared.sub(pattern) { |match| match.start_with?("\n") ? "\n" : "" }
+  end
   prepared = prepared.delete_suffix(class_closing)
   prepared = "#{prepared}\n\n#{FORMULA_TEST}end\n"
 
