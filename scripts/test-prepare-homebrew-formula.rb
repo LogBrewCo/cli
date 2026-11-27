@@ -117,6 +117,10 @@ class PrepareHomebrewFormulaTest < Minitest::Test
       assert_includes prepared, "/releases/download/v#{VERSION}/"
       assert_equal 4, prepared.scan("/releases/download/v#{VERSION}/").length
       assert_equal 1, prepared.scan("\n  test do\n").length
+      refute_includes prepared, "BINARY_ALIASES"
+      refute_includes prepared, "target_triple"
+      refute_includes prepared, "install_binary_aliases!"
+      assert_includes prepared, %(      bin.install "logbrew"\n    end\n  end\n\n  test do\n)
       assert_includes(
         prepared,
         %(assert_match version.to_s, shell_output("\#{bin}/logbrew version")),
@@ -131,6 +135,12 @@ class PrepareHomebrewFormulaTest < Minitest::Test
       assert_equal "Syntax OK\n", syntax_output
       assert_empty syntax_error
     end
+  end
+
+  def test_rejects_a_binary_alias_it_would_drop
+    assert_closed_failure(
+      generated_formula.sub(%("x86_64-apple-darwin": {}), %("x86_64-apple-darwin": { "logbrew" => ["lb"] })),
+    )
   end
 
   def test_rejects_release_version_substitution
