@@ -92,7 +92,7 @@ pub(super) fn help_topic(head: &str, tail: &[String]) -> Result<HelpTopic, CliEr
         alias if is_examples_help_alias(alias) => {
             help_topic_without_positionals(HelpTopic::Examples, positionals.as_slice())
         }
-        alias if is_project_help_alias(alias) => Ok(HelpTopic::Projects),
+        alias if is_project_help_alias(alias) => Ok(project_help_topic(positionals.as_slice())),
         "usage" => Ok(HelpTopic::Usage),
         "mcp" => Ok(HelpTopic::Mcp),
         "operations" => Ok(HelpTopic::Operations),
@@ -568,7 +568,7 @@ fn explicit_help_topic(args: &[&str]) -> Result<HelpTopic, CliError> {
         [topic, tail @ ..] if is_examples_help_alias(topic) => {
             help_topic_without_positionals(HelpTopic::Examples, tail)
         }
-        [topic, ..] if is_project_help_alias(topic) => Ok(HelpTopic::Projects),
+        [topic, tail @ ..] if is_project_help_alias(topic) => Ok(project_help_topic(tail)),
         ["usage", tail @ ..] => help_topic_without_positionals(HelpTopic::Usage, tail),
         ["mcp", ..] => Ok(HelpTopic::Mcp),
         ["operations", ..] => Ok(HelpTopic::Operations),
@@ -768,6 +768,18 @@ fn analytics_help_topic(args: &[&str]) -> Result<HelpTopic, CliError> {
             ..,
         ] => Err(unexpected_help_argument(extra)),
         [resource, ..] => Err(unknown_resource(resource, ANALYTICS_NEXT_STEP)),
+    }
+}
+
+/// Resolves help for one `projects` subcommand, else the full `projects` help.
+fn project_help_topic(args: &[&str]) -> HelpTopic {
+    match args {
+        ["create", ..] => HelpTopic::ProjectsCreate,
+        ["key" | "keys"] => HelpTopic::ProjectKeys,
+        ["key" | "keys", "create", ..] => HelpTopic::ProjectKeysCreate,
+        ["key" | "keys", "list", ..] => HelpTopic::ProjectKeysList,
+        ["key" | "keys", "revoke", ..] => HelpTopic::ProjectKeysRevoke,
+        _ => HelpTopic::Projects,
     }
 }
 

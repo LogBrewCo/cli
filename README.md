@@ -231,6 +231,7 @@ the owner-only directory created by CLI login is a suitable destination:
 
 ```bash
 logbrew projects create "FastAPI Template" \
+  --kind server \
   --runtime python \
   --environment development \
   --ingest-key-file "$HOME/.logbrew/fastapi-template.key" \
@@ -239,9 +240,21 @@ logbrew projects create "FastAPI Template" \
 
 The command writes the one-time ingest key to that file before reporting
 success. It never prints the key or its path. Its JSON response contains the
-new project ID; use that ID with `logbrew doctor --project <project_id>` to
-inspect setup readiness. Run `logbrew projects --help` for the complete
-security and retry contract.
+new project ID and name, and its `next` step is the `logbrew doctor` command
+for that project. Run `logbrew projects create --help` for every option and
+`logbrew projects --help` for the complete security and retry contract.
+
+`--kind server` makes the first key a `server` key for server code. Select
+another kind with `--kind browser` or `--kind sdk`. Without `--kind`, the first
+key is a `cli` key. A web app with server and browser code, such as a Next.js
+app, also needs a browser key for `clientKey`:
+
+```bash
+logbrew projects keys create <project_id> \
+  --kind browser \
+  --ingest-key-file "$HOME/.logbrew/checkout-browser.key" \
+  --json
+```
 
 ### Create an ingest key for an existing project
 

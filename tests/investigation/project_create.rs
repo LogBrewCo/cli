@@ -325,7 +325,7 @@ fn project_create_rejects_invalid_or_hostile_grammar_without_reflection() -> Tes
         assert_eq!(body["message"], "invalid project create command");
         assert_eq!(
             body["next"],
-            "use logbrew projects create <name> --ingest-key-file <path> with optional runtime, environment, repository, discovery components, --abandon-retry, and --json"
+            "use logbrew projects create <name> --ingest-key-file <path> with optional --kind server|browser|sdk|cli, runtime, environment, repository, discovery components, --abandon-retry, and --json"
         );
         assert!(!text.contains("hostile-secret"));
         assert!(!text.contains("authorization"));
@@ -379,13 +379,14 @@ async_test!(project_create_posts_exact_request_then_persists_before_safe_json ->
     let body: serde_json::Value = serde_json::from_str(text.as_str())?;
     assert_eq!(body["status"], "created");
     assert_eq!(body["project"]["id"], PROJECT_ID);
+    assert_eq!(body["project"]["name"], "Checkout API");
     assert_eq!(body["project"]["setup_status"], "created");
     assert_eq!(body["setup"]["status"], "created");
     assert_eq!(body["ingest_key"]["id"], INGEST_ID);
     assert_eq!(body["ingest_key"]["kind"], "cli");
     assert_eq!(body["ingest_key"]["expires_at"], "2026-08-15T12:00:00Z");
     assert_eq!(body["checks"][2]["status"], "stored");
-    assert_eq!(body["next"], "run logbrew doctor --project <project_id>");
+    assert_eq!(body["next"], format!("run logbrew doctor --project {PROJECT_ID}"));
     assert!(!text.contains(ONE_TIME_TOKEN));
     assert!(!text.contains(fixture.key_file.to_string_lossy().as_ref()));
     assert!(!text.contains(server.uri().as_str()));
@@ -909,7 +910,7 @@ async_test!(human_project_create_is_bounded_and_path_free -> Result<(), Box<dyn 
     let text = String::from_utf8(output)?;
     assert_eq!(
         text,
-        "LogBrew project created.\nProject: 123e4567-e89b-12d3-a456-426614174000\nSetup: created\nIngest key: stored\nNext: run logbrew doctor --project <project_id>\n"
+        "LogBrew project created.\nProject: 123e4567-e89b-12d3-a456-426614174000\nSetup: created\nKind: cli\nIngest key: stored\nNext: run logbrew doctor --project 123e4567-e89b-12d3-a456-426614174000\n"
     );
     assert!(!text.contains(ONE_TIME_TOKEN));
     assert!(!text.contains(fixture.key_file.to_string_lossy().as_ref()));
@@ -930,6 +931,238 @@ async_test!(project_create_fails_before_network_without_provable_owner_only_stor
     assert!(!fixture.retry_state().exists());
     Ok(())
 });
+
+const TELEMETRY_KINDS: [&str; 4] = ["server", "browser", "sdk", "cli"];
+
+#[test]
+fn project_create_kind_sends_response_version_2_and_no_kind_keeps_version_1() -> TestResult {
+    let base = [
+        "logbrew",
+        "projects",
+        "create",
+        "Checkout API",
+        "--ingest-key-file=./key",
+    ];
+    assert_eq!(
+        parse_command(base)?.request_body(),
+        Some(serde_json::json!({"name": "Checkout API", "source": "cli"}))
+    );
+    for kind in TELEMETRY_KINDS {
+        let inline = format!("--kind={kind}");
+        for args in [
+            [&base[..], &["--kind", kind]].concat(),
+            [&base[..], &[inline.as_str()]].concat(),
+        ] {
+            assert_eq!(
+                parse_command(args)?.request_body(),
+                Some(serde_json::json!({
+                    "name": "Checkout API",
+                    "source": "cli",
+                    "ingest_key_kind": kind,
+                    "response_version": 2
+                }))
+            );
+        }
+    }
+    for extra in [
+        &["--kind", "artifact"][..],
+        &["--kind", "read"],
+        &["--kind", "lbw_ingest_hostile"],
+        &["--kind"],
+        &["--kind", "server", "--kind", "browser"],
+    ] {
+        let (body, text) = rendered_json_error(&[&base[..], extra, &["--json"]].concat())?;
+        assert_eq!(body["error"], "invalid_project_create_command", "{extra:?}");
+        assert!(!text.contains("lbw_ingest_hostile"));
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+async_test!(project_create_stores_and_reports_each_requested_key_kind -> Result<(), Box<dyn std::error::Error>>, {
+    for kind in TELEMETRY_KINDS {
+        let server = MockServer::start().await?;
+        Mock::auth("POST", "/api/projects", "account-token")
+            .and(body_json(serde_json::json!({
+                "name": "Checkout API",
+                "runtime": "rust",
+                "environment": "production",
+                "source": "cli",
+                "ingest_key_kind": kind,
+                "response_version": 2
+            })))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(&created_response("Checkout API", kind)),
+            )
+            .expect(1)
+            .mount(&server);
+        let fixture = Fixture::new(format!("kind-{kind}").as_str())?;
+        let mut args = fixture.args("Checkout API", false);
+        args.extend([String::from("--kind"), kind.to_owned()]);
+        let mut output = Vec::new();
+
+        execute_command(&parse_command(args)?, &fixture.env(&server), &mut output).await?;
+
+        let text = String::from_utf8(output)?;
+        let body: serde_json::Value = serde_json::from_str(text.as_str())?;
+        assert_eq!(body["project"]["id"], PROJECT_ID);
+        assert_eq!(body["project"]["name"], "Checkout API");
+        assert_eq!(body["ingest_key"]["kind"], kind);
+        assert_eq!(body["next"], format!("run logbrew doctor --project {PROJECT_ID}"));
+        assert!(!text.contains("<project_id>"));
+        assert!(!text.contains(ONE_TIME_TOKEN));
+        assert_eq!(
+            std::fs::read_to_string(fixture.key_file.as_path())?,
+            ONE_TIME_TOKEN
+        );
+    }
+    Ok(())
+});
+
+#[cfg(unix)]
+async_test!(project_create_refuses_a_key_of_another_kind -> Result<(), Box<dyn std::error::Error>>, {
+    for (label, requested, returned) in [
+        ("kind-mismatch", Some("browser"), "cli"),
+        ("version-1-needs-cli", None, "server"),
+    ] {
+        let server = MockServer::start().await?;
+        Mock::route("POST", "/api/projects")
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(&created_response("Checkout API", returned)),
+            )
+            .mount(&server);
+        let fixture = Fixture::new(label)?;
+        let mut args = fixture.args("Checkout API", false);
+        if let Some(kind) = requested {
+            args.extend([String::from("--kind"), kind.to_owned()]);
+        }
+
+        let error = failed_command(&parse_command(args)?, &fixture.env(&server)).await?;
+
+        assert!(!runtime_error_text(&error)?.contains(ONE_TIME_TOKEN), "{label}");
+        assert!(!fixture.key_file.exists(), "{label}: a key of the wrong kind is never stored");
+    }
+    Ok(())
+});
+
+#[cfg(unix)]
+async_test!(project_create_kind_validation_failure_stores_nothing -> Result<(), Box<dyn std::error::Error>>, {
+    let server = MockServer::start().await?;
+    Mock::route("POST", "/api/projects")
+        .and(body_json(serde_json::json!({
+            "name": "Checkout API",
+            "runtime": "rust",
+            "environment": "production",
+            "source": "cli",
+            "ingest_key_kind": "browser",
+            "response_version": 2
+        })))
+        .respond_with(ResponseTemplate::new(422).set_body_json(&serde_json::json!({
+            "error": "ingest_key_kind requires response_version 2",
+            "code": "validation_failed",
+            "next": "send response_version=2 with ingest_key_kind",
+            "next_action": {"code": "fix_request", "target": "request"}
+        })))
+        .expect(1)
+        .mount(&server);
+    let fixture = Fixture::new("kind-validation")?;
+    let mut args = fixture.args("Checkout API", false);
+    args.extend([String::from("--kind"), String::from("browser")]);
+
+    let error = failed_command(&parse_command(args)?, &fixture.env(&server)).await?;
+    let body: serde_json::Value = serde_json::from_str(runtime_error_text(&error)?.as_str())?;
+
+    assert_eq!(body["status"], 422);
+    assert_eq!(body["api_code"], "validation_failed");
+    assert_eq!(
+        body["next"],
+        "correct project fields, then use --abandon-retry to start the corrected request"
+    );
+    assert!(!fixture.key_file.exists(), "a refused request stores no key");
+    Ok(())
+});
+
+#[test]
+fn projects_subcommand_help_shows_only_that_command() -> TestResult {
+    let projects = help::help_text(HelpTopic::Projects);
+    for (args, key, usage) in [
+        (
+            &["logbrew", "projects", "create", "--help"][..],
+            "projects_create",
+            "logbrew projects create <name>",
+        ),
+        (
+            &["logbrew", "projects", "create", "Checkout", "--help"],
+            "projects_create",
+            "logbrew projects create <name>",
+        ),
+        (
+            &["logbrew", "help", "projects", "create"],
+            "projects_create",
+            "logbrew projects create <name>",
+        ),
+        (
+            &["logbrew", "projects", "keys", "--help"],
+            "projects_keys",
+            "logbrew projects keys create <project_id>",
+        ),
+        (
+            &["logbrew", "projects", "keys", "create", "--help"],
+            "projects_keys_create",
+            "logbrew projects keys create <project_id>",
+        ),
+        (
+            &["logbrew", "project", "key", "create", PROJECT_ID, "-h"],
+            "projects_keys_create",
+            "logbrew projects keys create <project_id>",
+        ),
+        (
+            &["logbrew", "projects", "keys", "list", "--help"],
+            "projects_keys_list",
+            "logbrew projects keys list <project_id>",
+        ),
+        (
+            &["logbrew", "projects", "keys", "revoke", "--help"],
+            "projects_keys_revoke",
+            "logbrew projects keys revoke <project_id> <key_id> --yes",
+        ),
+    ] {
+        let logbrew_cli::Command::Help { topic, json: false } =
+            parse_command(args.iter().copied())?
+        else {
+            return Err(format!("{args:?} must print help").into());
+        };
+        let text = help::help_text(topic);
+        assert_eq!(topic.key(), key, "{args:?}");
+        assert!(
+            text.starts_with(format!("Usage:\n  {usage}").as_str()),
+            "{args:?}: {text}"
+        );
+        assert!(text.contains("Example"), "{args:?}");
+        assert_ne!(text, projects, "{args:?}");
+        assert!(!text.contains("logbrew projects archive"), "{args:?}");
+        if key == "projects_create" {
+            assert!(
+                text.contains("--kind <kind>              Kind of the first key. Default: cli.")
+            );
+            assert!(text.contains("browser  for clientKey in browser and mobile code"));
+            assert!(text.contains("logbrew projects keys create <project_id> --kind browser"));
+        }
+    }
+    for args in [
+        &["logbrew", "projects", "--help"][..],
+        &["logbrew", "help", "projects"],
+    ] {
+        let logbrew_cli::Command::Help { topic, .. } = parse_command(args.iter().copied())? else {
+            return Err(format!("{args:?} must print help").into());
+        };
+        assert_eq!(topic.key(), "projects");
+        assert!(help::help_text(topic).contains("logbrew projects keys revoke"));
+    }
+
+    Ok(())
+}
 
 struct Fixture {
     root: std::path::PathBuf,
@@ -1101,6 +1334,10 @@ fn discovery_complete() -> serde_json::Value {
 }
 
 fn success_response_with_name(name: &str) -> serde_json::Value {
+    created_response(name, "cli")
+}
+
+fn created_response(name: &str, kind: &str) -> serde_json::Value {
     serde_json::json!({
         "project": {
             "id": PROJECT_ID,
@@ -1142,8 +1379,8 @@ fn success_response_with_name(name: &str) -> serde_json::Value {
         },
         "ingest": {
             "id": INGEST_ID,
-            "label": "CLI ingest key",
-            "kind": "cli",
+            "label": "Default server ingest key",
+            "kind": kind,
             "token": ONE_TIME_TOKEN,
             "created_at": "2026-07-16T12:00:00Z",
             "expires_at": "2026-08-15T12:00:00Z",

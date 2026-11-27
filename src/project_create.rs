@@ -412,6 +412,8 @@ fn project_ingest_key_body(options: &ProjectIngestKeyCreateOptions) -> serde_jso
 struct CreatedProject {
     /// Account-owned project UUID.
     project_id: String,
+    /// Project name bound to the request.
+    project_name: String,
     /// Canonical backend setup state.
     setup_status: String,
     /// Project creation timestamp.
@@ -424,6 +426,8 @@ struct CreatedProject {
     ingest_id: String,
     /// Display-safe ingest-key label.
     ingest_label: String,
+    /// Key kind bound to the request.
+    ingest_kind: String,
     /// Ingest-key creation timestamp.
     ingest_created_at: String,
     /// Optional ingest-key expiration timestamp.
@@ -445,16 +449,19 @@ impl CreatedProject {
             project_id.as_str(),
             setup_status.as_str(),
         )?;
-        let ingest = parse_created_ingest(value.get("ingest"))?;
+        let kind = request.kind.as_deref().unwrap_or("cli");
+        let ingest = parse_created_ingest(value.get("ingest"), kind)?;
 
         Ok(Self {
             project_id,
+            project_name: request.name.clone(),
             setup_status,
             project_created_at,
             setup_action_code,
             setup_action_target,
             ingest_id: ingest.id,
             ingest_label: ingest.label,
+            ingest_kind: kind.to_owned(),
             ingest_created_at: ingest.created_at,
             ingest_expires_at: ingest.expires_at,
             token: ingest.token,
@@ -636,8 +643,11 @@ fn parse_created_setup(
     setup_action(setup.get("next_action"), setup_status)
 }
 
-/// Parses the exact one-time ingest credential object.
-fn parse_created_ingest(value: Option<&serde_json::Value>) -> Result<CreatedIngest, RuntimeError> {
+/// Parses the exact one-time ingest credential object of the requested kind.
+fn parse_created_ingest(
+    value: Option<&serde_json::Value>,
+    kind: &str,
+) -> Result<CreatedIngest, RuntimeError> {
     let ingest = object(value)?;
     exact_map_keys(
         ingest,
@@ -652,7 +662,7 @@ fn parse_created_ingest(value: Option<&serde_json::Value>) -> Result<CreatedInge
             "next_action",
         ],
     )?;
-    if required_safe(ingest, "kind", 32)?.as_str() != "cli" {
+    if required_safe(ingest, "kind", 32)? != kind {
         return Err(invalid_response());
     }
     drop(required_safe(ingest, "next", 512)?);
@@ -672,11 +682,13 @@ fn write_success<W: std::io::Write>(
     json: bool,
     output: &mut W,
 ) -> Result<(), RuntimeError> {
+    let next = format!("run logbrew doctor --project {}", created.project_id);
     if json {
         let body = serde_json::json!({
             "status": "created",
             "project": {
                 "id": created.project_id,
+                "name": created.project_name,
                 "setup_status": created.setup_status,
                 "created_at": created.project_created_at,
             },
@@ -690,7 +702,7 @@ fn write_success<W: std::io::Write>(
             "ingest_key": {
                 "id": created.ingest_id,
                 "label": created.ingest_label,
-                "kind": "cli",
+                "kind": created.ingest_kind,
                 "created_at": created.ingest_created_at,
                 "expires_at": created.ingest_expires_at,
             },
@@ -699,15 +711,16 @@ fn write_success<W: std::io::Write>(
                 {"check": "setup", "status": created.setup_status},
                 {"check": "ingest_key", "status": "stored"},
             ],
-            "next": "run logbrew doctor --project <project_id>",
+            "next": next,
         });
         writeln!(output, "{body}")?;
     } else {
         writeln!(output, "LogBrew project created.")?;
         writeln!(output, "Project: {}", created.project_id)?;
         writeln!(output, "Setup: {}", created.setup_status)?;
+        writeln!(output, "Kind: {}", created.ingest_kind)?;
         writeln!(output, "Ingest key: stored")?;
-        writeln!(output, "Next: run logbrew doctor --project <project_id>")?;
+        writeln!(output, "Next: {next}")?;
     }
     Ok(())
 }
@@ -720,13 +733,15 @@ fn write_ingest_key_success<W: std::io::Write>(
     output: &mut W,
 ) -> Result<(), RuntimeError> {
     let next = match created.kind.as_str() {
-        "artifact" => {
-            "load the stored artifact key into LOGBREW_TOKEN, then run logbrew debug-artifacts upload"
+        "artifact" => String::from(
+            "load the stored artifact key into LOGBREW_TOKEN, then run logbrew debug-artifacts upload",
+        ),
+        "read" => {
+            String::from("load the stored read key into LOGBREW_TOKEN, then run logbrew issues")
         }
-        "read" => "load the stored read key into LOGBREW_TOKEN, then run logbrew issues",
-        _ => {
-            "configure the SDK with the stored ingest key, then run logbrew doctor --project <project_id>"
-        }
+        _ => format!(
+            "configure the SDK with the stored ingest key, then run logbrew doctor --project {project_id}"
+        ),
     };
     if json {
         let body = serde_json::json!({

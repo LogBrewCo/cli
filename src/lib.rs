@@ -578,6 +578,16 @@ pub enum HelpTopic {
     Examples,
     /// Backend-owned project setup and ingest key workflow overview.
     Projects,
+    /// Project creation command.
+    ProjectsCreate,
+    /// Project key command overview.
+    ProjectKeys,
+    /// Project key creation command.
+    ProjectKeysCreate,
+    /// Project key list command.
+    ProjectKeysList,
+    /// Project key revocation command.
+    ProjectKeysRevoke,
     /// Backend-owned account usage and quota workflow overview.
     Usage,
     /// Connected MCP client grant list and revoke workflow.
@@ -649,6 +659,11 @@ impl HelpTopic {
             Self::Json => "json",
             Self::Examples => "examples",
             Self::Projects => "projects",
+            Self::ProjectsCreate => "projects_create",
+            Self::ProjectKeys => "projects_keys",
+            Self::ProjectKeysCreate => "projects_keys_create",
+            Self::ProjectKeysList => "projects_keys_list",
+            Self::ProjectKeysRevoke => "projects_keys_revoke",
             Self::Usage => "usage",
             Self::Mcp => "mcp",
             Self::Operations => "operations",
@@ -916,6 +931,9 @@ pub struct ProjectCreateOptions {
     pub environment: Option<String>,
     /// Optional repository and component selection.
     pub repository: Option<ProjectRepositoryOptions>,
+    /// Requested kind of the project's first key: `server`, `browser`, `sdk`, or `cli`.
+    /// Without one, the request stays at response version 1 and the API issues a `cli` key.
+    pub kind: Option<String>,
     /// Owner-selected destination for the one-time ingest key.
     pub ingest_key_file: String,
     /// Explicitly discard a mismatched pending retry before creating.
@@ -2207,6 +2225,13 @@ pub(crate) fn project_create_body(options: &ProjectCreateOptions) -> serde_json:
         "source".to_owned(),
         serde_json::Value::String(String::from("cli")),
     ));
+    if let Some(kind) = options.kind.as_ref() {
+        drop(body.insert(
+            "ingest_key_kind".to_owned(),
+            serde_json::Value::String(kind.clone()),
+        ));
+        drop(body.insert("response_version".to_owned(), 2.into()));
+    }
     serde_json::Value::Object(body)
 }
 
