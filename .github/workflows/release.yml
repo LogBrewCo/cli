@@ -235,6 +235,7 @@ jobs:
           mkdir -p "$audit_repo/Formula"
           cp target/distrib/logbrew.rb "$audit_repo/Formula/logbrew.rb"
           git -C "$audit_repo" init --quiet
+          brew trust --formula logbrew-release-verifier/formula/logbrew
           cleanup_audit_tap() {
             find "$audit_repo" -depth -delete
             rmdir "$audit_parent" 2>/dev/null || true

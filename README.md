@@ -17,6 +17,7 @@ For a new package-manager installation:
 ```bash
 cargo install logbrew-cli
 npm install -g logbrew-cli@latest
+brew trust --formula LogBrewCo/tap/logbrew
 brew install LogBrewCo/tap/logbrew
 ```
 
