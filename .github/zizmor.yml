@@ -28,5 +28,5 @@ rules:
     ignore:
       # actionlint 1.7.12, the latest release, rejects the $/ form of a
       # reusable workflow call. The release workflow keeps ./ until it does.
-      - release.yml:280
-      - release.yml:294
+      - release.yml:281
+      - release.yml:295
