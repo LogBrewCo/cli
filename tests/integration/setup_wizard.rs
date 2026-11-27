@@ -1225,6 +1225,12 @@ fn mount_api(server: &MockServer, projects: &[(&str, &str)], ingest_key: &str) {
     Mock::auth("POST", "/api/projects", ACCOUNT)
         .respond_with(|request: &Request| {
             let body: serde_json::Value = serde_json::from_slice(&request.body).unwrap_or_default();
+            if body["ingest_key_kind"] != "server" || body["response_version"] != 2 {
+                return ResponseTemplate::new(422).set_body_json(&serde_json::json!({
+                    "error": "ingest_key_kind requires response_version 2",
+                    "code": "validation_failed",
+                }));
+            }
             ResponseTemplate::new(201)
                 .set_body_json(&created_project(body["name"].as_str().unwrap_or_default()))
         })
@@ -1327,8 +1333,8 @@ fn created_project(name: &str) -> serde_json::Value {
         },
         "ingest": {
             "id": INGEST_ID,
-            "label": "CLI ingest key",
-            "kind": "cli",
+            "label": "Default server ingest key",
+            "kind": "server",
             "token": NEW_KEY,
             "created_at": "2026-10-27T12:00:00Z",
             "expires_at": null,

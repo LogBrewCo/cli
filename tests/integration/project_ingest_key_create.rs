@@ -635,7 +635,7 @@ async_test!(human_existing_project_key_success_is_bounded_and_path_free -> Resul
     assert_eq!(
         text,
         format!(
-            "LogBrew ingest key created.\nProject: {PROJECT_ID}\nKind: sdk\nIngest key: stored\nNext: configure the SDK with the stored ingest key, then run logbrew doctor --project <project_id>\n"
+            "LogBrew ingest key created.\nProject: {PROJECT_ID}\nKind: sdk\nIngest key: stored\nNext: configure the SDK with the stored ingest key, then run logbrew doctor --project {PROJECT_ID}\n"
         )
     );
     assert!(!text.contains(ONE_TIME_TOKEN));

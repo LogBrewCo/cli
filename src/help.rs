@@ -16,6 +16,11 @@ pub const fn help_text(topic: HelpTopic) -> &'static str {
         HelpTopic::Json => JSON_HELP,
         HelpTopic::Examples => EXAMPLES_HELP,
         HelpTopic::Projects => PROJECTS_HELP,
+        HelpTopic::ProjectsCreate => PROJECTS_CREATE_HELP,
+        HelpTopic::ProjectKeys => PROJECT_KEYS_HELP,
+        HelpTopic::ProjectKeysCreate => PROJECT_KEYS_CREATE_HELP,
+        HelpTopic::ProjectKeysList => PROJECT_KEYS_LIST_HELP,
+        HelpTopic::ProjectKeysRevoke => PROJECT_KEYS_REVOKE_HELP,
         HelpTopic::Usage => USAGE_HELP,
         HelpTopic::Mcp => MCP_HELP,
         HelpTopic::Operations => OPERATIONS_HELP,
@@ -58,7 +63,8 @@ Usage:
   logbrew projects repositories [--json]
   logbrew projects repositories discover --provider github|gitlab|bitbucket --repository <id> [--json]
   logbrew projects create <name> --ingest-key-file <path> [--runtime <runtime>] \
-                         [--environment <environment>] [--provider <provider> --repository <id>] \
+                         [--kind server|browser|sdk|cli] [--environment <environment>] \
+                         [--provider <provider> --repository <id>] \
                          [--discovery <uuid> --component <uuid>]... [--json]
   logbrew projects keys create <project_id> --ingest-key-file <path> [--label <label>] \
                          [--kind sdk|browser|server|cli|artifact|read] [--json]
@@ -267,8 +273,9 @@ JavaScript planning detects exact @sveltejs/kit, Express, and mixed React + Expr
 then emits released packages, detected install commands, compatibility, key scopes, and service-name requirements.
 Authenticated project creation (no dashboard sign-in):
   logbrew projects create <name> --ingest-key-file <path> [--runtime <runtime>] \
-                           [--environment <environment>] [--provider <provider> \
-                           --repository <id>] [--discovery <uuid> --component <uuid>]... [--json]
+                           [--kind server|browser|sdk|cli] [--environment <environment>] \
+                           [--provider <provider> --repository <id>] \
+                           [--discovery <uuid> --component <uuid>]... [--json]
 Existing-project key creation (no dashboard sign-in):
   logbrew projects keys create <project_id> --ingest-key-file <path> [--label <label>] \
                            [--kind sdk|browser|server|cli|artifact|read] [--json]
@@ -394,9 +401,9 @@ Usage:
   logbrew projects repositories discover --provider github|gitlab|bitbucket --repository <id> \
                            [--json]
   logbrew projects create <name> --ingest-key-file <path> [--runtime <runtime>] \
-                           [--environment <environment>] [--provider <provider> \
-                           --repository <id>] [--discovery <uuid> --component <uuid>]... \
-                           [--abandon-retry] [--json]
+                           [--kind server|browser|sdk|cli] [--environment <environment>] \
+                           [--provider <provider> --repository <id>] \
+                           [--discovery <uuid> --component <uuid>]... [--abandon-retry] [--json]
   logbrew projects keys create <project_id> --ingest-key-file <path> [--label <label>] \
                            [--kind sdk|browser|server|cli|artifact|read] [--abandon-retry] [--json]
   logbrew projects keys list <project_id> [--json]
@@ -447,6 +454,116 @@ the project inactive and schedules permanent deletion automatically; it cannot b
 Project-scoped SDK/ingest credentials are shown only when the server returns one-time credentials.
 Never use an account bearer token as SDK or ingest configuration.
 Next: run logbrew setup for the current non-mutating local plan.";
+
+/// Project creation help text.
+const PROJECTS_CREATE_HELP: &str = "\
+Usage:
+  logbrew projects create <name> --ingest-key-file <path> [--kind server|browser|sdk|cli] \
+                           [--runtime <runtime>] [--environment <environment>] \
+                           [--provider <provider> --repository <id>] \
+                           [--discovery <uuid> --component <uuid>]... [--abandon-retry] [--json]
+
+Creates a project and its first key. Stores the one-time key in a new owner-only file and never \
+prints the key or the file path.
+
+Options:
+  --ingest-key-file <path>   New file for the one-time key. Required.
+  --kind <kind>              Kind of the first key. Default: cli.
+                               server   for server SDKs. Keep it secret.
+                               browser  for clientKey in browser and mobile code. It can only send.
+                               sdk      for any SDK.
+                               cli      for the logbrew CLI.
+  --runtime <runtime>        Runtime, such as node, python, or go.
+  --environment <name>       First environment, such as production.
+  --provider <provider>      Repository provider: github, gitlab, or bitbucket.
+  --repository <id>          Repository ID from logbrew projects repositories.
+  --discovery <uuid>         Discovery ID from logbrew projects repositories discover.
+  --component <uuid>         Component ID from that discovery. Repeat for more.
+  --abandon-retry            Start a new attempt instead of retrying an unfinished one.
+  --json                     Print JSON.
+
+Examples:
+  logbrew projects create \"Checkout\" --kind server --ingest-key-file ./logbrew-server.key
+  logbrew projects keys create <project_id> --kind browser --ingest-key-file ./logbrew-browser.key
+
+A web app with server and browser code needs both keys: the server key for server SDKs and the \
+browser key for clientKey.";
+
+/// Project key command overview help text.
+const PROJECT_KEYS_HELP: &str = "\
+Usage:
+  logbrew projects keys create <project_id> --ingest-key-file <path> [--label <label>] \
+                           [--kind sdk|browser|server|cli|artifact|read] [--abandon-retry] [--json]
+  logbrew projects keys list <project_id> [--json]
+  logbrew projects keys revoke <project_id> <key_id> --yes [--json]
+
+Creates, lists, and revokes the keys of one project.
+
+Examples:
+  logbrew projects keys create <project_id> --kind browser --ingest-key-file ./logbrew-browser.key
+  logbrew projects keys list <project_id>
+
+More help:
+  logbrew projects keys create --help
+  logbrew projects keys list --help
+  logbrew projects keys revoke --help";
+
+/// Project key creation help text.
+const PROJECT_KEYS_CREATE_HELP: &str = "\
+Usage:
+  logbrew projects keys create <project_id> --ingest-key-file <path> [--label <label>] \
+                           [--kind sdk|browser|server|cli|artifact|read] [--abandon-retry] [--json]
+
+Creates one key for an existing project. Stores the one-time key in a new owner-only file and \
+never prints the key or the file path.
+
+Options:
+  --ingest-key-file <path>   New file for the one-time key. Required.
+  --kind <kind>              Kind of key. Default: sdk.
+                               server    for server SDKs. Keep it secret.
+                               browser   for clientKey in browser and mobile code. It can only send.
+                               sdk       for any SDK.
+                               cli       for the logbrew CLI.
+                               artifact  uploads source maps and native debug files and records \
+deploys.
+                               read      reads this project's data. Set LOGBREW_TOKEN to it.
+  --label <label>            Name shown in the key list. Default: CLI-created SDK key.
+  --abandon-retry            Start a new attempt instead of retrying an unfinished one.
+  --json                     Print JSON.
+
+Examples:
+  logbrew projects keys create <project_id> --kind browser --ingest-key-file ./logbrew-browser.key
+  logbrew projects keys create <project_id> --kind server --label \"API server\" \
+                           --ingest-key-file ./logbrew-server.key";
+
+/// Project key list help text.
+const PROJECT_KEYS_LIST_HELP: &str = "\
+Usage:
+  logbrew projects keys list <project_id> [--json]
+
+Lists the keys of one project with their ID, kind, status, prefix, label, and creation time. \
+Never prints a full key.
+
+Options:
+  --json   Print JSON.
+
+Example:
+  logbrew projects keys list <project_id>";
+
+/// Project key revocation help text.
+const PROJECT_KEYS_REVOKE_HELP: &str = "\
+Usage:
+  logbrew projects keys revoke <project_id> <key_id> --yes [--json]
+
+Revokes one project key. The key stops working at its next request. This cannot be undone.
+
+Options:
+  --yes    Confirm the revocation. Required.
+  --json   Print JSON.
+
+Example:
+  logbrew projects keys list <project_id>
+  logbrew projects keys revoke <project_id> <key_id> --yes";
 
 /// Backend-owned usage and quota help text.
 const USAGE_HELP: &str = "\

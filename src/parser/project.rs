@@ -467,6 +467,7 @@ fn parse_project_create(args: &[String]) -> Result<Command, CliError> {
     let mut repository_id = None;
     let mut discovery_id = None;
     let mut component_ids = Vec::new();
+    let mut kind = None;
     let mut ingest_key_file = None;
     let mut abandon_retry = false;
     let mut json = false;
@@ -479,6 +480,17 @@ fn parse_project_create(args: &[String]) -> Result<Command, CliError> {
                 (flag, Some(value))
             });
         match flag {
+            "--kind" if kind.is_none() => {
+                let value = flag_value(tail, &mut index, inline_value)
+                    .ok_or(CliError::InvalidProjectCreateCommand)?;
+                kind = Some(match value.trim() {
+                    "server" => "server",
+                    "browser" => "browser",
+                    "sdk" => "sdk",
+                    "cli" => "cli",
+                    _ => return Err(CliError::InvalidProjectCreateCommand),
+                });
+            }
             "--runtime" if runtime.is_none() => {
                 let value = flag_value(tail, &mut index, inline_value)
                     .ok_or(CliError::InvalidProjectCreateCommand)?;
@@ -534,6 +546,7 @@ fn parse_project_create(args: &[String]) -> Result<Command, CliError> {
             runtime,
             environment,
             repository,
+            kind: kind.map(String::from),
             ingest_key_file,
             abandon_retry,
         },

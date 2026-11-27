@@ -690,7 +690,7 @@ const fn cli_error_next_step(error: &CliError) -> &'static str {
             "use logbrew doctor --project <project_id> with optional --json"
         }
         CliError::InvalidProjectCreateCommand => {
-            "use logbrew projects create <name> --ingest-key-file <path> with optional runtime, environment, repository, discovery components, --abandon-retry, and --json"
+            "use logbrew projects create <name> --ingest-key-file <path> with optional --kind server|browser|sdk|cli, runtime, environment, repository, discovery components, --abandon-retry, and --json"
         }
         CliError::InvalidProjectIngestKeyCreateCommand => {
             "use logbrew projects keys create <project_id> --ingest-key-file <path> with optional --label, --kind sdk|browser|server|cli|artifact|read, --abandon-retry, and --json"

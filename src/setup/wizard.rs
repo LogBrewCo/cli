@@ -442,6 +442,7 @@ async fn credentials<W: Write>(
                 runtime: Some(project.target.runtime.to_owned()),
                 environment: Some(String::from("development")),
                 repository: None,
+                kind: Some(String::from("server")),
                 ingest_key_file: String::new(),
                 abandon_retry: false,
             };
